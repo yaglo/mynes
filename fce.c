@@ -222,7 +222,7 @@ void fce_update_screen()
     }
     
     if (ppu_shows_sprites()) {
-        al_draw_prim(ppu_sprite_pixels, NULL, NULL, 0, ppu_background_pixels_number, ALLEGRO_PRIM_POINT_LIST);
+        al_draw_prim(ppu_sprite_pixels, NULL, NULL, 0, ppu_sprite_pixels_number, ALLEGRO_PRIM_POINT_LIST);
     }
 
     // int ntrecordsize = 4;
