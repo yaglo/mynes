@@ -10,10 +10,10 @@ Keyboard:
 Arrows — D-pad.
 XZ = AB, A = SELECT, S = START
 
-![Screenshot 1](http://stackfault.net/mynes/mynes_1.png)
-![Screenshot 2](http://stackfault.net/mynes/mynes_2.png)
-![Screenshot 3](http://stackfault.net/mynes/mynes_3.png)
-![Screenshot 4](http://stackfault.net/mynes/mynes_4.png)
+![Screenshot 1](http://nsmutableperson.com/mynes/mynes_1.png)
+![Screenshot 2](http://nsmutableperson.com/mynes/mynes_2.png)
+![Screenshot 3](http://nsmutableperson.com/mynes/mynes_3.png)
+![Screenshot 4](http://nsmutableperson.com/mynes/mynes_4.png)
 
 
 License
