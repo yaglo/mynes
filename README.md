@@ -1,33 +1,16 @@
-mynes
-=====
+# mynes — Simple NES Emulator
 
-Simple NES Emulator
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-Requires Allegro 5.
+![Screenshot 1](./images/screenshot1.png)
+![Screenshot 2](./images/screenshot2.png)
+![Screenshot 3](./images/screenshot3.png)
+![Screenshot 4](./images/screenshot4.png)
 
-Keyboard:
+## Keyboard
 
-Arrows — D-pad.
-XZ = AB, A = SELECT, S = START
-
-![Screenshot 1](http://nsmutableperson.com/mynes/mynes_1.png)
-![Screenshot 2](http://nsmutableperson.com/mynes/mynes_2.png)
-![Screenshot 3](http://nsmutableperson.com/mynes/mynes_3.png)
-![Screenshot 4](http://nsmutableperson.com/mynes/mynes_4.png)
-
-
-License
-=======
-
-DO WHAT YOU WANT TO PUBLIC LICENSE 
-
-Copyright (C) 2012 Stanislav Yaglo <nsmutableperson@me.com> 
-
-Everyone is permitted to copy and distribute verbatim or modified 
-copies of this license document, and changing it is allowed as long 
-as the name is changed. 
-
-DO WHAT YOU WANT TO PUBLIC LICENSE 
-TERMS AND CONDITIONS FOR COPYING, DISTRIBUTION AND MODIFICATION 
-
-0. You just DO WHAT YOU WANT TO. 
+Arrows = D-pad
+<kbd>X</kbd> = A
+<kbd>Z</kbd> = B
+<kbd>A</kbd> = SELECT
+<kbd>S</kbd> = START
