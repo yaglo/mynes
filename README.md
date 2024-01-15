@@ -7,10 +7,12 @@
 ![Screenshot 3](./images/screenshot3.png)
 ![Screenshot 4](./images/screenshot4.png)
 
-## Keyboard
+## Controls
 
-Arrows = D-pad
-<kbd>X</kbd> = A
-<kbd>Z</kbd> = B
-<kbd>A</kbd> = SELECT
-<kbd>S</kbd> = START
+| Controller | Keyboard     |
+|------------|--------------|
+| ↑ ↓ ← →    | Arrow keys   |
+| A          | <kbd>X</kbd> |
+| B          | <kbd>Z</kbd> |
+| SELECT     | <kbd>A</kbd> |
+| START      | <kbd>S</kbd> |
