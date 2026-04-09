@@ -5,6 +5,8 @@
 #ifndef PPU_H
 #define PPU_H
 
+#include "common.h"
+
 #define MAX_PIXELS (256 * 240 * 2)
 
 extern byte PPU_SPRRAM[0x100];
