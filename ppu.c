@@ -12,9 +12,9 @@
 byte PPU_SPRRAM[0x100];
 byte PPU_RAM[0x4000];
 
-ALLEGRO_VERTEX ppu_background_pixels[65536];
-ALLEGRO_VERTEX ppu_sprite_pixels[65536];
-ALLEGRO_VERTEX ppu_behind_background_sprite_pixels[65536];
+ALLEGRO_VERTEX ppu_background_pixels[MAX_PIXELS];
+ALLEGRO_VERTEX ppu_sprite_pixels[MAX_PIXELS];
+ALLEGRO_VERTEX ppu_behind_background_sprite_pixels[MAX_PIXELS];
 
 int ppu_background_pixels_number;
 int ppu_behind_background_sprite_pixels_number;
