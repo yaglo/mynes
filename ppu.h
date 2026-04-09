@@ -12,7 +12,7 @@ extern byte PPU_RAM[0x4000];
 
 
 // Pixels to draw
-extern ALLEGRO_VERTEX ppu_background_pixels[65536], ppu_sprite_pixels[65536], ppu_behind_background_sprite_pixels[65536];
+extern ALLEGRO_VERTEX ppu_background_pixels[MAX_PIXELS], ppu_sprite_pixels[MAX_PIXELS], ppu_behind_background_sprite_pixels[MAX_PIXELS];
 
 // Count of pixels to draw
 extern int ppu_background_pixels_number, ppu_behind_background_sprite_pixels_number, ppu_sprite_pixels_number;
