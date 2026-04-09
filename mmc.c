@@ -5,6 +5,8 @@
 
 #define MMC_MAX_PAGE_COUNT 256
 
+byte mmc_id;
+
 byte mmc_prg_pages[MMC_MAX_PAGE_COUNT][0x4000];
 byte mmc_chr_pages[MMC_MAX_PAGE_COUNT][0x2000];
 int mmc_prg_pages_number, mmc_chr_pages_number;

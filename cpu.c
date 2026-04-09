@@ -8,6 +8,19 @@
 #include "ppu.h"
 
 
+CPU_STATE cpu;
+byte CPU_RAM[0x8000];
+byte op_code;
+int op_value, op_address;
+int op_cycles;
+unsigned long long cpu_cycles;
+
+void (*cpu_op_address_mode[256])();
+void (*cpu_op_handler[256])();
+bool cpu_op_in_base_instruction_set[256];
+char *cpu_op_name[256];
+int cpu_op_cycles[256];
+
 // CPU Memory
 
 inline byte cpu_ram_read(word address)

@@ -30,21 +30,21 @@ typedef struct {
     byte P; // Flag Register
 } CPU_STATE;
 
-CPU_STATE cpu;
+extern CPU_STATE cpu;
 
-byte CPU_RAM[0x8000];
+extern byte CPU_RAM[0x8000];
 
-byte op_code;             // Current instruction code
-int op_value, op_address; // Arguments for current instruction
-int op_cycles;            // Additional instruction cycles used (e.g. when paging occurs)
+extern byte op_code;             // Current instruction code
+extern int op_value, op_address; // Arguments for current instruction
+extern int op_cycles;            // Additional instruction cycles used (e.g. when paging occurs)
 
-unsigned long long cpu_cycles;  // Total CPU Cycles Since Power Up (wraps)
+extern unsigned long long cpu_cycles;  // Total CPU Cycles Since Power Up (wraps)
 
-void (*cpu_op_address_mode[256])();       // Array of address modes
-void (*cpu_op_handler[256])();            // Array of instruction function pointers
-bool cpu_op_in_base_instruction_set[256]; // true if instruction is in base 6502 instruction set
-char *cpu_op_name[256];                   // Instruction names
-int cpu_op_cycles[256];                   // CPU cycles used by instructions
+extern void (*cpu_op_address_mode[256])();       // Array of address modes
+extern void (*cpu_op_handler[256])();            // Array of instruction function pointers
+extern bool cpu_op_in_base_instruction_set[256]; // true if instruction is in base 6502 instruction set
+extern char *cpu_op_name[256];                   // Instruction names
+extern int cpu_op_cycles[256];                   // CPU cycles used by instructions
 
 byte cpu_ram_read(word address);
 void cpu_ram_write(word address, byte data);

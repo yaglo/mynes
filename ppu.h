@@ -5,15 +5,17 @@
 #ifndef PPU_H
 #define PPU_H
 
-byte PPU_SPRRAM[0x100];
-byte PPU_RAM[0x4000];
+#define MAX_PIXELS (256 * 240 * 2)
+
+extern byte PPU_SPRRAM[0x100];
+extern byte PPU_RAM[0x4000];
 
 
 // Pixels to draw
-ALLEGRO_VERTEX ppu_background_pixels[65536], ppu_sprite_pixels[65536], ppu_behind_background_sprite_pixels[65536];
+extern ALLEGRO_VERTEX ppu_background_pixels[65536], ppu_sprite_pixels[65536], ppu_behind_background_sprite_pixels[65536];
 
 // Count of pixels to draw
-int ppu_background_pixels_number, ppu_behind_background_sprite_pixels_number, ppu_sprite_pixels_number;
+extern int ppu_background_pixels_number, ppu_behind_background_sprite_pixels_number, ppu_sprite_pixels_number;
 
 
 void ppu_init();
