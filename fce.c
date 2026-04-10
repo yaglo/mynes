@@ -277,7 +277,7 @@ void fce_update_screen()
 
     // Resetting the pixel data
     ppu_behind_background_sprite_pixels_number = ppu_background_pixels_number = ppu_sprite_pixels_number = 0;
-    memset(ppu_behind_background_sprite_pixels, 0, 61440 * sizeof(ALLEGRO_VERTEX));
-    memset(ppu_background_pixels, 0, 61440 * sizeof(ALLEGRO_VERTEX));
-    memset(ppu_sprite_pixels, 0, 61440 * sizeof(ALLEGRO_VERTEX));
+    memset(ppu_behind_background_sprite_pixels, 0, MAX_PIXELS * sizeof(ALLEGRO_VERTEX));
+    memset(ppu_background_pixels, 0, MAX_PIXELS * sizeof(ALLEGRO_VERTEX));
+    memset(ppu_sprite_pixels, 0, MAX_PIXELS * sizeof(ALLEGRO_VERTEX));
 }

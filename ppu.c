@@ -147,7 +147,7 @@ void ppu_draw_background_scanline(bool mirror)
 {
     for (int tile_x = ppu_shows_background_in_leftmost_8px() ? 0 : 1; tile_x < 32; tile_x++) {
         // Skipping off-screen pixels
-        if (((tile_x << 3) - ppu.PPUSCROLL_X + (mirror ? 256 : 0)) > 256)
+        if (((tile_x << 3) - ppu.PPUSCROLL_X + (mirror ? 256 : 0)) >= 256)
             continue;
 
         int tile_y = ppu.scanline >> 3;
@@ -199,7 +199,7 @@ void ppu_draw_background_scanline(bool mirror)
                     exit(1);
                 }
                 ppu_background_pixels[ppu_background_pixels_number] = pixel;
-                ppu_screen_background[(tile_x << 3) + x][ppu.scanline] = color;
+                ppu_screen_background[px][py] = color;
                 ppu_background_pixels_number++;
             }
         }
@@ -241,23 +241,28 @@ void ppu_draw_sprite_scanline()
             // Color 0 is transparent
             if (color != 0) {
                 int screen_x = sprite_x + x;
+                int sy = sprite_y + y_in_tile + 1;
+
+                if (screen_x < 0 || screen_x >= 256 || sy < 0 || sy >= 240)
+                    continue;
+
                 pal c = palette[ppu_ram_read(palette_address + color)];
                 
                 if (PPU_SPRRAM[n + 2] & 0x20) {
                     ppu_behind_background_sprite_pixels[ppu_behind_background_sprite_pixels_number].x = screen_x;
-                    ppu_behind_background_sprite_pixels[ppu_behind_background_sprite_pixels_number].y = sprite_y + y_in_tile + 1;
+                    ppu_behind_background_sprite_pixels[ppu_behind_background_sprite_pixels_number].y = sy;
                     ppu_behind_background_sprite_pixels[ppu_behind_background_sprite_pixels_number].color = al_map_rgb(c.r, c.g, c.b);
                     ppu_behind_background_sprite_pixels_number++;
                 }
                 else {
                     ppu_sprite_pixels[ppu_sprite_pixels_number].x = screen_x;
-                    ppu_sprite_pixels[ppu_sprite_pixels_number].y = sprite_y + y_in_tile + 1;
+                    ppu_sprite_pixels[ppu_sprite_pixels_number].y = sy;
                     ppu_sprite_pixels[ppu_sprite_pixels_number].color = al_map_rgb(c.r, c.g, c.b);
                     ppu_sprite_pixels_number++;
                 }
 
                 // Checking sprite 0 hit
-                if (ppu_shows_background() && !ppu_sprite_hit_occured && n == 0 && ppu_screen_background[screen_x][sprite_y + y_in_tile] == color) {
+                if (ppu_shows_background() && !ppu_sprite_hit_occured && n == 0 && ppu_screen_background[screen_x][sy] == color) {
                     // printf("HIT at (%d,%d), bg = %d, sprite = %d\n", screen_x, sprite_y + y_in_tile, ppu_screen_background[screen_x][sprite_y + y_in_tile], color);
                     ppu_set_sprite_0_hit(true);
                     ppu_sprite_hit_occured = true;

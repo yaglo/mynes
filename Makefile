@@ -2,7 +2,7 @@ SOURCES=common.c cpu.c cpu-addressing.c fce.c main.c memory.c mmc.c ppu.c psg.c
 TARGET_BINARY=mynes
 # LIBS=-lallegro-static -lallegro_main-static -lallegro_primitives-static -framework AppKit -framework OpenGL /usr/lib/libIOKit.dylib -framework AGL
 LIBS=-lallegro -lallegro_main -lallegro_primitives
-FLAGS=
+FLAGS=-g -O0
 
 all:
 	clang $(FLAGS) $(LIBS) $(SOURCES) -o $(TARGET_BINARY)
