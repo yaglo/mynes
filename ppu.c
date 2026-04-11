@@ -146,7 +146,7 @@ void ppu_draw_background_scanline(bool mirror)
 {
     for (int tile_x = ppu_shows_background_in_leftmost_8px() ? 0 : 1; tile_x < 32; tile_x++) {
         // Skipping off-screen pixels
-        if (((tile_x << 3) - ppu.PPUSCROLL_X + (mirror ? 256 : 0)) > 256)
+        if (((tile_x << 3) - ppu.PPUSCROLL_X + (mirror ? 256 : 0)) >= 256)
             continue;
 
         int tile_y = ppu.scanline >> 3;
@@ -180,15 +180,26 @@ void ppu_draw_background_scanline(bool mirror)
                 word palette_address = 0x3F00 + (palette_attribute << 2);
                 pal c = palette[ppu_ram_read(palette_address + color)];
 
+                int px = (tile_x << 3) + x - ppu.PPUSCROLL_X + (mirror ? 256 : 0);
+                int py = ppu.scanline;
+
+                // Clip pixels outside visible screen to prevent OOB writes
+                if (px < 0 || px >= 256 || py < 0 || py >= 240)
+                    continue;
+
+                // Prevent background pixel buffer overflow
+                if (ppu_background_pixels_number >= 65536)
+                    return;
+
                 ALLEGRO_VERTEX pixel;
-                pixel.x = (tile_x << 3) + x - ppu.PPUSCROLL_X + (mirror ? 256 : 0);
-                pixel.y = ppu.scanline + 1;
+                pixel.x = px;
+                pixel.y = py;
                 pixel.z = 0;
                 pixel.color = al_map_rgb(c.r, c.g, c.b);
 
-                ppu_background_pixels[ppu_background_pixels_number] = pixel;
-                ppu_screen_background[(tile_x << 3) + x][ppu.scanline] = color;
-                ppu_background_pixels_number++;
+                ppu_background_pixels[ppu_background_pixels_number++] = pixel;
+                ppu_screen_background[px][py] = color;
+                //ppu_background_pixels_number++;
             }
         }
     }
@@ -272,16 +283,20 @@ void ppu_cycle()
         ppu.ready = true;
 
     ppu.scanline++;
-    if (ppu_shows_background()) {
-        ppu_draw_background_scanline(false);
-        ppu_draw_background_scanline(true);
+    if (ppu.scanline >= 0 && ppu.scanline < 240) {
+        if (ppu_shows_background()) {
+            ppu_draw_background_scanline(false);
+            ppu_draw_background_scanline(true);
+        }
+
+        if (ppu_shows_sprites()) {
+            ppu_draw_sprite_scanline();
+        }
     }
     // else if (ppu.scanline % 3 == 0)
     //     cpu_run(86);
     // else
     //     cpu_run(85);
-    
-    if (ppu_shows_sprites()) ppu_draw_sprite_scanline();
 
     if (ppu.scanline == 241) {
         ppu_set_in_vblank(true);
@@ -478,3 +493,4 @@ void ppu_set_mirroring(byte mirroring)
     ppu.mirroring = mirroring;
     ppu.mirroring_xor = 0x400 << mirroring;
 }
+
