@@ -288,6 +288,10 @@ void ppu_cycle()
         ppu.ready = true;
 
     ppu.scanline++;
+    
+    if (ppu.scanline == 0) {
+        ppu_background_pixels_number = 0;
+    }
     if (ppu.scanline >= 0 && ppu.scanline < 240) {
         if (ppu_shows_background()) {
             ppu_draw_background_scanline(false);
@@ -303,9 +307,6 @@ void ppu_cycle()
     // else
     //     cpu_run(85);
 
-    if (ppu.scanline == 0) {
-        ppu_background_pixels_number = 0;
-    }
     if (ppu.scanline == 241) {
         ppu_set_in_vblank(true);
         ppu_set_sprite_0_hit(false);
