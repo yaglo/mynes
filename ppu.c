@@ -255,11 +255,16 @@ void ppu_draw_sprite_scanline()
                     ppu_sprite_pixels_number++;
                 }
 
-                // Checking sprite 0 hit
-                if (ppu_shows_background() && !ppu_sprite_hit_occured && n == 0 && ppu_screen_background[screen_x][sprite_y + y_in_tile] == color) {
-                    // printf("HIT at (%d,%d), bg = %d, sprite = %d\n", screen_x, sprite_y + y_in_tile, ppu_screen_background[screen_x][sprite_y + y_in_tile], color);
-                    ppu_set_sprite_0_hit(true);
-                    ppu_sprite_hit_occured = true;
+                int bg_x = screen_x;
+                int bg_y = sprite_y + y_in_tile;
+
+                // Clamp to visible screen
+                if (bg_x >= 0 && bg_x < 256 && bg_y >= 0 && bg_y < 240) {
+                    if (ppu_shows_background() && !ppu_sprite_hit_occured && n == 0 && ppu_screen_background[bg_x][bg_y] == color) {
+                        // printf("HIT at (%d,%d), bg = %d, sprite = %d\n", screen_x, sprite_y + y_in_tile, ppu_screen_background[screen_x][sprite_y + y_in_tile], color);
+                        ppu_set_sprite_0_hit(true);
+                        ppu_sprite_hit_occured = true;
+                    }
                 }
             }
         }
@@ -298,6 +303,9 @@ void ppu_cycle()
     // else
     //     cpu_run(85);
 
+    if (ppu.scanline == 0) {
+        ppu_background_pixels_number = 0;
+    }
     if (ppu.scanline == 241) {
         ppu_set_in_vblank(true);
         ppu_set_sprite_0_hit(false);
