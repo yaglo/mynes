@@ -145,8 +145,10 @@ inline void ppu_ram_write(word address, byte data)
 void ppu_draw_background_scanline(bool mirror)
 {
     for (int tile_x = ppu_shows_background_in_leftmost_8px() ? 0 : 1; tile_x < 32; tile_x++) {
-        // Skipping off-screen pixels
-        if (((tile_x << 3) - ppu.PPUSCROLL_X + (mirror ? 256 : 0)) > 256)
+        // Skip tiles completely outside the visible screen
+        int tile_screen_x = (tile_x << 3) - ppu.PPUSCROLL_X + (mirror ? 256 : 0);
+
+        if (tile_screen_x >= 256 || tile_screen_x <= -8)
             continue;
 
         int tile_y = ppu.scanline >> 3;
