@@ -1,0 +1,47 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct Params
+{
+    uint count;
+    uint samples_per_line;
+    float noise_amplitude;
+    float hum_amplitude;
+};
+
+struct CompositeInOut
+{
+    float composite[1];
+};
+
+constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
+
+static inline __attribute__((always_inline))
+float prng(thread const uint& seed)
+{
+    uint x = (seed * 1103515245u) + 12345u;
+    x = (x / 65536u) % 32768u;
+    return float(x) / 32768.0;
+}
+
+kernel void main0(constant Params& _41 [[buffer(0)]], device CompositeInOut& _57 [[buffer(1)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+{
+    uint tid = gl_GlobalInvocationID.x;
+    if (tid >= _41.count)
+    {
+        return;
+    }
+    float signal = _57.composite[tid];
+    uint param = tid * 73856093u;
+    float _noise = (prng(param) - 0.5) * 2.0;
+    signal += (_41.noise_amplitude * _noise);
+    float hum_dp = 8.7765138232498429715633392333984e-06;
+    float hum_phase = float(tid) * hum_dp;
+    signal += (_41.hum_amplitude * sin(hum_phase));
+    _57.composite[tid] = signal;
+}
+

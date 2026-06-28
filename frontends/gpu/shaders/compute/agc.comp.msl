@@ -1,0 +1,85 @@
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct Params
+{
+    uint total_count;
+    uint samples_per_line;
+    uint num_lines;
+    float target_level;
+    float attack_coeff;
+    float release_coeff;
+    float min_gain;
+    float max_gain;
+};
+
+struct DataBuf
+{
+    float data[1];
+};
+
+struct CarryBuf
+{
+    float2 carry[1];
+};
+
+constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
+
+kernel void main0(constant Params& _20 [[buffer(0)]], device DataBuf& _75 [[buffer(1)]], device CarryBuf& _112 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+{
+    uint line = gl_GlobalInvocationID.x;
+    if (line >= _20.num_lines)
+    {
+        return;
+    }
+    uint start = line * _20.samples_per_line;
+    uint end = start + _20.samples_per_line;
+    if (end > _20.total_count)
+    {
+        end = _20.total_count;
+    }
+    if (start >= _20.total_count)
+    {
+        return;
+    }
+    float peak = 0.0;
+    for (uint i = start; i < end; i++)
+    {
+        peak = fast::max(peak, abs(_75.data[i]));
+    }
+    float _88;
+    if (peak < 0.0199999995529651641845703125)
+    {
+        _88 = 1.0;
+    }
+    else
+    {
+        _88 = _20.target_level / peak;
+    }
+    float desired_gain = _88;
+    desired_gain = fast::clamp(desired_gain, _20.min_gain, _20.max_gain);
+    float prev_gain = ((device float*)&_112.carry[line])[0u];
+    if (prev_gain <= 0.0)
+    {
+        prev_gain = desired_gain;
+    }
+    float _125;
+    if (desired_gain < prev_gain)
+    {
+        _125 = _20.attack_coeff;
+    }
+    else
+    {
+        _125 = _20.release_coeff;
+    }
+    float coeff = _125;
+    float smoothed_gain = prev_gain + (coeff * (desired_gain - prev_gain));
+    for (uint i_1 = start; i_1 < end; i_1++)
+    {
+        _75.data[i_1] *= smoothed_gain;
+    }
+    _112.carry[line] = float2(smoothed_gain, peak);
+}
+

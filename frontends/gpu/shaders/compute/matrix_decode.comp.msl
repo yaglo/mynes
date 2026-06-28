@@ -1,0 +1,91 @@
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct Params
+{
+    uint count;
+    float m00;
+    float m01;
+    float m02;
+    float m10;
+    float m11;
+    float m12;
+    float m20;
+    float m21;
+    float m22;
+    float bias_r;
+    float bias_g;
+    float bias_b;
+    float color_killer_threshold;
+    int chroma_delay;
+    uint samples_per_line;
+};
+
+struct YBuf
+{
+    float y_in[1];
+};
+
+struct IBuf
+{
+    float i_in[1];
+};
+
+struct QBuf
+{
+    float q_in[1];
+};
+
+struct RGBBuf
+{
+    float rgb_out[1];
+};
+
+constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
+
+kernel void main0(constant Params& _21 [[buffer(0)]], device YBuf& _36 [[buffer(1)]], device IBuf& _88 [[buffer(2)]], device QBuf& _96 [[buffer(3)]], device RGBBuf& _199 [[buffer(4)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+{
+    uint tid = gl_GlobalInvocationID.x;
+    if (tid >= _21.count)
+    {
+        return;
+    }
+    float Y = _36.y_in[tid];
+    int delayed_tid = int(tid);
+    bool _49 = _21.chroma_delay != 0;
+    bool _56;
+    if (_49)
+    {
+        _56 = _21.samples_per_line > 0u;
+    }
+    else
+    {
+        _56 = _49;
+    }
+    if (_56)
+    {
+        uint line_start = (tid / _21.samples_per_line) * _21.samples_per_line;
+        uint line_end = line_start + _21.samples_per_line;
+        delayed_tid = clamp(int(tid) - _21.chroma_delay, int(line_start), int(line_end) - 1);
+    }
+    float I = _88.i_in[delayed_tid];
+    float Q = _96.q_in[delayed_tid];
+    if (_21.color_killer_threshold > 0.0)
+    {
+        float kill = smoothstep(_21.color_killer_threshold * 0.699999988079071044921875, _21.color_killer_threshold * 1.2999999523162841796875, Y);
+        I *= kill;
+        Q *= kill;
+    }
+    float R = (((_21.m00 * Y) + (_21.m01 * I)) + (_21.m02 * Q)) + _21.bias_r;
+    float G = (((_21.m10 * Y) + (_21.m11 * I)) + (_21.m12 * Q)) + _21.bias_g;
+    float B = (((_21.m20 * Y) + (_21.m21 * I)) + (_21.m22 * Q)) + _21.bias_b;
+    R = fast::clamp(R, 0.0, 1.0);
+    G = fast::clamp(G, 0.0, 1.0);
+    B = fast::clamp(B, 0.0, 1.0);
+    _199.rgb_out[(tid * 3u) + 0u] = R;
+    _199.rgb_out[(tid * 3u) + 1u] = G;
+    _199.rgb_out[(tid * 3u) + 2u] = B;
+}
+

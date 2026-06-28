@@ -1,0 +1,65 @@
+# Build artifacts (CMake)
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Makefile
+Testing/
+build/
+
+# Output directories
+bin/
+lib/
+data/
+
+# Object files and libraries
+*.o
+*.a
+*.so
+*.dylib
+*.dSYM/
+
+# Generated CPU code — cpu_gen.h and cpu_gen.c are tracked as pre-built
+# fallbacks for systems without Chicken Scheme (csi)
+generated/*.o
+
+# ROM files (copyrighted — keep test ROMs only)
+roms/
+*.nes
+!tests/**/*.nes
+
+# Test output
+*.ppm
+*.png
+!docs/images/*.png
+output_*
+screenshot_*
+accuracy_*
+chr_tiles*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Debug/coverage
+*.log
+*.gcov
+*.gcda
+*.gcno
+coverage/
+
+# Temporary files
+/tmp/
+.build/
+
+# Agent / tool session caches
+.claude/
+.zed/
+tools/__pycache__/

@@ -1,0 +1,201 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct Params
+{
+    uint signal_w;
+    uint out_w;
+    uint out_h;
+    uint rows_per_scanline;
+    float sigma_narrow;
+    float sigma_wide;
+    float black_floor;
+    float noise_level;
+    uint frame_counter;
+    float hum_bar_amplitude;
+    float bloom_gamma;
+};
+
+struct RGBIn
+{
+    float rgb_in[1];
+};
+
+struct DeflectionX
+{
+    float deflection_x[1];
+};
+
+struct DeflectionY
+{
+    float deflection_y[1];
+};
+
+struct RGBAOut
+{
+    uint rgba_out[1];
+};
+
+constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(16u, 16u, 1u);
+
+static inline __attribute__((always_inline))
+float sample_rgb_channel_linear(thread const float& sx, thread const int& sy, thread const uint& channel, constant Params& _33, device RGBIn& _88)
+{
+    if ((sy < 0) || (sy >= 240))
+    {
+        return 0.0;
+    }
+    int signal_w_i = max(int(_33.signal_w), 1);
+    float sx_max = float(signal_w_i - 1);
+    bool _46 = sx < (-0.5);
+    bool _55;
+    if (!_46)
+    {
+        _55 = sx > (sx_max + 0.5);
+    }
+    else
+    {
+        _55 = _46;
+    }
+    if (_55)
+    {
+        return 0.0;
+    }
+    float sx_clamped = fast::clamp(sx, 0.0, sx_max);
+    int x0 = int(floor(sx_clamped));
+    int x1 = min((x0 + 1), (signal_w_i - 1));
+    float tx = sx_clamped - float(x0);
+    uint base = uint(sy) * _33.signal_w;
+    float a = _88.rgb_in[((base + uint(x0)) * 3u) + channel];
+    float b = _88.rgb_in[((base + uint(x1)) * 3u) + channel];
+    return mix(a, b, tx);
+}
+
+kernel void main0(constant Params& _33 [[buffer(0)]], device RGBIn& _88 [[buffer(1)]], device DeflectionX& _159 [[buffer(2)]], device DeflectionY& _184 [[buffer(3)]], device RGBAOut& _215 [[buffer(4)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+{
+    uint ox = gl_GlobalInvocationID.x;
+    uint oy = gl_GlobalInvocationID.y;
+    bool _131 = ox >= _33.out_w;
+    bool _140;
+    if (!_131)
+    {
+        _140 = oy >= _33.out_h;
+    }
+    else
+    {
+        _140 = _131;
+    }
+    if (_140)
+    {
+        return;
+    }
+    uint pix = (oy * _33.out_w) + ox;
+    uint didx = pix * 4u;
+    float r_center = _159.deflection_x[didx + 0u];
+    float g_center = _159.deflection_x[didx + 1u];
+    float b_center = _159.deflection_x[didx + 2u];
+    float dwell = _159.deflection_x[didx + 3u];
+    float r_vy = _184.deflection_y[didx + 0u];
+    float g_vy = _184.deflection_y[didx + 1u];
+    float b_vy = _184.deflection_y[didx + 2u];
+    float focus_scale = _184.deflection_y[didx + 3u];
+    if (dwell <= 9.9999997473787516355514526367188e-05)
+    {
+        uint idx0 = pix * 2u;
+        _215.rgba_out[idx0 + 0u] = as_type<uint>(half2(float2(0.0)));
+        _215.rgba_out[idx0 + 1u] = as_type<uint>(half2(float2(0.0, 1.0)));
+        return;
+    }
+    uint rps = _33.rows_per_scanline;
+    uint out_h_clamped = max(_33.out_h, 1u);
+    float r_vy_clamped = fast::clamp(r_vy, 0.0, float(out_h_clamped - 1u));
+    float g_vy_clamped = fast::clamp(g_vy, 0.0, float(out_h_clamped - 1u));
+    float b_vy_clamped = fast::clamp(b_vy, 0.0, float(out_h_clamped - 1u));
+    float r_linef = r_vy_clamped / float(rps);
+    float g_linef = g_vy_clamped / float(rps);
+    float b_linef = b_vy_clamped / float(rps);
+    float r_d = fract(r_linef) - 0.5;
+    float g_d = fract(g_linef) - 0.5;
+    float b_d = fract(b_linef) - 0.5;
+    uint r_sy = clamp(uint(floor(r_linef)), 0u, 239u);
+    uint g_sy = clamp(uint(floor(g_linef)), 0u, 239u);
+    uint b_sy = clamp(uint(floor(b_linef)), 0u, 239u);
+    float R = 0.0;
+    float G = 0.0;
+    float B = 0.0;
+    for (int soff = -1; soff <= 1; soff++)
+    {
+        float lR = 0.0;
+        float lG = 0.0;
+        float lB = 0.0;
+        int r_line = int(r_sy) + soff;
+        int g_line = int(g_sy) + soff;
+        int b_line = int(b_sy) + soff;
+        float param = r_center;
+        int param_1 = r_line;
+        uint param_2 = 0u;
+        lR = sample_rgb_channel_linear(param, param_1, param_2, _33, _88);
+        float param_3 = g_center;
+        int param_4 = g_line;
+        uint param_5 = 1u;
+        lG = sample_rgb_channel_linear(param_3, param_4, param_5, _33, _88);
+        float param_6 = b_center;
+        int param_7 = b_line;
+        uint param_8 = 2u;
+        lB = sample_rgb_channel_linear(param_6, param_7, param_8, _33, _88);
+        float lY = fast::clamp(((0.2989999949932098388671875 * lR) + (0.58700001239776611328125 * lG)) + (0.114000000059604644775390625 * lB), 0.0, 1.0);
+        float bloom_t = powr(lY, _33.bloom_gamma);
+        float sv = (_33.sigma_narrow + ((_33.sigma_wide - _33.sigma_narrow) * bloom_t)) * focus_scale;
+        float inv2s = 1.0 / fast::max((2.0 * sv) * sv, 9.9999997473787516355514526367188e-06);
+        float rd = r_d - float(soff);
+        float gd = g_d - float(soff);
+        float bd = b_d - float(soff);
+        R += (lR * exp((-(rd * rd)) * inv2s));
+        G += (lG * exp((-(gd * gd)) * inv2s));
+        B += (lB * exp((-(bd * bd)) * inv2s));
+    }
+    R *= dwell;
+    G *= dwell;
+    B *= dwell;
+    uint sy = g_sy;
+    if (_33.hum_bar_amplitude > 0.0)
+    {
+        float hum_phase = ((float(sy) / 240.0) * 6.28318500518798828125) + (float(_33.frame_counter) * 0.006000000052154064178466796875);
+        float hum_wave = (sin(hum_phase) + (0.4000000059604644775390625 * sin((2.0 * hum_phase) + 0.800000011920928955078125))) + (0.1500000059604644775390625 * sin((3.0 * hum_phase) + 1.5));
+        float hum = 1.0 - (_33.hum_bar_amplitude * (0.5 + (0.3499999940395355224609375 * hum_wave)));
+        R *= hum;
+        G *= hum;
+        B *= hum;
+    }
+    if (_33.noise_level > 0.0)
+    {
+        uint sr = ((ox * 1999u) + (oy * 7919u)) + (_33.frame_counter * 6271u);
+        uint sg = ((ox * 2999u) + (oy * 8923u)) + (_33.frame_counter * 4517u);
+        uint sb = ((ox * 3989u) + (oy * 9341u)) + (_33.frame_counter * 7211u);
+        sr ^= (sr >> 16u);
+        sr *= 73244475u;
+        sr ^= (sr >> 16u);
+        sg ^= (sg >> 16u);
+        sg *= 73244475u;
+        sg ^= (sg >> 16u);
+        sb ^= (sb >> 16u);
+        sb *= 73244475u;
+        sb ^= (sb >> 16u);
+        float luma = ((0.2989999949932098388671875 * R) + (0.58700001239776611328125 * G)) + (0.114000000059604644775390625 * B);
+        float noise_scale = _33.noise_level * (1.0 - (0.800000011920928955078125 * fast::clamp(luma, 0.0, 1.0)));
+        R += (((float(sr & 65535u) / 65535.0) - 0.5) * noise_scale);
+        G += (((float(sg & 65535u) / 65535.0) - 0.5) * noise_scale);
+        B += (((float(sb & 65535u) / 65535.0) - 0.5) * noise_scale);
+    }
+    R = fast::min(fast::max(R, _33.black_floor), 4.0);
+    G = fast::min(fast::max(G, _33.black_floor), 4.0);
+    B = fast::min(fast::max(B, _33.black_floor), 4.0);
+    uint idx = pix * 2u;
+    _215.rgba_out[idx + 0u] = as_type<uint>(half2(float2(R, G)));
+    _215.rgba_out[idx + 1u] = as_type<uint>(half2(float2(B, 1.0)));
+}
+

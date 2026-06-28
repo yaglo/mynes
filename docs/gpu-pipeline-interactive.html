@@ -1,0 +1,948 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MyNES GPU Signal Pipeline</title>
+<style>
+  :root {
+    --bg: #1a1a2e;
+    --bg2: #16213e;
+    --bg3: #0f3460;
+    --card: #1e2a45;
+    --card-border: #2a3a5c;
+    --text: #e0e0e0;
+    --text-dim: #8899aa;
+    --accent: #4fc3f7;
+    --accent2: #81c784;
+    --signal: #42a5f5;
+    --signal-dim: #1e3a5f;
+    --display: #66bb6a;
+    --display-dim: #1e4a2f;
+    --amber: #ffb74d;
+    --red: #ef5350;
+    --green: #66bb6a;
+    --mono: 'Menlo', 'Consolas', 'Monaco', monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { font-family: var(--sans); background: var(--bg); color: var(--text); line-height: 1.6; }
+
+  /* Header */
+  .header {
+    position: sticky; top: 0; z-index: 100;
+    background: linear-gradient(135deg, var(--bg2), var(--bg));
+    border-bottom: 1px solid var(--card-border);
+    padding: 12px 24px;
+    display: flex; align-items: center; gap: 16px;
+    backdrop-filter: blur(10px);
+  }
+  .header h1 { font-size: 1.3rem; font-weight: 600; letter-spacing: 0.5px; }
+  .header h1 span { color: var(--accent); }
+  .header nav { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+  .header nav a {
+    color: var(--text-dim); text-decoration: none; font-size: 0.8rem;
+    padding: 4px 10px; border-radius: 4px; transition: all 0.2s;
+  }
+  .header nav a:hover { color: var(--text); background: rgba(255,255,255,0.05); }
+
+  .main { max-width: 1400px; margin: 0 auto; padding: 24px; }
+
+  /* Section titles */
+  .section-title {
+    font-size: 1.4rem; font-weight: 600; margin: 32px 0 16px;
+    padding-bottom: 8px; border-bottom: 2px solid var(--card-border);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .section-title .badge {
+    font-size: 0.7rem; padding: 2px 8px; border-radius: 10px;
+    background: var(--accent); color: var(--bg); font-weight: 700;
+  }
+
+  /* Flow diagram */
+  .flow-container {
+    background: var(--card); border: 1px solid var(--card-border);
+    border-radius: 12px; padding: 24px; overflow-x: auto;
+    margin-bottom: 24px;
+  }
+  .flow-svg { width: 100%; min-width: 1200px; }
+  .stage-box { cursor: pointer; transition: filter 0.2s; }
+  .stage-box:hover { filter: brightness(1.3) drop-shadow(0 0 8px rgba(79,195,247,0.5)); }
+  .stage-box rect { rx: 8; ry: 8; stroke-width: 2; }
+  .stage-box text { font-family: var(--sans); pointer-events: none; }
+  .stage-box .stage-num { font-size: 11px; fill: rgba(255,255,255,0.5); }
+  .stage-box .stage-name { font-size: 11px; fill: #fff; font-weight: 600; }
+  .stage-box.highlighted rect { stroke: var(--amber) !important; stroke-width: 3; }
+  .stage-box.dimmed { opacity: 0.25; }
+  .divider-label { font-family: var(--sans); font-size: 11px; fill: var(--amber); font-weight: 600; }
+
+  /* Connection Matrix */
+  .matrix-container {
+    background: var(--card); border: 1px solid var(--card-border);
+    border-radius: 12px; padding: 24px; overflow-x: auto;
+    margin-bottom: 24px;
+  }
+  .matrix-table { width: 100%; border-collapse: collapse; min-width: 900px; font-size: 0.85rem; }
+  .matrix-table th, .matrix-table td {
+    padding: 8px 6px; text-align: center; border-bottom: 1px solid rgba(255,255,255,0.05);
+  }
+  .matrix-table thead th {
+    background: rgba(255,255,255,0.03); font-weight: 600;
+    position: sticky; top: 0; font-size: 0.75rem; color: var(--text-dim);
+  }
+  .matrix-table thead th:first-child { text-align: left; min-width: 110px; }
+  .matrix-table tbody tr { transition: background 0.2s; cursor: pointer; }
+  .matrix-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+  .matrix-table tbody tr:hover { background: rgba(79,195,247,0.08); }
+  .matrix-table tbody tr.active-row { background: rgba(79,195,247,0.15); }
+  .matrix-table td:first-child { text-align: left; font-weight: 600; color: var(--accent); }
+  .matrix-table .active { color: var(--green); font-size: 1.1rem; }
+  .matrix-table .inactive { color: #555; font-size: 1.1rem; }
+
+  /* Stage Cards */
+  .stage-card {
+    background: var(--card); border: 1px solid var(--card-border);
+    border-radius: 12px; margin-bottom: 16px; overflow: hidden;
+    transition: border-color 0.3s;
+  }
+  .stage-card:target { border-color: var(--accent); }
+  .stage-card-header {
+    padding: 16px 20px; cursor: pointer; display: flex;
+    align-items: center; gap: 12px; user-select: none;
+    border-left: 4px solid transparent;
+  }
+  .stage-card-header.signal-domain { border-left-color: var(--signal); }
+  .stage-card-header.display-domain { border-left-color: var(--display); }
+  .stage-card-header:hover { background: rgba(255,255,255,0.02); }
+  .stage-card-header .num {
+    width: 32px; height: 32px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 0.9rem; flex-shrink: 0;
+  }
+  .stage-card-header.signal-domain .num { background: var(--signal-dim); color: var(--signal); }
+  .stage-card-header.display-domain .num { background: var(--display-dim); color: var(--display); }
+  .stage-card-header .title { font-weight: 600; font-size: 1.05rem; }
+  .stage-card-header .kernel {
+    font-family: var(--mono); font-size: 0.75rem; color: var(--text-dim);
+    background: rgba(255,255,255,0.05); padding: 2px 8px; border-radius: 4px;
+  }
+  .stage-card-header .conn-badges { margin-left: auto; display: flex; gap: 4px; flex-shrink: 0; }
+  .conn-badge {
+    font-size: 0.6rem; padding: 1px 5px; border-radius: 3px;
+    background: rgba(255,255,255,0.08); color: var(--text-dim);
+  }
+  .conn-badge.active { background: rgba(102,187,106,0.2); color: var(--green); }
+  .stage-card-header .chevron {
+    margin-left: 8px; transition: transform 0.3s; color: var(--text-dim);
+    font-size: 0.8rem; flex-shrink: 0;
+  }
+  .stage-card.open .chevron { transform: rotate(90deg); }
+  .stage-card-body { display: none; padding: 0 20px 20px; }
+  .stage-card.open .stage-card-body { display: block; }
+
+  /* Sub-sections inside cards */
+  .card-section { margin-top: 16px; }
+  .card-section h4 {
+    font-size: 0.85rem; color: var(--accent); margin-bottom: 8px;
+    text-transform: uppercase; letter-spacing: 1px;
+  }
+  .card-section p { font-size: 0.9rem; color: var(--text-dim); line-height: 1.7; }
+
+  /* Signal flow mini diagram */
+  .signal-flow {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 12px 16px; background: rgba(0,0,0,0.2); border-radius: 8px;
+    font-family: var(--mono); font-size: 0.8rem; color: var(--text-dim);
+  }
+  .signal-flow .arrow { color: var(--accent); }
+  .signal-flow .node {
+    padding: 4px 10px; background: rgba(79,195,247,0.1);
+    border: 1px solid rgba(79,195,247,0.2); border-radius: 4px; color: var(--text);
+  }
+
+  /* Param tables */
+  .param-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+  .param-table th {
+    text-align: left; padding: 8px 10px; font-weight: 600;
+    background: rgba(255,255,255,0.03); color: var(--text-dim);
+    border-bottom: 2px solid var(--card-border); font-size: 0.75rem;
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .param-table td {
+    padding: 7px 10px; border-bottom: 1px solid rgba(255,255,255,0.03);
+  }
+  .param-table tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
+  .param-table .param-name { font-family: var(--mono); color: var(--accent); font-size: 0.8rem; }
+  .param-table .param-type { font-family: var(--mono); color: var(--text-dim); font-size: 0.75rem; }
+
+  /* Preset cards */
+  .preset-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+  .preset-card {
+    background: var(--card); border: 1px solid var(--card-border);
+    border-radius: 12px; padding: 20px; transition: border-color 0.3s;
+  }
+  .preset-card:hover { border-color: var(--accent); }
+  .preset-card h3 { font-size: 1rem; margin-bottom: 4px; }
+  .preset-card .desc { font-size: 0.8rem; color: var(--text-dim); margin-bottom: 12px; }
+  .preset-card .conn-type {
+    display: inline-block; font-size: 0.7rem; padding: 2px 8px;
+    border-radius: 4px; margin-bottom: 12px; font-weight: 600;
+  }
+  .preset-card .conn-rf { background: rgba(239,83,80,0.2); color: var(--red); }
+  .preset-card .conn-comp { background: rgba(255,183,77,0.2); color: var(--amber); }
+  .preset-card .conn-svid { background: rgba(102,187,106,0.2); color: var(--green); }
+  .preset-card .param-diff { margin-top: 8px; }
+  .preset-card .param-diff div {
+    display: flex; justify-content: space-between; font-size: 0.78rem;
+    padding: 3px 0; border-bottom: 1px solid rgba(255,255,255,0.03);
+  }
+  .preset-card .param-diff .pname { font-family: var(--mono); color: var(--text-dim); }
+  .preset-card .param-diff .pval { color: var(--amber); font-family: var(--mono); }
+  .preset-card .character {
+    margin-top: 12px; padding: 8px 12px; background: rgba(255,255,255,0.03);
+    border-radius: 6px; font-size: 0.8rem; font-style: italic; color: var(--text-dim);
+  }
+
+  /* Audio section */
+  .audio-details { margin-bottom: 24px; }
+  .audio-details summary {
+    cursor: pointer; font-size: 1.1rem; font-weight: 600;
+    padding: 12px 20px; background: var(--card); border: 1px solid var(--card-border);
+    border-radius: 12px; list-style: none; display: flex; align-items: center; gap: 10px;
+  }
+  .audio-details summary::before { content: '\25B6'; font-size: 0.7rem; transition: transform 0.3s; }
+  .audio-details[open] summary::before { transform: rotate(90deg); }
+  .audio-details[open] summary { border-radius: 12px 12px 0 0; }
+  .audio-body {
+    background: var(--card); border: 1px solid var(--card-border);
+    border-top: none; border-radius: 0 0 12px 12px; padding: 20px;
+  }
+  .audio-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; margin-bottom: 20px; }
+  .audio-table th {
+    text-align: left; padding: 8px 10px; font-weight: 600;
+    background: rgba(255,255,255,0.03); color: var(--text-dim);
+    border-bottom: 2px solid var(--card-border); font-size: 0.75rem;
+  }
+  .audio-table td { padding: 7px 10px; border-bottom: 1px solid rgba(255,255,255,0.03); }
+  .audio-table tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
+  .audio-table .mono { font-family: var(--mono); font-size: 0.8rem; color: var(--accent); }
+
+  /* Responsive */
+  @media (max-width: 768px) {
+    .main { padding: 12px; }
+    .header nav { display: none; }
+    .preset-grid { grid-template-columns: 1fr; }
+    .stage-card-header .conn-badges { display: none; }
+  }
+
+  @media print {
+    .header { position: static; }
+    .stage-card-body { display: block !important; }
+    .stage-card .chevron { display: none; }
+    body { background: #fff; color: #000; }
+    .stage-card, .flow-container, .matrix-container, .preset-card {
+      border-color: #ccc; background: #fff; break-inside: avoid;
+    }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1><span>MyNES</span> GPU Signal Pipeline</h1>
+  <nav>
+    <a href="#flow">Flow</a>
+    <a href="#matrix">Connections</a>
+    <a href="#stages">Stages</a>
+    <a href="#presets">Presets</a>
+    <a href="#audio">Audio</a>
+  </nav>
+</div>
+
+<div class="main">
+
+<!-- Section 1: Pipeline Flow -->
+<h2 class="section-title" id="flow">Pipeline Flow <span class="badge">14 STAGES</span></h2>
+<div class="flow-container">
+<svg class="flow-svg" viewBox="0 0 1360 180" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="sig-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1e5799"/>
+      <stop offset="100%" stop-color="#1e3a5f"/>
+    </linearGradient>
+    <linearGradient id="disp-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#2e7d32"/>
+      <stop offset="100%" stop-color="#1b5e20"/>
+    </linearGradient>
+    <filter id="glow"><feGaussianBlur stdDeviation="2" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- Row 1: Stages 1-9 (Signal Domain) -->
+  <g class="stage-box" data-stage="1" onclick="scrollToStage(1)">
+    <rect x="10" y="20" width="110" height="54" fill="url(#sig-grad)" stroke="#42a5f5"/>
+    <text x="65" y="38" text-anchor="middle" class="stage-num">1</text>
+    <text x="65" y="56" text-anchor="middle" class="stage-name">2C02 DAC</text>
+  </g>
+  <line x1="120" y1="47" x2="135" y2="47" stroke="#42a5f5" stroke-width="2" marker-end="url(#arrowSig)"/>
+
+  <g class="stage-box" data-stage="2" onclick="scrollToStage(2)">
+    <rect x="135" y="20" width="110" height="54" fill="url(#sig-grad)" stroke="#42a5f5"/>
+    <text x="190" y="38" text-anchor="middle" class="stage-num">2</text>
+    <text x="190" y="56" text-anchor="middle" class="stage-name">Console Output</text>
+  </g>
+  <line x1="245" y1="47" x2="260" y2="47" stroke="#42a5f5" stroke-width="2"/>
+
+  <g class="stage-box" data-stage="3" onclick="scrollToStage(3)">
+    <rect x="260" y="20" width="110" height="54" fill="url(#sig-grad)" stroke="#42a5f5"/>
+    <text x="315" y="38" text-anchor="middle" class="stage-num">3</text>
+    <text x="315" y="56" text-anchor="middle" class="stage-name">Cable</text>
+  </g>
+  <line x1="370" y1="47" x2="385" y2="47" stroke="#42a5f5" stroke-width="2"/>
+
+  <g class="stage-box" data-stage="4" onclick="scrollToStage(4)">
+    <rect x="385" y="20" width="110" height="54" fill="url(#sig-grad)" stroke="#42a5f5"/>
+    <text x="440" y="38" text-anchor="middle" class="stage-num">4</text>
+    <text x="440" y="56" text-anchor="middle" class="stage-name">RF Mod</text>
+  </g>
+  <line x1="495" y1="47" x2="510" y2="47" stroke="#42a5f5" stroke-width="2"/>
+
+  <g class="stage-box" data-stage="5" onclick="scrollToStage(5)">
+    <rect x="510" y="20" width="110" height="54" fill="url(#sig-grad)" stroke="#42a5f5"/>
+    <text x="565" y="38" text-anchor="middle" class="stage-num">5</text>
+    <text x="565" y="56" text-anchor="middle" class="stage-name">TV Input</text>
+  </g>
+  <line x1="620" y1="47" x2="635" y2="47" stroke="#42a5f5" stroke-width="2"/>
+
+  <g class="stage-box" data-stage="6" onclick="scrollToStage(6)">
+    <rect x="635" y="20" width="110" height="54" fill="url(#sig-grad)" stroke="#42a5f5"/>
+    <text x="690" y="38" text-anchor="middle" class="stage-num">6</text>
+    <text x="690" y="56" text-anchor="middle" class="stage-name">Comb Filter</text>
+  </g>
+  <line x1="745" y1="47" x2="760" y2="47" stroke="#42a5f5" stroke-width="2"/>
+
+  <g class="stage-box" data-stage="7" onclick="scrollToStage(7)">
+    <rect x="760" y="20" width="110" height="54" fill="url(#sig-grad)" stroke="#42a5f5"/>
+    <text x="815" y="38" text-anchor="middle" class="stage-num">7</text>
+    <text x="815" y="56" text-anchor="middle" class="stage-name">Chroma Demod</text>
+  </g>
+  <line x1="870" y1="47" x2="885" y2="47" stroke="#42a5f5" stroke-width="2"/>
+
+  <g class="stage-box" data-stage="8" onclick="scrollToStage(8)">
+    <rect x="885" y="20" width="110" height="54" fill="url(#sig-grad)" stroke="#42a5f5"/>
+    <text x="940" y="38" text-anchor="middle" class="stage-num">8</text>
+    <text x="940" y="56" text-anchor="middle" class="stage-name">Luma Proc</text>
+  </g>
+  <line x1="995" y1="47" x2="1010" y2="47" stroke="#42a5f5" stroke-width="2"/>
+
+  <g class="stage-box" data-stage="9" onclick="scrollToStage(9)">
+    <rect x="1010" y="20" width="110" height="54" fill="url(#sig-grad)" stroke="#42a5f5"/>
+    <text x="1065" y="38" text-anchor="middle" class="stage-num">9</text>
+    <text x="1065" y="56" text-anchor="middle" class="stage-name">Matrix Decode</text>
+  </g>
+
+  <!-- Domain divider -->
+  <line x1="1130" y1="10" x2="1130" y2="170" stroke="var(--amber)" stroke-width="1" stroke-dasharray="6,4"/>
+  <text x="1140" y="90" class="divider-label" transform="rotate(90,1140,90)">Signal &rarr; Display</text>
+
+  <!-- Row 2: Stages 10-14 (Display Domain) -->
+  <g class="stage-box" data-stage="10" onclick="scrollToStage(10)">
+    <rect x="10" y="100" width="110" height="54" fill="url(#disp-grad)" stroke="#66bb6a"/>
+    <text x="65" y="118" text-anchor="middle" class="stage-num">10</text>
+    <text x="65" y="136" text-anchor="middle" class="stage-name">Video Amp</text>
+  </g>
+  <line x1="120" y1="127" x2="135" y2="127" stroke="#66bb6a" stroke-width="2"/>
+
+  <g class="stage-box" data-stage="11" onclick="scrollToStage(11)">
+    <rect x="135" y="100" width="110" height="54" fill="url(#disp-grad)" stroke="#66bb6a"/>
+    <text x="190" y="118" text-anchor="middle" class="stage-num">11</text>
+    <text x="190" y="136" text-anchor="middle" class="stage-name">Electron Beam</text>
+  </g>
+  <line x1="245" y1="127" x2="260" y2="127" stroke="#66bb6a" stroke-width="2"/>
+
+  <g class="stage-box" data-stage="12" onclick="scrollToStage(12)">
+    <rect x="260" y="100" width="110" height="54" fill="url(#disp-grad)" stroke="#66bb6a"/>
+    <text x="315" y="118" text-anchor="middle" class="stage-num">12</text>
+    <text x="315" y="136" text-anchor="middle" class="stage-name">Phosphor</text>
+  </g>
+  <line x1="370" y1="127" x2="385" y2="127" stroke="#66bb6a" stroke-width="2"/>
+
+  <g class="stage-box" data-stage="13" onclick="scrollToStage(13)">
+    <rect x="385" y="100" width="110" height="54" fill="url(#disp-grad)" stroke="#66bb6a"/>
+    <text x="440" y="118" text-anchor="middle" class="stage-num">13</text>
+    <text x="440" y="136" text-anchor="middle" class="stage-name">Glass</text>
+  </g>
+  <line x1="495" y1="127" x2="510" y2="127" stroke="#66bb6a" stroke-width="2"/>
+
+  <g class="stage-box" data-stage="14" onclick="scrollToStage(14)">
+    <rect x="510" y="100" width="110" height="54" fill="url(#disp-grad)" stroke="#66bb6a"/>
+    <text x="565" y="118" text-anchor="middle" class="stage-num">14</text>
+    <text x="565" y="136" text-anchor="middle" class="stage-name">Environment</text>
+  </g>
+
+  <!-- Wraparound arrow from stage 9 to stage 10 -->
+  <path d="M1120,47 L1150,47 L1150,127 L630,127 L630,127" stroke="#ffb74d" stroke-width="2" fill="none" stroke-dasharray="6,3" opacity="0.6"/>
+  <line x1="625" y1="127" x2="620" y2="127" stroke="#ffb74d" stroke-width="2" opacity="0.6"/>
+</svg>
+</div>
+
+<!-- Section 2: Connection Matrix -->
+<h2 class="section-title" id="matrix">Connection Type Matrix</h2>
+<div class="matrix-container">
+  <table class="matrix-table" id="connMatrix">
+    <thead>
+      <tr>
+        <th>Connection</th>
+        <th>1<br><span style="font-weight:400;font-size:0.65rem">DAC</span></th>
+        <th>2<br><span style="font-weight:400;font-size:0.65rem">Console</span></th>
+        <th>3<br><span style="font-weight:400;font-size:0.65rem">Cable</span></th>
+        <th>4<br><span style="font-weight:400;font-size:0.65rem">RF</span></th>
+        <th>5<br><span style="font-weight:400;font-size:0.65rem">TV In</span></th>
+        <th>6<br><span style="font-weight:400;font-size:0.65rem">Comb</span></th>
+        <th>7<br><span style="font-weight:400;font-size:0.65rem">Chroma</span></th>
+        <th>8<br><span style="font-weight:400;font-size:0.65rem">Luma</span></th>
+        <th>9<br><span style="font-weight:400;font-size:0.65rem">Matrix</span></th>
+        <th>10<br><span style="font-weight:400;font-size:0.65rem">Amp</span></th>
+        <th>11<br><span style="font-weight:400;font-size:0.65rem">Beam</span></th>
+        <th>12<br><span style="font-weight:400;font-size:0.65rem">Phosphor</span></th>
+        <th>13<br><span style="font-weight:400;font-size:0.65rem">Glass</span></th>
+        <th>14<br><span style="font-weight:400;font-size:0.65rem">Env</span></th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<!-- Section 3: Stage Detail Cards -->
+<h2 class="section-title" id="stages">Stage Details</h2>
+<div id="stageCards"></div>
+
+<!-- Section 4: Presets -->
+<h2 class="section-title" id="presets">Preset Comparison</h2>
+<div class="preset-grid" id="presetGrid"></div>
+
+<!-- Section 5: Audio -->
+<h2 class="section-title" id="audio">Audio Chain</h2>
+<details class="audio-details">
+  <summary>Audio Signal Chain (10 stages)</summary>
+  <div class="audio-body">
+    <h4 style="color:var(--accent);margin-bottom:12px;font-size:0.85rem;">PIPELINE STAGES</h4>
+    <table class="audio-table">
+      <thead><tr><th>#</th><th>Kernel</th><th>Type</th><th>Description</th><th>Key Parameters</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td class="mono">rc_filter</td><td>HP</td><td>Coupling cap DC blocking</td><td>R=10k&Omega;, C per console variant</td></tr>
+        <tr><td>2</td><td class="mono">rc_filter</td><td>HP</td><td>Feedback network bass shaping</td><td>fc ~442-482 Hz</td></tr>
+        <tr><td>3</td><td class="mono">rc_filter</td><td>LP</td><td>Amplifier bandwidth limit</td><td>fc 8-14 kHz per variant</td></tr>
+        <tr><td>4</td><td class="mono">pointwise</td><td>mode 1</td><td>tanh soft-clip saturation</td><td>drive 1.0-3.0</td></tr>
+        <tr><td>5</td><td class="mono">pointwise</td><td>mode 5</td><td>PSU hum injection (60 Hz + harmonics)</td><td>amplitude 0-0.03</td></tr>
+        <tr><td>6</td><td class="mono">pointwise</td><td>--</td><td>White noise injection</td><td>floor -80 to -50 dBFS</td></tr>
+        <tr><td>7</td><td class="mono">rc_filter</td><td>LP</td><td>Cable capacitance lowpass</td><td>length-dependent</td></tr>
+        <tr><td>8</td><td class="mono">rc_filter</td><td>HP</td><td>TV input coupling cap</td><td>10-100 &micro;F</td></tr>
+        <tr><td>9</td><td class="mono">fir</td><td>biquad</td><td>Speaker resonance + rolloff</td><td>per speaker type</td></tr>
+        <tr><td>10</td><td class="mono">fir</td><td>decim</td><td>Decimation 1.79 MHz to 48 kHz</td><td>anti-alias FIR</td></tr>
+      </tbody>
+    </table>
+
+    <h4 style="color:var(--accent);margin-bottom:12px;font-size:0.85rem;">CONSOLE VARIANTS</h4>
+    <table class="audio-table">
+      <thead><tr><th>Parameter</th><th>Famicom</th><th>NES Front</th><th>NES Top</th><th>Dendy</th></tr></thead>
+      <tbody>
+        <tr><td>Coupling C</td><td>100 &micro;F</td><td>10 &micro;F</td><td>10 &micro;F</td><td>47 &micro;F</td></tr>
+        <tr><td>Coupling fc</td><td>0.16 Hz</td><td>1.6 Hz</td><td>1.6 Hz</td><td>0.34 Hz</td></tr>
+        <tr><td>Feedback fc</td><td>482 Hz</td><td>442 Hz</td><td>442 Hz</td><td>442 Hz</td></tr>
+        <tr><td>Amp BW fc</td><td>9.6 kHz</td><td>14.1 kHz</td><td>11.8 kHz</td><td>7.9 kHz</td></tr>
+      </tbody>
+    </table>
+
+    <h4 style="color:var(--accent);margin-bottom:12px;font-size:0.85rem;">SPEAKER TYPES</h4>
+    <table class="audio-table">
+      <thead><tr><th>Type</th><th>Resonance</th><th>Low BW</th><th>High BW</th><th>Q</th><th>Breakup</th></tr></thead>
+      <tbody>
+        <tr><td>Small TV</td><td>350 Hz</td><td>400 Hz</td><td>6 kHz</td><td>2.0</td><td>5 kHz</td></tr>
+        <tr><td>Console TV</td><td>150 Hz</td><td>80 Hz</td><td>10 kHz</td><td>1.5</td><td>6 kHz</td></tr>
+        <tr><td>PVM</td><td>100 Hz</td><td>60 Hz</td><td>15 kHz</td><td>0.8</td><td>8 kHz</td></tr>
+        <tr><td>Arcade</td><td>200 Hz</td><td>100 Hz</td><td>8 kHz</td><td>3.0</td><td>4 kHz</td></tr>
+        <tr><td>Headphones</td><td>20 Hz</td><td>20 Hz</td><td>20 kHz</td><td>0.7</td><td>15 kHz</td></tr>
+        <tr><td>Famicom RF</td><td>400 Hz</td><td>500 Hz</td><td>4 kHz</td><td>2.5</td><td>3.5 kHz</td></tr>
+      </tbody>
+    </table>
+
+    <h4 style="color:var(--accent);margin-bottom:12px;font-size:0.85rem;">BUFFER FORMAT</h4>
+    <p style="font-size:0.85rem;color:var(--text-dim);">
+      Input: 1 frame of float32 at CPU clock rate (~29,829 NTSC, ~33,252 PAL) = ~116 KB.
+      Output: Decimated to 48 kHz. 800 samples/frame NTSC, 960 PAL = ~3.2 KB.
+      Workgroup size: 1024. Blocks per frame: ~30 (NTSC), ~33 (PAL).
+    </p>
+  </div>
+</details>
+
+</div><!-- .main -->
+
+<script>
+// ========== DATA ==========
+
+const CONNECTION_TYPES = ['RF','Composite','S-Video','Component','RGB','Direct'];
+
+// true = active for that connection type, indexed [conn][stage-1]
+const CONN_MATRIX = {
+  'RF':        [1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+  'Composite': [1,1,1,0,1,1,1,1,1,1,1,1,1,1],
+  'S-Video':   [1,1,1,0,1,0,1,1,1,1,1,1,1,1],
+  'Component': [1,1,1,0,1,0,0,1,1,1,1,1,1,1],
+  'RGB':       [1,1,1,0,0,0,0,0,0,1,1,1,1,1],
+  'Direct':    [1,1,0,0,0,0,0,0,0,1,1,1,1,1],
+};
+
+const STAGES = [
+  {
+    num: 1, name: '2C02 DAC', kernel: 'dac_2c02.comp', domain: 'signal',
+    conns: ['RF','Composite','S-Video','Component','RGB','Direct'],
+    params: [],
+    whatYouSee: 'This stage is internal to the PPU emulation. It converts the NES palette index + emphasis bits into a composite waveform voltage using a precomputed signal table. No user-adjustable parameters -- the waveform shape is physically accurate to the 2C02 chip.',
+    signalFlow: ['Palette + Emphasis Index', 'Signal Table Lookup', 'Composite Waveform (2048 samples/line)'],
+  },
+  {
+    num: 2, name: 'Console Output', kernel: 'pointwise.comp, rc_filter.comp', domain: 'signal',
+    conns: ['RF','Composite','S-Video','Component','RGB','Direct'],
+    params: [
+      ['console_coupling_R', 'float', '75', '75', '\u03A9', 'Output impedance of the console video driver'],
+      ['console_coupling_C', 'float', '10e-6 .. 100e-6', 'NES: 10\u00B5F, Fami: 100\u00B5F', 'F', 'AC coupling capacitor -- larger cap preserves more low-frequency (brightness) detail'],
+      ['console_amp_bw', 'float', '6 .. 14', '14 (NES)', 'MHz', 'Amplifier bandwidth; lower values soften high-frequency detail like tile edges'],
+      ['console_psu_hum', 'float', '0 .. 0.01', '0', '--', 'Power supply 60 Hz hum injection amplitude'],
+    ],
+    whatYouSee: 'Different console variants (Famicom vs NES vs Dendy) produce subtly different video character. The Famicom\'s larger coupling cap preserves more DC content, while Dendy\'s narrower amp bandwidth creates a slightly softer image. PSU hum adds faint horizontal brightness bars rolling slowly up the screen.',
+    signalFlow: ['Raw Waveform', 'HP Coupling + Amp BW Limit + PSU Hum', 'Console-Filtered Signal'],
+  },
+  {
+    num: 3, name: 'Cable', kernel: 'rc_filter.comp, delay.comp', domain: 'signal',
+    conns: ['RF','Composite','S-Video','Component','RGB'],
+    params: [
+      ['length_meters', 'float', '0 .. 10', '2.0', 'm', 'Physical cable length -- longer cable = more signal degradation'],
+      ['resistance_per_m', 'float', '0.1 .. 2.0', '0.1', '\u03A9/m', 'Series resistance per meter of conductor'],
+      ['capacitance_per_m', 'float', '50 .. 100', '67', 'pF/m', 'Shunt capacitance -- higher values cause more horizontal smearing'],
+      ['num_sections', 'int', '2 .. 8', '4', '--', 'RC ladder approximation order (more = more accurate)'],
+      ['connector_resistance', 'float', '0.01 .. 5.0', '0.3', '\u03A9', 'Total contact resistance at both connectors'],
+      ['impedance', 'float', '75', '75', '\u03A9', 'Characteristic impedance of the cable'],
+      ['shield_effectiveness', 'float', '0 .. 1', '0.85', '--', 'EMI shielding quality (0=none, 1=perfect)'],
+      ['ghost_delay', 'int', '0 .. 32', '0', 'samples', 'Impedance mismatch reflection delay'],
+      ['ghost_level', 'float', '0 .. 0.20', '0', '--', 'Ghost echo amplitude'],
+    ],
+    whatYouSee: 'Increasing cable length softens the image progressively. Higher capacitance creates more horizontal smearing, especially visible on sharp edges and text. Ghost delay/level adds a faint duplicate image shifted right -- a classic effect of cheap or damaged coax cables. Corroded connectors (high connector_resistance) dim the signal and reduce contrast.',
+    signalFlow: ['Console Signal', 'RC Ladder (length x R x C) + Ghost Echo', 'Cable-Degraded Signal'],
+  },
+  {
+    num: 4, name: 'RF Modulator', kernel: 'rf_mod_demod.comp', domain: 'signal',
+    conns: ['RF'],
+    params: [
+      ['enabled', 'bool', '--', 'true (RF)', '--', 'Enable RF channel simulation'],
+      ['carrier_freq', 'float', '61.25 / 67.25', '61.25', 'MHz', 'RF carrier frequency (Ch 3 or Ch 4)'],
+      ['mod_bandwidth', 'float', '2 .. 4', '3.58', 'MHz', 'Modulation bandwidth -- lower = softer image'],
+      ['noise_floor_dbm', 'float', '-70 .. -44', '-60', 'dBm', 'RF noise floor -- higher (less negative) = more snow'],
+      ['agc_attack_ms', 'float', '1 .. 200', '50', 'ms', 'AGC gain decrease speed on bright scenes'],
+      ['agc_release_ms', 'float', '50 .. 2000', '500', 'ms', 'AGC gain increase speed on dark scenes'],
+    ],
+    whatYouSee: 'RF adds the classic "snow" noise pattern and slightly softens the image compared to composite. The noise floor controls how much static you see -- a -44 dBm floor creates a blizzard while -70 dBm is nearly clean. AGC attack/release control how quickly brightness adapts to scene changes, creating the characteristic "bloom then settle" effect when switching between dark and bright screens.',
+    signalFlow: ['Composite Signal', 'AM Modulation + Noise + Hum + BW Limit', 'RF-Degraded Signal'],
+  },
+  {
+    num: 5, name: 'TV Input', kernel: 'agc.comp, rc_filter.comp', domain: 'signal',
+    conns: ['RF','Composite','S-Video','Component','RGB'],
+    params: [
+      ['target_level', 'float', '0.85 .. 0.95', '0.90', '--', 'AGC target peak amplitude'],
+      ['attack_coeff', 'float', '0.01 .. 0.5', '0.1', '--', 'Gain reduction speed (fast attack)'],
+      ['release_coeff', 'float', '0.005 .. 0.1', '0.02', '--', 'Gain increase speed (slow release)'],
+    ],
+    whatYouSee: 'TV input stage normalizes the signal level using AGC (Automatic Gain Control). With fast attack and slow release, sudden bright flashes cause momentary dimming that slowly recovers -- exactly like a real TV. The coupling cap here provides additional DC blocking for the TV\'s input circuit.',
+    signalFlow: ['Cable/RF Output', 'AGC Normalization + Input Coupling', 'Level-Normalized Signal'],
+  },
+  {
+    num: 6, name: 'Comb Filter', kernel: 'comb_filter.comp', domain: 'signal',
+    conns: ['RF','Composite','S-Video'],
+    params: [
+      ['comb_type', 'enum', 'NONE(0), 2LINE(1), 3LINE(2), BYPASS(3)', '0 (NONE)', '--', 'Y/C separation algorithm'],
+    ],
+    whatYouSee: 'Switching from None to 2-line dramatically reduces rainbow shimmer (dot crawl) on horizontal stripe patterns, but may soften vertical detail transitions. 3-line comb further reduces artifacts but can create comb "hangers" on moving edges. Bypass (S-Video) skips Y/C separation entirely since luma and chroma arrive on separate wires. NONE means composite signal enters chroma demod directly (cheapest TVs).',
+    signalFlow: ['Composite Signal', 'Y/C Separation (inter-line phase)', 'Luma (Y) + Chroma (C)'],
+  },
+  {
+    num: 7, name: 'Chroma Demod', kernel: 'modulator.comp, rc_filter.comp, fir.comp', domain: 'signal',
+    conns: ['RF','Composite','S-Video'],
+    params: [
+      ['chroma_bandwidth', 'float', '0.35 .. 1.5', '0.60', 'MHz', 'Chroma lowpass cutoff -- lower = less color detail but cleaner'],
+      ['hue_offset', 'float', '-30 .. +30', '0', '\u00B0', 'Hue rotation -- the classic "tint" knob on old TVs'],
+      ['saturation', 'float', '0.5 .. 1.5', '1.0', '--', 'Color intensity multiplier'],
+      ['fir_ringing', 'float', '0 .. 1', '0', '--', 'FIR window shape: 0=Hamming (smooth), 1=rectangular (ringing)'],
+    ],
+    whatYouSee: 'Chroma bandwidth is the single most impactful color quality parameter. At 0.35 MHz (cheap TV), colors bleed horizontally over 8+ pixels. At 1.5 MHz (PVM), colors are pixel-sharp. The hue knob rotates all colors -- essential for correcting the 2C02\'s ~15-degree phase offset. FIR ringing at 1.0 creates visible color fringing echoes around saturated edges.',
+    signalFlow: ['Chroma (C)', '\u00D7cos(\u03C9t), \u00D7sin(\u03C9t) \u2192 I + Q \u2192 FIR BW Limit', 'I\u2032, Q\u2032'],
+  },
+  {
+    num: 8, name: 'Luma Processing', kernel: 'rc_filter.comp, fir.comp', domain: 'signal',
+    conns: ['RF','Composite','S-Video','Component','RGB','Direct'],
+    params: [
+      ['luma_bandwidth', 'float', '2.5 .. 6.0', '4.2', 'MHz', 'Luma lowpass cutoff -- controls horizontal sharpness'],
+      ['brightness', 'float', '-0.2 .. +0.2', '0', '--', 'DC offset added to luma'],
+      ['contrast', 'float', '0.5 .. 1.5', '1.0', '--', 'Luma gain multiplier'],
+    ],
+    whatYouSee: 'Luma bandwidth directly controls horizontal image sharpness. At 2.5 MHz (cheap RF TV), fine details blur into mush. At 6.0 MHz (PVM), individual NES pixels are crisp. Brightness shifts the entire image lighter or darker. Contrast expands or compresses the dynamic range -- too high clips whites, too low looks washed out.',
+    signalFlow: ['Luma (Y)', 'FIR Lowpass + Brightness/Contrast', 'Processed Y'],
+  },
+  {
+    num: 9, name: 'Matrix Decode', kernel: 'matrix_decode.comp', domain: 'signal',
+    conns: ['RF','Composite','S-Video','Component'],
+    params: [
+      ['color_temperature', 'float', '3200 .. 9300', '6500', 'K', 'White point -- 6500K=D65, 9300K=D93 (Japanese standard)'],
+      ['r_drive / g_drive / b_drive', 'float', '0.8 .. 1.2', '1.0', '--', 'Per-channel gain for white balance fine-tuning'],
+      ['r_cutoff / g_cutoff / b_cutoff', 'float', '-0.05 .. +0.05', '0', '--', 'Per-channel black level offset'],
+      ['chroma_gain', 'float', '0.8 .. 1.5', '1.2', '--', 'Overall chroma amplitude (compensates GPU demod losses)'],
+      ['color_killer', 'float', '0 .. 0.2', '0.05', '--', 'Suppress chroma in dark areas to reduce noise-induced color speckle'],
+    ],
+    whatYouSee: 'Color temperature shifts the overall image warmth: 6500K is neutral daylight, 9300K (common on Japanese TVs and PVMs) gives a cooler/bluer cast. Drive and cutoff controls let you fine-tune the white balance of each gun. Color killer suppresses chroma in very dark areas where noise dominates -- prevents random colored speckles in shadows. Chroma gain baseline is 1.2-1.3 to compensate for GPU demodulation losses.',
+    signalFlow: ['Y, I\u2032, Q\u2032', '3\u00D73 Matrix + Color Temp + Killer', 'Linear RGB'],
+  },
+  {
+    num: 10, name: 'Video Amp', kernel: 'video_amp.comp', domain: 'display',
+    conns: ['RF','Composite','S-Video','Component','RGB','Direct'],
+    params: [
+      ['r_bandwidth / g_bandwidth / b_bandwidth', 'float', '5 .. 8', '6.5', 'MHz', 'Per-channel analog bandwidth -- mismatched values create color fringing'],
+      ['gamma', 'float', '2.0 .. 2.6', '2.40', '--', 'CRT gamma curve exponent'],
+      ['black_floor', 'float', '0.005 .. 0.05', '0.01', '--', 'Minimum black level (CRTs cannot produce absolute black)'],
+    ],
+    whatYouSee: 'Per-channel bandwidth differences create subtle color fringing on sharp edges -- red is typically narrower than green on consumer CRTs. Gamma controls the overall contrast curve: lower gamma (2.0) looks washed out, higher gamma (2.5+) creates deep blacks with punchy contrast. Black floor prevents the image from reaching absolute black, simulating CRT phosphor glow in dark areas.',
+    signalFlow: ['Linear RGB', 'Per-Channel FIR + Gamma + Black Floor', 'Display-Ready RGB'],
+  },
+  {
+    num: 11, name: 'Electron Beam', kernel: 'h_blur_rgb.comp, beam_profile.comp', domain: 'display',
+    conns: ['RF','Composite','S-Video','Component','RGB','Direct'],
+    params: [
+      ['beam_sharpness', 'float', '0.3 .. 1.0', '0.50', '--', 'Interpolates between defocused (0) and sharp (1) beam; controls sigma_narrow/sigma_wide blend'],
+      ['beam_height_min / max', 'float', '0.55 .. 1.36', '0.64 / 1.20', '--', 'Vertical beam extent for dark/bright pixels'],
+      ['beam_spot_size', 'float', '1 .. 12', '5', 'samples', 'Horizontal beam sampling radius'],
+      ['convergence_static', 'float', '0 .. 1', '0.15', '--', 'Fixed R/B horizontal offset (static misconvergence)'],
+      ['convergence_dynamic', 'float', '0 .. 1', '0.10', '--', 'Edge-dependent convergence degradation'],
+      ['conv_r_x / conv_r_y', 'float', '-10 .. +10', '0', 'px', 'Red gun horizontal/vertical offset'],
+      ['conv_b_x / conv_b_y', 'float', '-10 .. +10', '0', 'px', 'Blue gun horizontal/vertical offset'],
+      ['h_jitter', 'float', '0 .. 0.8', '0', '--', 'Horizontal timebase instability'],
+      ['v_jitter', 'float', '0 .. 0.005', '0', '--', 'Vertical jitter amplitude'],
+      ['edge_focus', 'float', '0 .. 0.5', '0.05', '--', 'Focus degradation toward screen edges'],
+      ['velocity_dim', 'float', '0 .. 0.3', '0.02', '--', 'Brightness reduction at sharp edges (beam velocity effect)'],
+      ['bloom_gamma', 'float', '1.0 .. 2.0', '1.4', '--', 'Bloom nonlinearity -- controls brightness-dependent beam spread'],
+      ['noise_level', 'float', '0 .. 0.1', '0.03', '--', 'Per-pixel Gaussian noise simulating analog circuit noise'],
+      ['hum_bar_amplitude', 'float', '0 .. 0.15', '0.02', '--', 'Mains hum brightness bars (3 harmonics at 60/120/180 Hz)'],
+      ['rf_interference', 'float', '0 .. 1', '0', '--', 'RF zigzag interference pattern amplitude'],
+      ['geometry_warp', 'float', '0 .. 3', '0', '--', 'Pincushion + S-correction geometric distortion'],
+    ],
+    whatYouSee: 'This is the most visually impactful stage. Beam sharpness at 1.0 produces tight, defined scanlines; at 0.0 the image is a defocused blob. Convergence offsets create visible red/blue color fringing on edges -- subtle amounts (2-4 px) add realism, large amounts (6+) simulate a badly adjusted set. Noise adds analog grain. Hum bars create slow-rolling brightness waves. H_jitter makes lines wobble horizontally, mimicking a worn flyback transformer.',
+    signalFlow: ['RGB (2048\u00D7240)', 'Beam Profile + Convergence + Noise + Geometry', 'RGBA (out_w \u00D7 out_h)'],
+  },
+  {
+    num: 12, name: 'Phosphor', kernel: 'temporal_blit.comp', domain: 'display',
+    conns: ['RF','Composite','S-Video','Component','RGB','Direct'],
+    params: [
+      ['mask_type', 'enum', 'SHADOW(0), APERTURE_GRILLE(1), SLOT(2)', 'SHADOW', '--', 'Phosphor mask geometry (shadow=dot triads, aperture=vertical stripes, slot=rectangular groups)'],
+      ['mask_pitch_mm', 'float', '0.25 .. 0.80', '0.50', 'mm', 'Distance between mask elements -- smaller = finer detail (PVM), larger = visible structure'],
+      ['mask_strength', 'float', '0 .. 1', '0.35', '--', 'How visible the mask pattern is (0=invisible, 1=harsh)'],
+      ['persistence_ms', 'float', '0.5 .. 3.0', '1.5', 'ms', 'Phosphor decay time -- higher creates motion trails'],
+      ['persistence_r / g / b', 'float', '0 .. 1', 'R:0.85, G:1.0, B:0.72', '--', 'Per-channel persistence weights (P22: green longest, blue shortest)'],
+    ],
+    whatYouSee: 'Mask type defines the CRT\'s fundamental character: shadow mask (most consumer TVs) creates a hexagonal dot pattern, aperture grille (Trinitron/PVM) creates clean vertical stripes, slot mask is a hybrid. Larger mask pitch (5+ mm) makes individual phosphor groups visible. Temporal persistence with the B key blend creates dot crawl cancellation -- the NES\'s 4-frame color subcarrier cycle averages out when blended.',
+    signalFlow: ['Beam RGBA', 'Temporal Blend (persistence decay per channel)', 'Storage Texture'],
+  },
+  {
+    num: 13, name: 'Glass', kernel: 'crt_display.frag', domain: 'display',
+    conns: ['RF','Composite','S-Video','Component','RGB','Direct'],
+    params: [
+      ['halation', 'float', '0 .. 0.3', '0.05', '--', 'Internal light reflection in glass -- bright areas glow outward'],
+      ['glass_tint', 'float', '0.6 .. 1.0', '0.82', '--', 'Glass transmittance (1.0=clear, 0.6=heavily tinted for contrast)'],
+      ['barrel', 'float', '0 .. 0.1', '0.03', '--', 'Horizontal barrel distortion (curved screen)'],
+      ['barrel_v', 'float', '0 .. 0.1', '0.03', '--', 'Vertical barrel distortion'],
+    ],
+    whatYouSee: 'Halation creates a soft bloom around bright white areas -- visible on title screens with large white text on dark backgrounds. Glass tint darkens the overall image but improves perceived contrast (tinted glass was standard on consumer CRTs). Barrel distortion curves the image edges inward, simulating the curved face of a CRT tube. Flat-screen CRTs (Wega, PVM) use barrel near 0.',
+    signalFlow: ['Phosphor Texture', 'Halation Blur + Glass Tint + Barrel Distortion', 'Glass-Filtered Image'],
+  },
+  {
+    num: 14, name: 'Environment', kernel: 'crt_display.frag', domain: 'display',
+    conns: ['RF','Composite','S-Video','Component','RGB','Direct'],
+    params: [
+      ['vignette', 'float', '0 .. 0.5', '0.10', '--', 'Corner/edge darkening (cos^4 falloff)'],
+      ['ambient_light', 'float', '0 .. 0.3', '0.05', '--', 'Simulated room light reflecting off the screen surface'],
+      ['hdr_gain', 'float', '0 .. 2', '1.0', '--', 'Output multiplier to compensate mask darkening; >1 for HDR/EDR displays'],
+    ],
+    whatYouSee: 'Vignette darkens the corners and edges, simulating both the natural brightness falloff of a CRT and the shadow from the bezel. Ambient light washes out the blacks slightly -- set higher for a brightly lit living room, lower for a dark gaming den. HDR gain boosts the final output to compensate for the darkening effect of the phosphor mask, especially useful on EDR displays.',
+    signalFlow: ['Glass Output', 'Vignette + Ambient + HDR Gain + Tone Map', 'Final Display Output'],
+  },
+];
+
+const PRESETS = [
+  {
+    name: 'Living Room 1988',
+    desc: '19" Zenith shadow mask in a 1988 living room',
+    connection: 'Composite',
+    connClass: 'conn-comp',
+    params: {
+      'comb_type': 'NONE',
+      'cable_length': '2 m',
+      'capacitance': '80 pF/m',
+      'connector_R': '0.3 \u03A9',
+      'chroma_bw': '0.4 MHz',
+      'luma_bw': '4.2 MHz',
+      'hue_offset': '+2\u00B0',
+      'saturation': '1.05',
+      'gamma': '2.45',
+      'mask_type': 'Shadow',
+      'mask_pitch': '4.0 mm',
+      'beam_sharpness': '0.50',
+      'conv_static': '0.15',
+      'barrel': '0.04',
+      'noise': '0.035',
+      'hum_bar': '0.02',
+      'ambient': '0.08',
+    },
+    character: 'Warm, slightly soft, mild noise -- the picture you remember from childhood',
+  },
+  {
+    name: 'Bedroom RF 1990',
+    desc: '13" GE portable with RF switch box in a kid\'s bedroom',
+    connection: 'RF',
+    connClass: 'conn-rf',
+    params: {
+      'comb_type': 'NONE',
+      'cable_length': '1.5 m coax',
+      'capacitance': '67 pF/m',
+      'connector_R': '0.5 \u03A9 + switch',
+      'ghost_delay': '16',
+      'ghost_level': '0.06',
+      'chroma_bw': '0.35 MHz',
+      'luma_bw': '2.5 MHz',
+      'hue_offset': '+5\u00B0',
+      'saturation': '0.95',
+      'gamma': '2.50',
+      'mask_type': 'Shadow',
+      'mask_pitch': '5.0 mm',
+      'beam_sharpness': '0.35',
+      'conv_static': '0.25',
+      'noise_floor': '-55 dBm',
+      'rf_interference': '0.8',
+      'noise': '0.06',
+      'h_jitter': '0.5',
+    },
+    character: 'Noisy, soft, visible ghosts and jitter -- the struggle of RF on a cheap set',
+  },
+  {
+    name: 'Studio PVM',
+    desc: 'Sony PVM-20M4U with S-Video -- professional reference monitor',
+    connection: 'S-Video',
+    connClass: 'conn-svid',
+    params: {
+      'comb_type': 'BYPASS',
+      'cable_length': '1 m',
+      'capacitance': '50 pF/m',
+      'connector_R': '0.05 \u03A9 (gold)',
+      'chroma_bw': '1.5 MHz',
+      'luma_bw': '6.0 MHz',
+      'hue_offset': '0\u00B0',
+      'saturation': '1.0',
+      'gamma': '2.20',
+      'mask_type': 'Aperture Grille',
+      'mask_pitch': '0.31 mm',
+      'beam_sharpness': '1.00',
+      'conv_static': '0.02',
+      'noise': '0.002',
+      'hum_bar': '0',
+      'barrel': '0',
+    },
+    character: 'Razor-sharp, vibrant, zero artifacts -- pixel-perfect through an analog chain',
+  },
+  {
+    name: 'Basement TV',
+    desc: '19" beat-up CRT in a damp basement -- corroded connections, bad reception',
+    connection: 'RF',
+    connClass: 'conn-rf',
+    params: {
+      'comb_type': 'NONE',
+      'cable_length': '3 m corroded',
+      'connector_R': '3.0 \u03A9',
+      'shield': '0.45',
+      'ghost_delay': '32',
+      'ghost_level': '0.12',
+      'chroma_bw': '0.30 MHz',
+      'luma_bw': '2.0 MHz',
+      'gamma': '2.55',
+      'mask_type': 'Shadow',
+      'mask_pitch': '6.0 mm',
+      'beam_sharpness': '0.0 (defocused)',
+      'conv_r_x': '+6.0',
+      'conv_b_x': '-5.0',
+      'noise_floor': '-44 dBm',
+      'noise': '0.08',
+      'hum_bar': '0.08',
+      'barrel': '0.05 / 0.08',
+    },
+    character: 'Heavy snow, defocused, terrible convergence, strong hum -- barely watchable, maximum nostalgia',
+  },
+];
+
+// ========== CONNECTION MATRIX ==========
+
+function buildMatrix() {
+  const tbody = document.querySelector('#connMatrix tbody');
+  CONNECTION_TYPES.forEach(conn => {
+    const tr = document.createElement('tr');
+    tr.dataset.conn = conn;
+    let html = `<td>${conn}</td>`;
+    for (let i = 0; i < 14; i++) {
+      const active = CONN_MATRIX[conn][i];
+      html += `<td class="${active ? 'active' : 'inactive'}">${active ? '\u2713' : '\u2717'}</td>`;
+    }
+    tr.innerHTML = html;
+    tr.addEventListener('mouseenter', () => highlightStages(conn));
+    tr.addEventListener('mouseleave', () => clearHighlights());
+    tbody.appendChild(tr);
+  });
+}
+
+function highlightStages(conn) {
+  const active = CONN_MATRIX[conn];
+  document.querySelectorAll('.stage-box').forEach(box => {
+    const stage = parseInt(box.dataset.stage);
+    if (active[stage - 1]) {
+      box.classList.add('highlighted');
+      box.classList.remove('dimmed');
+    } else {
+      box.classList.remove('highlighted');
+      box.classList.add('dimmed');
+    }
+  });
+  document.querySelectorAll('#connMatrix tbody tr').forEach(tr => {
+    tr.classList.toggle('active-row', tr.dataset.conn === conn);
+  });
+}
+
+function clearHighlights() {
+  document.querySelectorAll('.stage-box').forEach(box => {
+    box.classList.remove('highlighted', 'dimmed');
+  });
+  document.querySelectorAll('#connMatrix tbody tr').forEach(tr => {
+    tr.classList.remove('active-row');
+  });
+}
+
+// ========== STAGE CARDS ==========
+
+function buildStageCards() {
+  const container = document.getElementById('stageCards');
+  STAGES.forEach(stage => {
+    const card = document.createElement('div');
+    card.className = 'stage-card';
+    card.id = `stage-${stage.num}`;
+
+    const domainClass = stage.domain === 'signal' ? 'signal-domain' : 'display-domain';
+    const connBadges = CONNECTION_TYPES.map(c =>
+      `<span class="conn-badge ${stage.conns.includes(c) ? 'active' : ''}">${c}</span>`
+    ).join('');
+
+    let paramsHTML = '';
+    if (stage.params.length > 0) {
+      paramsHTML = `
+        <div class="card-section">
+          <h4>Parameters</h4>
+          <div style="overflow-x:auto">
+          <table class="param-table">
+            <thead><tr><th>Parameter</th><th>Type</th><th>Range</th><th>Default</th><th>Unit</th><th>Visual Effect</th></tr></thead>
+            <tbody>
+              ${stage.params.map(p => `
+                <tr>
+                  <td class="param-name">${p[0]}</td>
+                  <td class="param-type">${p[1]}</td>
+                  <td>${p[2]}</td>
+                  <td>${p[3]}</td>
+                  <td>${p[4]}</td>
+                  <td>${p[5]}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          </div>
+        </div>`;
+    }
+
+    const flowHTML = stage.signalFlow.map((n, i) =>
+      i === 0 ? `<span class="node">${n}</span>` : `<span class="arrow">\u2192</span><span class="node">${n}</span>`
+    ).join('');
+
+    card.innerHTML = `
+      <div class="stage-card-header ${domainClass}" onclick="toggleCard(this)">
+        <div class="num">${stage.num}</div>
+        <span class="title">${stage.name}</span>
+        <span class="kernel">${stage.kernel}</span>
+        <div class="conn-badges">${connBadges}</div>
+        <span class="chevron">\u25B6</span>
+      </div>
+      <div class="stage-card-body">
+        <div class="card-section">
+          <h4>Signal Flow</h4>
+          <div class="signal-flow">${flowHTML}</div>
+        </div>
+        ${paramsHTML}
+        <div class="card-section">
+          <h4>What You See</h4>
+          <p>${stage.whatYouSee}</p>
+        </div>
+      </div>
+    `;
+    container.appendChild(card);
+  });
+}
+
+function toggleCard(header) {
+  header.parentElement.classList.toggle('open');
+}
+
+function scrollToStage(num) {
+  const el = document.getElementById(`stage-${num}`);
+  if (el) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    el.classList.add('open');
+  }
+}
+
+// ========== PRESETS ==========
+
+function buildPresets() {
+  const grid = document.getElementById('presetGrid');
+  PRESETS.forEach(preset => {
+    const card = document.createElement('div');
+    card.className = 'preset-card';
+
+    const paramLines = Object.entries(preset.params).map(([k, v]) =>
+      `<div><span class="pname">${k}</span><span class="pval">${v}</span></div>`
+    ).join('');
+
+    card.innerHTML = `
+      <h3>${preset.name}</h3>
+      <div class="desc">${preset.desc}</div>
+      <span class="conn-type ${preset.connClass}">${preset.connection}</span>
+      <div class="param-diff">${paramLines}</div>
+      <div class="character">"${preset.character}"</div>
+    `;
+    grid.appendChild(card);
+  });
+}
+
+// ========== INIT ==========
+
+buildMatrix();
+buildStageCards();
+buildPresets();
+
+// Open card if URL has a hash like #stage-11
+if (location.hash.startsWith('#stage-')) {
+  const el = document.querySelector(location.hash);
+  if (el) el.classList.add('open');
+}
+</script>
+
+</body>
+</html>

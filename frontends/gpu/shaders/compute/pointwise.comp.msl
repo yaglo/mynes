@@ -1,0 +1,101 @@
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct Params
+{
+    uint count;
+    uint mode;
+    float param_a;
+    float param_b;
+    float param_c;
+};
+
+struct InputBuf
+{
+    float data_in[1];
+};
+
+struct OutputBuf
+{
+    float data_out[1];
+};
+
+constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
+
+kernel void main0(constant Params& _20 [[buffer(0)]], device InputBuf& _36 [[buffer(1)]], device OutputBuf& _154 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+{
+    uint tid = gl_GlobalInvocationID.x;
+    if (tid >= _20.count)
+    {
+        return;
+    }
+    float x = _36.data_in[tid];
+    float y;
+    switch (_20.mode)
+    {
+        case 0u:
+        {
+            y = (_20.param_a * x) + _20.param_b;
+            break;
+        }
+        case 1u:
+        {
+            float drive = _20.param_a;
+            float t = precise::tanh(x * drive);
+            float _75;
+            if (drive > 0.0)
+            {
+                _75 = precise::tanh(drive);
+            }
+            else
+            {
+                _75 = 1.0;
+            }
+            float norm = _75;
+            y = t / norm;
+            break;
+        }
+        case 2u:
+        {
+            y = fast::clamp(x, _20.param_a, _20.param_b);
+            break;
+        }
+        case 3u:
+        {
+            float exponent = _20.param_a;
+            float _99;
+            if (x >= 0.0)
+            {
+                _99 = powr(x, exponent);
+            }
+            else
+            {
+                _99 = -powr(-x, exponent);
+            }
+            y = _99;
+            break;
+        }
+        case 4u:
+        {
+            float k = _20.param_a;
+            y = x + (k * (((x * x) * x) - x));
+            break;
+        }
+        case 5u:
+        {
+            float amplitude = _20.param_a;
+            float phase = _20.param_b + (float(tid) * _20.param_c);
+            y = x + (amplitude * sin(phase));
+            break;
+        }
+        default:
+        {
+            y = x;
+            break;
+        }
+    }
+    _154.data_out[tid] = y;
+}
+

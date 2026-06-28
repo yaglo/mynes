@@ -1,0 +1,297 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct Params
+{
+    uint signal_w;
+    uint out_w;
+    uint out_h;
+    uint rows_per_scanline;
+    uint frame_counter;
+    float h_jitter;
+    float v_jitter;
+    float rf_interference;
+    float geometry_warp;
+    float convergence_static;
+    float convergence_dynamic;
+    float conv_r_x;
+    float conv_r_y;
+    float conv_b_x;
+    float conv_b_y;
+    float edge_focus;
+    float velocity_dim;
+    float psu_hum;
+    float focus_breathing;
+    float scanline_wobble;
+    float corner_astigmatism;
+    float barrel;
+    float barrel_v;
+    float overscan;
+    float keystone;
+    float rotation;
+    float skew_x;
+    float skew_y;
+    float hv_sag;
+    float frame_brightness;
+    float h_pos;
+    float v_pos;
+    float h_size;
+    float v_size;
+    float microphonic_amount;
+    float audio_bass_rms;
+    float top_band_shift;
+    float top_edge_skew;
+    float top_band_start;
+    float top_band_end;
+    float top_edge_width;
+};
+
+struct DeflectionX
+{
+    float out_x[1];
+};
+
+struct DeflectionY
+{
+    float out_y[1];
+};
+
+constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(16u, 16u, 1u);
+
+static inline __attribute__((always_inline))
+float2 barrel_distort(thread const float2& coord, thread const float& k_h, thread const float& k_v)
+{
+    float2 centered = coord - float2(0.5);
+    float r2 = dot(centered, centered);
+    centered.x *= (1.0 + (k_h * r2));
+    centered.y *= (1.0 + (k_v * r2));
+    return centered + float2(0.5);
+}
+
+static inline __attribute__((always_inline))
+float rect_envelope(thread const float2& coord, thread const float& edge_x, thread const float& edge_y)
+{
+    float l = smoothstep(-edge_x, edge_x, coord.x);
+    float r = smoothstep(-edge_x, edge_x, 1.0 - coord.x);
+    float t = smoothstep(-edge_y, edge_y, coord.y);
+    float b = smoothstep(-edge_y, edge_y, 1.0 - coord.y);
+    return ((l * r) * t) * b;
+}
+
+static inline __attribute__((always_inline))
+float hash01(thread uint& x)
+{
+    x ^= (x >> 16u);
+    x *= 2146121005u;
+    x ^= (x >> 15u);
+    x *= 2221713035u;
+    x ^= (x >> 16u);
+    return float(x & 16777215u) / 16777216.0;
+}
+
+static inline __attribute__((always_inline))
+float hashSigned(thread const uint& x)
+{
+    uint param = x;
+    float _61 = hash01(param);
+    return (_61 * 2.0) - 1.0;
+}
+
+kernel void main0(constant Params& _153 [[buffer(0)]], device DeflectionX& _1182 [[buffer(1)]], device DeflectionY& _1206 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+{
+    uint ox = gl_GlobalInvocationID.x;
+    uint oy = gl_GlobalInvocationID.y;
+    bool _159 = ox >= _153.out_w;
+    bool _168;
+    if (!_159)
+    {
+        _168 = oy >= _153.out_h;
+    }
+    else
+    {
+        _168 = _159;
+    }
+    if (_168)
+    {
+        return;
+    }
+    float fw = fast::max(float(_153.out_w), 1.0);
+    float fh = fast::max(float(_153.out_h), 1.0);
+    float x_uv = (float(ox) + 0.5) / fw;
+    float y_uv = (float(oy) + 0.5) / fh;
+    float frame_t = float(_153.frame_counter) * 0.01730000041425228118896484375;
+    float microphonic_phase = float(_153.frame_counter) * 8.37757968902587890625;
+    float2 tube_uv = float2(x_uv, y_uv);
+    float2 uv_wobble = tube_uv;
+    bool _218 = _153.microphonic_amount > 9.9999997473787516355514526367188e-05;
+    bool _225;
+    if (_218)
+    {
+        _225 = _153.audio_bass_rms > 9.9999997473787516355514526367188e-05;
+    }
+    else
+    {
+        _225 = _218;
+    }
+    if (_225)
+    {
+        float amp = _153.microphonic_amount * _153.audio_bass_rms;
+        uv_wobble.y += (sin(microphonic_phase) * amp);
+        uv_wobble.x += ((sin(microphonic_phase * 0.310000002384185791015625) * amp) * 0.4000000059604644775390625);
+    }
+    float _260;
+    if (_153.barrel_v > 0.001000000047497451305389404296875)
+    {
+        _260 = _153.barrel_v;
+    }
+    else
+    {
+        _260 = _153.barrel;
+    }
+    float kv = _260;
+    float2 param = uv_wobble;
+    float param_1 = _153.barrel;
+    float param_2 = kv;
+    float2 warped = barrel_distort(param, param_1, param_2);
+    if (_153.hv_sag > 0.001000000047497451305389404296875)
+    {
+        float expand = 1.0 + ((_153.hv_sag * _153.frame_brightness) * 0.07999999821186065673828125);
+        warped = ((warped - float2(0.5)) * expand) + float2(0.5);
+    }
+    if (abs(_153.rotation) > 9.9999997473787516355514526367188e-05)
+    {
+        float2 c = warped - float2(0.5);
+        float cr = cos(_153.rotation);
+        float sr = sin(_153.rotation);
+        warped = float2((c.x * cr) - (c.y * sr), (c.x * sr) + (c.y * cr)) + float2(0.5);
+    }
+    bool _346 = abs(_153.skew_x) > 9.9999997473787516355514526367188e-05;
+    bool _355;
+    if (!_346)
+    {
+        _355 = abs(_153.skew_y) > 9.9999997473787516355514526367188e-05;
+    }
+    else
+    {
+        _355 = _346;
+    }
+    if (_355)
+    {
+        float2 c_1 = warped - float2(0.5);
+        warped = float2(c_1.x + (_153.skew_x * c_1.y), c_1.y + (_153.skew_y * c_1.x)) + float2(0.5);
+    }
+    if (abs(_153.keystone) > 9.9999997473787516355514526367188e-05)
+    {
+        float y_norm = warped.y - 0.5;
+        float x_scale = 1.0 + ((_153.keystone * y_norm) * 2.0);
+        warped.x = ((warped.x - 0.5) / fast::max(x_scale, 0.20000000298023223876953125)) + 0.5;
+    }
+    if (_153.overscan > 0.001000000047497451305389404296875)
+    {
+        warped = ((warped - float2(0.5)) / float2(fast::max(1.0 - (_153.overscan * 2.0), 0.20000000298023223876953125))) + float2(0.5);
+    }
+    float2 param_3 = warped;
+    float param_4 = 0.0024999999441206455230712890625;
+    float param_5 = 0.0024999999441206455230712890625;
+    float tube_envelope = rect_envelope(param_3, param_4, param_5);
+    float2 raster = warped;
+    raster.x = (((warped.x - 0.5) - _153.h_pos) / fast::max(_153.h_size, 0.00999999977648258209228515625)) + 0.5;
+    raster.y = (((warped.y - 0.5) - _153.v_pos) / fast::max(_153.v_size, 0.00999999977648258209228515625)) + 0.5;
+    float2 param_6 = raster;
+    float param_7 = 0.0040000001899898052215576171875;
+    float param_8 = 0.00449999980628490447998046875;
+    float raster_envelope = rect_envelope(param_6, param_7, param_8);
+    float visibility = tube_envelope * raster_envelope;
+    float cx = (raster.x * 2.0) - 1.0;
+    float cy = (raster.y * 2.0) - 1.0;
+    int sy_i = clamp(int(floor(raster.y * 240.0)), 0, 239);
+    uint sy_nom = uint(sy_i);
+    float line_uv = (float(sy_nom) + 0.5) / 240.0;
+    uint line_seed = ((sy_nom * 1103515245u) + (_153.frame_counter * 12345u)) + 2654435769u;
+    float slow_sway = (sin(frame_t * 0.62999999523162841796875) * 0.699999988079071044921875) + (sin((frame_t * 0.20999999344348907470703125) + 1.7000000476837158203125) * 0.300000011920928955078125);
+    uint param_9 = line_seed;
+    uint param_10 = line_seed ^ 2246822507u;
+    float pll_jitter = hashSigned(param_9) + (0.5 * hashSigned(param_10));
+    float ripple = sin((float(sy_nom) * 0.189999997615814208984375) + (frame_t * 1.39999997615814208984375));
+    float flyback_ring = exp((-float(sy_nom)) / 18.0) * sin((float(sy_nom) * 0.920000016689300537109375) + (frame_t * 1.89999997615814208984375));
+    float group_shift = sin((floor(float(sy_nom) / 4.0) * 0.829999983310699462890625) + (frame_t * 0.699999988079071044921875));
+    float h_shift_px = _153.h_jitter * (((((0.2800000011920928955078125 * slow_sway) + (0.2199999988079071044921875 * pll_jitter)) + (0.180000007152557373046875 * ripple)) + (0.2199999988079071044921875 * flyback_ring)) + (0.100000001490116119384765625 * group_shift));
+    if (_153.rf_interference > 0.001000000047497451305389404296875)
+    {
+        float rf_step = sin((float(sy_nom) * 0.4699999988079071044921875) + (frame_t * 0.310000002384185791015625));
+        h_shift_px += floor((rf_step * _153.rf_interference) + 0.5);
+    }
+    uint param_11 = (_153.frame_counter * 4099u) + 17u;
+    float field_jump_px = (_153.v_jitter * 0.25) * hashSigned(param_11);
+    float top_settle_px = ((_153.v_jitter * 1.60000002384185791015625) * exp((-float(sy_nom)) / 14.0)) * sin((float(sy_nom) * 0.7799999713897705078125) + (frame_t * 1.25));
+    float bottom_compress = (_153.geometry_warp * 0.01600000075995922088623046875) * (((cy * cy) * cy) - (0.25 * cy));
+    float s_correction = (_153.geometry_warp * 0.034000001847743988037109375) * (((cx * cx) * cx) - (0.3499999940395355224609375 * cx));
+    float ew_residual = (((_153.geometry_warp * 0.0240000002086162567138671875) * cx) * cy) * cy;
+    float left_edge_nl = ((_153.geometry_warp * 0.01200000010430812835693359375) * exp((-fast::max(raster.x, 0.0)) / 0.0599999986588954925537109375)) * (0.3499999940395355224609375 - raster.x);
+    float right_edge_nl = ((_153.geometry_warp * 0.00999999977648258209228515625) * exp((-fast::max(1.0 - raster.x, 0.0)) / 0.0500000007450580596923828125)) * (raster.x - 0.64999997615814208984375);
+    float line_bow_x = (_153.scanline_wobble * 0.014999999664723873138427734375) * sin(((x_uv * 6.28318500518798828125) + (float(sy_nom) * 0.62999999523162841796875)) + (frame_t * 0.89999997615814208984375));
+    float line_bow_y = (_153.scanline_wobble * 0.0199999995529651641845703125) * sin(((x_uv * 6.28318500518798828125) + (float(sy_nom) * 0.38999998569488525390625)) + (frame_t * 0.89999997615814208984375));
+    float band_lo = fast::min(_153.top_band_start, _153.top_band_end);
+    float band_hi = fast::max(_153.top_band_start, _153.top_band_end);
+    float band_soft = 2.5;
+    float band_window = smoothstep(band_lo - band_soft, band_lo + band_soft, float(sy_nom)) * (1.0 - smoothstep(band_hi - band_soft, band_hi + band_soft, float(sy_nom)));
+    float edge_width = fast::max(_153.top_edge_width, 0.00999999977648258209228515625);
+    float top_edge_env = exp((-fast::max(raster.x, 0.0)) / edge_width);
+    float top_band_px = _153.top_band_shift * band_window;
+    float top_edge_px = (_153.top_edge_skew * band_window) * top_edge_env;
+    float x_land_n = (((((cx + s_correction) + ew_residual) + left_edge_nl) + right_edge_nl) + line_bow_x) + ((((h_shift_px + top_band_px) + top_edge_px) * 2.0) / fw);
+    float y_land_n = ((cy + bottom_compress) + line_bow_y) + (((field_jump_px + top_settle_px) * 2.0) / fh);
+    float edge_factor = fast::clamp((cx * cx) + (cy * cy), 0.0, 2.0);
+    float conv_edge = fast::clamp(edge_factor * 0.5, 0.0, 1.0);
+    float generic_conv_px = _153.convergence_static + (_153.convergence_dynamic * fast::clamp(sqrt(conv_edge), 0.0, 1.0));
+    float generic_conv_signal = (generic_conv_px * float(_153.signal_w)) / fw;
+    float base_x = ((x_land_n * 0.5) + 0.5) * float(_153.signal_w);
+    float base_y = ((y_land_n * 0.5) + 0.5) * fh;
+    float r_x = (base_x - generic_conv_signal) + (_153.conv_r_x * conv_edge);
+    float g_x = base_x;
+    float b_x = (base_x + generic_conv_signal) + (_153.conv_b_x * conv_edge);
+    float r_y = base_y + (_153.conv_r_y * conv_edge);
+    float g_y = base_y;
+    float b_y = base_y + (_153.conv_b_y * conv_edge);
+    float focus_scale = 1.0 + (edge_factor * _153.edge_focus);
+    if ((_153.corner_astigmatism > 0.001000000047497451305389404296875) && (edge_factor > 9.9999999747524270787835121154785e-07))
+    {
+        float vy_radial = (cy * cy) / edge_factor;
+        focus_scale *= (1.0 + ((_153.corner_astigmatism * edge_factor) * vy_radial));
+    }
+    if (_153.psu_hum > 0.001000000047497451305389404296875)
+    {
+        float psu_phase = 6.28318500518798828125 * (line_uv + (float(_153.frame_counter) * 0.00200000009499490261077880859375));
+        focus_scale *= (1.0 + ((_153.psu_hum * 0.4000000059604644775390625) * sin(psu_phase)));
+    }
+    if (_153.focus_breathing > 0.001000000047497451305389404296875)
+    {
+        focus_scale *= (1.0 + (_153.focus_breathing * sin(float(_153.frame_counter) * 0.07999999821186065673828125)));
+    }
+    float dx_dcx = (((1.0 + (_153.geometry_warp * ((((0.1019999980926513671875 * cx) * cx) - 0.011900000274181365966796875) + ((0.0240000002086162567138671875 * cy) * cy)))) + (_153.geometry_warp * (((-0.01200000010430812835693359375) * exp((-fast::max(raster.x, 0.0)) / 0.0599999986588954925537109375)) - (0.00999999977648258209228515625 * exp((-fast::max(1.0 - raster.x, 0.0)) / 0.0500000007450580596923828125))))) + ((_153.scanline_wobble * 0.047123901546001434326171875) * cos(((x_uv * 6.28318500518798828125) + (float(sy_nom) * 0.62999999523162841796875)) + (frame_t * 0.89999997615814208984375)))) - (((((2.0 / fw) * _153.top_edge_skew) * band_window) * top_edge_env) / edge_width);
+    float dwell = 1.0;
+    if (_153.velocity_dim > 0.001000000047497451305389404296875)
+    {
+        float fastness = fast::clamp(abs(dx_dcx) - 1.0, 0.0, 1.5);
+        dwell -= ((_153.velocity_dim * fastness) * (0.3499999940395355224609375 + (0.64999997615814208984375 * conv_edge)));
+    }
+    float left_settle = exp((-fast::max(raster.x, 0.0)) / 0.02999999932944774627685546875);
+    float right_retrace = exp((-fast::max(1.0 - raster.x, 0.0)) / 0.026000000536441802978515625);
+    float edge_drive = fast::clamp((_153.geometry_warp * 0.449999988079071044921875) + (_153.velocity_dim * 1.2000000476837158203125), 0.0, 1.0);
+    dwell *= (1.0 - ((0.100000001490116119384765625 * edge_drive) * left_settle));
+    dwell *= (1.0 + ((0.0599999986588954925537109375 * edge_drive) * right_retrace));
+    dwell *= visibility;
+    uint idx = ((oy * _153.out_w) + ox) * 4u;
+    _1182.out_x[idx + 0u] = r_x;
+    _1182.out_x[idx + 1u] = g_x;
+    _1182.out_x[idx + 2u] = b_x;
+    _1182.out_x[idx + 3u] = fast::clamp(dwell, 0.0, 1.10000002384185791015625);
+    _1206.out_y[idx + 0u] = r_y;
+    _1206.out_y[idx + 1u] = g_y;
+    _1206.out_y[idx + 2u] = b_y;
+    _1206.out_y[idx + 3u] = fast::clamp(focus_scale, 1.0, 3.5);
+}

@@ -1,0 +1,70 @@
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct Params
+{
+    uint signal_w;
+    uint num_lines;
+    float sigma;
+};
+
+struct RGBIn
+{
+    float rgb_in[1];
+};
+
+struct RGBOut
+{
+    float rgb_out[1];
+};
+
+constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
+
+kernel void main0(constant Params& _25 [[buffer(0)]], device RGBIn& _122 [[buffer(1)]], device RGBOut& _164 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+{
+    uint sx = gl_GlobalInvocationID.x;
+    uint sy = gl_GlobalInvocationID.y;
+    bool _31 = sx >= _25.signal_w;
+    bool _40;
+    if (!_31)
+    {
+        _40 = sy >= _25.num_lines;
+    }
+    else
+    {
+        _40 = _31;
+    }
+    if (_40)
+    {
+        return;
+    }
+    float hs = fast::max(_25.sigma, 0.5);
+    int h_radius = int(ceil(hs * 3.0));
+    h_radius = min(h_radius, 24);
+    float inv_2hs2 = 1.0 / ((2.0 * hs) * hs);
+    float sr = 0.0;
+    float sg = 0.0;
+    float sb = 0.0;
+    float wt = 0.0;
+    uint base = sy * _25.signal_w;
+    int cx = int(sx);
+    int _85 = -h_radius;
+    for (int dx = _85; dx <= h_radius; dx++)
+    {
+        float w = exp((-float(dx * dx)) * inv_2hs2);
+        int x = clamp(cx + dx, 0, int(_25.signal_w) - 1);
+        uint idx = (base + uint(x)) * 3u;
+        sr += (_122.rgb_in[idx + 0u] * w);
+        sg += (_122.rgb_in[idx + 1u] * w);
+        sb += (_122.rgb_in[idx + 2u] * w);
+        wt += w;
+    }
+    float inv_wt = 1.0 / wt;
+    uint out_idx = (base + sx) * 3u;
+    _164.rgb_out[out_idx + 0u] = sr * inv_wt;
+    _164.rgb_out[out_idx + 1u] = sg * inv_wt;
+    _164.rgb_out[out_idx + 2u] = sb * inv_wt;
+}
+

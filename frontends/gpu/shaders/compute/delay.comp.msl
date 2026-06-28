@@ -1,0 +1,91 @@
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct Params
+{
+    uint count;
+    uint mode;
+    int delay_samples;
+    float level0;
+};
+
+struct InputBuf
+{
+    float data_in[1];
+};
+
+struct PrevBuf
+{
+    float data_prev[1];
+};
+
+struct OutputBuf
+{
+    float data_out[1];
+};
+
+constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
+
+kernel void main0(constant Params& _21 [[buffer(0)]], device InputBuf& _59 [[buffer(1)]], device PrevBuf& _103 [[buffer(2)]], device OutputBuf& _131 [[buffer(3)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+{
+    uint tid = gl_GlobalInvocationID.x;
+    if (tid >= _21.count)
+    {
+        return;
+    }
+    float y;
+    switch (_21.mode)
+    {
+        case 0u:
+        {
+            int src = int(tid) - _21.delay_samples;
+            float _53;
+            if (src >= 0)
+            {
+                _53 = _59.data_in[src];
+            }
+            else
+            {
+                _53 = 0.0;
+            }
+            y = _53;
+            break;
+        }
+        case 1u:
+        {
+            float x = _59.data_in[tid];
+            int src_1 = int(tid) - _21.delay_samples;
+            float _81;
+            if (src_1 >= 0)
+            {
+                _81 = _59.data_in[src_1];
+            }
+            else
+            {
+                _81 = 0.0;
+            }
+            float ghost = _81;
+            y = x + (_21.level0 * ghost);
+            break;
+        }
+        case 2u:
+        {
+            y = (_59.data_in[tid] + _103.data_prev[tid]) * _21.level0;
+            break;
+        }
+        case 3u:
+        {
+            y = (_59.data_in[tid] - _103.data_prev[tid]) * _21.level0;
+            break;
+        }
+        default:
+        {
+            y = _59.data_in[tid];
+            break;
+        }
+    }
+    _131.data_out[tid] = y;
+}
+

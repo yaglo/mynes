@@ -1,0 +1,89 @@
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct IndexBuf
+{
+    uint index_data[1];
+};
+
+struct Params
+{
+    uint samples_per_pixel;
+    uint samples_per_line;
+    uint phase_base;
+    uint phase_line_adv;
+    uint phase_field_adv;
+    uint frame_field;
+    uint use_alt_table;
+};
+
+struct WaveformBuf
+{
+    float waveform[1];
+};
+
+struct SignalTableAlt
+{
+    float signal_table_alt[1];
+};
+
+struct SignalTable
+{
+    float signal_table[1];
+};
+
+constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
+
+kernel void main0(device IndexBuf& _41 [[buffer(1)]], constant Params& _72 [[buffer(0)]], device WaveformBuf& _135 [[buffer(4)]], device SignalTableAlt& _147 [[buffer(3)]], device SignalTable& _158 [[buffer(2)]], uint3 gl_LocalInvocationID [[thread_position_in_threadgroup]], uint3 gl_WorkGroupID [[threadgroup_position_in_grid]])
+{
+    uint px = gl_LocalInvocationID.x;
+    uint sy = gl_WorkGroupID.y;
+    if ((px >= 256u) || (sy >= 240u))
+    {
+        return;
+    }
+    uint flat_idx = (sy * 256u) + px;
+    uint _packed = _41.index_data[flat_idx / 2u];
+    uint _54;
+    if ((flat_idx & 1u) == 0u)
+    {
+        _54 = _packed & 65535u;
+    }
+    else
+    {
+        _54 = _packed >> 16u;
+    }
+    uint pixel_val = _54;
+    uint entry = pixel_val & 511u;
+    uint line_phase = (_72.phase_base + (sy * _72.phase_line_adv)) % 12u;
+    uint pixel_phase = (line_phase + (px * _72.samples_per_pixel)) % 12u;
+    uint table_base = (entry * 24u) + pixel_phase;
+    uint wave_base = (sy * _72.samples_per_line) + (px * _72.samples_per_pixel);
+    bool _114 = _72.use_alt_table != 0u;
+    bool _120;
+    if (_114)
+    {
+        _120 = (sy & 1u) == 1u;
+    }
+    else
+    {
+        _120 = _114;
+    }
+    bool alt = _120;
+    float _141;
+    for (uint s = 0u; s < _72.samples_per_pixel; s++)
+    {
+        if (alt)
+        {
+            _141 = _147.signal_table_alt[table_base + s];
+        }
+        else
+        {
+            _141 = _158.signal_table[table_base + s];
+        }
+        _135.waveform[wave_base + s] = _141;
+    }
+}
+

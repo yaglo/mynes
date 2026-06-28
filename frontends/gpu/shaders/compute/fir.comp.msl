@@ -1,0 +1,81 @@
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct Params
+{
+    uint input_count;
+    uint output_count;
+    uint tap_count;
+    uint decimation_ratio;
+    uint samples_per_line;
+};
+
+struct TapsBuf
+{
+    float taps[1];
+};
+
+struct InputBuf
+{
+    float data_in[1];
+};
+
+struct OutputBuf
+{
+    float data_out[1];
+};
+
+constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
+
+kernel void main0(constant Params& _19 [[buffer(0)]], device TapsBuf& _112 [[buffer(2)]], device InputBuf& _121 [[buffer(1)]], device OutputBuf& _188 [[buffer(3)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+{
+    uint tid = gl_GlobalInvocationID.x;
+    if (tid >= _19.output_count)
+    {
+        return;
+    }
+    int halfN = int(_19.tap_count) / 2;
+    int base = int(tid * _19.decimation_ratio);
+    float sum = 0.0;
+    if (_19.samples_per_line > 0u)
+    {
+        int spl = int(_19.samples_per_line);
+        int line_start = (base / spl) * spl;
+        int line_end = line_start + spl;
+        for (uint k = 0u; k < _19.tap_count; k++)
+        {
+            int idx = (base - halfN) + int(k);
+            if (idx < line_start)
+            {
+                idx = (2 * line_start) - idx;
+            }
+            if (idx >= line_end)
+            {
+                idx = ((2 * line_end) - idx) - 1;
+            }
+            idx = clamp(idx, line_start, line_end - 1);
+            sum += (_112.taps[k] * _121.data_in[idx]);
+        }
+    }
+    else
+    {
+        for (uint k_1 = 0u; k_1 < _19.tap_count; k_1++)
+        {
+            int idx_1 = (base - halfN) + int(k_1);
+            if (idx_1 < 0)
+            {
+                idx_1 = -idx_1;
+            }
+            if (idx_1 >= int(_19.input_count))
+            {
+                idx_1 = ((2 * int(_19.input_count)) - idx_1) - 1;
+            }
+            idx_1 = clamp(idx_1, 0, int(_19.input_count) - 1);
+            sum += (_112.taps[k_1] * _121.data_in[idx_1]);
+        }
+    }
+    _188.data_out[tid] = sum;
+}
+

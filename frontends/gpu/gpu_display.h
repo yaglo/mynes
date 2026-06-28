@@ -1,0 +1,150 @@
+/*
+ * GPU Display Pipeline — CRT Display-Domain Render Shaders
+ * ==========================================================
+ *
+ * Manages the SDL_GPU graphics pipeline for the display-domain effects:
+ *   Pass 1: Halation H blur (quarter-res FBO, threshold extract + Gaussian)
+ *   Pass 2: Halation V blur (quarter-res FBO)
+ *   Pass 3: CRT display composite (barrel + mask + halation
+ *           blend + gamma + vignette + black floor → swapchain)
+ *
+ * Input: the composite output texture (uploaded from CPU pipeline).
+ * Output: rendered to the swapchain texture (presented to display).
+ *
+ * When this pipeline is active, it REPLACES SDL_BlitGPUTexture with
+ * a multi-pass render that applies CRT physics at native display
+ * resolution. The CPU composite pipeline still does signal-domain work
+ * (waveform → FIR → comb → beam profile); the GPU adds display effects
+ * that benefit from running at the monitor's native pixel count.
+ */
+
+#ifndef GPU_DISPLAY_H
+#define GPU_DISPLAY_H
+
+#include <SDL3/SDL.h>
+#include <stdbool.h>
+#include "video_chain.h"
+
+/* Display pipeline state (opaque to callers). */
+typedef struct {
+    /* Shader pipelines. */
+    SDL_GPUGraphicsPipeline *pipe_halation;   /* shared H+V blur pipeline */
+    SDL_GPUGraphicsPipeline *pipe_crt;        /* CRT display composite */
+
+    /* Halation FBOs (quarter resolution). */
+    SDL_GPUTexture *tex_halation_a;    /* H blur output */
+    SDL_GPUTexture *tex_halation_b;    /* V blur output (final halation) */
+    int halation_w, halation_h;
+
+    /* Sampler for linear filtering. */
+    SDL_GPUSampler *sampler_linear;
+
+    bool initialized;
+} GPUDisplay;
+
+/* CRT display uniforms (matches crt_display.frag.glsl UBO layout). */
+typedef struct {
+    float src_w, src_h;             /* composite texture dimensions */
+    float out_w, out_h;             /* display dimensions */
+    float barrel;                   /* horizontal barrel distortion */
+    float barrel_v;                 /* vertical barrel distortion (0=same as barrel) */
+    float convergence_static;       /* legacy UBO slot, beam path handles convergence */
+    float convergence_dynamic;      /* legacy UBO slot, beam path handles convergence */
+    float mask_strength;            /* phosphor mask strength (0-1) */
+    int   mask_type;                /* 0=shadow, 1=aperture_grille, 2=slot */
+    float mask_pitch_px;            /* mask pitch in display pixels */
+    float halation_strength;        /* halation blend intensity */
+    float halation_tint_r;          /* halation bloom per-channel tint */
+    float halation_tint_g;
+    float halation_tint_b;
+    float vignette;                 /* corner darkening (0-0.3) */
+    float gamma;                    /* display gamma (2.0-2.5) */
+    float black_floor;              /* minimum black level (0-1) */
+    float ambient_light;            /* room light reflection (0-0.2) */
+    float glass_tint;               /* glass attenuation (0.6-1.0) */
+    float hdr_gain;                 /* output multiplier (1.0=normal) */
+    int   subpixel_layout;          /* 0=none, 1=RGB, 2=BGR */
+    float overscan;                 /* bezel crop fraction per edge (0-0.08) */
+    float keystone;                 /* trapezoidal distortion (-0.1 to +0.1) */
+    float rotation;                 /* image rotation in radians (-0.05 to +0.05) */
+    float skew_x;                   /* horizontal shear (-0.1 to +0.1) */
+    float skew_y;                   /* vertical shear (-0.1 to +0.1) */
+    float hv_sag;                   /* HV supply sag intensity (0-0.3) */
+    float frame_brightness;         /* avg frame luma, computed per-frame by CPU */
+    float h_pos;                    /* horizontal raster shift (-0.2 to +0.2) */
+    float v_pos;                    /* vertical raster shift (-0.2 to +0.2) */
+    float h_size;                   /* horizontal raster size (0.5 - 1.5) */
+    float v_size;                   /* vertical raster size (0.5 - 1.5) */
+
+    /* Reference §3.6 / §4.8 / §5.6 / §5.9 / §6.1 / §5.1 / §5.3. */
+    float phosphor_gamma_offset_r;
+    float phosphor_gamma_offset_g;
+    float phosphor_gamma_offset_b;
+    float secondary_scatter;       /* cross-phosphor desat (§4.8) */
+    float glass_reflection;        /* local-brightness-dependent black lift (§5.6) */
+    float antiglare_blur;          /* matte screen sub-pixel scatter (§5.6) */
+    float emi_gradient;            /* horizontal deflection brightness (§5.9) */
+    float degauss_tint;            /* residual corner color offset (§6.1) */
+    float phosphor_grain;          /* fixed-pattern high-freq noise (§5.1) */
+    float cathode_center_dim;      /* center dimmer than rim (§5.3) */
+    float cathode_gain_r;          /* per-gun aging (§5.3) */
+    float cathode_gain_g;
+    float cathode_gain_b;
+
+    /* §4.9 APL black lift + slow tracker state (set by gpu_render). */
+    float apl_black_lift;
+    float apl_smoothed;            /* slow-EMA of frame luma */
+    /* §5.2 thermal-mask doming — amplitude + per-channel slow-EMA of
+     * color load (set by gpu_render, consumed in shader). */
+    float thermal_dome_amount;
+    float thermal_r;
+    float thermal_g;
+    float thermal_b;
+    /* §5.4 phosphor chromaticity drive shift. */
+    float chromaticity_drive_shift;
+    /* §6.2 microphonic wobble amplitude + current bass RMS
+     * (per-frame updated from gpu_render). */
+    float microphonic_amount;
+    float audio_bass_rms;
+    float frame_phase;            /* radians, advances by bass freq/60 each frame */
+    /* §6.3 glass-face specular/diffuse glare. */
+    float glass_glare;
+    float glass_glare_light_x;
+    float glass_glare_light_y;
+    float glass_glare_size;
+    float glass_glare_temp_k;
+} GPUDisplayParams;
+
+/* Initialize the display pipeline. Loads SPIR-V shaders from shader_dir.
+ * Returns true on success. */
+bool gpu_display_init(GPUDisplay *d, SDL_GPUDevice *gpu,
+                       SDL_Window *window, const char *shader_dir);
+
+/* Destroy the display pipeline. */
+void gpu_display_destroy(GPUDisplay *d, SDL_GPUDevice *gpu);
+
+/* Resize halation FBOs when window size changes. */
+void gpu_display_resize(GPUDisplay *d, SDL_GPUDevice *gpu, int win_w, int win_h);
+
+/* Render a frame: runs the 3-pass shader chain and presents to swapchain.
+ * composite_tex: the CPU composite output texture (RGBA8, uploaded each frame).
+ * params: CRT display uniforms for the current preset.
+ * swapchain_tex: acquired from SDL_AcquireGPUSwapchainTexture.
+ * cmd: the command buffer to record into.
+ * viewport: if non-NULL, restricts the final CRT pass to this viewport
+ *           (for 4:3 aspect ratio with letterboxing). Pass NULL for fullscreen.
+ *
+ * Caller must acquire the command buffer and swapchain texture before calling.
+ * Caller submits the command buffer after calling. */
+void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
+                         SDL_GPUCommandBuffer *cmd,
+                         SDL_GPUTexture *composite_tex, int comp_w, int comp_h,
+                         SDL_GPUTexture *swapchain_tex, int sw, int sh,
+                         const GPUDisplayParams *params,
+                         const SDL_GPUViewport *viewport);
+
+/* Fill GPUDisplayParams from a VideoChain's TVDisplayParams. */
+void gpu_display_params_from_tv(GPUDisplayParams *out, const TVDisplayParams *tv,
+                                 int comp_w, int comp_h, int win_w, int win_h);
+
+#endif /* GPU_DISPLAY_H */

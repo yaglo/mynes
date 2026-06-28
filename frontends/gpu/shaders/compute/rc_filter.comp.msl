@@ -1,0 +1,54 @@
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct Params
+{
+    float a;
+    float b;
+    uint total_count;
+    uint block_offset;
+    uint samples_per_line;
+    uint num_lines;
+};
+
+struct DataBuf
+{
+    float data[1];
+};
+
+constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
+
+struct CarryBuf
+{
+    float2 carry[1];
+};
+
+kernel void main0(constant Params& _20 [[buffer(0)]], device DataBuf& _63 [[buffer(1)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+{
+    uint line = gl_GlobalInvocationID.x;
+    if (line >= _20.num_lines)
+    {
+        return;
+    }
+    uint start = line * _20.samples_per_line;
+    uint end = start + _20.samples_per_line;
+    if (end > _20.total_count)
+    {
+        end = _20.total_count;
+    }
+    if (start >= _20.total_count)
+    {
+        return;
+    }
+    float y_prev = _63.data[start];
+    for (uint i = start; i < end; i++)
+    {
+        float x = _63.data[i];
+        float y = (_20.a * y_prev) + (_20.b * x);
+        _63.data[i] = y;
+        y_prev = y;
+    }
+}
+

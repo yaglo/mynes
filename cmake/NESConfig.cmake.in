@@ -1,0 +1,17 @@
+@PACKAGE_INIT@
+
+# NES Emulator CMake Package Configuration
+# ========================================
+#
+# This file is used by find_package(NES) to locate and configure the NES emulator library.
+#
+# Usage:
+#   find_package(NES REQUIRED)
+#   target_link_libraries(your_target PRIVATE NES::nes_static)
+#
+# Targets:
+#   NES::nes_static - Static library with full emulator implementation
+
+include("${CMAKE_CURRENT_LIST_DIR}/NESTargets.cmake")
+
+check_required_components(NES)

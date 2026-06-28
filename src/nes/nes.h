@@ -1,0 +1,841 @@
+/*
+ * NES System Integration
+ *
+ * Ties together CPU, PPU, and memory into a complete NES system.
+ * Handles memory mapping, timing, and inter-component communication.
+ */
+
+#ifndef NES_H
+#define NES_H
+
+#include <stdint.h>
+#include <stdbool.h>
+#include <string.h>
+
+/* ============================================================================
+ * Include component headers BEFORE the NES struct so we can embed them.
+ * ============================================================================ */
+
+#include "nes/hooks.h"
+#include "nes/cpu_opnames.h"
+#include "cpu_gen.h"
+#include "ppu/ppu.h"
+#include "nes/apu.h"
+#include "nes/mapper.h"
+
+/* ============================================================================
+ * NES System State
+ * ============================================================================ */
+
+typedef struct NES NES;
+
+struct NES {
+    /* Components — embedded by value */
+    CPU cpu;
+    PPU ppu;
+    APU apu;
+    Mapper mapper;
+    bool mapper_loaded;  /* replaces NULL checks on old mapper pointer */
+
+    /* System RAM (2KB, mirrored 4x to fill $0000-$1FFF) */
+    uint8_t ram[0x800];
+
+    /* Legacy cartridge fields - kept for compatibility, mapper now handles these */
+    uint8_t *prg_rom;       /* Program ROM (CPU $8000-$FFFF) */
+    uint32_t prg_rom_size;
+    uint8_t *chr_rom;       /* Character ROM (PPU $0000-$1FFF) */
+    uint32_t chr_rom_size;
+    uint8_t prg_ram[0x2000]; /* Cartridge RAM ($6000-$7FFF) */
+
+    /* Controller state */
+    uint8_t controller[2];      /* Current button state */
+    uint8_t controller_shift[2]; /* Shift register for serial read */
+    uint8_t controller_strobe;  /* Strobe state (bit 0) */
+    bool controller_strobed;    /* Latched once per APU put cycle while strobe is high */
+
+    /* OAM DMA pending start delay. Real hardware: after a $4014 write, the
+     * OAM DMA can't start until a "get" cycle, which means the CPU's current
+     * instruction has to finish. This matters for INC $4014 where the RMW
+     * instruction does TWO writes — without this delay, our model would
+     * start the DMA between the two writes and use the wrong page. */
+    uint8_t oam_dma_start_delay;
+
+    /* DMA Controller State */
+    struct {
+        /* OAM DMA */
+        bool oam_pending;        /* OAM DMA requested */
+        uint8_t oam_page;        /* Source page for OAM DMA */
+        uint8_t oam_start_addr;  /* OAMADDR at DMA start (writes to this + i) */
+        bool oam_active;         /* OAM DMA in progress */
+        uint16_t oam_cycle;      /* Current cycle within OAM DMA (0-513) */
+        bool oam_read_cycle;     /* Saved odd/even start for alignment */
+
+        /* DMC DMA */
+        bool dmc_pending;        /* DMC DMA requested */
+        uint8_t dmc_cycle;       /* Current cycle within DMC DMA (0-3) */
+        bool dmc_active;         /* DMC DMA in progress */
+
+        /* RDY line - when low, CPU is halted */
+        bool cpu_halted;         /* CPU cannot execute (DMA owns bus) */
+    } dma;
+
+    /* Legacy DMA fields for compatibility */
+    bool oam_dma_pending;
+    uint8_t oam_dma_page;
+
+    /* Open bus - last value on data bus */
+    uint8_t open_bus;
+
+    /* Master Clock Scheduler.
+     *
+     * The NES has a single master clock at 21.477272 MHz (NTSC).
+     * Component dividers:
+     *   - CPU: master / 12 → 1.789 MHz (1 CPU cycle = 12 master ticks)
+     *   - PPU: master / 4  → 5.369 MHz (1 PPU dot = 4 master ticks, 3 dots/CPU cycle)
+     *   - APU: same divider as CPU; runs in lockstep
+     *
+     * The master_tick counter is the canonical NES time. Within a single
+     * CPU cycle (12 master ticks), components fire at specific tick offsets:
+     *   - PPU dot work: ticks 0, 4, 8 (modulo ppu_phase_offset)
+     *   - CPU bus access: tick cpu_phase_offset (default 4 → "align=1" semantics)
+     *   - APU: same as CPU
+     *
+     * cpu_phase_offset values 0..11 select sub-cycle CPU bus position:
+     *   0      : CPU runs at the very start of a CPU cycle (before any PPU dot)
+     *   1..3   : CPU runs in the first slot (between dot 0 and dot 1)
+     *   4..7   : CPU runs in the second slot (between dot 1 and dot 2)
+     *   8..11  : CPU runs in the third slot (between dot 2 and end of cycle)
+     *
+     * Default cpu_phase_offset = 4 reproduces the legacy "align=1" interleave
+     * (PPU dot 0, CPU, PPU dot 1, PPU dot 2). cpu_align is kept as a coarse
+     * alias (0/1/2) and is mapped to cpu_phase_offset 0/4/8 at config time. */
+    uint64_t master_tick;        /* Total master clock ticks elapsed */
+    uint64_t master_clock;       /* Legacy alias - kept for HOOK_FRAME compatibility */
+    uint8_t cpu_divider;         /* Counts 0-2, CPU ticks when wraps */
+
+    /* CPU/PPU clock alignment (0, 1, or 2): coarse alias kept for backward
+     * compatibility with the older API and existing tests. Real master-tick
+     * granularity is expressed via cpu_phase_offset.
+     *   0: CPU step happens BEFORE the 3 PPU steps
+     *   1: CPU step happens AFTER 1 PPU step (legacy default)
+     *   2: CPU step happens AFTER 2 PPU steps */
+    uint8_t cpu_align;
+    uint8_t cpu_phase_offset;   /* Master tick offset within CPU cycle (0..11) */
+
+    /* Mirroring mode (0=horizontal, 1=vertical) */
+    uint8_t mirroring;
+
+    /* NMI edge detection */
+    bool prev_nmi;
+    bool nmi_edge_detected;
+
+    /* IRQ inhibit — after CLI/PLP clears I flag, IRQ is delayed 1 instruction */
+    uint8_t irq_inhibit_cycles;
+
+    /* Mapper scanline tracking (for MMC3 IRQ) */
+    uint16_t mapper_last_scanline;
+
+    /* Instruction trace: PC at the start of the current instruction */
+    uint16_t last_instr_pc;
+};
+
+/* ============================================================================
+ * Memory Map Constants
+ * ============================================================================ */
+
+/* CPU Memory Map:
+ * $0000-$07FF  2KB internal RAM
+ * $0800-$1FFF  Mirrors of $0000-$07FF
+ * $2000-$2007  PPU registers
+ * $2008-$3FFF  Mirrors of $2000-$2007
+ * $4000-$4017  APU and I/O registers
+ * $4018-$401F  APU and I/O (normally disabled)
+ * $4020-$5FFF  Cartridge expansion
+ * $6000-$7FFF  Cartridge RAM
+ * $8000-$FFFF  Cartridge PRG ROM
+ */
+
+/* ============================================================================
+ * Memory Access Functions
+ * ============================================================================ */
+
+static inline uint8_t nes_cpu_read(CPU *cpu, uint16_t addr) {
+    NES *nes = (NES *)cpu->user_data;
+    uint8_t val;
+
+    if (addr < 0x2000) {
+        val = nes->ram[addr & 0x07FF];
+        nes->open_bus = val;
+    }
+    else if (addr < 0x4000) {
+        val = ppu_reg_read(&nes->ppu, addr);
+        nes->open_bus = val;
+    }
+    else if (addr < 0x4018) {
+        /* APU/I/O reads: open bus is NOT updated (bits mix in from existing bus) */
+        if (addr == 0x4016) {
+            if (nes->controller_strobe) {
+                val = nes->controller[0] & 0x01;
+            } else {
+                val = nes->controller_shift[0] & 0x01;
+                nes->controller_shift[0] >>= 1;
+                nes->controller_shift[0] |= 0x80;
+            }
+            val = (val & 0x1F) | (nes->open_bus & 0xE0);
+        }
+        else if (addr == 0x4017) {
+            if (nes->controller_strobe) {
+                val = nes->controller[1] & 0x01;
+            } else {
+                val = nes->controller_shift[1] & 0x01;
+                nes->controller_shift[1] >>= 1;
+                nes->controller_shift[1] |= 0x80;
+            }
+            val = (val & 0x1F) | (nes->open_bus & 0xE0);
+        }
+        else if (addr == 0x4015) {
+            val = apu_read_status(&nes->apu);
+            val = (val & 0xDF) | (nes->open_bus & 0x20);
+        }
+        else {
+            val = nes->open_bus;
+        }
+    }
+    else if (addr < 0x5000) {
+        val = nes->open_bus;
+    }
+    else {
+        if (nes->mapper_loaded) {
+            val = mapper_cpu_read(&nes->mapper, addr);
+        } else if (addr < 0x8000) {
+            val = nes->prg_ram[addr & 0x1FFF];
+        } else if (nes->prg_rom) {
+            val = nes->prg_rom[(addr - 0x8000) % nes->prg_rom_size];
+        } else {
+            val = nes->open_bus;
+        }
+        nes->open_bus = val;
+    }
+
+    HOOK_MEM_ACCESS(addr, val, false);
+    return val;
+}
+
+static inline void nes_cpu_write(CPU *cpu, uint16_t addr, uint8_t val) {
+    NES *nes = (NES *)cpu->user_data;
+
+    /* All writes update the data bus */
+    nes->open_bus = val;
+    HOOK_MEM_ACCESS(addr, val, true);
+
+    if (addr < 0x2000) {
+        /* Internal RAM (mirrored) */
+        nes->ram[addr & 0x07FF] = val;
+    }
+    else if (addr < 0x4000) {
+        /* PPU registers (mirrored every 8 bytes) */
+        ppu_reg_write(&nes->ppu, addr, val);
+    }
+    else if (addr < 0x4018) {
+        /* APU and I/O */
+        if (addr == 0x4014) {
+            /* OAM DMA. Delay start by 2 CPU cycles so RMW instructions
+             * (e.g. INC $4014) get to do BOTH writes before the DMA starts.
+             * Real hardware: DMA only starts on a "get" cycle (read), so
+             * during a write-cycle sequence the DMA waits. AccuracyCoin
+             * INC $4014 test 3 depends on this. */
+            nes->oam_dma_pending = true;
+            nes->oam_dma_page = val;
+            nes->oam_dma_start_delay = 2;
+        }
+        else if (addr == 0x4016) {
+            /* Controller strobe. The actual latching of the button state
+             * into the shift register happens on APU "put" cycles while
+             * strobe is high (see nes_step's per-cycle strobe handler).
+             * This matches real hardware: a 1-cycle strobe pulse that
+             * happens to fall between two put cycles never strobes at
+             * all (AccuracyCoin Controller Strobing test 4). */
+            nes->controller_strobe = val & 1;
+            if (!(val & 1)) {
+                nes->controller_strobed = false;
+            }
+        }
+        else {
+            /* APU registers ($4000-$4013, $4015, $4017) */
+            apu_write(&nes->apu, addr, val);
+        }
+    }
+    else if (addr >= 0x5000) {
+        /* Cartridge space ($5000-$FFFF) - handled by mapper */
+        if (nes->mapper_loaded) {
+            mapper_cpu_write(&nes->mapper, addr, val);
+            /* Propagate any mapper-controlled mirroring changes */
+            nes->ppu.mirroring = mapper_get_mirroring(&nes->mapper);
+            nes->mirroring = nes->ppu.mirroring;
+        } else if (addr < 0x8000) {
+            /* Legacy fallback for PRG RAM */
+            nes->prg_ram[addr & 0x1FFF] = val;
+        }
+        /* ROM writes without mapper are ignored */
+    }
+}
+
+/* ============================================================================
+ * PPU Memory Access (for CHR ROM/RAM)
+ * ============================================================================ */
+
+static inline uint8_t nes_ppu_read(PPU *ppu, uint16_t addr) {
+    NES *nes = (NES *)ppu->user_data;
+
+    if (addr < 0x2000) {
+        /* Pattern tables - handled by mapper */
+        if (nes->mapper_loaded) {
+            nes->mapper.ppu_dot = ppu->dot;
+            return mapper_ppu_read(&nes->mapper, addr);
+        }
+        /* Legacy fallback */
+        if (nes->chr_rom && nes->chr_rom_size > 0) {
+            return nes->chr_rom[addr % nes->chr_rom_size];
+        }
+        /* CHR RAM fallback */
+        return ppu->vram[addr];
+    }
+    return 0;
+}
+
+static inline void nes_ppu_write(PPU *ppu, uint16_t addr, uint8_t val) {
+    NES *nes = (NES *)ppu->user_data;
+
+    if (addr < 0x2000) {
+        /* Pattern tables - handled by mapper */
+        if (nes->mapper_loaded) {
+            mapper_ppu_write(&nes->mapper, addr, val);
+        } else if (!nes->chr_rom || nes->chr_rom_size == 0) {
+            /* Legacy CHR RAM fallback */
+            ppu->vram[addr] = val;
+        }
+    }
+}
+
+/* ============================================================================
+ * OAM DMA - Cycle-Stealing Implementation
+ * ============================================================================ */
+
+/* OAM DMA State Machine:
+ * - Triggered by write to $4014
+ * - Waits for CPU to finish current cycle (alignment)
+ * - Halts CPU via RDY line
+ * - Takes 513 cycles (or 514 if starting on odd cycle):
+ *   - 1 (or 2) alignment cycles
+ *   - 256 read cycles + 256 write cycles interleaved
+ * - PPU and APU continue running during DMA
+ */
+
+/* Process one DMA cycle, returns true if DMA is still active */
+static inline bool nes_dma_step(NES *nes) {
+    /* Check if OAM DMA should start */
+    if (nes->dma.oam_pending && !nes->dma.oam_active) {
+        /* Start DMA - halt CPU */
+        nes->dma.oam_active = true;
+        nes->dma.oam_pending = false;
+        nes->dma.oam_page = nes->oam_dma_page;
+        nes->dma.oam_start_addr = nes->ppu.oam_addr;  /* Save OAMADDR at start */
+        nes->dma.oam_cycle = 0;
+        nes->cpu.rdy = false;  /* Halt CPU */
+
+        /* DMA alignment: if starting on odd CPU cycle, add extra dummy cycle */
+        /* On real hardware, DMA waits for a "get" cycle before starting */
+        /* Total cycles: 1 alignment (+ 1 if odd) + 256*2 transfer = 513 or 514 */
+        nes->dma.oam_read_cycle = (nes->cpu.cycles & 1) != 0;  /* Save odd/even start */
+    }
+
+    if (!nes->dma.oam_active) {
+        return false;  /* No DMA active */
+    }
+
+    /* OAM DMA cycle processing */
+    uint16_t cycle = nes->dma.oam_cycle;
+    bool started_odd = nes->dma.oam_read_cycle;  /* Saved from DMA start */
+    uint16_t alignment_cycles = started_odd ? 2 : 1;  /* Extra cycle if started odd */
+
+    if (cycle < alignment_cycles) {
+        /* Alignment cycle(s) - CPU repeats the read cycle it was halted on.
+         * This is important for side-effect registers like $4016, $4015, $2007 */
+        (void)nes_cpu_read(&nes->cpu, nes->cpu.last_read_addr);
+    } else {
+        /* Transfer cycles: 256 reads + 256 writes = 512 cycles */
+        uint16_t transfer_cycle = cycle - alignment_cycles;  /* 0-511 */
+        uint8_t byte_idx = transfer_cycle >> 1;  /* 0-255 */
+        bool is_read = (transfer_cycle & 1) == 0;
+
+        if (is_read) {
+            /* Read from source address - store in DL for write cycle.
+             *
+             * APU register chip-select quirk (AccuracyCoin APU REGISTER
+             * ACTIVATION test 4): the APU registers ($4000-$401F) only
+             * respond when the 6502's *own* address bus is in that range.
+             * If the OAM DMA reads from page $40 while the CPU's halted
+             * address is somewhere else, the APU registers are inactive
+             * and the read returns open bus rather than reading $4015 etc.
+             * (mirrors C# Emulator.cs Fetch APU range check on addressBus
+             * vs Address). */
+            uint16_t src_addr = ((uint16_t)nes->dma.oam_page << 8) | byte_idx;
+            if (src_addr >= 0x4000 && src_addr < 0x4020) {
+                uint16_t cpu_addr = cpu_get_next_read_addr(&nes->cpu);
+                bool apu_active = (cpu_addr >= 0x4000 && cpu_addr < 0x4020);
+                if (!apu_active) {
+                    /* APU not selected — open bus stays whatever it was. */
+                    /* (no nes_cpu_read call → no $4015 clear, etc.) */
+                } else {
+                    nes->open_bus = nes_cpu_read(&nes->cpu, src_addr);
+                }
+            } else {
+                nes->open_bus = nes_cpu_read(&nes->cpu, src_addr);
+            }
+        } else {
+            /* Write to OAM - DMA writes to (OAMADDR + byte_idx) & 0xFF
+             * without modifying OAMADDR itself. Use OAMDATA write path */
+            uint8_t oam_offset = (nes->dma.oam_start_addr + byte_idx) & 0xFF;
+            /* Save current oam_addr, write to OAM, then restore */
+            uint8_t saved_oam_addr = nes->ppu.oam_addr;
+            nes->ppu.oam_addr = oam_offset;
+            ppu_reg_write(&nes->ppu, 0x2004, nes->open_bus);
+            nes->ppu.oam_addr = saved_oam_addr;
+        }
+    }
+
+    nes->dma.oam_cycle++;
+
+    /* Check if DMA is complete */
+    uint16_t total_cycles = alignment_cycles + 512;  /* 513 or 514 */
+    if (nes->dma.oam_cycle >= total_cycles) {
+        /* DMA complete - release CPU */
+        nes->dma.oam_active = false;
+        nes->cpu.rdy = true;  /* Resume CPU */
+        return false;
+    }
+
+    return true;  /* DMA still active */
+}
+
+/* ============================================================================
+ * System Step - Run one CPU cycle (3 PPU cycles)
+ * ============================================================================ */
+
+/* Helper: trace bookkeeping wrapper around cpu_step. Captures the
+ * instruction-boundary PC for trace hooks and tracks NMI/IRQ consumption.
+ * Inlined into nes_step at the cpu_phase_offset master tick. */
+static inline void nes_cpu_step_traced(NES *nes) {
+    uint16_t prev_upc = nes->cpu.uPC;
+    bool prev_nmi_pending = nes->cpu.nmi_pending;
+    bool prev_irq_pending = nes->cpu.irq_pending;
+
+    cpu_step(&nes->cpu);
+
+    /* CPU instruction completed (uPC returned to 0). */
+    if (prev_upc != 0 && nes->cpu.uPC == 0) {
+        uint16_t tpc = nes->last_instr_pc;
+        uint8_t actual_op;
+        if (tpc < 0x2000)
+            actual_op = nes->ram[tpc & 0x7FF];
+        else if (tpc >= 0x8000 && nes->mapper_loaded)
+            actual_op = mapper_cpu_read(&nes->mapper, tpc);
+        else if (tpc >= 0x8000 && nes->prg_rom)
+            actual_op = nes->prg_rom[(tpc - 0x8000) % nes->prg_rom_size];
+        else
+            actual_op = nes->cpu.IR;
+        HOOK_CPU_STEP(nes->last_instr_pc, actual_op, nes->cpu.cycles);
+    }
+    if (nes->cpu.uPC == 0) {
+        nes->last_instr_pc = nes->cpu.PC;
+    }
+    if (prev_nmi_pending && !nes->cpu.nmi_pending) {
+        HOOK_CPU_IRQ(true, 0xFFFA, nes->cpu.PC);
+    }
+    if (prev_irq_pending && !nes->cpu.irq_pending) {
+        HOOK_CPU_IRQ(false, 0xFFFE, nes->cpu.PC);
+    }
+}
+
+static inline void nes_step(NES *nes) {
+    /* Check for new OAM DMA request (from $4014 write).
+     * The 2-cycle start delay (set by $4014 write) gives RMW instructions
+     * like INC $4014 time to do BOTH writes before the DMA starts. */
+    if (nes->oam_dma_start_delay > 0) {
+        nes->oam_dma_start_delay--;
+    }
+    if (nes->oam_dma_pending && nes->oam_dma_start_delay == 0
+        && !nes->dma.oam_active) {
+        nes->dma.oam_pending = true;
+        nes->oam_dma_pending = false;
+    }
+
+    /* Step APU FIRST so IRQ is set before CPU checks for interrupts */
+    apu_step(&nes->apu);
+
+    /* Controller strobe handling. Real hardware: while $4016 bit 0 is high,
+     * the shift registers are reloaded from the controller buttons on every
+     * APU "put" cycle. A 1-cycle strobe pulse that falls between two put
+     * cycles never strobes at all — AccuracyCoin Controller Strobing test 4
+     * relies on this. */
+    if (nes->apu.put_cycle) {
+        if (nes->controller_strobe) {
+            if (!nes->controller_strobed) {
+                nes->controller_strobed = true;
+                nes->controller_shift[0] = nes->controller[0];
+                nes->controller_shift[1] = nes->controller[1];
+            }
+        } else {
+            nes->controller_strobed = false;
+        }
+    }
+
+    /* DMC DMA cycle stealing.
+     *
+     * Real hardware: when the DMC needs a sample, the CPU is halted on its
+     * next read cycle and the bus is held at the address the CPU was about
+     * to drive. DMA cannot halt on write cycles — it waits.
+     *
+     * We replicate this by:
+     *   1. Checking cpu_next_is_write() — if the next cycle is a write,
+     *      defer the DMA (the test ROM verifies this for STA $2007).
+     *   2. Calling cpu_get_next_read_addr() — a side-effect-free generated
+     *      function that inspects the current uPC and returns the address
+     *      the next cpu_step would drive on its bus.
+     *   3. Doing 2-3 dummy reads of that address (each with full side
+     *      effects: clears VBL on $2002, increments v on $2007, clears
+     *      frame IRQ on $4015, etc.).
+     *   4. Doing the actual sample read from the DMC current address.
+     *
+     * This must run BEFORE cpu_step (legacy timing — INSTRUCTION TIMING and
+     * other tests depend on cpu->cycles being one BEHIND the current cycle
+     * when the DMA halt parity is computed). */
+    if (apu_dmc_needs_sample(&nes->apu) && nes->cpu.rdy
+        && !cpu_next_is_write(&nes->cpu)) {
+        nes->cpu.rdy = false;
+
+        bool need_alignment = (nes->cpu.cycles & 1) != 0;
+        int total_dmc_cycles = need_alignment ? 4 : 3;
+        uint16_t halt_addr = cpu_get_next_read_addr(&nes->cpu);
+
+        /* SHA/SHX/SHY/TAS quirk: when DMC DMA halts on the dummy-read
+         * cycle (the cycle right before the actual write), the upcoming
+         * SHA-family store ignores the H register entirely — the value
+         * stored is just A & X (or X, or Y) without the AND with the
+         * high byte of the target address. AccuracyCoin SHA test sub-test
+         * 7+, mirrors C# Emulator.cs IgnoreH. */
+        if (cpu_next_is_sha_dummy_read(&nes->cpu)) {
+            nes->cpu.ignore_h = 1;
+        }
+
+        for (int dmc_cycle = 0; dmc_cycle < total_dmc_cycles; dmc_cycle++) {
+            if (dmc_cycle == total_dmc_cycles - 1) {
+                /* Last cycle: actual sample read */
+                uint8_t sample = nes_cpu_read(&nes->cpu, nes->apu.dmc_current_addr);
+                apu_dmc_load_sample(&nes->apu, sample);
+            } else {
+                /* Halt/dummy/alignment cycles: re-read the upcoming bus addr */
+                (void)nes_cpu_read(&nes->cpu, halt_addr);
+            }
+            ppu_step(&nes->ppu);
+            ppu_step(&nes->ppu);
+            ppu_step(&nes->ppu);
+            apu_step(&nes->apu);
+            nes->master_tick += 12;
+        }
+
+        if (!nes->dma.oam_active) {
+            nes->cpu.rdy = true;
+        }
+    }
+
+    /* Process OAM DMA (cycle-stealing) */
+    nes_dma_step(nes);
+
+    /* IRQ line — level-sensitive, reflects current state of all sources.
+     * On real hardware, the CPU /IRQ pin is active-low and directly driven
+     * by all IRQ sources ORed together. The CPU samples this at each
+     * instruction boundary. */
+    nes->cpu.irq_pending = nes->apu.frame_irq_pending ||
+                            nes->apu.dmc_irq_pending ||
+                            (nes->mapper_loaded && nes->mapper.irq_pending);
+
+    /* ============================================================
+     * Master-clock-driven CPU/PPU interleave
+     * ============================================================
+     *
+     * Each nes_step advances by 12 master ticks = 1 CPU cycle.
+     * Within these 12 ticks, components run at well-defined offsets:
+     *   - PPU dot work at master tick offset 0, 4, 8 (3 dots per cycle)
+     *   - CPU bus access at master tick offset cpu_phase_offset (0..11)
+     *
+     * The legacy cpu_align (0/1/2) maps to cpu_phase_offset (0/4/8)
+     * and reproduces the original interleave exactly:
+     *   align=0 → offset 0:  cpu, ppu(0), ppu(4), ppu(8)
+     *   align=1 → offset 4:  ppu(0), cpu, ppu(4), ppu(8)
+     *   align=2 → offset 8:  ppu(0), ppu(4), cpu, ppu(8)
+     *
+     * Finer offsets in 1..3, 5..7, 9..11 are accepted but currently
+     * behave the same as the slot they fall in (PPU work is atomic
+     * per dot in our model). They reserve sub-dot resolution for
+     * future master-clock-aware PPU events.
+     *
+     * For now we just unroll the schedule. The cpu_phase_offset is
+     * recomputed from cpu_align at config time so callers using the
+     * legacy API see no behavior change. */
+    {
+        uint64_t cpu_cycle_start = nes->master_tick;
+        uint64_t cpu_bus_tick = cpu_cycle_start + nes->cpu_phase_offset;
+
+        /* Advance PPU forward to (but not past) cpu_bus_tick.
+         * After this, the PPU's state reflects all dots whose start tick
+         * is < cpu_bus_tick — the state the cpu sees at bus access. */
+        ppu_advance_to_master_tick(&nes->ppu, cpu_bus_tick);
+
+        nes_cpu_step_traced(nes);
+
+        /* Advance master tick to end of CPU cycle. DMC DMA (above) has
+         * already advanced master_tick if it fired, but cpu_cycle_start
+         * was captured AFTER that, so this is consistent. */
+        nes->master_tick = cpu_cycle_start + 12;
+        ppu_advance_to_master_tick(&nes->ppu, nes->master_tick);
+    }
+
+    /* Mapper scanline notification (for MMC3 IRQ counter).
+     * Real MMC3 clocks on PPU A12 rising edge at dot 260 during sprite
+     * tile fetch. Fire once per scanline when dot crosses 260. */
+    if (nes->mapper_loaded &&
+        nes->ppu.scanline < 240 &&
+        nes->ppu.dot >= 260 &&
+        nes->ppu.scanline != nes->mapper_last_scanline &&
+        (nes->ppu.mask & (MASK_BG_ENABLE | MASK_SPRITE_ENABLE))) {
+        nes->mapper_last_scanline = nes->ppu.scanline;
+        mapper_notify_scanline(&nes->mapper);
+        /* IRQ propagation happens via the level-sensitive check above
+         * on the next nes_step cycle. No need for immediate propagation. */
+    }
+    /* Reset tracker at start of new frame (pre-render scanline) */
+    if (nes->ppu.scanline >= 241) {
+        nes->mapper_last_scanline = 0xFFFF;
+    }
+
+    /* Sync PPU mirroring from mapper (mappers like 1, 4, 7 can change it dynamically) */
+    if (nes->mapper_loaded) {
+        nes->ppu.mirroring = mapper_get_mirroring(&nes->mapper);
+    }
+
+    /* Check for NMI suppression from $2002 read at VBL-set cycle.
+     * When $2002 is read in the suppression window, we must:
+     * 1. Clear any pending edge detection
+     * 2. Clear any pending NMI on the CPU (not yet executed)
+     * 3. Skip edge detection this cycle (even if nmi_output is high)
+     * 4. Update prev_nmi to prevent false edge on next cycle
+     */
+    if (nes->ppu.suppress_nmi_edge) {
+        nes->nmi_edge_detected = false;
+        nes->cpu.nmi_pending = false;  /* Cancel pending NMI */
+        nes->prev_nmi = nes->ppu.nmi_output;  /* Prevent edge detection */
+        nes->ppu.suppress_nmi_edge = false;
+        nes->ppu.nmi_edge_pending = false;  /* Suppression beats sticky edge */
+    } else {
+        /* Sticky rising-edge latch from PPU. The PPU sets this when its
+         * internal nmi_output transitions low→high — either inside ppu_step
+         * (e.g., dot 1 of sl 241 sets VBL when NMI is already enabled) or
+         * inside ppu_reg_write to PPUCTRL (STA $2000 sets NMI enable while
+         * VBL is still pending). Captures brief edges that may be cleared
+         * again by a later ppu_step in the same nes_step iteration. */
+        if (nes->ppu.nmi_edge_pending) {
+            nes->nmi_edge_detected = true;
+            nes->ppu.nmi_edge_pending = false;
+        }
+
+        /* Check for NMI from PPU - edge triggered (low-to-high transition)
+         * When NMI edge is detected, we delay setting nmi_pending until the CPU
+         * is in the MIDDLE of an instruction (uPC != 0). This way:
+         * 1. Edge detected at end of instruction N (e.g., STA $2000)
+         * 2. Instruction N+1 starts (uPC goes from 0 to non-zero)
+         * 3. We set nmi_pending during instruction N+1
+         * 4. CPU finishes N+1, sees nmi_pending at case 0, fires NMI
+         *
+         * If nmi_output goes LOW before we transfer to nmi_pending, cancel the
+         * pending edge. This handles the case where NMI is disabled right after
+         * VBL is set but before NMI actually fires.
+         */
+        if (nes->ppu.nmi_output && !nes->prev_nmi) {
+            nes->nmi_edge_detected = true;
+        } else if (!nes->ppu.nmi_output && nes->nmi_edge_detected) {
+            /* NMI output went low - cancel pending edge */
+            nes->nmi_edge_detected = false;
+        }
+        nes->prev_nmi = nes->ppu.nmi_output;
+    }
+
+    /* Transfer NMI to CPU during instruction execution.
+     * NMI is edge-triggered: fires once per low→high transition of nmi_output.
+     * Set nmi_pending when uPC != 0 (mid-instruction); the CPU's dispatch
+     * loop picks it up at the next uPC == 0 boundary. */
+    if (nes->nmi_edge_detected && nes->cpu.uPC != 0) {
+        nes->cpu.nmi_pending = true;
+        nes->nmi_edge_detected = false;
+    }
+
+    nes->master_clock++;
+
+    /* Frame completion hook */
+    if (nes->ppu.frame_complete) {
+        HOOK_FRAME(nes->ppu.frame, nes->master_clock);
+    }
+}
+
+/* Run until frame is complete */
+static inline void nes_run_frame(NES *nes) {
+    nes->ppu.frame_complete = false;
+
+    while (!nes->ppu.frame_complete) {
+        nes_step(nes);
+    }
+}
+
+/* ============================================================================
+ * Initialization
+ * ============================================================================ */
+
+static inline void nes_init(NES *nes) {
+    memset(nes, 0, sizeof(NES));
+
+    nes->mapper_loaded = false;  /* No mapper loaded yet */
+
+    /* Default CPU/PPU alignment. cpu_phase_offset = 5 in the master-tick
+     * driven model means the CPU bus access master tick is 5, after PPU
+     * dots at master ticks 0 and 4 have been processed, before dot at
+     * tick 8. This is "PPU PPU CPU PPU" — maximum AccuracyCoin pass rate.
+     * Override via nes_set_cpu_align() or nes_set_cpu_phase_offset(). */
+    nes->cpu_align = 2;
+    nes->cpu_phase_offset = 5;
+
+    /* Initialize CPU */
+    cpu_init(&nes->cpu);
+    nes->cpu.mem_read = nes_cpu_read;
+    nes->cpu.mem_write = nes_cpu_write;
+    nes->cpu.user_data = nes;
+
+    /* Trigger reset to load reset vector */
+    nes->cpu.reset_pending = true;
+
+    /* Initialize PPU */
+    ppu_init(&nes->ppu);
+    nes->ppu.cart_read = nes_ppu_read;
+    nes->ppu.cart_write = nes_ppu_write;
+    nes->ppu.user_data = nes;
+
+    /* Initialize APU */
+    apu_init(&nes->apu);
+}
+
+static inline void nes_reset(NES *nes) {
+    /* Reset CPU - trigger reset sequence in microcode */
+    nes->cpu.reset_pending = true;
+
+    /* Reset PPU */
+    ppu_reset(&nes->ppu);
+
+    /* Reset APU */
+    apu_reset(&nes->apu);
+
+    /* Clear RAM (optional, real NES has random values) */
+    memset(nes->ram, 0, sizeof(nes->ram));
+}
+
+/* Set CPU/PPU clock alignment (0, 1, or 2). Real hardware has a fixed but
+ * power-on-random alignment. Maps to cpu_phase_offset values that, in the
+ * master-tick driven scheduler, produce N PPU dots done before the CPU
+ * bus access:
+ *   align=0 → offset 0   (0 dots done — CPU before any PPU dot)
+ *   align=1 → offset 1   (1 dot done — CPU after dot 0)
+ *   align=2 → offset 5   (2 dots done — CPU after dots 0 and 1)
+ * The master-tick interpretation is: dot D's start tick = D*4. CPU at
+ * master tick T sees state with all dots having start_tick < T processed.
+ * align=2 maps to offset 5..8 (any value in the slot); we pick 5 as the
+ * canonical representative. */
+static inline void nes_set_cpu_align(NES *nes, uint8_t align) {
+    if (align > 2) align = 2;
+    nes->cpu_align = align;
+    static const uint8_t align_to_offset[3] = { 0, 1, 5 };
+    nes->cpu_phase_offset = align_to_offset[align];
+}
+
+/* Set CPU phase offset directly with master-tick resolution (0..11).
+ * Allows finer alignment than the legacy 0/1/2 align values. */
+static inline void nes_set_cpu_phase_offset(NES *nes, uint8_t offset) {
+    if (offset > 11) offset = 11;
+    nes->cpu_phase_offset = offset;
+    /* Map back to coarse cpu_align for backward compatibility. */
+    if (offset == 0)       nes->cpu_align = 0;
+    else if (offset <= 4)  nes->cpu_align = 1;
+    else                   nes->cpu_align = 2;
+}
+
+/* Load PRG ROM */
+static inline void nes_load_prg(NES *nes, uint8_t *data, uint32_t size) {
+    nes->prg_rom = data;
+    nes->prg_rom_size = size;
+}
+
+/* Load CHR ROM */
+static inline void nes_load_chr(NES *nes, uint8_t *data, uint32_t size) {
+    nes->chr_rom = data;
+    nes->chr_rom_size = size;
+}
+
+/* Load mapper - initializes the embedded Mapper and marks it loaded */
+static inline void nes_load_mapper(NES *nes, uint8_t number,
+                                    uint8_t *prg_rom, uint32_t prg_size,
+                                    uint8_t *chr_rom, uint32_t chr_size,
+                                    uint8_t mirroring) {
+    mapper_init(&nes->mapper, number, prg_rom, prg_size, chr_rom, chr_size, mirroring);
+    nes->mapper.nes = nes;
+    nes->mapper_loaded = true;
+
+    /* Also set legacy fields for compatibility */
+    nes->prg_rom = prg_rom;
+    nes->prg_rom_size = prg_size;
+    nes->chr_rom = chr_rom;
+    nes->chr_rom_size = chr_size;
+    nes->mirroring = mirroring;
+
+    /* Set initial PPU mirroring */
+    nes->ppu.mirroring = mapper_get_mirroring(&nes->mapper);
+
+}
+
+/* ============================================================================
+ * Controller Input
+ * ============================================================================ */
+
+/* Controller button bits (active high, bit 7 read first) */
+#define BTN_A      0x01
+#define BTN_B      0x02
+#define BTN_SELECT 0x04
+#define BTN_START  0x08
+#define BTN_UP     0x10
+#define BTN_DOWN   0x20
+#define BTN_LEFT   0x40
+#define BTN_RIGHT  0x80
+
+static inline void nes_set_controller(NES *nes, int player, uint8_t buttons) {
+    if (player >= 0 && player < 2) {
+        nes->controller[player] = buttons;
+    }
+}
+
+/* Set region (NTSC or PAL) — affects PPU scanline count and APU clock rate.
+ * Must be called before nes_reset(). */
+#define NES_REGION_NTSC 0
+#define NES_REGION_PAL  1
+
+static inline void nes_set_region(NES *nes, int region) {
+    ppu_set_region(&nes->ppu, region);
+    apu_set_region(&nes->apu, region);
+}
+
+#endif /* NES_H */

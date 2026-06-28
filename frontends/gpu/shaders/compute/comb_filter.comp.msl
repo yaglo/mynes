@@ -1,0 +1,150 @@
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct Params
+{
+    uint count;
+    uint samples_per_line;
+    uint mode;
+    float blend;
+};
+
+struct SignalBuf
+{
+    float signal_in[1];
+};
+
+struct YBuf
+{
+    float y_out[1];
+};
+
+struct CBuf
+{
+    float c_out[1];
+};
+
+constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
+
+kernel void main0(constant Params& _20 [[buffer(0)]], device SignalBuf& _36 [[buffer(1)]], device YBuf& _257 [[buffer(2)]], device CBuf& _264 [[buffer(3)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+{
+    uint tid = gl_GlobalInvocationID.x;
+    if (tid >= _20.count)
+    {
+        return;
+    }
+    float signal = _36.signal_in[tid];
+    float y;
+    float c;
+    switch (_20.mode)
+    {
+        case 0u:
+        {
+            y = signal;
+            c = 0.0;
+            break;
+        }
+        case 1u:
+        {
+            int prev_idx = int(tid) - int(_20.samples_per_line);
+            float _67;
+            if (prev_idx >= 0)
+            {
+                _67 = _36.signal_in[prev_idx];
+            }
+            else
+            {
+                _67 = signal;
+            }
+            float prev_signal = _67;
+            float avg = (signal + prev_signal) * 0.5;
+            float diff = (signal - prev_signal) * 0.5;
+            y = mix(signal, avg, _20.blend);
+            c = _20.blend * diff;
+            break;
+        }
+        case 2u:
+        {
+            int prev1_idx = int(tid) - int(_20.samples_per_line);
+            int prev2_idx = int(tid) - (2 * int(_20.samples_per_line));
+            float _116;
+            if (prev1_idx >= 0)
+            {
+                _116 = _36.signal_in[prev1_idx];
+            }
+            else
+            {
+                _116 = signal;
+            }
+            float prev1 = _116;
+            float _128;
+            if (prev2_idx >= 0)
+            {
+                _128 = _36.signal_in[prev2_idx];
+            }
+            else
+            {
+                _128 = signal;
+            }
+            float prev2 = _128;
+            float avg1 = (signal + prev1) * 0.5;
+            float diff1 = (signal - prev1) * 0.5;
+            float vert_diff = abs(signal - prev2);
+            float vert_blend = _20.blend * (1.0 - fast::clamp(vert_diff * 4.0, 0.0, 0.5));
+            y = mix(signal, avg1, vert_blend);
+            c = vert_blend * diff1;
+            break;
+        }
+        case 3u:
+        {
+            int prev1_idx_1 = int(tid) - int(_20.samples_per_line);
+            int prev2_idx_1 = int(tid) - (2 * int(_20.samples_per_line));
+            int prev3_idx = int(tid) - (3 * int(_20.samples_per_line));
+            float _196;
+            if (prev1_idx_1 >= 0)
+            {
+                _196 = _36.signal_in[prev1_idx_1];
+            }
+            else
+            {
+                _196 = signal;
+            }
+            float prev1_1 = _196;
+            float _208;
+            if (prev2_idx_1 >= 0)
+            {
+                _208 = _36.signal_in[prev2_idx_1];
+            }
+            else
+            {
+                _208 = signal;
+            }
+            float prev2_1 = _208;
+            float _220;
+            if (prev3_idx >= 0)
+            {
+                _220 = _36.signal_in[prev3_idx];
+            }
+            else
+            {
+                _220 = signal;
+            }
+            float prev3 = _220;
+            float avg4 = (((signal + prev1_1) + prev2_1) + prev3) * 0.25;
+            y = mix(signal, avg4, _20.blend);
+            c = _20.blend * (signal - avg4);
+            break;
+        }
+        default:
+        {
+            y = signal;
+            c = 0.0;
+            break;
+        }
+    }
+    _257.y_out[tid] = y;
+    _264.c_out[tid] = c;
+}
+
