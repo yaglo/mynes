@@ -517,6 +517,71 @@ int test_sprite_clock_order(void) {
  * Main
  * ============================================================================ */
 
+static int test_nametable_mirroring_all_addresses(void) {
+    static const unsigned banks[5][4] = {
+        {0, 0, 1, 1}, {0, 1, 0, 1}, {0, 0, 0, 0}, {1, 1, 1, 1}, {0, 1, 2, 3}
+    };
+    bool pass = true;
+    for (unsigned mode = 0; mode < 5; mode++) {
+        test_ppu_init();
+        ppu.mirroring = mode;
+        for (unsigned addr = 0x2000; addr < 0x3F00; addr++) {
+            unsigned offset = (addr - 0x2000) % 4096;
+            unsigned physical = 0x2000 + banks[mode][offset / 1024] * 1024 + offset % 1024;
+            ppu.vram[physical] = 0xA5;
+            pass &= ppu_read(&ppu, addr) == 0xA5;
+            ppu_write(&ppu, addr, 0x5A);
+            pass &= ppu.vram[physical] == 0x5A;
+            ppu.vram[physical] = 0;
+        }
+    }
+    printf("TEST nametable_mirroring_all_addresses: %s\n", pass ? "PASS" : "FAIL");
+    return pass;
+}
+
+static int test_pixel_palette_priority(void) {
+    bool pass = true;
+    test_ppu_init();
+    ppu.scanline = 0;
+    ppu.sprites_on_line = 1;
+    ppu.sprite_zero_being_rendered = true;
+    for (unsigned bg = 0; bg < 4; bg++)
+    for (unsigned sp = 0; sp < 4; sp++)
+    for (unsigned bgpal = 0; bgpal < 4; bgpal++)
+    for (unsigned sppal = 0; sppal < 4; sppal++)
+    for (unsigned flags = 0; flags < 32; flags++) {
+        bool behind = flags & 1;
+        bool grey = flags & 2;
+        unsigned emphasis = flags >> 2;
+        ppu.dot = 11;
+        ppu.mask = MASK_BG_ENABLE | MASK_SPRITE_ENABLE | (grey ? MASK_GREYSCALE : 0) | (emphasis << 5);
+        ppu.bg_shift_pattern_lo = (bg & 1) ? 0x8000 : 0;
+        ppu.bg_shift_pattern_hi = (bg & 2) ? 0x8000 : 0;
+        ppu.bg_shift_attrib_lo = (bgpal & 1) ? 0x8000 : 0;
+        ppu.bg_shift_attrib_hi = (bgpal & 2) ? 0x8000 : 0;
+        ppu.sprite_patterns_lo[0] = (sp & 1) ? 0x80 : 0;
+        ppu.sprite_patterns_hi[0] = (sp & 2) ? 0x80 : 0;
+        ppu.sprite_attributes[0] = sppal | (behind ? SPRITE_PRIORITY : 0);
+        /* Distinct high-bit palette values also test the six-bit output mask. */
+        for (unsigned i = 0; i < 32; i++) ppu.palette[i] = 0xC0 | (i + 17);
+        unsigned address = 0;
+        if (bg) address = bgpal * 4 + bg;
+        if (sp && (!bg || !behind)) address = 16 + sppal * 4 + sp;
+        unsigned color = (address + 17) & (grey ? 0x30 : 0x3F);
+        for (unsigned edge = 0; edge < 2; edge++) {
+            ppu.dot = edge ? 256 : 11;
+            ppu.sprite_flags_pending = 0;
+            ppu_render_pixel(&ppu);
+            unsigned x = ppu.dot - 1;
+            pass &= ppu.index_framebuffer[x] == (color | (emphasis << 6));
+            pass &= memcmp(&ppu.framebuffer[x * 3], ppu_palette_2c02[color], 3) == 0;
+            pass &= !!(ppu.sprite_flags_pending & STATUS_SPRITE_ZERO) == (bg && sp && !edge);
+        }
+    }
+    printf("TEST pixel_palette_priority: %s\n", pass ? "PASS" : "FAIL");
+    return pass;
+}
+
 int main(void) {
     printf("=== NES PPU Tests ===\n\n");
 
@@ -543,6 +608,8 @@ int main(void) {
     total++; passed += test_oam_output_latch();
     total++; passed += test_nmi_disable_gates_output();
     total++; passed += test_sprite_clock_order();
+    total++; passed += test_nametable_mirroring_all_addresses();
+    total++; passed += test_pixel_palette_priority();
 
     printf("\n=== Results: %d/%d tests passed ===\n", passed, total);
 

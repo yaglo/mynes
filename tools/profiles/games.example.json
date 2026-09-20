@@ -1,0 +1,9 @@
+[
+  {"name": "nes15-pal", "args": ["tests/nes-test-roms/nes15-1.0.0/nes15-PAL.nes", "2000", "--pal", "--start", "--input", "tools/profiles/nes15.inputs"]},
+  {"name": "uxrom-pcm", "args": ["tests/nes-test-roms/other/PCM.demo.wgraphics.nes", "2000"]},
+  {"name": "nestress", "args": ["tests/nes-test-roms/stress/NEStress.NES", "2000", "--start"]},
+  {"name": "accuracycoin", "args": ["tests/accuracy_coin/AccuracyCoin.nes", "2000", "--start"]},
+  {"name": "smb-ntsc", "args": ["${NES_ROM_DIR}/World/Super Mario Bros (JU) (PRG 0).nes", "2000", "--input", "tools/profiles/smb.inputs"]},
+  {"name": "metroid-mmc1", "args": ["${NES_ROM_DIR}/USA/Metroid (U).nes", "2000", "--input", "tools/profiles/metroid.inputs"]},
+  {"name": "smb3-mmc3", "args": ["${NES_ROM_DIR}/USA/Super Mario Bros 3 (U) (PRG 0).nes", "2000", "--input", "tools/profiles/smb3.inputs"]}
+]

@@ -1,5 +1,7 @@
 # Core CPU sampling — 2026-09-20
 
+See [expanded gameplay and repeated comparisons](profiling-round2.md) for the follow-up experiment.
+
 Baseline: `8c38bd4`, Apple Silicon MacBook Air, macOS 27.0, AppleClang,
 Release `-O3 -DNDEBUG -g` with the project's native architecture flags.
 Instruments Time Profiler sampled the unpaced `bench_core` executable.
