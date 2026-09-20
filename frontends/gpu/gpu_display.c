@@ -613,9 +613,23 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
         ct.texture = swapchain_tex;
         ct.load_op = SDL_GPU_LOADOP_CLEAR;
         ct.store_op = SDL_GPU_STOREOP_STORE;
-        ct.clear_color.r = 0.0f;
-        ct.clear_color.g = 0.0f;
-        ct.clear_color.b = 0.0f;
+        /* Continue the unlit glass level into letterbox/pillarbox margins.
+         * Match the final shader's ambient/APL lift and output transfer so
+         * preset changes and HDR white-level changes cannot expose black bars.
+         * Beam emission, mask and spatial reflections remain inside the CRT. */
+        float surround = params->ambient_light * 0.15f;
+        if (params->apl_black_lift > 0.001f)
+            surround += params->apl_black_lift * (params->apl_smoothed - 0.5f) * 0.15f;
+        surround *= params->hdr_gain > 0.0f ? params->hdr_gain : 1.0f;
+        surround = fminf(fmaxf(surround, 0.0f), fmaxf(params->hdr_headroom, 1.0f));
+        if (params->output_hdr)
+            surround *= params->sdr_white_level;
+        else
+            surround = surround <= 0.0031308f ? 12.92f * surround :
+                       1.055f * powf(surround, 1.0f / 2.4f) - 0.055f;
+        ct.clear_color.r = surround;
+        ct.clear_color.g = surround;
+        ct.clear_color.b = surround;
         ct.clear_color.a = 1.0f;
 
         SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, &ct, 1, NULL);
