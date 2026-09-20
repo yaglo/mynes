@@ -75,7 +75,11 @@ typedef struct {
     int listen_sock;        /* listening socket (background thread) */
     int client_sock;        /* connected client, or -1 */
     pthread_t listen_thread;
-    pthread_mutex_t client_lock;  /* protects client_sock */
+    pthread_mutex_t client_lock;  /* protects client socket and output queue */
+    uint8_t *output;
+    size_t output_capacity;
+    size_t output_start;
+    size_t output_end;
 
     char socket_path[256];
 
@@ -93,19 +97,24 @@ static DebugServer *g_server = NULL;
  * Socket utilities
  * ============================================================================ */
 
-static ssize_t send_all(int sock, const void *data, size_t size) {
-    const uint8_t *buf = (const uint8_t *)data;
-    size_t sent = 0;
-    while (sent < size) {
-        ssize_t n = send(sock, buf + sent, size - sent, 0);
-        if (n < 0) {
-            if (errno == EINTR) continue;
-            return -1;
+/* Called with client_lock held. A slow reader is not a lost connection. */
+static bool flush_output(DebugServerState *state) {
+    if (state->client_sock < 0) return false;
+    while (state->output_start < state->output_end) {
+        ssize_t n = send(state->client_sock, state->output + state->output_start,
+                         state->output_end - state->output_start, MSG_DONTWAIT);
+        if (n < 0 && errno == EINTR) continue;
+        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return true;
+        if (n <= 0) {
+            close(state->client_sock);
+            state->client_sock = -1;
+            state->output_start = state->output_end = 0;
+            return false;
         }
-        if (n == 0) return -1;  /* connection closed */
-        sent += (size_t)n;
+        state->output_start += (size_t)n;
     }
-    return (ssize_t)sent;
+    state->output_start = state->output_end = 0;
+    return true;
 }
 
 /* ============================================================================
@@ -159,8 +168,6 @@ static void *listen_thread_main(void *arg) {
         setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &no_sigpipe, sizeof(no_sigpipe));
         int send_buffer = 65536;
         setsockopt(client, SOL_SOCKET, SO_SNDBUF, &send_buffer, sizeof(send_buffer));
-        struct timeval timeout = {.tv_sec = 0, .tv_usec = 5000};
-        setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
         printf("Visualiser connected\n");
 
         pthread_mutex_lock(&state->client_lock);
@@ -168,6 +175,7 @@ static void *listen_thread_main(void *arg) {
             close(state->client_sock);
         }
         state->client_sock = client;
+        state->output_start = state->output_end = 0;
         pthread_mutex_unlock(&state->client_lock);
     }
 
@@ -185,38 +193,43 @@ static void *listen_thread_main(void *arg) {
 
 static bool send_message(DebugServerState *state, uint32_t msg_type,
                          const void *payload, uint32_t payload_size) {
-    int sock;
+    const size_t telemetry_limit = 32 * 1024;
+    const size_t tap_limit = 32 * 1024 * 1024;
+    const size_t reply_reserve = 64 * 1024;
+    size_t size = sizeof(DebugMessageHeader) + (size_t)payload_size;
+    bool accepted = false;
     pthread_mutex_lock(&state->client_lock);
-    sock = state->client_sock;
+    if (!flush_output(state)) goto done;
+
+    size_t pending = state->output_end - state->output_start;
+    size_t limit = msg_type == 9 ? tap_limit + reply_reserve :
+                   msg_type == DEBUG_MSG_TAP_DATA ? tap_limit : telemetry_limit;
+    /* Drop replaceable telemetry under pressure, preserving whole frames and
+     * reserving space for command acknowledgements. Never stall emulation. */
+    if (size > limit || pending > limit - size) goto done;
+    if (state->output_start) {
+        memmove(state->output, state->output + state->output_start, pending);
+        state->output_start = 0;
+        state->output_end = pending;
+    }
+    if (pending + size > state->output_capacity) {
+        size_t capacity = pending + size;
+        if (capacity < telemetry_limit + reply_reserve)
+            capacity = telemetry_limit + reply_reserve;
+        uint8_t *output = realloc(state->output, capacity);
+        if (!output) goto done;
+        state->output = output;
+        state->output_capacity = capacity;
+    }
+    DebugMessageHeader hdr = {msg_type, payload_size};
+    memcpy(state->output + state->output_end, &hdr, sizeof(hdr));
+    if (payload_size)
+        memcpy(state->output + state->output_end + sizeof(hdr), payload, payload_size);
+    state->output_end += size;
+    accepted = flush_output(state);
+done:
     pthread_mutex_unlock(&state->client_lock);
-
-    if (sock < 0) return false;  /* no client */
-
-    DebugMessageHeader hdr;
-    hdr.msg_type = msg_type;
-    hdr.payload_size = payload_size;
-
-    if (send_all(sock, &hdr, sizeof(hdr)) < 0) {
-        printf("Debug server: header send failed, closing client\n");
-        pthread_mutex_lock(&state->client_lock);
-        close(state->client_sock);
-        state->client_sock = -1;
-        pthread_mutex_unlock(&state->client_lock);
-        return false;
-    }
-
-    if (payload_size > 0) {
-        if (send_all(sock, payload, payload_size) < 0) {
-            printf("Debug server: payload send failed, closing client\n");
-            pthread_mutex_lock(&state->client_lock);
-            close(state->client_sock);
-            state->client_sock = -1;
-            pthread_mutex_unlock(&state->client_lock);
-            return false;
-        }
-    }
-
-    return true;
+    return accepted;
 }
 
 /* Peek until the entire frame is available. Never consume a partial header
@@ -299,6 +312,7 @@ void debug_server_destroy(DebugServer *srv) {
 
     pthread_join(state->listen_thread, NULL);
     pthread_mutex_destroy(&state->client_lock);
+    free(state->output);
 
     free(state);
 
@@ -326,11 +340,16 @@ void debug_server_frame(DebugServer *srv,
 
     DebugServerState *state = (DebugServerState *)srv;
 
+    pthread_mutex_lock(&state->client_lock);
+    flush_output(state);
+    pthread_mutex_unlock(&state->client_lock);
+
     /* Process incoming messages */
     uint32_t msg_type, msg_size;
     uint8_t msg_payload[512];
 
-    while (read_message(state, &msg_type, msg_payload, sizeof(msg_payload), &msg_size)) {
+    for (int processed = 0; processed < 32 &&
+         read_message(state, &msg_type, msg_payload, sizeof(msg_payload), &msg_size); processed++) {
         switch (msg_type) {
             case DEBUG_MSG_TAP_REQUEST: {
                 if (msg_size == sizeof(DebugTapRequest)) {

@@ -82,6 +82,9 @@ with tempfile.TemporaryDirectory(prefix="mynes-editor-") as tmp:
 
             revision, active, dirty, entries = catalog()
             assert active >= 0 and not dirty, (active, dirty)
+            # A macOS menu tracking loop can temporarily stall MainActor reads.
+            # Backpressure must not disconnect the editor or lose its selection.
+            time.sleep(3)
             edit(0.85)
             revision, active, dirty, entries = command(3, active, revision, "IPC test CRT")
             assert not dirty and entries[active][1:]==(True,"IPC test CRT")
@@ -94,6 +97,7 @@ with tempfile.TemporaryDirectory(prefix="mynes-editor-") as tmp:
             revision, active, dirty, entries = command(4, active, revision, "Renamed CRT")
             assert entries[active][2]=="Renamed CRT"
             bundled = next(e[0] for e in entries if not e[1] and "Bedroom" in e[2])
+            time.sleep(3)  # Preset selection must also survive a stalled reader.
             revision, active, dirty, entries = command(1, bundled, revision)
             assert active == bundled and not dirty
             command(5, bundled, revision, success=False)
@@ -102,7 +106,7 @@ with tempfile.TemporaryDirectory(prefix="mynes-editor-") as tmp:
             assert active == user_id
             revision, active, dirty, entries = command(5, user_id, revision)
             assert active == -1 and dirty and not paths[0].exists()
-            print("Preset IPC: active preset, dirty state, fragmented edits, save-as, save, rename, topology switch, bundled protection, stale revision rejection, delete: PASS")
+            print("Preset IPC: active preset, dirty state, stalled reader, fragmented edits, save-as, save, rename, topology switch, bundled protection, stale revision rejection, delete: PASS")
             client.close()
         except Exception:
             log.flush(); log.seek(0); print(log.read(), file=sys.stderr)
