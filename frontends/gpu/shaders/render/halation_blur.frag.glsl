@@ -29,7 +29,13 @@ layout(set = 1, binding = 0) uniform BlurParams {
     int   radius;           /* kernel radius in texels (e.g. 12-32) */
     float threshold;        /* brightness threshold for extraction */
     int   do_threshold;     /* 1 = extract bright pixels first pass */
+    float input_gamma;
 };
+
+vec3 light(vec2 p) {
+    vec3 v = max(texture(tex_input,p).rgb, vec3(0.0));
+    return input_gamma > 0.0 ? pow(v,vec3(input_gamma)) : v;
+}
 
 void main() {
     float sigma = float(radius) * 0.4;
@@ -38,14 +44,7 @@ void main() {
     /*
      * Center sample.
      */
-    vec3 center = texture(tex_input, uv).rgb;
-
-    if (do_threshold == 1) {
-        /* Extract: only keep pixels above the brightness threshold. */
-        float luma = dot(center, vec3(0.2126, 0.7152, 0.0722));
-        float extract = max(luma - threshold, 0.0) / max(1.0 - threshold, 0.001);
-        center *= extract;
-    }
+    vec3 center = light(uv);
 
     /* Gaussian weight for center tap (offset = 0). */
     float w0 = 1.0;
@@ -61,17 +60,8 @@ void main() {
         float w = exp(-fi * fi * inv_2sigma2);
 
         vec2 offset = direction * fi;
-        vec3 s_pos = texture(tex_input, uv + offset).rgb;
-        vec3 s_neg = texture(tex_input, uv - offset).rgb;
-
-        if (do_threshold == 1) {
-            float luma_p = dot(s_pos, vec3(0.2126, 0.7152, 0.0722));
-            float luma_n = dot(s_neg, vec3(0.2126, 0.7152, 0.0722));
-            float ext_p = max(luma_p - threshold, 0.0) / max(1.0 - threshold, 0.001);
-            float ext_n = max(luma_n - threshold, 0.0) / max(1.0 - threshold, 0.001);
-            s_pos *= ext_p;
-            s_neg *= ext_n;
-        }
+        vec3 s_pos = light(uv + offset);
+        vec3 s_neg = light(uv - offset);
 
         accum += (s_pos + s_neg) * w;
         weight_sum += 2.0 * w;

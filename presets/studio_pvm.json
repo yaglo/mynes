@@ -1,6 +1,6 @@
 {
     "name": "Studio PVM",
-    "description": "S-Video modded NES on a Sony PVM-20M4U \u2014 reference-grade monitoring",
+    "description": "S-Video modded NES on a Sony PVM-20M4U — reference-grade monitoring",
     "connection": "svideo",
     "comb_type": "none",
     "console_variant": 1,
@@ -60,7 +60,7 @@
         "h_jitter": 0.0,
         "v_jitter": 0.0001,
         "mask_type": "aperture_grille",
-        "mask_pitch_mm": 1.0,
+        "mask_pitch_px": 1.0,
         "mask_strength": 0.3,
         "subpixel_layout": 0,
         "persistence_ms": 1.2,

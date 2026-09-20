@@ -257,7 +257,7 @@ static inline bool preset_json_save(const PhysicalPreset *p, const char *path)
     fprintf(f, "        \"v_jitter\": %.6f,\n",             p->tv.v_jitter);
     /* Phosphor. */
     fprintf(f, "        \"mask_type\": \"%s\",\n",          preset_json__mask_name((int)p->tv.mask_type));
-    fprintf(f, "        \"mask_pitch_mm\": %.6f,\n",        p->tv.mask_pitch_mm);
+    fprintf(f, "        \"mask_pitch_px\": %.6f,\n",        p->tv.mask_pitch_px);
     fprintf(f, "        \"mask_strength\": %.6f,\n",        p->tv.mask_strength);
     fprintf(f, "        \"subpixel_layout\": %d,\n",        p->tv.subpixel_layout);
     fprintf(f, "        \"persistence_ms\": %.6f,\n",       p->tv.persistence_ms);
@@ -382,8 +382,9 @@ static inline bool preset_json_save(const PhysicalPreset *p, const char *path)
 
     fprintf(f, "}\n");
 
-    fclose(f);
-    return true;
+    bool ok = ferror(f) == 0;
+    if (fclose(f) != 0) ok = false;
+    return ok;
 }
 
 /* ============================================================================
@@ -616,7 +617,8 @@ static inline bool preset_json_load(PhysicalPreset *p, const char *path)
             char *u = preset_json__unescape(val);
             p->tv.mask_type = (VideoMaskType)preset_json__mask_from(u);
         }
-        else MATCH_FLOAT(PJSON_SEC_TV, "mask_pitch_mm",        p->tv.mask_pitch_mm)
+        else MATCH_FLOAT(PJSON_SEC_TV, "mask_pitch_px",        p->tv.mask_pitch_px)
+        else MATCH_FLOAT(PJSON_SEC_TV, "mask_pitch_mm",        p->tv.mask_pitch_px)
         else MATCH_FLOAT(PJSON_SEC_TV, "mask_strength",        p->tv.mask_strength)
         else MATCH_INT  (PJSON_SEC_TV, "subpixel_layout",      p->tv.subpixel_layout)
         else MATCH_FLOAT(PJSON_SEC_TV, "persistence_ms",       p->tv.persistence_ms)

@@ -13,6 +13,7 @@
 #include "presets.h"
 #include "chain_vis.h"
 #include "gpu_render.h"
+#include "config.h"
 #include "nes/nes.h"
 #include "nes/osd.h"
 
@@ -24,6 +25,7 @@ typedef struct {
     SDL_GPUDevice    *gpu;
     bool             *gpu_video_enabled;
     int              *current_preset;
+    MynesConfig      *config;
     int               region;
     NES              *nes;
     ChainVis         *chain_vis;
@@ -55,6 +57,8 @@ typedef struct {
 
 /* Set the global preset context (must be called before any callbacks fire). */
 void preset_ctx_init(PresetCtx *ctx);
+struct DebugServer;
+void preset_register_debug_controls(PresetCtx *ctx, struct DebugServer *server);
 
 /* Apply a physical preset by struct pointer (CPU state + GPU push in
  * one call). Runtime preset loads preserve the CURRENT live region so
@@ -90,6 +94,14 @@ const char *preset_display_name(int idx);
 int         preset_load_index(int idx);          /* returns idx on success, -1 otherwise */
 int         preset_load_index_exact(int idx);    /* startup path: honour preset region */
 int         preset_find_by_slug(const char *s);  /* substring match on path/name, -1 if none */
+
+/* Editor catalog and commands. IDs are registry slots guarded by revision. */
+uint32_t preset_catalog_revision(void);
+int preset_active_index(void);
+bool preset_is_user(int index);
+bool preset_is_modified(void);
+bool preset_manage(uint32_t operation, int index, uint32_t revision,
+                   const char *name, char *error, size_t error_size);
 
 /* Composite chain visualiser + OSD overlays onto the PPU framebuffer. */
 void preset_composite_overlays(PresetCtx *ctx);

@@ -39,6 +39,7 @@ static bool chroma_demod_rebind(struct SignalChainFwd *chain,
     s->rw[0] = aux_ref(aux.i_raw);
     s->rw[1] = aux_ref(aux.q_raw);
     s->rw_count = 2;
+    s->ro_count = 2; s->ro[1] = CBR_EXT0; s->external[0] = vgc->buf_receiver;
 
     /* Chroma source. Comb active → aux[0] carries separated C.
      * Comb inactive → read composite from the "other" ping-pong
@@ -46,7 +47,6 @@ static bool chroma_demod_rebind(struct SignalChainFwd *chain,
      * the typed dispatcher's perspective — it names the buffer
      * opposite to current_buf, regardless of what it's used for. */
     s->ro[0] = comb_active ? CBR_AUX0 : CBR_BUF_DST;
-    s->ro_count = 1;
     return true;
 }
 
@@ -110,7 +110,7 @@ void chroma_pipeline_install_typed(VideoGPUChain *vgc) {
         d->custom = NULL;
         d->custom_user = NULL;
         /* Initial bindings — rebind hook overwrites each frame. */
-        d->ro_count = 1; d->ro[0] = CBR_BUF_DST;
+        d->ro_count = 2; d->ro[0] = CBR_BUF_DST; d->ro[1] = CBR_EXT0; d->external[0] = vgc->buf_receiver;
         d->rw_count = 2; d->rw[0] = CBR_AUX1; d->rw[1] = CBR_AUX2;
         /* Demod ignores chain ping-pong — doesn't touch BUF_DST
          * in rw, so current_buf stays put. */

@@ -46,6 +46,7 @@
 #define SIGNAL_FORMAT_H
 
 #include <stdint.h>
+#include <math.h>
 
 /* ============================================================================
  * Video waveform buffer format
@@ -182,6 +183,24 @@ static inline float signal_region_sample_rate_hz(int region) {
 static inline float signal_format_sample_rate_hz(const SignalFormat *fmt) {
     return signal_region_sample_rate_hz(fmt ? fmt->region
                                             : SIGNAL_REGION_NTSC);
+}
+
+/* Clock-derived phase in the 12-sample carrier grid, including blanking. */
+static inline int signal_region_line_phase(int region) {
+    return (341 * (region == SIGNAL_REGION_PAL ? 10 : 8)) % 12;
+}
+
+static inline float signal_region_frame_ms(int region) {
+    double dots = region == SIGNAL_REGION_PAL ? 341.0 * 312.0 : 341.0 * 262.0 - 0.5;
+    double spp = region == SIGNAL_REGION_PAL ? 10.0 : 8.0;
+    return (float)(1000.0 * dots * spp / signal_region_sample_rate_hz(region));
+}
+
+/* Per-channel scale changes the decay time constant, not its amplitude.
+ * Zero explicitly disables persistence. */
+static inline float signal_persistence_weight(int region, float tau_ms, float scale) {
+    if (!(tau_ms > 0.0f) || !(scale > 0.0f)) return 0.0f;
+    return expf(-signal_region_frame_ms(region) / (tau_ms * scale));
 }
 
 #endif /* SIGNAL_FORMAT_H */

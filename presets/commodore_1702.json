@@ -1,6 +1,6 @@
 {
     "name": "Commodore 1702",
-    "description": "NES via S-Video on a Commodore 1702 \u2014 the legendary warm, comfy retro gaming monitor",
+    "description": "NES via S-Video on a Commodore 1702 — the legendary warm, comfy retro gaming monitor",
     "connection": "svideo",
     "comb_type": "none",
     "console_variant": 1,
@@ -60,7 +60,7 @@
         "h_jitter": 0.15,
         "v_jitter": 0.0008,
         "mask_type": "shadow",
-        "mask_pitch_mm": 4.5,
+        "mask_pitch_px": 4.5,
         "mask_strength": 0.45,
         "subpixel_layout": 0,
         "persistence_ms": 2.0,

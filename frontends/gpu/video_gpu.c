@@ -97,6 +97,11 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     memset(vgc, 0, sizeof(*vgc));
     vgc->chain = chain;
     vgc->signal_fmt = chain->signal_fmt;
+    vgc->raster_fmt = chain->signal_fmt;
+    vgc->raster_fmt.samples_per_line = 341 * chain->signal_fmt.samples_per_pixel;
+    vgc->raster_fmt.lines = chain->signal_fmt.lines;
+    vgc->raster_fmt.total_samples = vgc->raster_fmt.samples_per_line * vgc->raster_fmt.lines;
+    vgc->signal_line_phase = signal_region_line_phase(chain->signal_fmt.region);
 
     /* Initialize stage indices to -1 (not registered). */
     vgc->stage_console_hp  = -1;
@@ -144,11 +149,11 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     vgc->fir_q_n = fir_q_n;
 
     /* ---- Compute buffer sizes ---- */
-    const SignalFormat *fmt = &vgc->signal_fmt;
+    const SignalFormat *fmt = &vgc->raster_fmt;
     int total_samples = fmt->total_samples;
 
     vgc->signal_size = (Uint32)(total_samples * sizeof(float));
-    vgc->rgb_size    = (Uint32)(total_samples * 3 * sizeof(float));
+    vgc->rgb_size = (Uint32)(vgc->signal_fmt.total_samples * 3 * sizeof(float));
 
     /* ---- Initialize the generic signal chain ---- */
     if (!chain_init(&vgc->sig_chain, gpu, total_samples, shader_dir)) {
@@ -156,6 +161,9 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
         return false;
     }
     vgc->sig_chain.samples_per_line = fmt->samples_per_line;
+
+    vgc->buf_receiver = gpu_buffer_create(gpu, (Uint32)fmt->lines * 4 * sizeof(float), GPU_BUF_READWRITE);
+    if (!vgc->buf_receiver) goto fail;
 
     /* ---- Upload FIR tap coefficients ---- */
     int taps_y_idx = chain_upload_taps(&vgc->sig_chain, gpu,
@@ -186,6 +194,17 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     /* Compute sample rate for RC alpha calculations from the live region. */
     float fsample = signal_format_sample_rate_hz(&vgc->signal_fmt);
 
+    /* Add blanking/sync/burst before the analogue path so receiver timing
+     * and DC restoration observe the same distortions as the picture. */
+    uint32_t raster_params[8] = {0};
+    vgc->stage_raster = chain_add_stage(&vgc->sig_chain, "PPU raster / sync / burst",
+        CHAIN_KERNEL_RASTER, raster_params, sizeof(raster_params), dispatch_x_256, 1);
+    if (vgc->stage_raster < 0) goto fail;
+    ChainStage *raster = &vgc->sig_chain.stages[vgc->stage_raster];
+    raster->io_typed = true;
+    raster->ro_count=1; raster->ro[0]=CBR_BUF_SRC;
+    raster->rw_count=1; raster->rw[0]=CBR_BUF_DST;
+
     /* Stage 0: Console Output HP (coupling capacitor DC blocker).
      * R=75Ω, C=10µF → fc = 1/(2π·R·C) ≈ 0.21 Hz.
      * At Fs=42.95 MHz this is a sub-Hz DC blocker.  The composite
@@ -208,8 +227,8 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
         rc_params.b            = 1.0f - alpha;
         rc_params.total_count  = (uint32_t)total_samples;
         rc_params.block_offset = 0;
-        rc_params.samples_per_line = (uint32_t)vgc->signal_fmt.samples_per_line;
-        rc_params.num_lines = (uint32_t)vgc->signal_fmt.lines;
+        rc_params.samples_per_line = (uint32_t)vgc->raster_fmt.samples_per_line;
+        rc_params.num_lines = (uint32_t)vgc->raster_fmt.lines;
         vgc->stage_console_lp = chain_add_stage(&vgc->sig_chain,
             "Console Output LP", CHAIN_KERNEL_RC_FILTER,
             &rc_params, sizeof(rc_params), dispatch_x_1024, 1);
@@ -243,8 +262,8 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
         rc_params.b            = 1.0f - alpha;
         rc_params.total_count  = (uint32_t)total_samples;
         rc_params.block_offset = 0;
-        rc_params.samples_per_line = (uint32_t)vgc->signal_fmt.samples_per_line;
-        rc_params.num_lines = (uint32_t)vgc->signal_fmt.lines;
+        rc_params.samples_per_line = (uint32_t)vgc->raster_fmt.samples_per_line;
+        rc_params.num_lines = (uint32_t)vgc->raster_fmt.lines;
         vgc->stage_cable_rc = chain_add_stage(&vgc->sig_chain,
             "Cable RC", CHAIN_KERNEL_RC_FILTER,
             &rc_params, sizeof(rc_params), dispatch_x_1024, 1);
@@ -262,13 +281,7 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
      * Simulates the RF connection: adds noise, limits bandwidth, and adds
      * hum. Only enabled when RF connection is selected (stage 4 active). */
     {
-        struct {
-            uint32_t count;
-            uint32_t samples_per_line;
-            float    noise_amplitude;
-            float    hum_amplitude;
-
-        } rf_params;
+        GpuRFParams rf_params = {0};
 
         rf_params.count             = (uint32_t)total_samples;
         rf_params.samples_per_line  = (uint32_t)fmt->samples_per_line;
@@ -276,8 +289,7 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
          * -70 dBm (clean) → 0.005, -44 dBm (terrible) → 0.05 */
         rf_params.noise_amplitude   = 0.005f * powf(10.0f,
             (chain->rf.noise_floor_dbm + 70.0f) / 26.0f);
-        rf_params.hum_amplitude     = chain->console_psu_hum > 0.005f
-            ? chain->console_psu_hum : 0.02f;  /* use preset hum if available */
+        rf_params.hum_amplitude     = fmaxf(0.0f, chain->console_psu_hum);
 
         vgc->stage_rf = chain_add_stage(&vgc->sig_chain,
             "RF Path", CHAIN_KERNEL_RF,
@@ -324,8 +336,8 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
         GpuAGCParams agc_params;
         agc_params.total_count     = (uint32_t)total_samples;
         agc_params.samples_per_line = (uint32_t)fmt->samples_per_line;
-        agc_params.num_lines       = (uint32_t)vgc->signal_fmt.lines;
-        agc_params.target_level    = 0.90f;
+        agc_params.num_lines       = (uint32_t)vgc->raster_fmt.lines;
+        agc_params.target_level    = 264.0f / 788.0f;
         agc_params.attack_coeff    = 0.10f;
         agc_params.release_coeff   = 0.02f;
         agc_params.min_gain        = 0.5f;
@@ -333,8 +345,8 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
 
         /* Derive from preset if available. */
         if (chain->rf.enabled && chain->rf.agc_attack_ms > 0.0f) {
-            agc_params.attack_coeff  = 1.0f / (chain->rf.agc_attack_ms * 60.0f);
-            agc_params.release_coeff = 1.0f / (chain->rf.agc_release_ms * 60.0f);
+            agc_params.attack_coeff  = 1.0f - expf(-signal_region_frame_ms(chain->signal_fmt.region) / chain->rf.agc_attack_ms);
+            agc_params.release_coeff = 1.0f - expf(-signal_region_frame_ms(chain->signal_fmt.region) / fmaxf(chain->rf.agc_release_ms, 0.01f));
         }
 
         vgc->stage_agc = chain_add_stage(&vgc->sig_chain,
@@ -365,6 +377,17 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
                 chain->cable.ghost_level > 0.001f);
     }
 
+    uint32_t receiver_params[] = {(uint32_t)fmt->lines, (uint32_t)fmt->samples_per_line,
+        (uint32_t)fmt->samples_per_pixel, (uint32_t)fmt->region};
+    vgc->stage_receiver = chain_add_stage(&vgc->sig_chain, "Burst lock / DC clamp",
+        CHAIN_KERNEL_RECEIVER, receiver_params, sizeof(receiver_params), ((uint32_t)fmt->lines+255)/256, 1);
+    if (vgc->stage_receiver < 0) goto fail;
+    ChainStage *receiver = &vgc->sig_chain.stages[vgc->stage_receiver];
+    receiver->io_typed=true;
+    receiver->ro_count=1; receiver->ro[0]=CBR_BUF_SRC;
+    receiver->rw_count=1; receiver->rw[0]=CBR_EXT0;
+    receiver->external[0]=vgc->buf_receiver;
+
     /* Stage 6: Comb Filter (Y/C separator).
      * Separates luma and chroma by exploiting the 180° subcarrier phase
      * inversion between adjacent scanlines. Writes Y to buf[dst] and
@@ -376,6 +399,7 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
         uint32_t shader_mode = video_chain_comb_shader_mode(chain->comb_type);
 
         GpuCombParams comb_params;
+        comb_params.delay_samples = chain->signal_fmt.region == SIGNAL_REGION_NTSC ? 2730u : 0u;
         comb_params.count             = (uint32_t)total_samples;
         comb_params.samples_per_line  = (uint32_t)fmt->samples_per_line;
         comb_params.mode              = shader_mode;
@@ -446,11 +470,11 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
         demod_params.param_a          = 1.0f;
         demod_params.samples_per_line = (uint32_t)fmt->samples_per_line;
         demod_params.line_phase_inc   = (float)chain->signal_fmt.lines > 0
-            ? 6.0f * 2.0f * (float)M_PI / 12.0f  /* line_adv=6 → π radians per scanline */
+            ? (float)signal_region_line_phase(vgc->signal_fmt.region) * 2.0f * (float)M_PI / 12.0f  /* match the DAC clock */
             : 0.0f;
 
         vgc->stage_chroma_demod = chain_add_stage(&vgc->sig_chain,
-            "Chroma Demod", CHAIN_KERNEL_MODULATOR,
+            "Chroma Demod", CHAIN_KERNEL_RECEIVER_DEMOD,
             &demod_params, sizeof(demod_params), dispatch_x_256, 1);
         if (vgc->stage_chroma_demod < 0) {
             fprintf(stderr, "video_gpu_init: failed to add Chroma Demod stage\n");
@@ -623,6 +647,7 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     }
 
     /* ---- Default demod parameters (NTSC colorburst) ---- */
+    vgc->demod_line_phase = signal_region_line_phase(fmt->region) * 2.0f * (float)M_PI / 12.0f;
     vgc->demod_phase = 0.0f;
     vgc->demod_dp    = 2.0f * (float)M_PI / 12.0f;
 
@@ -724,7 +749,7 @@ fail:
 void video_gpu_update_rc_params(VideoGPUChain *vgc)
 {
     const VideoChain *chain = vgc->chain;
-    int total_samples = vgc->signal_fmt.total_samples;
+    int total_samples = vgc->raster_fmt.total_samples;
     float fsample = signal_format_sample_rate_hz(&vgc->signal_fmt);
 
     /* Console Output LP: NES 2C02 output amp ~6 MHz (fixed hardware property). */
@@ -736,8 +761,8 @@ void video_gpu_update_rc_params(VideoGPUChain *vgc)
         rc_params.b            = 1.0f - alpha;
         rc_params.total_count  = (uint32_t)total_samples;
         rc_params.block_offset = 0;
-        rc_params.samples_per_line = (uint32_t)vgc->signal_fmt.samples_per_line;
-        rc_params.num_lines = (uint32_t)vgc->signal_fmt.lines;
+        rc_params.samples_per_line = (uint32_t)vgc->raster_fmt.samples_per_line;
+        rc_params.num_lines = (uint32_t)vgc->raster_fmt.lines;
         chain_update_params(&vgc->sig_chain, vgc->stage_console_lp,
                             &rc_params, sizeof(rc_params));
     }
@@ -757,8 +782,8 @@ void video_gpu_update_rc_params(VideoGPUChain *vgc)
         rc_params.b            = 1.0f - alpha;
         rc_params.total_count  = (uint32_t)total_samples;
         rc_params.block_offset = 0;
-        rc_params.samples_per_line = (uint32_t)vgc->signal_fmt.samples_per_line;
-        rc_params.num_lines = (uint32_t)vgc->signal_fmt.lines;
+        rc_params.samples_per_line = (uint32_t)vgc->raster_fmt.samples_per_line;
+        rc_params.num_lines = (uint32_t)vgc->raster_fmt.lines;
         chain_update_params(&vgc->sig_chain, vgc->stage_cable_rc,
                             &rc_params, sizeof(rc_params));
     }
@@ -846,33 +871,33 @@ bool video_gpu_update_fir_taps(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     /* Update the FIR uniform params (tap count may have changed). */
     {
         GpuFIRParams fir_y;
-        fir_y.input_count     = (uint32_t)vgc->signal_fmt.total_samples;
-        fir_y.output_count    = (uint32_t)vgc->signal_fmt.total_samples;
+        fir_y.input_count     = (uint32_t)vgc->raster_fmt.total_samples;
+        fir_y.output_count    = (uint32_t)vgc->raster_fmt.total_samples;
         fir_y.tap_count       = (uint32_t)fir_y_n;
         fir_y.decimation_ratio = 1;
-        fir_y.samples_per_line = (uint32_t)vgc->signal_fmt.samples_per_line;
+        fir_y.samples_per_line = (uint32_t)vgc->raster_fmt.samples_per_line;
         chain_update_params(&vgc->sig_chain, vgc->stage_luma_fir,
                             &fir_y, sizeof(fir_y));
     }
     {
         GpuFIRParams fir_c;
         memset(&fir_c, 0, sizeof(fir_c));
-        fir_c.input_count      = (uint32_t)vgc->signal_fmt.total_samples;
-        fir_c.output_count     = (uint32_t)vgc->signal_fmt.total_samples;
+        fir_c.input_count      = (uint32_t)vgc->raster_fmt.total_samples;
+        fir_c.output_count     = (uint32_t)vgc->raster_fmt.total_samples;
         fir_c.tap_count        = (uint32_t)fir_c_n;
         fir_c.decimation_ratio = 1;
-        fir_c.samples_per_line = (uint32_t)vgc->signal_fmt.samples_per_line;
+        fir_c.samples_per_line = (uint32_t)vgc->raster_fmt.samples_per_line;
         chain_update_params(&vgc->sig_chain, vgc->stage_chroma_i_fir,
                             &fir_c, sizeof(fir_c));
     }
     {
         GpuFIRParams fir_q;
         memset(&fir_q, 0, sizeof(fir_q));
-        fir_q.input_count      = (uint32_t)vgc->signal_fmt.total_samples;
-        fir_q.output_count     = (uint32_t)vgc->signal_fmt.total_samples;
+        fir_q.input_count      = (uint32_t)vgc->raster_fmt.total_samples;
+        fir_q.output_count     = (uint32_t)vgc->raster_fmt.total_samples;
         fir_q.tap_count        = (uint32_t)fir_q_n;
         fir_q.decimation_ratio = 1;
-        fir_q.samples_per_line = (uint32_t)vgc->signal_fmt.samples_per_line;
+        fir_q.samples_per_line = (uint32_t)vgc->raster_fmt.samples_per_line;
         chain_update_params(&vgc->sig_chain, vgc->stage_chroma_q_fir,
                             &fir_q, sizeof(fir_q));
     }
@@ -929,7 +954,7 @@ bool video_gpu_rebuild_for_region(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
 void video_gpu_reinit_stages(VideoGPUChain *vgc, const VideoChain *chain)
 {
     vgc->chain = chain;
-    int total_samples = vgc->signal_fmt.total_samples;
+    int total_samples = vgc->raster_fmt.total_samples;
 
     /* Stage enables CAN be toggled at runtime — chain_run_cmd ping-pongs
      * based on the currently-enabled stages, not on an init-time routing
@@ -947,19 +972,12 @@ void video_gpu_reinit_stages(VideoGPUChain *vgc, const VideoChain *chain)
         bool rf_on = video_chain_stage_active(chain, 4);
         chain_set_stage_enabled(&vgc->sig_chain, vgc->stage_rf, rf_on);
         if (rf_on) {
-            struct {
-                uint32_t count;
-                uint32_t samples_per_line;
-                float    noise_amplitude;
-                float    hum_amplitude;
-    
-            } rf_params;
+            GpuRFParams rf_params = {0};
             rf_params.count            = (uint32_t)total_samples;
-            rf_params.samples_per_line = (uint32_t)vgc->signal_fmt.samples_per_line;
+            rf_params.samples_per_line = (uint32_t)vgc->raster_fmt.samples_per_line;
             rf_params.noise_amplitude  = 0.005f * powf(10.0f,
                 (chain->rf.noise_floor_dbm + 70.0f) / 26.0f);
-            rf_params.hum_amplitude    = chain->console_psu_hum > 0.005f
-                ? chain->console_psu_hum : 0.02f;
+            rf_params.hum_amplitude    = fmaxf(0.0f, chain->console_psu_hum);
             chain_update_params(&vgc->sig_chain, vgc->stage_rf,
                                 &rf_params, sizeof(rf_params));
         }
@@ -977,14 +995,14 @@ void video_gpu_reinit_stages(VideoGPUChain *vgc, const VideoChain *chain)
         if (agc_on) {
         GpuAGCParams agc_params;
         agc_params.total_count     = (uint32_t)total_samples;
-        agc_params.samples_per_line = (uint32_t)vgc->signal_fmt.samples_per_line;
-        agc_params.num_lines       = (uint32_t)vgc->signal_fmt.lines;
-        agc_params.target_level    = 0.90f;
+        agc_params.samples_per_line = (uint32_t)vgc->raster_fmt.samples_per_line;
+        agc_params.num_lines       = (uint32_t)vgc->raster_fmt.lines;
+        agc_params.target_level    = 264.0f / 788.0f;
         agc_params.min_gain        = 0.5f;
         agc_params.max_gain        = 2.0f;
         if (chain->rf.enabled && chain->rf.agc_attack_ms > 0.0f) {
-            agc_params.attack_coeff  = 1.0f / (chain->rf.agc_attack_ms * 60.0f);
-            agc_params.release_coeff = 1.0f / (chain->rf.agc_release_ms * 60.0f);
+            agc_params.attack_coeff  = 1.0f - expf(-signal_region_frame_ms(chain->signal_fmt.region) / chain->rf.agc_attack_ms);
+            agc_params.release_coeff = 1.0f - expf(-signal_region_frame_ms(chain->signal_fmt.region) / fmaxf(chain->rf.agc_release_ms, 0.01f));
         } else {
             agc_params.attack_coeff  = 0.10f;
             agc_params.release_coeff = 0.02f;
@@ -1014,8 +1032,9 @@ void video_gpu_reinit_stages(VideoGPUChain *vgc, const VideoChain *chain)
     if (vgc->stage_comb >= 0) {
         uint32_t shader_mode = video_chain_comb_shader_mode(chain->comb_type);
         GpuCombParams comb_params;
+        comb_params.delay_samples = chain->signal_fmt.region == SIGNAL_REGION_NTSC ? 2730u : 0u;
         comb_params.count            = (uint32_t)total_samples;
-        comb_params.samples_per_line = (uint32_t)vgc->signal_fmt.samples_per_line;
+        comb_params.samples_per_line = (uint32_t)vgc->raster_fmt.samples_per_line;
         comb_params.mode             = shader_mode;
         /* Notch-depth override: honour preset's comb_notch_depth if set,
          * otherwise use the per-comb-type default (same logic as init). */
@@ -1091,13 +1110,13 @@ void video_gpu_set_demod(VideoGPUChain *vgc, float phase, float dp)
     /* Update the demod stage uniform params. */
     GpuModulatorParams demod_params;
     memset(&demod_params, 0, sizeof(demod_params));
-    demod_params.count            = (uint32_t)vgc->signal_fmt.total_samples;
+    demod_params.count            = (uint32_t)vgc->raster_fmt.total_samples;
     demod_params.mode             = 3;
     demod_params.phase            = phase;
     demod_params.dp               = dp;
     demod_params.param_a          = 1.0f;
-    demod_params.samples_per_line = (uint32_t)vgc->signal_fmt.samples_per_line;
-    demod_params.line_phase_inc   = 6.0f * 2.0f * (float)M_PI / 12.0f;
+    demod_params.samples_per_line = (uint32_t)vgc->raster_fmt.samples_per_line;
+    demod_params.line_phase_inc   = vgc->demod_line_phase;
     chain_update_params(&vgc->sig_chain, vgc->stage_chroma_demod,
                         &demod_params, sizeof(demod_params));
 }
@@ -1259,9 +1278,44 @@ bool dispatch_temporal_blit_public(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd
  *   3. If rgb_out requested, download buf_rgb to CPU
  */
 
+static void update_demod_params(VideoGPUChain *vgc) {
+    struct {
+        uint32_t count, full_width, active_width, samples_per_dot;
+        float phase_base, line_phase;
+        uint32_t region, lines;
+    } raster = {(uint32_t)vgc->raster_fmt.total_samples, (uint32_t)vgc->raster_fmt.samples_per_line,
+        (uint32_t)vgc->signal_fmt.samples_per_line, (uint32_t)vgc->signal_fmt.samples_per_pixel,
+        (float)vgc->signal_phase_base, (float)vgc->signal_line_phase,
+        (uint32_t)vgc->signal_fmt.region, (uint32_t)vgc->raster_fmt.lines};
+    chain_update_params(&vgc->sig_chain, vgc->stage_raster, &raster, sizeof(raster));
+    GpuModulatorParams p = {0};
+    p.count = (uint32_t)vgc->raster_fmt.total_samples;
+    p.mode = 3;
+    p.phase = vgc->demod_phase - vgc->signal_phase_base * 2.0f * (float)M_PI / 12.0f;
+    p.dp = vgc->demod_dp;
+    p.param_a = 1;
+    p.samples_per_line = (uint32_t)vgc->raster_fmt.samples_per_line;
+    p.line_phase_inc = (float)(65 * vgc->signal_fmt.samples_per_pixel); /* active offset */
+    chain_update_params(&vgc->sig_chain, vgc->stage_chroma_demod, &p, sizeof(p));
+}
+
+static void update_signal_time(VideoGPUChain *vgc) {
+    if (vgc->stage_rf >= 0) {
+        GpuRFParams *p = (GpuRFParams *)vgc->sig_chain.stages[vgc->stage_rf].params;
+        p->frame_seed = vgc->signal_frame_counter;
+        p->sample_rate = signal_format_sample_rate_hz(&vgc->signal_fmt);
+        p->full_line_samples = 341u * (uint32_t)vgc->signal_fmt.samples_per_pixel;
+        p->hum_hz = vgc->signal_fmt.region == SIGNAL_REGION_PAL ? 50.0f : 60.0f;
+        double t = (double)vgc->signal_frame_counter * signal_region_frame_ms(vgc->signal_fmt.region) / 1000.0;
+        p->hum_phase = (float)(fmod(t * p->hum_hz, 1.0) * 2.0 * M_PI);
+    }
+    vgc->signal_frame_counter++;
+}
+
 bool video_gpu_process(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
                        const float *waveform, float *rgb_out)
 {
+    update_signal_time(vgc);
     const SignalFormat *fmt = &vgc->signal_fmt;
     int total_samples = fmt->total_samples;
     Uint32 upload_bytes = (Uint32)(total_samples * sizeof(float));
@@ -1272,45 +1326,7 @@ bool video_gpu_process(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
         return false;
     }
 
-    /* Update demod phase in the chain stage params before each frame.
-     * Compensate for phase shift introduced by RC filter stages.
-     * Each first-order IIR y[n]=a*y[n-1]+b*x[n] shifts phase at frequency ω by:
-     *   φ = arctan(a * sin(ω) / (1 - a * cos(ω)))
-     * The demod reads composite AFTER these filters, so its reference
-     * carrier must be advanced by the total phase shift. */
-    {
-        float omega_sc = 2.0f * (float)M_PI / 12.0f;  /* subcarrier: 1/12 of sample rate */
-        float sin_w = sinf(omega_sc), cos_w = cosf(omega_sc);
-        float phase_comp = 0.0f;
-
-        /* Console LP RC phase shift. */
-        if (vgc->stage_console_lp >= 0 &&
-            vgc->sig_chain.stages[vgc->stage_console_lp].enabled) {
-            GpuRCFilterParams *rcp = (GpuRCFilterParams *)
-                vgc->sig_chain.stages[vgc->stage_console_lp].params;
-            float a = rcp->a;
-            phase_comp += atan2f(a * sin_w, 1.0f - a * cos_w);
-        }
-        /* Cable RC phase shift. */
-        if (vgc->stage_cable_rc >= 0 &&
-            vgc->sig_chain.stages[vgc->stage_cable_rc].enabled) {
-            GpuRCFilterParams *rcp = (GpuRCFilterParams *)
-                vgc->sig_chain.stages[vgc->stage_cable_rc].params;
-            float a = rcp->a;
-            phase_comp += atan2f(a * sin_w, 1.0f - a * cos_w);
-        }
-
-        GpuModulatorParams demod_params;
-        demod_params.count   = (uint32_t)total_samples;
-        demod_params.mode    = 3;
-        demod_params.phase            = vgc->demod_phase - phase_comp;
-        demod_params.dp               = vgc->demod_dp;
-        demod_params.param_a          = 1.0f;
-        demod_params.samples_per_line = (uint32_t)vgc->signal_fmt.samples_per_line;
-        demod_params.line_phase_inc   = 6.0f * 2.0f * (float)M_PI / 12.0f; /* π */
-        chain_update_params(&vgc->sig_chain, vgc->stage_chroma_demod,
-                            &demod_params, sizeof(demod_params));
-    }
+    update_demod_params(vgc);
 
     /* ---- ALL GPU work in ONE command buffer, ONE fence ---- */
     SDL_GPUCommandBuffer *master_cmd = SDL_AcquireGPUCommandBuffer(gpu);
@@ -1411,6 +1427,12 @@ bool video_gpu_set_beam_params(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
             vgc->buf_beam_prev = NULL;
         }
         vgc->buf_beam_prev = gpu_buffer_create(gpu, needed, GPU_BUF_READWRITE);
+        if (vgc->buf_phosphor_history)
+            SDL_ReleaseGPUBuffer(gpu, vgc->buf_phosphor_history);
+        vgc->buf_phosphor_history = gpu_buffer_create(gpu, needed, GPU_BUF_READWRITE);
+        vgc->temporal_history_valid = false;
+    vgc->smoothing_history_valid = false;
+        if (!vgc->buf_beam_prev || !vgc->buf_phosphor_history) return false;
 
         /* Storage texture: compute writes here, CRT shader samples it.
          * Zero-copy path — no CPU download/upload needed. */
@@ -1473,7 +1495,7 @@ SDL_GPUTexture *video_gpu_get_beam_texture(const VideoGPUChain *vgc)
  * Also copies cur→prev for next frame. All GPU-side, no CPU roundtrip. */
 static bool dispatch_temporal_blit(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd)
 {
-    if (!vgc->buf_beam_rgba || !vgc->tex_beam) return false;
+    if (!vgc->buf_beam_rgba || !vgc->tex_beam || !vgc->buf_phosphor_history) return false;
     if (!vgc->sig_chain.pipeline_loaded[CHAIN_KERNEL_TEMPORAL_BLIT]) return false;
 
     struct {
@@ -1484,30 +1506,30 @@ static bool dispatch_temporal_blit(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd
         float    blend_g;
         float    blend_b;
         float    motion_threshold;
+        uint32_t history_valid;
     } params;
     params.width = (uint32_t)vgc->beam_out_w;
     params.height = (uint32_t)vgc->beam_out_h;
-    /* blend_factor: 0.0=no blend (dot crawl visible), 0.5=full cancel.
-     * Skip on first frame (prev buffer uninitialized). */
-    params.blend_factor = (vgc->buf_beam_prev && vgc->beam_frame_counter > 1)
+    /* Display smoothing requires a valid previous raw frame. */
+    params.blend_factor = (vgc->buf_beam_prev && vgc->smoothing_history_valid)
         ? vgc->temporal_blend : 0.0f;
-    /* Per-channel phosphor persistence: P22 green persists ~2x longer
-     * than red/blue. Default to uniform (1.0) if not configured. */
-    params.blend_r = vgc->blend_r > 0.0f ? vgc->blend_r : 1.0f;
-    params.blend_g = vgc->blend_g > 0.0f ? vgc->blend_g : 1.0f;
-    params.blend_b = vgc->blend_b > 0.0f ? vgc->blend_b : 1.0f;
-    /* Motion-adaptive 3D comb: dot crawl is ~5-10% of signal amplitude.
-     * Threshold below which a pixel is considered "static" and gets
-     * temporal averaging. Above → moving, no blend (no ghosting). */
+    /* Zero disables decay; never read uninitialised history. */
+    params.blend_r = vgc->temporal_history_valid ? vgc->blend_r : 0.0f;
+    params.blend_g = vgc->temporal_history_valid ? vgc->blend_g : 0.0f;
+    params.blend_b = vgc->temporal_history_valid ? vgc->blend_b : 0.0f;
+    /* Optional display-domain smoothing, not receiver comb filtering. */
     params.motion_threshold = vgc->motion_threshold > 0.0f
         ? vgc->motion_threshold : 0.08f;
 
-    /* Compute pass: 2 readonly buffers + 1 readwrite storage texture. */
+    params.history_valid = vgc->temporal_history_valid ? 1u : 0u;
+    /* History is read/written only by its own pixel, so no cross-thread race. */
     SDL_GPUStorageTextureReadWriteBinding tex_rw[1] = {0};
     tex_rw[0].texture = vgc->tex_beam;
 
+    SDL_GPUStorageBufferReadWriteBinding history_rw = {0};
+    history_rw.buffer = vgc->buf_phosphor_history;
     SDL_GPUComputePass *pass = SDL_BeginGPUComputePass(
-        cmd, tex_rw, 1, NULL, 0);
+        cmd, tex_rw, 1, &history_rw, 1);
     if (!pass) return false;
 
     SDL_BindGPUComputePipeline(pass,
@@ -1527,16 +1549,19 @@ static bool dispatch_temporal_blit(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd
     SDL_EndGPUComputePass(pass);
 
     /* Copy cur → prev for next frame (buffer-to-buffer, same cmd). */
-    if (vgc->buf_beam_prev) {
+    vgc->smoothing_history_valid = false;
+    if (vgc->buf_beam_prev && vgc->temporal_blend > 0.0f) {
         SDL_GPUCopyPass *copy = SDL_BeginGPUCopyPass(cmd);
         if (copy) {
             SDL_GPUBufferLocation src = { .buffer = vgc->buf_beam_rgba, .offset = 0 };
             SDL_GPUBufferLocation dst = { .buffer = vgc->buf_beam_prev, .offset = 0 };
             SDL_CopyGPUBufferToBuffer(copy, &src, &dst, vgc->beam_rgba_size, false);
+            vgc->smoothing_history_valid = true;
             SDL_EndGPUCopyPass(copy);
         }
     }
 
+    vgc->temporal_history_valid = true;
     return true;
 }
 
@@ -1663,9 +1688,14 @@ static bool dispatch_beam_profile(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd)
         uint32_t frame_counter;
         float    hum_bar_amplitude;
         float    bloom_gamma;
+        float gamma, gamma_r, gamma_g, gamma_b;
     } beam_params;
 
     const TVDisplayParams *tv = vgc->chain ? &vgc->chain->tv : NULL;
+    beam_params.gamma = tv && tv->gamma > 0 ? tv->gamma : 2.2f;
+    beam_params.gamma_r = tv ? tv->phosphor_gamma_offset_r : 0;
+    beam_params.gamma_g = tv ? tv->phosphor_gamma_offset_g : 0;
+    beam_params.gamma_b = tv ? tv->phosphor_gamma_offset_b : 0;
     beam_params.signal_w          = (uint32_t)vgc->signal_fmt.samples_per_line;
     beam_params.out_w             = (uint32_t)vgc->beam_out_w;
     beam_params.out_h             = (uint32_t)vgc->beam_out_h;
@@ -1758,18 +1788,9 @@ void video_gpu_reset_temporal_state(VideoGPUChain *vgc, SDL_GPUDevice *gpu)
     /* Beam dispatch counter — resets per-frame noise phase + dot-crawl
      * field index so the next preset starts from zero. */
     vgc->beam_frame_counter = 0;
-
-    /* Previous-frame beam buffer → zero. Prevents the next preset's
-     * first 1–3 frames blending with the outgoing preset's output
-     * through the persistence_r/g/b weights. */
-    if (vgc->buf_beam_prev && vgc->beam_rgba_size > 0) {
-        void *zeros = calloc(1, vgc->beam_rgba_size);
-        if (zeros) {
-            gpu_buffer_upload(gpu, vgc->buf_beam_prev, zeros,
-                              vgc->beam_rgba_size);
-            free(zeros);
-        }
-    }
+    vgc->signal_frame_counter = 0;
+    vgc->temporal_history_valid = false;
+    vgc->smoothing_history_valid = false;
 
     /* Carry buffer — holds AGC running-gain and RC-filter prefix-scan
      * inter-block state, both of which are time-integrators that can
@@ -1849,6 +1870,8 @@ void video_gpu_destroy(VideoGPUChain *vgc, SDL_GPUDevice *gpu)
     gpu_pipeline_destroy(gpu, &vgc->pipe_dac);
 
     /* Release DAC-specific buffers. */
+    if (vgc->buf_receiver) { SDL_ReleaseGPUBuffer(gpu, vgc->buf_receiver); vgc->buf_receiver = NULL; }
+    if (vgc->indices_transfer) { SDL_ReleaseGPUTransferBuffer(gpu, vgc->indices_transfer); vgc->indices_transfer = NULL; }
     if (vgc->buf_indices)      { SDL_ReleaseGPUBuffer(gpu, vgc->buf_indices);      vgc->buf_indices = NULL; }
     if (vgc->buf_signal_table) { SDL_ReleaseGPUBuffer(gpu, vgc->buf_signal_table); vgc->buf_signal_table = NULL; }
     if (vgc->buf_signal_table_alt) { SDL_ReleaseGPUBuffer(gpu, vgc->buf_signal_table_alt); vgc->buf_signal_table_alt = NULL; }
@@ -1860,6 +1883,7 @@ void video_gpu_destroy(VideoGPUChain *vgc, SDL_GPUDevice *gpu)
     if (vgc->buf_deflection_y) { SDL_ReleaseGPUBuffer(gpu, vgc->buf_deflection_y); vgc->buf_deflection_y = NULL; }
     if (vgc->buf_beam_rgba)    { SDL_ReleaseGPUBuffer(gpu, vgc->buf_beam_rgba);    vgc->buf_beam_rgba = NULL; }
     if (vgc->buf_beam_prev)    { SDL_ReleaseGPUBuffer(gpu, vgc->buf_beam_prev);    vgc->buf_beam_prev = NULL; }
+    if (vgc->buf_phosphor_history) { SDL_ReleaseGPUBuffer(gpu, vgc->buf_phosphor_history); vgc->buf_phosphor_history = NULL; }
     if (vgc->tex_beam)         { SDL_ReleaseGPUTexture(gpu, vgc->tex_beam);        vgc->tex_beam = NULL; }
 
     vgc->chain = NULL;
@@ -1908,196 +1932,56 @@ bool video_gpu_process_full(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
                              const uint16_t *idx_fb,
                              int phase_base, int phase_line_adv, int frame_field,
                              float *rgb_out) {
+    (void)frame_field; /* phase_base already includes the frame's clock phase */
+    if (!vgc || !idx_fb || !vgc->pipe_dac.pipeline || !vgc->buf_signal_table) return false;
     const SignalFormat *fmt = &vgc->signal_fmt;
-
-    /* ---- 1. Upload palette index buffer ---- */
-    Uint32 idx_bytes = (Uint32)(256 * 240 * sizeof(uint16_t));
+    if (fmt->region == SIGNAL_REGION_PAL && !vgc->buf_signal_table_alt) return false;
+    const Uint32 bytes = 256 * 240 * sizeof(uint16_t);
     if (!vgc->buf_indices) {
-        vgc->indices_size = idx_bytes;
-        vgc->buf_indices = gpu_buffer_create(gpu, idx_bytes, GPU_BUF_READONLY);
-        if (!vgc->buf_indices) return false;
+        vgc->indices_size = bytes;
+        vgc->buf_indices = gpu_buffer_create(gpu, bytes, GPU_BUF_READONLY);
     }
-    if (!gpu_buffer_upload(gpu, vgc->buf_indices, idx_fb, idx_bytes))
-        return false;
-
-    /* ---- 2. Dispatch DAC shader (Stage 1) ---- */
-    if (vgc->pipe_dac.pipeline && vgc->buf_signal_table) {
-        struct {
-            uint32_t samples_per_pixel;
-            uint32_t samples_per_line;
-            uint32_t phase_base;
-            uint32_t phase_line_adv;
-            uint32_t phase_field_adv;
-            uint32_t frame_field;
-            uint32_t use_alt_table;
-            uint32_t _pad;
-        } dac_params;
-        dac_params.samples_per_pixel = (uint32_t)fmt->samples_per_pixel;
-        dac_params.samples_per_line  = (uint32_t)fmt->samples_per_line;
-        dac_params.phase_base        = (uint32_t)((phase_base % 12 + 12) % 12);
-        dac_params.phase_line_adv    = (uint32_t)((phase_line_adv % 12 + 12) % 12);
-        dac_params.phase_field_adv   = 0;
-        dac_params.frame_field       = (uint32_t)frame_field;
-        /* PAL uses the alt table on odd scanlines; NTSC never does.
-         * Zero also handles the case where the preset is PAL but
-         * the caller never uploaded an alt table (fall back to
-         * sampling the base table on every line — still renders,
-         * just without the 2C07 V-phase correction). */
-        dac_params.use_alt_table     = (fmt->region == SIGNAL_REGION_PAL
-                                        && vgc->buf_signal_table_alt) ? 1u : 0u;
-        dac_params._pad              = 0;
-
-        /* The DAC writes to the chain's input buffer (buf[0]). */
-        SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(gpu);
-        if (!cmd) return false;
-
-        SDL_GPUStorageBufferReadWriteBinding rw_bindings[1] = {0};
-        rw_bindings[0].buffer = vgc->sig_chain.buf[0];
-
-        SDL_GPUComputePass *pass = SDL_BeginGPUComputePass(
-            cmd, NULL, 0, rw_bindings, 1);
-        if (pass) {
-            SDL_BindGPUComputePipeline(pass, vgc->pipe_dac.pipeline);
-
-            /* Bind three readonly buffers: palette indices, base
-             * signal table, and the alt table. When no alt is
-             * available (NTSC, or first-frame PAL before upload),
-             * reuse the base table pointer so the binding slot
-             * isn't null — the shader gates reads on
-             * use_alt_table=0 in that case. */
-            SDL_GPUBuffer *alt = vgc->buf_signal_table_alt
-                               ? vgc->buf_signal_table_alt
-                               : vgc->buf_signal_table;
-            SDL_GPUBuffer *readonly_bufs[] = {
-                vgc->buf_indices,
-                vgc->buf_signal_table,
-                alt,
-            };
-            SDL_BindGPUComputeStorageBuffers(pass, 0, readonly_bufs, 3);
-
-            SDL_PushGPUComputeUniformData(cmd, 0, &dac_params, sizeof(dac_params));
-
-            SDL_DispatchGPUCompute(pass, 1, 240, 1);
-
-            SDL_EndGPUComputePass(pass);
-        }
-
-        SDL_GPUFence *fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
-        if (fence) {
-            SDL_WaitForGPUFences(gpu, true, &fence, 1);
-            SDL_ReleaseGPUFence(gpu, fence);
-        }
-
-        /* buf[0] now has the waveform. Set chain state so chain_run
-         * reads from buf[0]. */
-        vgc->sig_chain.current_buf = 0;
-
-        /* --- DIAGNOSTIC: dump raw composite waveform on first frame --- */
-        {
-            static int diag_frame = 0;
-            if (diag_frame == 5) {
-                int spl = fmt->samples_per_line;
-                Uint32 dump_bytes = (Uint32)(spl * 4 * sizeof(float));
-                float *raw = (float *)malloc(dump_bytes);
-                if (raw && gpu_buffer_download(gpu, vgc->sig_chain.buf[0], raw, dump_bytes)) {
-                    /* Dump composite waveform around NES pixel 128 (sample ~1024)
-                     * on lines 100 and 101 (middle of screen, likely colored). */
-                    int probe = spl / 2;  /* ~sample 1024 */
-                    fprintf(stderr, "DIAG: Composite waveform at sample %d (NES pixel ~%d):\n",
-                            probe, probe / fmt->samples_per_pixel);
-                    fprintf(stderr, "  Line 100: ");
-                    for (int i = probe - 8; i < probe + 8; i++)
-                        fprintf(stderr, "%.4f ", raw[100 * spl + i]);
-                    fprintf(stderr, "\n  Line 101: ");
-                    for (int i = probe - 8; i < probe + 8; i++)
-                        fprintf(stderr, "%.4f ", raw[101 * spl + i]);
-                    fprintf(stderr, "\n  Line 102: ");
-                    for (int i = probe - 8; i < probe + 8; i++)
-                        fprintf(stderr, "%.4f ", raw[102 * spl + i]);
-                    fprintf(stderr, "\n");
-                    /* Check if lines differ (phase should differ by line_adv). */
-                    float diff_01 = 0, diff_02 = 0;
-                    for (int i = probe - 8; i < probe + 8; i++) {
-                        diff_01 += fabsf(raw[100 * spl + i] - raw[101 * spl + i]);
-                        diff_02 += fabsf(raw[100 * spl + i] - raw[102 * spl + i]);
-                    }
-                    fprintf(stderr, "  Sum|diff| L100-L101=%.4f  L100-L102=%.4f "
-                            "(should differ if colored pixel)\n", diff_01, diff_02);
-                }
-                free(raw);
-            }
-            diag_frame++;
-        }
-
-        /* Run the signal chain (stages 0-4) + manual chroma dispatch.
-         * Skip the upload step since buf[0] is already populated. */
-        if (!chain_run(&vgc->sig_chain, gpu)) {
-            fprintf(stderr, "video_gpu_process_full: chain_run failed\n");
-            return false;
-        }
-
-        /* --- DIAGNOSTIC: dump Y (luma FIR output) after chain_run --- */
-        {
-            static int diag_frame2 = 0;
-            if (diag_frame2 == 5) {
-                SignalChain *sc = &vgc->sig_chain;
-                int spl = fmt->samples_per_line;
-                Uint32 dump_bytes = (Uint32)(spl * 4 * sizeof(float));
-                float *y_buf = (float *)malloc(dump_bytes);
-                if (y_buf && gpu_buffer_download(gpu, sc->buf[sc->current_buf],
-                                                  y_buf, dump_bytes)) {
-                    int probe = spl / 2;
-                    fprintf(stderr, "DIAG: Luma FIR output at sample %d:\n", probe);
-                    fprintf(stderr, "  Y Line 100: ");
-                    for (int i = probe - 8; i < probe + 8; i++)
-                        fprintf(stderr, "%.4f ", y_buf[100 * spl + i]);
-                    fprintf(stderr, "\n  Y Line 101: ");
-                    for (int i = probe - 8; i < probe + 8; i++)
-                        fprintf(stderr, "%.4f ", y_buf[101 * spl + i]);
-                    fprintf(stderr, "\n  Y Line 102: ");
-                    for (int i = probe - 8; i < probe + 8; i++)
-                        fprintf(stderr, "%.4f ", y_buf[102 * spl + i]);
-                    fprintf(stderr, "\n");
-                    float diff_01 = 0, diff_02 = 0;
-                    for (int i = probe - 8; i < probe + 8; i++) {
-                        diff_01 += fabsf(y_buf[100 * spl + i] - y_buf[101 * spl + i]);
-                        diff_02 += fabsf(y_buf[100 * spl + i] - y_buf[102 * spl + i]);
-                    }
-                    fprintf(stderr, "  Sum|diff| Y100-Y101=%.4f  Y100-Y102=%.4f "
-                            "(if 0: FIR killed all subcarrier → no zigzag possible)\n",
-                            diff_01, diff_02);
-                }
-                free(y_buf);
-            }
-            diag_frame2++;
-        }
-
-        /* Chroma demod, I/Q FIR, matrix decode, and post-RGB stages
-         * all run inside chain_run() now — the typed dispatcher drives
-         * the chroma path, the matrix_decode stage uses typed
-         * bindings + rebind, and the post_pipeline meta-stage dispatches
-         * video_amp + h_blur + beam + temporal_blit via its custom hook.
-         *
-         * The manual re-dispatch that used to live here applied every
-         * effect TWICE on this path — once from chain_run above,
-         * again here — which made the full-GPU DAC pipeline diverge
-         * from the CPU-waveform pipeline's output. Deleted. */
-
-        /* Download RGB to CPU if requested. */
-        if (rgb_out && vgc->buf_rgb) {
-            Uint32 rgb_bytes = (Uint32)(fmt->total_samples * 3 * sizeof(float));
-            if (!gpu_buffer_download(gpu, vgc->buf_rgb, rgb_out, rgb_bytes)) {
-                fprintf(stderr, "video_gpu_process_full: RGB download failed\n");
-                return false;
-            }
-        }
-
-        return true;
+    if (!vgc->indices_transfer) {
+        SDL_GPUTransferBufferCreateInfo info = {.usage=SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD, .size=bytes};
+        vgc->indices_transfer = SDL_CreateGPUTransferBuffer(gpu, &info);
     }
-
-    /* DAC not available — fall back to CPU waveform upload path.
-     * This shouldn't happen in normal operation. */
-    fprintf(stderr, "video_gpu_process_full: DAC pipeline not available, "
-            "falling back to CPU waveform\n");
-    return false;
+    if (!vgc->buf_indices || !vgc->indices_transfer) return false;
+    void *mapped = SDL_MapGPUTransferBuffer(gpu, vgc->indices_transfer, true);
+    if (!mapped) return false;
+    memcpy(mapped, idx_fb, bytes);
+    SDL_UnmapGPUTransferBuffer(gpu, vgc->indices_transfer);
+    SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(gpu);
+    if (!cmd) return false;
+    SDL_GPUCopyPass *copy = SDL_BeginGPUCopyPass(cmd);
+    if (!copy) { SDL_CancelGPUCommandBuffer(cmd); return false; }
+    SDL_GPUTransferBufferLocation source = {.transfer_buffer=vgc->indices_transfer, .offset=0};
+    SDL_GPUBufferRegion target = {.buffer=vgc->buf_indices, .offset=0, .size=bytes};
+    SDL_UploadToGPUBuffer(copy, &source, &target, false);
+    SDL_EndGPUCopyPass(copy);
+    struct {
+        uint32_t samples_per_pixel, samples_per_line, phase_base, phase_line_adv;
+        uint32_t phase_field_adv, frame_field, use_alt_table, pad;
+    } params = {(uint32_t)fmt->samples_per_pixel, (uint32_t)fmt->samples_per_line,
+        (uint32_t)((phase_base % 12 + 12) % 12),
+        (uint32_t)((phase_line_adv % 12 + 12) % 12), 0, 0,
+        fmt->region == SIGNAL_REGION_PAL ? 1u : 0u, 0};
+    SDL_GPUStorageBufferReadWriteBinding rw = {.buffer=vgc->sig_chain.buf[0]};
+    SDL_GPUComputePass *pass = SDL_BeginGPUComputePass(cmd, NULL, 0, &rw, 1);
+    if (!pass) { SDL_CancelGPUCommandBuffer(cmd); return false; }
+    SDL_GPUBuffer *inputs[] = {vgc->buf_indices, vgc->buf_signal_table,
+        vgc->buf_signal_table_alt ? vgc->buf_signal_table_alt : vgc->buf_signal_table};
+    SDL_BindGPUComputePipeline(pass, vgc->pipe_dac.pipeline);
+    SDL_BindGPUComputeStorageBuffers(pass, 0, inputs, 3);
+    SDL_PushGPUComputeUniformData(cmd, 0, &params, sizeof(params));
+    SDL_DispatchGPUCompute(pass, 1, 240, 1);
+    SDL_EndGPUComputePass(pass);
+    vgc->signal_phase_base = phase_base;
+    vgc->signal_line_phase = phase_line_adv;
+    update_signal_time(vgc);
+    vgc->demod_line_phase = phase_line_adv * 2.0f * (float)M_PI / 12.0f;
+    update_demod_params(vgc);
+    vgc->sig_chain.current_buf = 0;
+    if (!chain_run_cmd(&vgc->sig_chain, cmd)) { SDL_CancelGPUCommandBuffer(cmd); return false; }
+    if (!SDL_SubmitGPUCommandBuffer(cmd)) return false;
+    return !rgb_out || gpu_buffer_download(gpu, vgc->buf_rgb, rgb_out, vgc->rgb_size);
 }

@@ -76,7 +76,8 @@ extension ChainSnapshot {
         // Header
         guard let msgType = read(UInt32.self),
               msgType == MessageType.snapshot.rawValue,
-              let _ = read(UInt32.self) else { return nil }
+              let payloadSize = read(UInt32.self),
+              payloadSize == data.count - 8 else { return nil }
 
         // Snapshot header
         guard let frameNumber = read(UInt32.self),
@@ -85,6 +86,7 @@ extension ChainSnapshot {
               let numAudio = read(UInt16.self) else { return nil }
 
         let totalStages = Int(numVideo) + Int(numAudio)
+        guard totalStages <= 64, data.count == 20 + totalStages * 44 else { return nil }
 
         // Per-stage metadata (C struct DebugStageInfo is 44 bytes)
         var videoStages: [StageInfo] = []

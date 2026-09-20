@@ -194,6 +194,14 @@ static SDL_GPUTexture *create_halation_fbo(SDL_GPUDevice *gpu, int w, int h)
 bool gpu_display_init(GPUDisplay *d, SDL_GPUDevice *gpu,
                        SDL_Window *window, const char *shader_dir)
 {
+    int w, h;
+    SDL_GetWindowSizeInPixels(window, &w, &h);
+    return gpu_display_init_target(d, gpu, SDL_GetGPUSwapchainTextureFormat(gpu, window), w, h, shader_dir);
+}
+
+bool gpu_display_init_target(GPUDisplay *d, SDL_GPUDevice *gpu,
+    SDL_GPUTextureFormat swapchain_fmt, int win_w, int win_h, const char *shader_dir)
+{
     memset(d, 0, sizeof(*d));
 
     /* Build shader paths. */
@@ -203,7 +211,7 @@ bool gpu_display_init(GPUDisplay *d, SDL_GPUDevice *gpu,
     snprintf(blur_frag_path, sizeof(blur_frag_path), "%s/halation_blur.frag.spv", shader_dir);
 
     /* Get swapchain format for the CRT pipeline's output. */
-    SDL_GPUTextureFormat swapchain_fmt = SDL_GetGPUSwapchainTextureFormat(gpu, window);
+
 
     /* --- Halation blur pipeline ---
      * Vertex shader: no samplers, no uniforms.
@@ -269,8 +277,7 @@ bool gpu_display_init(GPUDisplay *d, SDL_GPUDevice *gpu,
 
     /* --- Halation FBOs at quarter window resolution --- */
     {
-        int win_w, win_h;
-        SDL_GetWindowSizeInPixels(window, &win_w, &win_h);
+
         d->halation_w = (win_w > 4) ? win_w / 4 : 1;
         d->halation_h = (win_h > 4) ? win_h / 4 : 1;
         d->tex_halation_a = create_halation_fbo(gpu, d->halation_w, d->halation_h);
@@ -363,7 +370,8 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
         int   radius;         /* int   radius        (offset 8)  */
         float threshold;      /* float threshold     (offset 12) */
         int   do_threshold;   /* int   do_threshold  (offset 16) */
-        int   _pad[3];        /* pad to 32 bytes                 */
+        float input_gamma;
+        int   _pad[2];        /* pad to 32 bytes                 */
     } blur_params;
 
     /* -----------------------------------------------------------------------
@@ -380,6 +388,7 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
         blur_params.radius = 16;
         blur_params.threshold = 0.65f;
         blur_params.do_threshold = 1;
+        blur_params.input_gamma = params->input_gamma;
 
         SDL_GPUColorTargetInfo ct;
         memset(&ct, 0, sizeof(ct));
@@ -406,13 +415,14 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
     }
 
     /* Pass 2: Vertical blur (halation_a → halation_b). */
-    {
+    if (params->halation_strength > 0.001f) {
         memset(&blur_params, 0, sizeof(blur_params));
         blur_params.dir_x = 0.0f;
         blur_params.dir_y = 1.0f / (float)d->halation_h;
         blur_params.radius = 16;
         blur_params.threshold = 0.65f;
         blur_params.do_threshold = 0;
+        blur_params.input_gamma = 0;
 
         SDL_GPUColorTargetInfo ct;
         memset(&ct, 0, sizeof(ct));
@@ -527,7 +537,9 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
             float glass_glare_light_x;      /* offset 228 */
             float glass_glare_light_y;      /* offset 232 */
             float glass_glare_size;         /* offset 236 */
-            float glass_glare_temp_k;       /* offset 240 */
+            float glass_glare_temp_k;
+            float input_gamma, hdr_headroom, sdr_white_level;
+            int output_hdr;       /* offset 240 */
         } crt_ubo;
 
         crt_ubo.src_w = (float)comp_w;
@@ -540,6 +552,10 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
         crt_ubo.convergence_dynamic = params->convergence_dynamic;
         crt_ubo.mask_strength = params->mask_strength;
         crt_ubo.mask_type = params->mask_type;
+        crt_ubo.input_gamma = params->input_gamma;
+        crt_ubo.hdr_headroom = params->hdr_headroom;
+        crt_ubo.sdr_white_level = params->sdr_white_level;
+        crt_ubo.output_hdr = params->output_hdr;
         crt_ubo.mask_pitch_pixels = params->mask_pitch_px;
         crt_ubo.halation_strength = params->halation_strength;
         crt_ubo.vignette_strength = params->vignette;
@@ -644,9 +660,8 @@ void gpu_display_params_from_tv(GPUDisplayParams *out, const TVDisplayParams *tv
     out->mask_strength = fminf(fmaxf(tv->mask_strength, 0.0f), 1.0f);
     out->mask_type = (int)tv->mask_type;
 
-    /* Mask pitch: use the mm value directly as pixels.
-     * The user tunes this in OSD to look right on their display. */
-    out->mask_pitch_px = tv->mask_pitch_mm;
+    /* Phosphor cell spacing in drawable pixels; legacy JSON used a misleading mm key. */
+    out->mask_pitch_px = tv->mask_pitch_px;
     if (out->mask_pitch_px < 1.0f) out->mask_pitch_px = 1.0f;
 
     out->halation_strength = tv->halation;
@@ -660,6 +675,9 @@ void gpu_display_params_from_tv(GPUDisplayParams *out, const TVDisplayParams *tv
     out->black_floor = tv->black_floor;
     out->ambient_light = tv->ambient_light;
     out->hdr_gain = tv->hdr_gain;
+    out->input_gamma = tv->gamma;
+    out->hdr_headroom = out->sdr_white_level = 1;
+    out->output_hdr = 0;
     out->subpixel_layout = tv->subpixel_layout;
     out->overscan = tv->overscan;
     out->keystone = tv->keystone;

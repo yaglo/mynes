@@ -175,13 +175,13 @@ static int test_tv_params_physical(void) {
         CHECK_RANGE(p, t->g_drive,           0.5,    1.5,    "tv.g_drive");
         CHECK_RANGE(p, t->b_drive,           0.5,    1.5,    "tv.b_drive");
 
-        /* mask_pitch_mm is in pixel units per recent refactor; typical 0.5-20 */
-        if (!(t->mask_pitch_mm > 0.0f)) {
-            printf("\n  FAIL: [%s] tv.mask_pitch_mm = %g must be > 0",
-                   p->name, (double)t->mask_pitch_mm);
+        /* mask_pitch_px is in pixel units per recent refactor; typical 0.5-20 */
+        if (!(t->mask_pitch_px > 0.0f)) {
+            printf("\n  FAIL: [%s] tv.mask_pitch_px = %g must be > 0",
+                   p->name, (double)t->mask_pitch_px);
             return 0;
         }
-        CHECK_RANGE(p, t->mask_pitch_mm,   0.5,   20.0,   "tv.mask_pitch_mm");
+        CHECK_RANGE(p, t->mask_pitch_px,   0.5,   20.0,   "tv.mask_pitch_px");
         CHECK_RANGE(p, t->mask_strength,   0.0,   1.0,    "tv.mask_strength");
         CHECK_RANGE(p, t->persistence_ms,  0.1,   50.0,   "tv.persistence_ms");
         CHECK_RANGE(p, t->beam_sharpness,  0.0,   2.0,    "tv.beam_sharpness");
@@ -260,7 +260,7 @@ static int test_no_nan_or_inf(void) {
         CHECK_FINITE(p, t->gamma,              "tv.gamma");
         CHECK_FINITE(p, t->beam_sharpness,     "tv.beam_sharpness");
         CHECK_FINITE(p, t->beam_spot_size,     "tv.beam_spot_size");
-        CHECK_FINITE(p, t->mask_pitch_mm,      "tv.mask_pitch_mm");
+        CHECK_FINITE(p, t->mask_pitch_px,      "tv.mask_pitch_px");
         CHECK_FINITE(p, t->mask_strength,      "tv.mask_strength");
         CHECK_FINITE(p, t->halation,           "tv.halation");
         CHECK_FINITE(p, t->glass_tint,         "tv.glass_tint");

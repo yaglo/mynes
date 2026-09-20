@@ -49,6 +49,7 @@ layout(set = 2, binding = 0) uniform Params {
     uint  frame_counter;
     float hum_bar_amplitude;
     float bloom_gamma;
+    float gamma, gamma_r, gamma_g, gamma_b;
 };
 
 float sample_rgb_channel_linear(float sx, int sy, uint channel) {
@@ -142,9 +143,12 @@ void main() {
         float gd = g_d - float(soff);
         float bd = b_d - float(soff);
 
-        R += lR * exp(-(rd * rd) * inv2s);
-        G += lG * exp(-(gd * gd) * inv2s);
-        B += lB * exp(-(bd * bd) * inv2s);
+        // Gun voltage becomes light before spatial beam deposition.
+        // Unit-area spots conserve current as focus/bloom changes width.
+        float energy = 1.0 / max(2.50662827463 * sv, 0.001);
+        R += pow(max(lR,0.0),gamma+gamma_r) * exp(-(rd * rd) * inv2s) * energy;
+        G += pow(max(lG,0.0),gamma+gamma_g) * exp(-(gd * gd) * inv2s) * energy;
+        B += pow(max(lB,0.0),gamma+gamma_b) * exp(-(bd * bd) * inv2s) * energy;
     }
 
     R *= dwell;
@@ -177,9 +181,9 @@ void main() {
         B += (float(sb & 0xFFFFu) / 65535.0 - 0.5) * noise_scale;
     }
 
-    R = min(max(R, black_floor), 4.0);
-    G = min(max(G, black_floor), 4.0);
-    B = min(max(B, black_floor), 4.0);
+    R = min(max(R, pow(max(black_floor,0.0),gamma)), 4.0);
+    G = min(max(G, pow(max(black_floor,0.0),gamma)), 4.0);
+    B = min(max(B, pow(max(black_floor,0.0),gamma)), 4.0);
 
     uint idx = pix * 2u;
     rgba_out[idx + 0u] = packHalf2x16(vec2(R, G));

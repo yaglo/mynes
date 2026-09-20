@@ -17,9 +17,7 @@ static inline void waveform_generate(float *waveform, const uint16_t *idx_fb,
     const int spp = sp->samples_per_pixel;
     const int spl = sp->samples_per_line;
 
-    int num_fields = sp->phase_num_fields;
-    if (num_fields < 1) num_fields = 1;
-    int field_ph = (int)(fc % (unsigned)num_fields) * sp->phase_field_adv;
+    int field_ph = signal_frame_phase(sp, fc);
     int line_adv = sp->phase_line_adv;
     int base_ph  = sp->phase_base;
 
@@ -96,7 +94,7 @@ static inline void waveform_apply_beam_edges(float *waveform,
 
     /* Fast path: everything off. */
     if (fade_px < 1e-4f && osh_amp < 1e-4f &&
-        (drift_wpx < 1e-4f || fabsf(drift_deg) < 1e-4f)) {
+        (drift_wpx < 1e-4f || fabsf(drift_deg) < 1e-4f) && tv->beam_current_load < 1e-4f) {
         return;
     }
 
@@ -113,9 +111,7 @@ static inline void waveform_apply_beam_edges(float *waveform,
      * phase. SignalPrecompute's 12-slot table is indexed by `ph` in
      * {0..11}; one subcarrier cycle = 360°, so slot offset = deg/30. */
     if (drift_samples > 0 && fabsf(drift_deg) > 1e-4f) {
-        int num_fields = sp->phase_num_fields;
-        if (num_fields < 1) num_fields = 1;
-        int field_ph = (int)(fc % (unsigned)num_fields) * sp->phase_field_adv;
+        int field_ph = signal_frame_phase(sp, fc);
         int line_adv = sp->phase_line_adv;
         int base_ph  = sp->phase_base;
         float slot_shift = drift_deg / 30.0f;  /* 12 slots = 360° */

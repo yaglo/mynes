@@ -11,6 +11,11 @@ struct Params
     uint samples_per_line;
     float noise_amplitude;
     float hum_amplitude;
+    uint frame_seed;
+    uint full_line_samples;
+    float sample_rate;
+    float hum_phase;
+    float hum_hz;
 };
 
 struct CompositeInOut
@@ -21,27 +26,32 @@ struct CompositeInOut
 constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
 
 static inline __attribute__((always_inline))
-float prng(thread const uint& seed)
+float prng(thread uint& x)
 {
-    uint x = (seed * 1103515245u) + 12345u;
-    x = (x / 65536u) % 32768u;
-    return float(x) / 32768.0;
+    x ^= (x >> uint(16));
+    x *= 2146121005u;
+    x ^= (x >> uint(15));
+    x *= 2221713035u;
+    x ^= (x >> uint(16));
+    return float(x >> uint(8)) * 5.9604644775390625e-08;
 }
 
-kernel void main0(constant Params& _41 [[buffer(0)]], device CompositeInOut& _57 [[buffer(1)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+kernel void main0(constant Params& _53 [[buffer(0)]], device CompositeInOut& _68 [[buffer(1)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
     uint tid = gl_GlobalInvocationID.x;
-    if (tid >= _41.count)
+    if (tid >= _53.count)
     {
         return;
     }
-    float signal = _57.composite[tid];
-    uint param = tid * 73856093u;
-    float _noise = (prng(param) - 0.5) * 2.0;
-    signal += (_41.noise_amplitude * _noise);
-    float hum_dp = 8.7765138232498429715633392333984e-06;
-    float hum_phase = float(tid) * hum_dp;
-    signal += (_41.hum_amplitude * sin(hum_phase));
-    _57.composite[tid] = signal;
+    float signal = _68.composite[tid];
+    uint param = tid ^ (_53.frame_seed * 2654435769u);
+    float _82 = prng(param);
+    float _noise = (_82 - 0.5) * 2.0;
+    signal += (_53.noise_amplitude * _noise);
+    uint line = tid / _53.samples_per_line;
+    uint sample_in_line = tid % _53.samples_per_line;
+    float time_sample = float((line * _53.full_line_samples) + sample_in_line);
+    float phase = _53.hum_phase + (time_sample * ((6.283185482025146484375 * _53.hum_hz) / _53.sample_rate));
+    signal += (_53.hum_amplitude * sin(phase));
+    _68.composite[tid] = signal;
 }
-

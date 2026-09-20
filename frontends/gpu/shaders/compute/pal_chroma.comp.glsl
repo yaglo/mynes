@@ -9,7 +9,7 @@
  *      flips sign on alternate lines under PAL's encoder-side V-phase
  *      alternation. Flip it back here so both fields land on a stable U.
  *
- *   2. 1H delay-line V averaging
+ *   2. 1H delay-line chroma averaging
  *      PAL's defining decoder trait: average the current V line with the
  *      previous line's V. This cancels small hue errors and gives PAL its
  *      characteristic vertically-soft chroma while leaving luma sharp.
@@ -20,7 +20,7 @@
  *
  * Output:
  *   v_out[] = 1H-averaged V
- *   u_out[] = odd-line compensated U
+ *   u_out[] = parity-corrected, 1H-averaged U
  */
 
 #version 450
@@ -56,6 +56,9 @@ void main() {
         /* First line has no delay-line history, so pass V through. */
         if (line > 0u) {
             v = 0.5 * (v + v_raw[tid - samples_per_line]);
+            float previous_u = u_raw[tid - samples_per_line];
+            if (((line-1u)&1u)!=0u) previous_u = -previous_u;
+            u = 0.5 * (u + previous_u);
         }
     }
 

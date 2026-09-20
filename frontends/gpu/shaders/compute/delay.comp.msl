@@ -88,4 +88,3 @@ kernel void main0(constant Params& _21 [[buffer(0)]], device InputBuf& _59 [[buf
     }
     _131.data_out[tid] = y;
 }
-

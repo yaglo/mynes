@@ -7,6 +7,7 @@
  */
 
 #include "debug_server.h"
+#include "preset_apply.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,6 +17,7 @@
 #include <pthread.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <math.h>
 
 /* ============================================================================
  * Message format (matching SwiftUI client)
@@ -51,18 +53,6 @@ typedef struct {
     char     name[32];       /* null-terminated stage name */
 } DebugStageInfo;
 
-/* Parameter update message (client → server) */
-typedef struct {
-    uint16_t stage_index;
-    uint32_t params_size;
-    uint8_t  params[128];  /* max CHAIN_MAX_UNIFORM_SIZE */
-} DebugParamUpdate;
-
-/* Preset change message (client → server) */
-typedef struct {
-    uint8_t preset_index;
-} DebugPresetChange;
-
 /* Tap request message (client → server) */
 typedef struct {
     uint32_t stage_index;
@@ -90,6 +80,10 @@ typedef struct {
     char socket_path[256];
 
     /* Pending tap request (from client) */
+    DebugControl controls[48];
+    int control_count;
+    uint64_t last_snapshot_ms;
+    uint64_t last_catalog_ms;
     int tap_stage_pending;  /* -1 = none, >= 0 = stage index */
 } DebugServerState;
 
@@ -112,21 +106,6 @@ static ssize_t send_all(int sock, const void *data, size_t size) {
         sent += (size_t)n;
     }
     return (ssize_t)sent;
-}
-
-static ssize_t recv_all(int sock, void *data, size_t size) {
-    uint8_t *buf = (uint8_t *)data;
-    size_t recvd = 0;
-    while (recvd < size) {
-        ssize_t n = recv(sock, buf + recvd, size - recvd, 0);
-        if (n < 0) {
-            if (errno == EINTR) continue;
-            return -1;
-        }
-        if (n == 0) return 0;  /* connection closed */
-        recvd += (size_t)n;
-    }
-    return (ssize_t)recvd;
 }
 
 /* ============================================================================
@@ -176,6 +155,12 @@ static void *listen_thread_main(void *arg) {
             continue;
         }
 
+        int no_sigpipe = 1;
+        setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &no_sigpipe, sizeof(no_sigpipe));
+        int send_buffer = 65536;
+        setsockopt(client, SOL_SOCKET, SO_SNDBUF, &send_buffer, sizeof(send_buffer));
+        struct timeval timeout = {.tv_sec = 0, .tv_usec = 5000};
+        setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
         printf("Visualiser connected\n");
 
         pthread_mutex_lock(&state->client_lock);
@@ -234,57 +219,40 @@ static bool send_message(DebugServerState *state, uint32_t msg_type,
     return true;
 }
 
+/* Peek until the entire frame is available. Never consume a partial header
+ * or block the emulation thread waiting for a client's payload. */
 static bool read_message(DebugServerState *state, uint32_t *out_type,
-                         void *out_payload, uint32_t max_payload_size) {
-    int sock;
+                         void *out_payload, uint32_t max_payload_size, uint32_t *out_size) {
     pthread_mutex_lock(&state->client_lock);
-    sock = state->client_sock;
-    pthread_mutex_unlock(&state->client_lock);
-
-    if (sock < 0) return false;  /* no client */
-
-    /* Set non-blocking mode temporarily to check for messages */
-    int flags = fcntl(sock, F_GETFL, 0);
-    fcntl(sock, F_SETFL, flags | O_NONBLOCK);
-
+    int sock = state->client_sock;
+    if (sock < 0) { pthread_mutex_unlock(&state->client_lock); return false; }
+    uint8_t frame[520];
+    ssize_t n = recv(sock, frame, sizeof(frame), MSG_PEEK | MSG_DONTWAIT);
+    if (n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)) {
+        close(sock); state->client_sock = -1;
+    }
+    if (n < 8) { pthread_mutex_unlock(&state->client_lock); return false; }
     DebugMessageHeader hdr;
-    ssize_t n = recv_all(sock, &hdr, sizeof(hdr));
-
-    fcntl(sock, F_SETFL, flags);  /* restore */
-
-    if (n <= 0) {
-        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-            return false;  /* no message available */
-        }
-        if (n == 0) {
-            printf("Debug server: client disconnected\n");
-            pthread_mutex_lock(&state->client_lock);
-            close(state->client_sock);
-            state->client_sock = -1;
-            pthread_mutex_unlock(&state->client_lock);
-        }
-        return false;
+    memcpy(&hdr, frame, sizeof(hdr));
+    if (hdr.payload_size > max_payload_size || hdr.payload_size > sizeof(frame)-8) {
+        close(sock); state->client_sock = -1;
+        pthread_mutex_unlock(&state->client_lock); return false;
     }
-
-    if (hdr.payload_size > max_payload_size) {
-        printf("Debug server: message too large (%u > %u)\n",
-               hdr.payload_size, max_payload_size);
-        return false;
-    }
-
-    if (hdr.payload_size > 0) {
-        if (recv_all(sock, out_payload, hdr.payload_size) < 0) {
-            printf("Debug server: payload recv failed\n");
-            pthread_mutex_lock(&state->client_lock);
-            close(state->client_sock);
-            state->client_sock = -1;
-            pthread_mutex_unlock(&state->client_lock);
-            return false;
-        }
-    }
-
-    *out_type = hdr.msg_type;
+    size_t size = 8 + hdr.payload_size;
+    if ((size_t)n < size) { pthread_mutex_unlock(&state->client_lock); return false; }
+    n = recv(sock, frame, size, MSG_DONTWAIT);
+    pthread_mutex_unlock(&state->client_lock);
+    if (n != (ssize_t)size) return false;
+    memcpy(out_payload, frame+8, hdr.payload_size);
+    *out_type = hdr.msg_type; *out_size = hdr.payload_size;
     return true;
+}
+
+void debug_server_set_controls(DebugServer *srv, const DebugControl *controls, int count) {
+    if (!srv || count < 0 || count > 48) return;
+    DebugServerState *state = (DebugServerState *)srv;
+    memcpy(state->controls, controls, (size_t)count * sizeof(*controls));
+    state->control_count = count;
 }
 
 /* ============================================================================
@@ -359,33 +327,62 @@ void debug_server_frame(DebugServer *srv,
     DebugServerState *state = (DebugServerState *)srv;
 
     /* Process incoming messages */
-    uint32_t msg_type;
+    uint32_t msg_type, msg_size;
     uint8_t msg_payload[512];
 
-    while (read_message(state, &msg_type, msg_payload, sizeof(msg_payload))) {
+    while (read_message(state, &msg_type, msg_payload, sizeof(msg_payload), &msg_size)) {
         switch (msg_type) {
             case DEBUG_MSG_TAP_REQUEST: {
-                if (sizeof(DebugTapRequest) <= sizeof(msg_payload)) {
+                if (msg_size == sizeof(DebugTapRequest)) {
                     DebugTapRequest *req = (DebugTapRequest *)msg_payload;
                     state->tap_stage_pending = (int)req->stage_index;
                 }
                 break;
             }
 
-            case DEBUG_MSG_PARAM_UPDATE: {
-                /* Parameter updates would be handled here.
-                 * For now, just acknowledge. */
+            case 8: { /* op, preset id, catalog revision, UTF-8 name[128] */
+                if(msg_size!=140) break;
+                uint32_t op,id,revision;
+                memcpy(&op,msg_payload,4); memcpy(&id,msg_payload+4,4); memcpy(&revision,msg_payload+8,4);
+                char name[128]; memcpy(name,msg_payload+12,128); name[127]=0;
+                uint8_t result[136]={0}; memcpy(result,&op,4);
+                uint32_t ok=preset_manage(op,(int)id,revision,name,(char *)result+8,128);
+                memcpy(result+4,&ok,4); send_message(state,9,result,sizeof(result));
+                state->last_catalog_ms=0;
                 break;
             }
 
-            case DEBUG_MSG_PRESET_CHANGE: {
-                /* Preset changes would be handled here. */
+            case 6: { /* physical control: uint32 id, float value */
+                uint32_t id; float value;
+                if (msg_size != 8) break;
+                memcpy(&id, msg_payload, 4); memcpy(&value, msg_payload+4, 4);
+                if (id >= (uint32_t)state->control_count || !isfinite(value)) break;
+                DebugControl *control = &state->controls[id];
+                if (value < control->minimum || value > control->maximum) break;
+                *control->value = value;
+                if (control->apply) control->apply();
                 break;
             }
 
             default:
                 break;
         }
+    }
+
+    uint64_t now = SDL_GetTicks();
+    if (now - state->last_snapshot_ms < 33) return;
+    state->last_snapshot_ms = now;
+
+    if(!state->last_catalog_ms || now-state->last_catalog_ms>=500) {
+        uint8_t catalog[20+63*136]={0};
+        uint32_t header[]={1,preset_catalog_revision(),(uint32_t)preset_total_count(),
+            (uint32_t)preset_active_index(),preset_is_modified() ? 1u : 0u};
+        memcpy(catalog,header,sizeof(header));
+        for(uint32_t i=0;i<header[2];i++) {
+            uint8_t *r=catalog+20+i*136; uint32_t user=preset_is_user((int)i);
+            memcpy(r,&i,4); memcpy(r+4,&user,4); snprintf((char *)r+8,128,"%s",preset_display_name((int)i));
+        }
+        send_message(state,7,catalog,20+header[2]*136); state->last_catalog_ms=now;
     }
 
     /* Build and send snapshot */
@@ -395,7 +392,7 @@ void debug_server_frame(DebugServer *srv,
     /* Snapshot header + per-stage info */
     DebugSnapshotHeader snap_hdr;
     snap_hdr.frame_number = frame_number;
-    snap_hdr.timestamp_ms = 0;  /* would use SDL_GetTicks() */
+    snap_hdr.timestamp_ms = (uint32_t)now;
     snap_hdr.num_video_stages = (uint16_t)num_video_stages;
     snap_hdr.num_audio_stages = (uint16_t)num_audio_stages;
 
@@ -438,6 +435,20 @@ void debug_server_frame(DebugServer *srv,
 
     send_message(state, DEBUG_MSG_SNAPSHOT, payload, (uint32_t)payload_size);
     free(payload);
+
+    /* Versioned physical-control snapshot. Fixed records avoid C struct padding. */
+    uint8_t controls[8 + 48 * 72] = {0};
+    uint32_t version = 1, count = (uint32_t)state->control_count;
+    memcpy(controls, &version, 4); memcpy(controls+4, &count, 4);
+    for (uint32_t i = 0; i < count; i++) {
+        DebugControl *c = &state->controls[i];
+        uint8_t *record = controls + 8 + i*72;
+        memcpy(record, &i, 4); memcpy(record+4, c->value, 4);
+        memcpy(record+8, &c->minimum, 4); memcpy(record+12, &c->maximum, 4);
+        snprintf((char *)record+16, 32, "%s", c->name);
+        snprintf((char *)record+48, 24, "%s", c->group);
+    }
+    send_message(state, 5, controls, 8 + count*72);
 }
 
 void debug_server_send_tap(DebugServer *srv,

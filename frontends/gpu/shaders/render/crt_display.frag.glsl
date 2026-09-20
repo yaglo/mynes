@@ -95,6 +95,8 @@ layout(set = 1, binding = 0) uniform DisplayParams {
     float glass_glare_light_y;
     float glass_glare_size;
     float glass_glare_temp_k;
+    float input_gamma, hdr_headroom, sdr_white_level;
+    int output_hdr;
 };
 
 /* -----------------------------------------------------------------------
@@ -224,56 +226,40 @@ float mask_alias_risk(vec2 frag_pos, int type, float pitch, int subpixel_mode) {
     return max(risk_x, risk_y);
 }
 
-/* Convolve beam spot with phosphor dot grid.
- * Samples the beam texture at offsets within the spot radius,
- * applies the phosphor selector at each offset's screen position,
- * weights by Gaussian falloff from the centre. */
-vec3 beam_phosphor_convolve(vec2 uv_center, vec2 frag_pos,
-                             int type, float pitch, int subpixel_mode) {
-    float dot_pitch = mask_effective_pitch(pitch, subpixel_mode);
-    /* Beam spot radius in display pixels.
-     * A real CRT spot is ~0.3-0.8mm. At ~110 PPI (0.23mm/pixel),
-     * that's ~1.3-3.5 pixels. Use pitch as a proxy: spot ≈ 1 triad. */
-    float spot_radius = dot_pitch * 1.5;  /* spot covers ~1.5 dot pitches */
-    float inv_2sigma2 = 1.0 / (2.0 * spot_radius * spot_radius * 0.11);
-    /* 0.11 factor: sigma ≈ spot_radius/3, so 2σ² = 2*(r/3)² = 2r²/9 ≈ 0.22r² */
-
-    vec3 total = vec3(0.0);
-    float weight_sum = 0.0;
-
-    /* Sample a 3×3 grid — covers ~85% of Gaussian energy, good cost/quality. */
-    int radius = 1;
-
-    for (int dy = -radius; dy <= radius; dy++) {
-        for (int dx = -radius; dx <= radius; dx++) {
-            vec2 offset = vec2(float(dx), float(dy)) * dot_pitch * 0.5;
-            float dist2 = dot(offset, offset);
-
-            /* Gaussian beam intensity at this offset. */
-            float w = exp(-dist2 * inv_2sigma2);
-
-            /* Screen position of this sample. */
-            vec2 sample_pos = frag_pos + offset;
-
-            /* Which phosphor is at this position? */
-            vec3 phos_color;
-            float dot_sh;
-            phosphor_at(sample_pos, type, pitch, subpixel_mode, phos_color, dot_sh);
-
-            /* Sample the beam signal at this position's UV. */
-            vec2 sample_uv = uv_center + vec2(offset.x / out_size.x,
-                                               offset.y / out_size.y);
-            vec3 beam = texture(tex_composite, clamp(sample_uv, 0.0, 1.0)).rgb;
-
-            /* This phosphor dot emits: its colour × beam channel × dot shape × beam weight. */
-            vec3 emission = phos_color * dot(phos_color, beam) * dot_sh * w;
-            total += emission;
-            weight_sum += w;
-        }
+// Pixel-footprint integration of the fixed phosphor face. Beam spreading
+// has already happened upstream; do not convolve RGB dots a second time.
+float stripe_integral(float x, float left) {
+    float t=x-left;
+    return floor(t/3.0)*0.86 + clamp(mod(t,3.0),0.0,0.86);
+}
+vec3 phosphor_mask(vec2 pos) {
+    if(mask_type==1) {
+        float pitch=max(mask_pitch_pixels,1.0);
+        float a=(pos.x-0.5)/pitch, b=(pos.x+0.5)/pitch;
+        vec3 m;
+        for(int c=0;c<3;c++) m[c]=(stripe_integral(b,float(c)+0.07)-stripe_integral(a,float(c)+0.07))*pitch*3.0/0.86;
+        return subpixel_layout==2 ? m.bgr : m;
     }
-
-    /* Normalize by total Gaussian weight to preserve energy. */
-    return total / max(weight_sum, 0.001) * 3.0;
+    vec3 coverage = vec3(0.0);
+    for (int y=0; y<4; y++) for (int x=0; x<4; x++) {
+        vec2 p = pos + (vec2(x,y)+0.5)/4.0-0.5;
+        vec3 primary; float shape;
+        phosphor_at(p, mask_type, mask_pitch_pixels, subpixel_layout, primary, shape);
+        coverage += primary * shape;
+    }
+    // Average open area of each cell. Calibration preserves white-field
+    // energy; local phosphor peaks require HDR headroom.
+    float area = mask_type == 1 ? 0.86 : (mask_type == 2 ? 0.84*0.74 : 0.42*0.34*3.14159265*0.83);
+    vec3 resolved = coverage * (3.0 / (16.0*area));
+    float unresolved = mask_alias_risk(pos,mask_type,mask_pitch_pixels,subpixel_layout);
+    return mix(resolved,vec3(1.0),unresolved);
+}
+vec3 beam_light(vec2 p) {
+    vec3 v = max(texture(tex_composite,p).rgb,vec3(0.0));
+    return input_gamma > 0.0 ? pow(v,vec3(input_gamma)) : v;
+}
+vec3 srgb_encode(vec3 v) {
+    return mix(12.92*v,1.055*pow(v,vec3(1.0/2.4))-0.055,greaterThan(v,vec3(0.0031308)));
 }
 
 /* -----------------------------------------------------------------------
@@ -312,7 +298,7 @@ void main() {
     bool outside_raster = false;
 
     vec3 color = vec3(0.0);
-    color = texture(tex_composite, sample_uv).rgb;
+    color = beam_light(sample_uv);
 
     /* §5.6 anti-glare blur — matte tube treatments scatter emitted
      * phosphor light through a fine-grain surface, blurring the
@@ -321,10 +307,10 @@ void main() {
      * 0 = glossy (untreated), 0.3 = heavy matte. */
     if (antiglare_blur > 0.001) {
         vec2 ts = antiglare_blur / src_size;
-        vec3 c0 = texture(tex_composite, sample_uv + vec2( ts.x,  0.0)).rgb;
-        vec3 c1 = texture(tex_composite, sample_uv + vec2(-ts.x,  0.0)).rgb;
-        vec3 c2 = texture(tex_composite, sample_uv + vec2(0.0,   ts.y)).rgb;
-        vec3 c3 = texture(tex_composite, sample_uv + vec2(0.0,  -ts.y)).rgb;
+        vec3 c0 = beam_light(sample_uv + vec2( ts.x,  0.0));
+        vec3 c1 = beam_light(sample_uv + vec2(-ts.x,  0.0));
+        vec3 c2 = beam_light(sample_uv + vec2(0.0,   ts.y));
+        vec3 c3 = beam_light(sample_uv + vec2(0.0,  -ts.y));
         vec3 blurred = 0.25 * (c0 + c1 + c2 + c3);
         float mix_amt = clamp(antiglare_blur, 0.0, 1.0);
         color = mix(color, blurred, mix_amt);
@@ -338,19 +324,12 @@ void main() {
      * image warps. */
     if (mask_strength > 0.01 && !outside_raster) {
         vec2 local_frag_pos = uv * out_size;
-        float alias_risk = mask_alias_risk(local_frag_pos, mask_type,
-                                           mask_pitch_pixels,
-                                           subpixel_layout);
-        float effective_mask_strength = mask_strength * (1.0 - 0.65 * alias_risk);
-        vec3 emitted = beam_phosphor_convolve(sample_uv, local_frag_pos,
-                                              mask_type, mask_pitch_pixels,
-                                              subpixel_layout);
-        color = mix(color, emitted, effective_mask_strength);
+        color *= mix(vec3(1.0), phosphor_mask(local_frag_pos), mask_strength);
     }
 
     /* (e) Halation: the glass carries light past the raster edge via
      * internal reflections, so it bleeds a little beyond the lit area. */
-    if (!outside_raster) {
+    if (halation_strength > 0.001 && !outside_raster) {
         vec3 halo = texture(tex_halation, sample_uv).rgb;
         /* Phosphor-coloured halo: per-channel tint biases the bloom so
          * highlights pick up a characteristic glow colour (e.g. green-
@@ -358,7 +337,7 @@ void main() {
          * monitors). Zero tint falls back to uniform white bloom. */
         vec3 tint = vec3(halation_tint_r, halation_tint_g, halation_tint_b);
         if (tint.r + tint.g + tint.b < 1e-4) tint = vec3(1.0);
-        color += halo * tint * halation_strength;
+        color = color * (1.0-halation_strength) + halo * tint * halation_strength;
     }
 
     /* §5.4 Phosphor chromaticity shift with drive level — each gun's
@@ -586,29 +565,11 @@ void main() {
         color += env * edge_boost * corner_fade * glass_glare * 1.6;
     }
 
-    /* HDR gain: compensate for mask/grille darkening or boost for HDR pop. */
-    if (hdr_gain > 0.01) color *= hdr_gain;
-
-    /* (i) Tone mapping / output encoding.
-     *     gamma > 0 signals EDR mode: convert sRGB→linear for HDR display.
-     *     gamma == 0 signals SDR mode: soft Reinhard rolloff to [0,1).
-     *
-     * §3.6 per-phosphor gamma: P22 R/G/B have subtly different response
-     * curves. `phosphor_gamma_offset_*` (default 0) adds a per-channel
-     * exponent to the base gamma so legacy presets render identically
-     * with zeros. */
-    if (gamma > 0.1) {
-        vec3 g_exp = vec3(gamma + phosphor_gamma_offset_r,
-                          gamma + phosphor_gamma_offset_g,
-                          gamma + phosphor_gamma_offset_b);
-        color = pow(max(color, vec3(0.0)), g_exp);
-        color = min(color, vec3(4.0));
-    } else {
-        /* Soft rolloff: preserves bloom detail instead of hard clip.
-         * Reinhard: x/(1+x) maps [0,∞) → [0,1) smoothly. */
-        color = max(color, vec3(0.0));
-        color = color / (1.0 + color);
-    }
+    // Gain is a LINEAR luminance multiplier. SDR and EDR share the same
+    // phosphor/glass model and differ only in their final output encoding.
+    color *= hdr_gain > 0.0 ? hdr_gain : 1.0;
+    color = clamp(color,vec3(0.0),vec3(max(hdr_headroom,1.0)));
+    color = output_hdr != 0 ? color * sdr_white_level : srgb_encode(color);
 
     frag_color = vec4(color, 1.0);
 }

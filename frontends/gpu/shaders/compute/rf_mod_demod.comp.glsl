@@ -1,27 +1,5 @@
-/*
- * RF Modulator/Demodulator — Composite → RF Channel → Composite
- * =============================================================
- *
- * Simulates the RF path: composite signal is AM-modulated onto a carrier
- * (~61.25 MHz for channels 2–4), transmitted over coax cable, then demodulated.
- *
- * Effects:
- *   • Bandwidth limiting (RF channel ~4 MHz vs composite ~4.2 MHz)
- *   • White noise (RF snow)
- *   • Intermodulation (CRT oscillator hum at 60/120 Hz)
- *   • Slight phase distortion from envelope detection
- *
- * Implementation: Simplified RF path that adds noise and limits bandwidth
- * without explicit AM modulation (the visual effect is the same).
- *
- * Input:  composite signal (1 float per sample)
- * Output: RF-degraded composite (same buffer, in-place)
- *
- * Parallelization: One thread per sample. Each sample is independent.
- *
- * Pseudorandom noise: Use sample index + seed for LCG-like noise generation.
- */
-
+/* Baseband approximation of receiver noise and mains pickup. The separate
+ * RF FIR supplies bandwidth loss; this does not simulate a tuner or AM/VSB. */
 #version 450
 
 layout(local_size_x = 256) in;
@@ -32,14 +10,20 @@ layout(set = 2, binding = 0) uniform Params {
     uint  count;              /* total samples in buffer */
     uint  samples_per_line;   /* 2048 for NTSC, 2560 for PAL */
     float noise_amplitude;    /* RF snow amplitude (0.02–0.05 typical) */
-    float hum_amplitude;      /* 60 Hz hum amplitude (0.01–0.03) */
+    float hum_amplitude;
+    uint frame_seed;
+    uint full_line_samples;
+    float sample_rate;
+    float hum_phase;
+    float hum_hz;
 };
 
-/* Simple LCG-style pseudorandom number [0, 1). */
-float prng(uint seed) {
-    uint x = seed * 1103515245u + 12345u;
-    x = (x / 65536u) % 32768u;
-    return float(x) / 32768.0;
+/* Integer avalanche hash: independent noise for each sample and frame. */
+float prng(uint x) {
+    x ^= x >> 16; x *= 0x7feb352du;
+    x ^= x >> 15; x *= 0x846ca68bu;
+    x ^= x >> 16;
+    return float(x >> 8) * (1.0 / 16777216.0);
 }
 
 void main() {
@@ -49,16 +33,14 @@ void main() {
     float signal = composite[tid];
 
     /* ---- 1. Add RF channel noise (snow) ---- */
-    float noise = (prng(tid * 73856093u) - 0.5) * 2.0;  /* [-1, 1) */
+    float noise = (prng(tid ^ (frame_seed * 0x9e3779b9u)) - 0.5) * 2.0;  /* [-1, 1) */
     signal += noise_amplitude * noise;
 
-    /* ---- 2. Add 60 Hz hum from CRT oscillator ---- */
-    /* Sample rate: Fsample = Fsc * 12 = 3.579545e6 * 12 = 42.954540 MHz
-     * 60 Hz hum period: 42.954540e6 / 60 = 715909.0 samples per cycle
-     * Phase increment: 2π / 715909.0 */
-    float hum_dp = 2.0 * 3.14159265359 / 715909.0;
-    float hum_phase = float(tid) * hum_dp;
-    signal += hum_amplitude * sin(hum_phase);
+    uint line = tid / samples_per_line;
+    uint sample_in_line = tid % samples_per_line;
+    float time_sample = float(line * full_line_samples + sample_in_line);
+    float phase = hum_phase + time_sample * (6.28318530718 * hum_hz / sample_rate);
+    signal += hum_amplitude * sin(phase);
 
     /* RF bandwidth limiting is handled by a separate FIR stage
      * (RF Bandwidth FIR) in the signal chain, not here. */

@@ -1,6 +1,6 @@
 {
     "name": "Living Room 1988",
-    "description": "NES front-loader, composite on a 19\" Zenith \u2014 the canonical American experience",
+    "description": "NES front-loader, composite on a 19\" Zenith — the canonical American experience",
     "connection": "composite",
     "comb_type": "none",
     "console_variant": 1,
@@ -60,7 +60,7 @@
         "h_jitter": 0.2,
         "v_jitter": 0.001,
         "mask_type": "shadow",
-        "mask_pitch_mm": 3.0,
+        "mask_pitch_px": 3.0,
         "mask_strength": 0.5,
         "subpixel_layout": 0,
         "persistence_ms": 2.0,

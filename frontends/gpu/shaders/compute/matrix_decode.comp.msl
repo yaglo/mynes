@@ -21,11 +21,18 @@ struct Params
     float color_killer_threshold;
     int chroma_delay;
     uint samples_per_line;
+    uint active_width;
+    uint active_offset;
 };
 
 struct YBuf
 {
     float y_in[1];
+};
+
+struct Reference
+{
+    float4 reference[1];
 };
 
 struct IBuf
@@ -45,36 +52,38 @@ struct RGBBuf
 
 constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
 
-kernel void main0(constant Params& _21 [[buffer(0)]], device YBuf& _36 [[buffer(1)]], device IBuf& _88 [[buffer(2)]], device QBuf& _96 [[buffer(3)]], device RGBBuf& _199 [[buffer(4)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+kernel void main0(constant Params& _21 [[buffer(0)]], device YBuf& _57 [[buffer(1)]], device Reference& _66 [[buffer(4)]], device IBuf& _118 [[buffer(2)]], device QBuf& _126 [[buffer(3)]], device RGBBuf& _232 [[buffer(5)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
     uint tid = gl_GlobalInvocationID.x;
     if (tid >= _21.count)
     {
         return;
     }
-    float Y = _36.y_in[tid];
-    int delayed_tid = int(tid);
-    bool _49 = _21.chroma_delay != 0;
-    bool _56;
-    if (_49)
+    uint line = tid / _21.active_width;
+    uint source = ((line * _21.samples_per_line) + _21.active_offset) + (tid % _21.active_width);
+    float Y = _57.y_in[source] - ((device float*)&_66.reference[line])[1u];
+    int delayed_tid = int(source);
+    bool _80 = _21.chroma_delay != 0;
+    bool _86;
+    if (_80)
     {
-        _56 = _21.samples_per_line > 0u;
+        _86 = _21.samples_per_line > 0u;
     }
     else
     {
-        _56 = _49;
+        _86 = _80;
     }
-    if (_56)
+    if (_86)
     {
-        uint line_start = (tid / _21.samples_per_line) * _21.samples_per_line;
+        uint line_start = (source / _21.samples_per_line) * _21.samples_per_line;
         uint line_end = line_start + _21.samples_per_line;
-        delayed_tid = clamp(int(tid) - _21.chroma_delay, int(line_start), int(line_end) - 1);
+        delayed_tid = clamp(int(source) - _21.chroma_delay, int(line_start), int(line_end) - 1);
     }
-    float I = _88.i_in[delayed_tid];
-    float Q = _96.q_in[delayed_tid];
+    float I = _118.i_in[delayed_tid];
+    float Q = _126.q_in[delayed_tid];
     if (_21.color_killer_threshold > 0.0)
     {
-        float kill = smoothstep(_21.color_killer_threshold * 0.699999988079071044921875, _21.color_killer_threshold * 1.2999999523162841796875, Y);
+        float kill = smoothstep(_21.color_killer_threshold * 0.699999988079071044921875, _21.color_killer_threshold * 1.2999999523162841796875, ((device float*)&_66.reference[line])[2u]);
         I *= kill;
         Q *= kill;
     }
@@ -84,8 +93,7 @@ kernel void main0(constant Params& _21 [[buffer(0)]], device YBuf& _36 [[buffer(
     R = fast::clamp(R, 0.0, 1.0);
     G = fast::clamp(G, 0.0, 1.0);
     B = fast::clamp(B, 0.0, 1.0);
-    _199.rgb_out[(tid * 3u) + 0u] = R;
-    _199.rgb_out[(tid * 3u) + 1u] = G;
-    _199.rgb_out[(tid * 3u) + 2u] = B;
+    _232.rgb_out[(tid * 3u) + 0u] = R;
+    _232.rgb_out[(tid * 3u) + 1u] = G;
+    _232.rgb_out[(tid * 3u) + 2u] = B;
 }
-

@@ -1,18 +1,9 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+
 #include <metal_stdlib>
 #include <simd/simd.h>
 
 using namespace metal;
-
-struct Params
-{
-    uint width;
-    uint height;
-    float blend_factor;
-    float blend_r;
-    float blend_g;
-    float blend_b;
-    float motion_threshold;
-};
 
 struct CurBuf
 {
@@ -24,71 +15,108 @@ struct PrevBuf
     uint prev_buf[1];
 };
 
+struct Params
+{
+    uint width;
+    uint height;
+    float blend_factor;
+    float blend_r;
+    float blend_g;
+    float blend_b;
+    float motion_threshold;
+    uint history_valid;
+};
+
+struct HistoryBuf
+{
+    uint history_buf[1];
+};
+
 constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(16u, 16u, 1u);
 
-kernel void main0(constant Params& _25 [[buffer(0)]], const device CurBuf& _59 [[buffer(1)]], const device PrevBuf& _97 [[buffer(2)]], texture2d<float, access::write> out_tex [[texture(0)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+static inline __attribute__((always_inline))
+float3 current(thread const uint& i, device CurBuf& _20)
 {
-    uint x = gl_GlobalInvocationID.x;
-    uint y = gl_GlobalInvocationID.y;
-    bool _31 = x >= _25.width;
-    bool _40;
-    if (!_31)
+    return float3(float2(as_type<half2>(_20.cur_buf[i])), float2(as_type<half2>(_20.cur_buf[i + 1u])).x);
+}
+
+static inline __attribute__((always_inline))
+float3 previous(thread const uint& i, device PrevBuf& _45)
+{
+    return float3(float2(as_type<half2>(_45.prev_buf[i])), float2(as_type<half2>(_45.prev_buf[i + 1u])).x);
+}
+
+kernel void main0(device CurBuf& _20 [[buffer(1)]], device PrevBuf& _45 [[buffer(2)]], constant Params& _74 [[buffer(0)]], device HistoryBuf& _266 [[buffer(3)]], texture2d<float, access::write> out_tex [[texture(0)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+{
+    uint2 p = gl_GlobalInvocationID.xy;
+    bool _77 = p.x >= _74.width;
+    bool _87;
+    if (!_77)
     {
-        _40 = y >= _25.height;
+        _87 = p.y >= _74.height;
     }
     else
     {
-        _40 = _31;
+        _87 = _77;
     }
-    if (_40)
+    if (_87)
     {
         return;
     }
-    uint idx = ((y * _25.width) + x) * 2u;
-    float2 rg = float2(as_type<half2>(_59.cur_buf[idx]));
-    float2 ba = float2(as_type<half2>(_59.cur_buf[idx + 1u]));
-    float max_blend = fast::max(_25.blend_factor, fast::max(fast::max(_25.blend_r, _25.blend_g), _25.blend_b));
-    if (max_blend > 0.001000000047497451305389404296875)
+    uint i = ((p.y * _74.width) + p.x) * 2u;
+    uint param = i;
+    float3 drive = current(param, _20);
+    bool _110 = _74.history_valid != 0u;
+    bool _119;
+    if (_110)
     {
-        float2 rg_p = float2(as_type<half2>(_97.prev_buf[idx]));
-        float2 ba_p = float2(as_type<half2>(_97.prev_buf[idx + 1u]));
-        float motion_mask = 1.0;
-        if (_25.motion_threshold > 0.0)
+        _119 = _74.blend_factor > 0.0;
+    }
+    else
+    {
+        _119 = _110;
+    }
+    if (_119)
+    {
+        float motion = 1.0;
+        if (_74.motion_threshold > 0.0)
         {
-            float max_delta = 0.0;
-            for (int dy = -1; dy <= 1; dy++)
+            float delta = 0.0;
+            for (int y = -1; y <= 1; y++)
             {
-                for (int dx = -1; dx <= 1; dx++)
+                for (int x = -1; x <= 1; x++)
                 {
-                    int sx = clamp(int(x) + dx, 0, int(_25.width) - 1);
-                    int sy = clamp(int(y) + dy, 0, int(_25.height) - 1);
-                    uint nx = uint(sx);
-                    uint ny = uint(sy);
-                    uint ni = ((ny * _25.width) + nx) * 2u;
-                    float2 nc = float2(as_type<half2>(_59.cur_buf[ni]));
-                    float2 nca = float2(as_type<half2>(_59.cur_buf[ni + 1u]));
-                    float2 np = float2(as_type<half2>(_97.prev_buf[ni]));
-                    float2 npa = float2(as_type<half2>(_97.prev_buf[ni + 1u]));
-                    float lc = ((0.2989999949932098388671875 * nc.x) + (0.58700001239776611328125 * nc.y)) + (0.114000000059604644775390625 * nca.x);
-                    float lp = ((0.2989999949932098388671875 * np.x) + (0.58700001239776611328125 * np.y)) + (0.114000000059604644775390625 * npa.x);
-                    max_delta = fast::max(max_delta, abs(lc - lp));
+                    int2 q = clamp(int2(p) + int2(x, y), int2(0), int2(int(_74.width), int(_74.height)) - int2(1));
+                    uint j = ((uint(q.y) * _74.width) + uint(q.x)) * 2u;
+                    uint param_1 = j;
+                    uint param_2 = j;
+                    float3 d = abs(current(param_1, _20) - previous(param_2, _45));
+                    delta = fast::max(delta, fast::max(d.x, fast::max(d.y, d.z)));
                 }
             }
-            motion_mask = 1.0 - smoothstep(_25.motion_threshold * 0.5, _25.motion_threshold * 1.5, max_delta);
+            motion = 1.0 - smoothstep(_74.motion_threshold * 0.5, _74.motion_threshold * 1.5, delta);
         }
-        float crawl_r = _25.blend_factor * motion_mask;
-        float crawl_g = _25.blend_factor * motion_mask;
-        float crawl_b = _25.blend_factor * motion_mask;
-        float bf_r = fast::max(crawl_r, _25.blend_r);
-        float bf_g = fast::max(crawl_g, _25.blend_g);
-        float bf_b = fast::max(crawl_b, _25.blend_b);
-        bf_r = fast::clamp(bf_r, 0.0, 0.949999988079071044921875);
-        bf_g = fast::clamp(bf_g, 0.0, 0.949999988079071044921875);
-        bf_b = fast::clamp(bf_b, 0.0, 0.949999988079071044921875);
-        rg.x = mix(rg.x, rg_p.x, bf_r);
-        rg.y = mix(rg.y, rg_p.y, bf_g);
-        ba.x = mix(ba.x, ba_p.x, bf_b);
+        uint param_3 = i;
+        drive = mix(drive, previous(param_3, _45), float3(fast::clamp(_74.blend_factor * motion, 0.0, 0.5)));
     }
-    out_tex.write(float4(rg.x, rg.y, ba.x, 1.0), uint2(int2(int(x), int(y))));
+    float3 light = fast::max(drive, float3(0.0));
+    float3 decay = fast::clamp(float3(_74.blend_r, _74.blend_g, _74.blend_b), float3(0.0), float3(0.99989998340606689453125));
+    bool _247 = _74.history_valid != 0u;
+    bool _259;
+    if (_247)
+    {
+        _259 = fast::max(decay.x, fast::max(decay.y, decay.z)) > 0.0;
+    }
+    else
+    {
+        _259 = _247;
+    }
+    if (_259)
+    {
+        float3 history = float3(float2(as_type<half2>(_266.history_buf[i])), float2(as_type<half2>(_266.history_buf[i + 1u])).x);
+        light = mix(light, history, decay);
+    }
+    _266.history_buf[i] = as_type<uint>(half2(light.xy));
+    _266.history_buf[i + 1u] = as_type<uint>(half2(float2(light.z, 1.0)));
+    out_tex.write(float4(fast::max(light, float3(0.0)), 1.0), uint2(int2(p)));
 }
-

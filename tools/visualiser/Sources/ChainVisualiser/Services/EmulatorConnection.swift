@@ -39,6 +39,15 @@ final class EmulatorConnection: ObservableObject {
     @Published private(set) var snapshot: ChainSnapshot = .empty
     @Published private(set) var tapWaveform: WaveformData? = nil
 
+    @Published private(set) var framesPerSecond: Double = 0
+    private var rateSample: (time: TimeInterval, frame: UInt32)?
+
+    @Published private(set) var presets = PresetCatalog()
+    @Published private(set) var presetBusy = false
+    @Published var presetError: String?
+
+    @Published private(set) var controls: [PhysicalControl] = []
+
     let socketPath: String
 
     private var fd: Int32 = -1
@@ -46,7 +55,7 @@ final class EmulatorConnection: ObservableObject {
     private var reconnectTask: Task<Void, Never>?
 
     init(socketPath: String? = nil) {
-        self.socketPath = socketPath ?? "/tmp/mynes_gpu_debug.sock"
+        self.socketPath = socketPath ?? ProcessInfo.processInfo.environment["MYNES_DEBUG_SOCKET"] ?? "/tmp/mynes_gpu_debug.sock"
     }
 
     deinit {
@@ -58,7 +67,8 @@ final class EmulatorConnection: ObservableObject {
     // MARK: - Public API
 
     func connect() {
-        guard state != .connecting else { return }
+        guard state != .connecting, state != .connected else { return }
+        reconnectTask?.cancel()
         state = .connecting
         listenTask?.cancel()
         listenTask = Task { await connectAndListen() }
@@ -80,24 +90,30 @@ final class EmulatorConnection: ObservableObject {
         sendRaw(buf)
     }
 
-    func updateStageParams(_ paramsData: Data, stageIndex: Int) {
-        // msg_type=1 (param_update), payload = stage_index(2) + params_size(4) + params(N)
-        var buf = Data(capacity: 8 + 6 + paramsData.count)
-        appendUInt32(&buf, 1)
-        appendUInt32(&buf, UInt32(6 + paramsData.count))
-        appendUInt16(&buf, UInt16(stageIndex))
-        appendUInt32(&buf, UInt32(paramsData.count))
-        buf.append(paramsData)
-        sendRaw(buf)
+    func updateControl(_ id: Int, value: Double) {
+        guard state == .connected, let control = controls.first(where: { $0.id == id }),
+              value.isFinite, value >= control.minimum, value <= control.maximum else { return }
+        var message = Data()
+        appendUInt32(&message, 6)
+        appendUInt32(&message, 8)
+        appendUInt32(&message, UInt32(id))
+        appendUInt32(&message, Float(value).bitPattern)
+        sendRaw(message)
     }
 
-    func setPreset(_ presetIndex: Int) {
-        // msg_type=2 (preset_change), payload = preset_index(1)
-        var buf = Data(capacity: 8 + 1)
-        appendUInt32(&buf, 2)
-        appendUInt32(&buf, 1)
-        buf.append(UInt8(presetIndex))
-        sendRaw(buf)
+    func presetCommand(_ operation: UInt32, id: Int? = nil, name: String = "") {
+        guard state == .connected, !presetBusy, name.utf8.count <= 100 else { return }
+        var message = Data()
+        appendUInt32(&message, 8)
+        appendUInt32(&message, 140)
+        appendUInt32(&message, operation)
+        appendUInt32(&message, UInt32(bitPattern: Int32(id ?? presets.activeID)))
+        appendUInt32(&message, presets.revision)
+        let encoded = Data(name.utf8)
+        message.append(encoded)
+        message.append(Data(repeating: 0, count: 128 - encoded.count))
+        presetBusy = true
+        sendRaw(message)
     }
 
     // MARK: - Connection loop
@@ -134,6 +150,8 @@ final class EmulatorConnection: ObservableObject {
                     return
                 }
 
+                var noSignal: Int32 = 1
+                setsockopt(sockFD, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout<Int32>.size))
                 var addr = sockaddr_un()
                 addr.sun_family = sa_family_t(AF_UNIX)
                 let pathBytes = path.utf8CString
@@ -199,8 +217,24 @@ final class EmulatorConnection: ObservableObject {
             switch msgType {
             case Self.msgTypeSnapshot:
                 if let decoded = ChainSnapshot.decode(from: data) {
+                    let now = ProcessInfo.processInfo.systemUptime
+                    if let previous = rateSample, now - previous.time >= 0.75 {
+                        framesPerSecond = decoded.frameNumber >= previous.frame
+                            ? Double(decoded.frameNumber - previous.frame) / (now - previous.time) : 0
+                        rateSample = (now, decoded.frameNumber)
+                    } else if rateSample == nil { rateSample = (now, decoded.frameNumber) }
                     self.snapshot = decoded
                 }
+            case 7:
+                if let catalog = PresetCatalog.decode(data) { presets = catalog }
+            case 9:
+                if data.count == 144 {
+                    let ok = data.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: 12, as: UInt32.self) }
+                    presetBusy = false
+                    if ok == 0 { presetError = String(decoding: data[16..<144].prefix { $0 != 0 }, as: UTF8.self) }
+                }
+            case 5:
+                if let controls = PhysicalControl.decode(data) { self.controls = controls }
             case Self.msgTypeTapData:
                 if let wf = WaveformData.decode(from: data) {
                     self.tapWaveform = wf
@@ -249,7 +283,11 @@ final class EmulatorConnection: ObservableObject {
     }
 
     private func closeSocket() {
+        presetBusy = false
+        rateSample = nil
+        framesPerSecond = 0
         if fd >= 0 {
+            shutdown(fd, SHUT_RDWR)
             close(fd)
             fd = -1
         }
@@ -258,7 +296,13 @@ final class EmulatorConnection: ObservableObject {
     private func sendRaw(_ data: Data) {
         guard fd >= 0 else { return }
         data.withUnsafeBytes { ptr in
-            _ = write(fd, ptr.baseAddress!, ptr.count)
+            var sent = 0
+            while sent < ptr.count {
+                let result = write(fd, ptr.baseAddress!.advanced(by: sent), ptr.count - sent)
+                if result < 0 && errno == EINTR { continue }
+                if result <= 0 { break }
+                sent += result
+            }
         }
     }
 

@@ -10,5 +10,6 @@ let package = Package(
             name: "ChainVisualiser",
             path: "Sources/ChainVisualiser"
         ),
+        .testTarget(name: "ChainVisualiserTests", dependencies: ["ChainVisualiser"]),
     ]
 )

@@ -1,137 +1,83 @@
 import SwiftUI
 
+struct ChainGroup: Identifiable {
+    let name: String, symbol: String, subtitle: String, detail: String
+    var id: String { name }
+    static let all: [ChainGroup] = [
+        .init(name: "Connection", symbol: "cable.connector", subtitle: "Console → receiver", detail: "Shape the signal before decoding: cable bandwidth, receiver noise, and power-supply hum."),
+        .init(name: "Decoder", symbol: "waveform.path", subtitle: "Composite → color", detail: "Separate brightness and color. Bandwidth affects fine detail, color bleed, and composite artifacts."),
+        .init(name: "Beam", symbol: "scope", subtitle: "Voltage → scanlines", detail: "Adjust the electron beam’s focus and brightness-dependent width."),
+        .init(name: "Phosphor", symbol: "sparkles", subtitle: "Light over time", detail: "Control the phosphor mask and exponential afterglow. Zero persistence disables decay history."),
+        .init(name: "Glass", symbol: "display", subtitle: "Screen → room", detail: "Adjust screen geometry, scattered light, and the viewing environment.")
+    ]
+    static func named(_ name: String) -> ChainGroup { all.first { $0.name == name } ?? all[0] }
+}
+
 struct NodeGraphView: View {
-    let videoStages: [StageInfo]
-    let audioStages: [StageInfo]
-    @Binding var selectedStage: Int?
-    var onBypassToggle: ((Int) -> Void)? = nil
-
+    let stages: [StageInfo]
+    @Binding var selectedGroup: String
     var body: some View {
-        ScrollView(.vertical) {
-            HStack(alignment: .top, spacing: 60) {
-                // Video chain column
-                if !videoStages.isEmpty {
-                    chainColumn(title: "VIDEO CHAIN", stages: videoStages)
-                }
-                // Audio chain column
-                if !audioStages.isEmpty {
-                    chainColumn(title: "AUDIO CHAIN", stages: audioStages)
-                }
-            }
-            .padding()
-        }
-    }
-
-    @ViewBuilder
-    private func chainColumn(title: String, stages: [StageInfo]) -> some View {
-        VStack(spacing: 0) {
-            Text(title)
-                .font(.caption.bold())
-                .foregroundStyle(.secondary)
-                .padding(.bottom, 8)
-
-            ForEach(Array(stages.enumerated()), id: \.element.id) { index, stage in
-                VStack(spacing: 0) {
-                    // Connection line above (skip first)
+        GeometryReader { geometry in
+            let cardWidth: CGFloat = max(120, (geometry.size.width - 112) / 5)
+            HStack(spacing: 0) {
+                ForEach(Array(ChainGroup.all.enumerated()), id: \.element.id) { index, group in
                     if index > 0 {
-                        Rectangle()
-                            .fill(Color.gray.opacity(0.3))
-                            .frame(width: 2, height: 12)
+                        Image(systemName: "arrow.right").font(.caption.weight(.semibold))
+                            .foregroundStyle(.cyan.opacity(0.5)).frame(width: 20)
                     }
-
-                    StageNodeView(
-                        stage: stage,
-                        isSelected: selectedStage == stage.id
-                    )
-                    .onTapGesture {
-                        selectedStage = stage.id
+                    Button { selectedGroup = group.name } label: {
+                        ChainCard(group: group, index: index, selected: selectedGroup == group.name,
+                                  count: stages.filter { $0.kernelType.group == group.name && $0.isActive }.count,
+                                  width: cardWidth)
                     }
-                    .onTapGesture(count: 2) {
-                        onBypassToggle?(stage.id)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Edit \(group.name)")
+                }
+            }.padding(.horizontal, 16).padding(.vertical, 24)
+        }
+        .frame(height: 192)
+        .background {
+            Canvas { context, size in
+                var grid = Path()
+                for x in stride(from: 0.0, to: size.width, by: 24) {
+                    for y in stride(from: 0.0, to: size.height, by: 24) {
+                        grid.addEllipse(in: CGRect(x: x, y: y, width: 1, height: 1))
                     }
                 }
+                context.fill(grid, with: .color(.white.opacity(0.12)))
             }
         }
     }
 }
 
-struct StageNodeView: View {
-    let stage: StageInfo
-    let isSelected: Bool
-
+private struct ChainCard: View {
+    let group: ChainGroup
+    let index: Int
+    let selected: Bool
+    let count: Int
+    let width: CGFloat
+    private var status: String {
+        switch group.name {
+        case "Glass": return "Display pass"
+        case "Phosphor": return "Afterglow + mask"
+        default: return "\(count) active stages"
+        }
+    }
     var body: some View {
-        HStack(spacing: 8) {
-            kernelIcon
-                .frame(width: 20, height: 20)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(stage.name)
-                    .font(.system(size: 11, weight: .medium))
-                    .lineLimit(1)
-                Text(stage.kernelType.rawValue)
-                    .font(.system(size: 9))
-                    .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Image(systemName: group.symbol).font(.title2).foregroundStyle(.cyan)
+                Spacer()
+                Text(String(format: "%02d", index + 1)).font(.caption.monospaced()).foregroundStyle(.secondary)
             }
-
-            Spacer()
-
-            Text(String(format: "%.0f", stage.timingUs))
-                .font(.system(size: 10).monospacedDigit())
-                .foregroundStyle(.secondary)
-            Text("us")
-                .font(.system(size: 8))
-                .foregroundStyle(.tertiary)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(group.name).font(.headline)
+                Text(group.subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.8)
+            }
+            Text(status).font(.caption2.monospaced()).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.8)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .frame(width: 200)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(backgroundColor)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .strokeBorder(borderColor, lineWidth: isSelected ? 2 : 1)
-        )
-    }
-
-    private var borderColor: Color {
-        if isSelected { return .accentColor }
-        if !stage.enabled { return .gray.opacity(0.4) }
-        if stage.bypassed { return .yellow.opacity(0.6) }
-        return .green.opacity(0.6)
-    }
-
-    private var backgroundColor: Color {
-        if isSelected { return .accentColor.opacity(0.08) }
-        if !stage.enabled { return .gray.opacity(0.05) }
-        if stage.bypassed { return .yellow.opacity(0.05) }
-        return .green.opacity(0.05)
-    }
-
-    private var kernelIcon: some View {
-        Image(systemName: kernelSymbol)
-            .font(.system(size: 12))
-            .foregroundStyle(iconColor)
-    }
-
-    private var kernelSymbol: String {
-        switch stage.kernelType {
-        case .pointwise: return "function"
-        case .rcFilter:  return "waveform.path.ecg"
-        case .fir:       return "line.3.horizontal.decrease"
-        case .delay:     return "timer"
-        case .comb:      return "tuningfork"
-        case .modulator: return "wave.3.right"
-        case .dac:       return "square.grid.2x2"
-        case .matrix:    return "tablecells"
-        case .beam:      return "line.horizontal.star.fill.line.horizontal"
-        }
-    }
-
-    private var iconColor: Color {
-        if !stage.enabled { return .gray }
-        if stage.bypassed { return .yellow }
-        return .green
+        .padding(14).frame(width: width, height: 144, alignment: .leading)
+        .background(selected ? Color.cyan.opacity(0.12) : Color.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(selected ? Color.cyan.opacity(0.8) : Color.white.opacity(0.1)))
     }
 }

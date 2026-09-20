@@ -1,0 +1,91 @@
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct Params
+{
+    uint count;
+    uint mode;
+    float phase;
+    float dp;
+    float param_a;
+    uint samples_per_line;
+    float active_offset;
+};
+
+struct InputBuf
+{
+    float data_in[1];
+};
+
+struct Reference
+{
+    float4 reference[1];
+};
+
+struct OutputBuf
+{
+    float data_out[1];
+};
+
+struct OutputBuf2
+{
+    float data_out2[1];
+};
+
+constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
+
+kernel void main0(constant Params& _20 [[buffer(0)]], device InputBuf& _36 [[buffer(1)]], device Reference& _65 [[buffer(2)]], device OutputBuf& _108 [[buffer(3)]], device OutputBuf2& _154 [[buffer(4)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+{
+    uint tid = gl_GlobalInvocationID.x;
+    if (tid >= _20.count)
+    {
+        return;
+    }
+    float x = _36.data_in[tid];
+    float p;
+    if (_20.samples_per_line > 0u)
+    {
+        uint scanline = tid / _20.samples_per_line;
+        uint sample_in_line = tid % _20.samples_per_line;
+        p = (_20.phase + ((device float*)&_65.reference[scanline])[0u]) + ((float(sample_in_line) - _20.active_offset) * _20.dp);
+        x -= ((device float*)&_65.reference[scanline])[1u];
+    }
+    else
+    {
+        p = _20.phase + (float(tid) * _20.dp);
+    }
+    switch (_20.mode)
+    {
+        case 0u:
+        {
+            _108.data_out[tid] = x * cos(p);
+            break;
+        }
+        case 1u:
+        {
+            _108.data_out[tid] = x * sin(p);
+            break;
+        }
+        case 2u:
+        {
+            float mod_index = _20.param_a;
+            _108.data_out[tid] = (1.0 + (mod_index * x)) * cos(p);
+            break;
+        }
+        case 3u:
+        {
+            float gain = _20.param_a;
+            float s = x * gain;
+            _108.data_out[tid] = s * cos(p);
+            _154.data_out2[tid] = s * sin(p);
+            break;
+        }
+        default:
+        {
+            _108.data_out[tid] = x;
+            break;
+        }
+    }
+}

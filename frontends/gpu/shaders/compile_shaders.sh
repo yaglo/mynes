@@ -22,13 +22,17 @@ FIXED=0
 # ── Resource counts per compute kernel: U R W ──
 get_resources() {
     case "$1" in
+        raster_encode)  echo "1 1 1" ;;
+        receiver_lock)  echo "1 1 1" ;;
+        receiver_demod) echo "1 2 2" ;;
+        agc)            echo "1 0 2" ;;
         pointwise)      echo "1 0 2" ;;
         rc_filter)      echo "1 0 2" ;;
         fir)            echo "1 2 1" ;;
         delay)          echo "1 2 1" ;;
         modulator)      echo "1 1 2" ;;
         dac_2c02)       echo "1 3 1" ;;
-        matrix_decode)  echo "1 3 1" ;;
+        matrix_decode)  echo "1 4 1" ;;
         pal_chroma)     echo "1 2 2" ;;
         deflection)     echo "1 0 2" ;;
         beam_profile)   echo "1 3 1" ;;
@@ -36,7 +40,7 @@ get_resources() {
         rf_mod_demod)   echo "1 0 1" ;;
         video_amp)      echo "1 1 1" ;;
         h_blur_rgb)     echo "1 0 2" ;;
-        temporal_blit)  echo "1 2 0" ;;
+        temporal_blit)  echo "1 2 1" ;;
         *)              echo "" ;;
     esac
 }

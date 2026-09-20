@@ -1,6 +1,6 @@
 {
     "name": "Famicom Kitchen",
-    "description": "Original Famicom on RF to a small Japanese TV \u2014 warm, buzzy, charming",
+    "description": "Original Famicom on RF to a small Japanese TV — warm, buzzy, charming",
     "connection": "rf",
     "comb_type": "none",
     "console_variant": 0,
@@ -60,7 +60,7 @@
         "h_jitter": 0.4,
         "v_jitter": 0.002,
         "mask_type": "shadow",
-        "mask_pitch_mm": 3.0,
+        "mask_pitch_px": 3.0,
         "mask_strength": 0.5,
         "subpixel_layout": 0,
         "persistence_ms": 2.2,

@@ -104,4 +104,3 @@ kernel void main0(constant Params& _22 [[buffer(0)]], device RGBIn& _119 [[buffe
     _358.rgb_out[dst + 1u] = sum_g;
     _358.rgb_out[dst + 2u] = sum_b;
 }
-

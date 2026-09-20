@@ -300,6 +300,8 @@ int main(int argc, char **argv) {
     int debug_dump_frames[32];
     int debug_dump_count = 0;
     bool debug_server_enabled = false;  /* --debug-server: ChainVisualiser IPC socket */
+    const char *debug_socket = getenv("MYNES_DEBUG_SOCKET");
+    if (!debug_socket) debug_socket = "/tmp/mynes_gpu_debug.sock";
     const char *static_frame_path = NULL;  /* --simulate-frame <file.bin>: bypass emulation */
     const char *preset_path = NULL;        /* --preset <path.json>: apply on startup */
     int screenshot_after = 0;              /* --screenshot-after <N>: dump and exit */
@@ -367,12 +369,7 @@ int main(int argc, char **argv) {
     /* rom_path may be NULL — in that case the startup ROM browser runs
      * after the SDL/GPU init below, then sets rom_path before continuing. */
 
-    fprintf(stderr,
-            "─────────────────────────────────────────────────────────────\n"
-            "NES emulator — GPU frontend (EXPERIMENTAL)\n"
-            "Requires SDL3 + a GPU with SPIR-V/MSL/Metal shader support.\n"
-            "For a stable emulator build, use the SDL2 frontend (mynes).\n"
-            "─────────────────────────────────────────────────────────────\n");
+    fprintf(stderr, "MyNES — SDL3 GPU signal / CRT frontend\n");
 
     /* Persistent config (recent ROMs, last preset). */
     mynes_config_load(&mynes_config);
@@ -385,7 +382,7 @@ int main(int argc, char **argv) {
 
     gpu = SDL_CreateGPUDevice(
         SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_MSL | SDL_GPU_SHADERFORMAT_METALLIB,
-        true, NULL
+        SDL_getenv("MYNES_GPU_VALIDATION") != NULL, NULL
     );
     if (!gpu) {
         fprintf(stderr, "SDL_CreateGPUDevice failed: %s\n", SDL_GetError());
@@ -421,11 +418,12 @@ int main(int argc, char **argv) {
      * brighter-than-SDR-white on the display. Screenshots may appear
      * brighter than on-screen due to sRGB capture of linear values. */
     if (hdr_available) {
-        SDL_SetGPUSwapchainParameters(gpu, window,
+        hdr_available = SDL_SetGPUSwapchainParameters(gpu, window,
             SDL_GPU_SWAPCHAINCOMPOSITION_HDR_EXTENDED_LINEAR,
             SDL_GPU_PRESENTMODE_VSYNC);
         LOGV("HDR: Extended linear (EDR) enabled\n");
-    } else {
+    }
+    if (!hdr_available) {
         SDL_SetGPUSwapchainParameters(gpu, window,
             SDL_GPU_SWAPCHAINCOMPOSITION_SDR,
             SDL_GPU_PRESENTMODE_VSYNC);
@@ -545,6 +543,7 @@ int main(int argc, char **argv) {
     preset_ctx.gpu = gpu;
     preset_ctx.gpu_video_enabled = &gpu_video_enabled;
     preset_ctx.current_preset = &current_preset;
+    preset_ctx.config = &mynes_config;
     preset_ctx.region = region;
     preset_ctx.nes = &nes;
     preset_ctx.chain_vis = NULL;  /* set after chain_vis_create */
@@ -651,7 +650,10 @@ int main(int argc, char **argv) {
             float fsc = signal_region_subcarrier_hz(sig_state.region);
             float fsample = signal_region_sample_rate_hz(sig_state.region);
             float dp = 2.0f * (float)M_PI * fsc / fsample;
-            video_gpu_set_demod(&video_gpu_chain, 0.0f, dp);
+            video_gpu_chain.signal_phase_base = sig_state.phase_base;
+                video_gpu_chain.signal_line_phase = sig_state.phase_line_adv;
+                video_gpu_chain.demod_line_phase = sig_state.phase_line_adv * (2.0f * (float)M_PI / 12.0f);
+                video_gpu_set_demod(&video_gpu_chain, 0.0f, dp);
             LOGV("Demod: dp=%.6f rad/sample (Fsc=%.3f MHz, Fs=%.3f MHz)\n",
                  dp, fsc/1e6, fsample/1e6);
         }
@@ -780,11 +782,11 @@ int main(int argc, char **argv) {
 
     /* --- Debug server (for SwiftUI visualiser, --debug-server only) --- */
     if (debug_server_enabled) {
-        const char *debug_socket = "/tmp/mynes_gpu_debug.sock";
         debug_srv = debug_server_create(debug_socket);
         if (!debug_srv) {
             fprintf(stderr, "Warning: debug server failed to start on %s\n", debug_socket);
         } else {
+            preset_register_debug_controls(&preset_ctx, debug_srv);
             printf("Debug server ready for visualiser connections on %s\n", debug_socket);
         }
     }
@@ -793,6 +795,7 @@ int main(int argc, char **argv) {
      * Main loop
      * ======================================================================== */
 
+    Uint64 frame_deadline = 0;
     while (running) {
         /* The OSD region toggle can flip the pipeline from inside
          * preset_apply.c; it can't touch tap_mgr (owned by main) so
@@ -866,6 +869,8 @@ int main(int argc, char **argv) {
                                 nes_reset(&nes);
                                 rom = new_rom;
                                 rom_loaded = true;
+                                free(static_frame_buf);
+                                static_frame_buf = NULL;
                                 mynes_config_add_recent(&mynes_config,
                                                         browser.chosen_path);
                                 mynes_config_save(&mynes_config);
@@ -954,7 +959,9 @@ int main(int argc, char **argv) {
                     }
                     /* D: dump GPU pipeline output as PPM for debugging. */
                     if (ev.key.scancode == SDL_SCANCODE_D) {
-                        if (gpu_rgb_out && gpu_video_enabled) {
+                        if (gpu_rgb_out && gpu_video_enabled &&
+                            gpu_buffer_download(gpu, video_gpu_chain.buf_rgb, gpu_rgb_out,
+                                                video_gpu_chain.rgb_size)) {
                             int spl = sig_state.samples_per_line;
                             dump_frame_ppm("/tmp/gpu_rgb_out.ppm", gpu_rgb_out, spl, 240);
                             /* Print actual float values at key positions. */
@@ -1031,12 +1038,13 @@ int main(int argc, char **argv) {
                             waveform_generate(waveform_buf, nes.ppu.index_framebuffer,
                                               &sig_state, frame_count);
                             {
-                                int nf = sig_state.phase_num_fields;
-                                if (nf < 1) nf = 1;
-                                int field_ph = (int)((frame_count) % (unsigned)nf) * sig_state.phase_field_adv;
+                                int field_ph = signal_frame_phase(&sig_state, frame_count);
                                 float bp = (float)(sig_state.phase_base + field_ph + sig_state.demod_rotate)
                                            * (2.0f * (float)M_PI / 12.0f);
-                                video_gpu_set_demod(&video_gpu_chain, bp, video_gpu_chain.demod_dp);
+                                video_gpu_chain.signal_phase_base = sig_state.phase_base + field_ph;
+                video_gpu_chain.signal_line_phase = sig_state.phase_line_adv;
+                video_gpu_chain.demod_line_phase = sig_state.phase_line_adv * (2.0f * (float)M_PI / 12.0f);
+                video_gpu_set_demod(&video_gpu_chain, bp, video_gpu_chain.demod_dp);
                             }
                             video_gpu_process(&video_gpu_chain, gpu, waveform_buf, NULL);
 
@@ -1137,14 +1145,14 @@ int main(int argc, char **argv) {
             }
         }
 
-        /* --- Frame pacing ---
-         * With vsync enabled, the swapchain presentation blocks until
-         * the next vblank. No manual delay needed — vsync IS the pacer.
-         * Having both vsync + manual delay causes double-frame jitter
-         * when the two timing sources disagree. */
-
-        /* Skip only when there's neither a ROM nor a browser to draw. */
-        if (!rom_loaded && !browser_active) continue;
+        /* Advance emulation at the console rate, independently of monitor Hz.
+         * A deadline (not a second full-frame sleep after vsync) avoids drift. */
+        if (!rom_loaded && !browser_active) { SDL_Delay(10); continue; }
+        Uint64 now = SDL_GetTicksNS();
+        Uint64 period = (Uint64)(signal_region_frame_ms(preset_ctx.region) * 1000000.0);
+        if (!frame_deadline || now > frame_deadline + period * 3) frame_deadline = now;
+        if (now < frame_deadline) SDL_DelayPrecise(frame_deadline - now);
+        frame_deadline += period;
 
         /* --- Audio sync — adjust APU rate before producing samples --- */
         audio_adjust_rate();
@@ -1169,6 +1177,16 @@ int main(int argc, char **argv) {
             }
         } else if (rom_loaded && !browser_active) {
             nes_run_frame(&nes);
+        }
+        /* Recover this picture's line-zero clock from the PPU position at
+         * VBlank. Actual skipped dots are already reflected in its clock. */
+        sig_state.frame_phase_override = -1;
+        if (rom_loaded && !browser_active && !static_frame_buf) {
+            uint64_t dots = nes.ppu.next_dot_master_tick / 4;
+            uint64_t position = (uint64_t)nes.ppu.scanline * 341 + nes.ppu.dot;
+            if (dots >= position)
+                sig_state.frame_phase_override = (int)(((dots - position) % 12)
+                                                       * sig_state.samples_per_pixel % 12);
         }
         Uint64 t_emu1 = SDL_GetPerformanceCounter();
 
@@ -1249,17 +1267,22 @@ int main(int argc, char **argv) {
         bool frame_advanced = false;
 
         if (signal_decode_active) {
-            /* FULL GPU PATH:
-             * Stage 1 (CPU): generate composite waveform from index FB.
-             * Stages 2-9 (GPU): Y/C separation, demod, matrix decode. */
-            if (test_signal_mode == 0) {
+            /* Generate the DAC waveform on GPU when no CPU-only edge effects
+             * or waveform diagnostics are requested. Both paths use PPU codes. */
+            const TVDisplayParams *tv = &video_chain.tv;
+            bool gpu_dac = test_signal_mode == 0 && !debug_dump &&
+                video_gpu_chain.pipe_dac.pipeline && video_gpu_chain.buf_signal_table &&
+                tv->beam_edge_fade == 0 && tv->beam_edge_overshoot == 0 &&
+                (tv->burst_lock_drift == 0 || tv->burst_lock_drift_width == 0) &&
+                tv->beam_current_load == 0;
+            if (test_signal_mode == 0 && !gpu_dac) {
                 waveform_generate(waveform_buf, nes.ppu.index_framebuffer,
                                   &sig_state, frame_count);
                 waveform_apply_beam_edges(waveform_buf,
                                           nes.ppu.index_framebuffer,
                                           &sig_state, &video_chain.tv,
                                           frame_count);
-            } else {
+            } else if (test_signal_mode != 0) {
                 int spl_ts = sig_state.samples_per_line;
                 float fsc = signal_region_subcarrier_hz(sig_state.region);
                 float fs = signal_region_sample_rate_hz(sig_state.region);
@@ -1280,11 +1303,12 @@ int main(int argc, char **argv) {
              * base_phase = (base_ph + field_ph) * (2π/12).
              * The demod must start at the same phase. */
             {
-                int nf = sig_state.phase_num_fields;
-                if (nf < 1) nf = 1;
-                int field_ph = (int)((frame_count - 1) % (unsigned)nf) * sig_state.phase_field_adv;
+                int field_ph = signal_frame_phase(&sig_state, frame_count - 1);
                 float base_phase = (float)(sig_state.phase_base + field_ph + sig_state.demod_rotate)
                                    * (2.0f * (float)M_PI / 12.0f);
+                video_gpu_chain.signal_phase_base = sig_state.phase_base + field_ph;
+                video_gpu_chain.signal_line_phase = sig_state.phase_line_adv;
+                video_gpu_chain.demod_line_phase = sig_state.phase_line_adv * (2.0f * (float)M_PI / 12.0f);
                 video_gpu_set_demod(&video_gpu_chain, base_phase, video_gpu_chain.demod_dp);
             }
 
@@ -1310,8 +1334,13 @@ int main(int argc, char **argv) {
                                         render_ctx.hv_sag_state,
                                         render_ctx.audio_bass_rms);
             t_gpu0 = SDL_GetPerformanceCounter();
-            bool gpu_ok = video_gpu_process(&video_gpu_chain, gpu,
-                                  waveform_buf, gpu_rgb_out);
+            float *readback = (dump_this_frame || screenshot_after > 0 ||
+                !video_gpu_get_beam_texture(&video_gpu_chain)) ? gpu_rgb_out : NULL;
+            bool gpu_ok = gpu_dac
+                ? video_gpu_process_full(&video_gpu_chain, gpu, nes.ppu.index_framebuffer,
+                    sig_state.phase_base + signal_frame_phase(&sig_state, frame_count - 1),
+                    sig_state.phase_line_adv, 0, readback)
+                : video_gpu_process(&video_gpu_chain, gpu, waveform_buf, readback);
             t_gpu1 = SDL_GetPerformanceCounter();
             if (dump_this_frame) {
                 printf("[dump frame %u] video_gpu_process: %s\n",
@@ -1409,12 +1438,6 @@ int main(int argc, char **argv) {
             debug_tap_capture(tap_mgr, gpu, frame_count);
         }
 
-        /* --- Send frame snapshot to debug server (visualiser) --- */
-        if (signal_decode_active &&
-            debug_srv && debug_server_has_client(debug_srv) && gpu_video_enabled) {
-            debug_server_frame(debug_srv, &video_gpu_chain.sig_chain, NULL, frame_count);
-        }
-
         Uint64 t_render0 = SDL_GetPerformanceCounter();
         gpu_render_frame(&render_ctx, &video_chain);
         Uint64 t_render1 = SDL_GetPerformanceCounter();
@@ -1477,6 +1500,11 @@ int main(int argc, char **argv) {
                         frame_count, screenshot_path, spl, 240);
             }
             running = false;
+        }
+
+        /* --- Send frame snapshot to debug server (visualiser) --- */
+        if (debug_srv && debug_server_has_client(debug_srv) && gpu_video_enabled) {
+            debug_server_frame(debug_srv, &video_gpu_chain.sig_chain, NULL, frame_count);
         }
 
         /* --- Performance stats accumulation --- */

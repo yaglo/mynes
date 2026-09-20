@@ -1,38 +1,30 @@
 import Foundation
 
 enum KernelType: String, CaseIterable, Sendable {
-    case pointwise = "pw"
-    case rcFilter  = "rc"
-    case fir       = "fir"
-    case delay     = "dly"
-    case comb      = "comb"
-    case modulator = "mod"
-    case dac       = "dac"
-    case matrix    = "mtx"
-    case beam      = "bm"
+    case pointwise = "Transfer", rcFilter = "RC filter", fir = "FIR filter", delay = "Delay"
+    case comb = "Y/C comb", modulator = "Demodulator", dac = "DAC", matrix = "Color matrix"
+    case pal = "PAL correction", deflection = "Deflection", beam = "Electron beam", rf = "RF"
+    case videoAmp = "Video amplifier", blur = "Beam width", temporal = "Persistence", agc = "AGC"
+    case raster = "PPU raster", receiver = "Burst lock", receiverDemod = "Chroma detector"
+    case unknown = "Unknown"
 
-    /// Map from the C enum CHAIN_KERNEL_* ordinal.
     static func from(ordinal: UInt8) -> KernelType {
-        switch ordinal {
-        case 0: return .pointwise
-        case 1: return .rcFilter
-        case 2: return .fir
-        case 3: return .delay
-        case 4: return .comb
-        case 5: return .modulator
-        case 6: return .dac
-        case 7: return .matrix
-        case 8: return .beam
-        default: return .pointwise
+        let types: [KernelType] = [.pointwise, .rcFilter, .fir, .delay, .comb, .modulator, .dac,
+                                  .matrix, .pal, .deflection, .beam, .rf, .videoAmp, .blur, .temporal, .agc, .raster, .receiver, .receiverDemod]
+        return Int(ordinal) < types.count ? types[Int(ordinal)] : .unknown
+    }
+    var group: String {
+        switch self {
+        case .raster, .rcFilter, .delay, .rf, .agc: return "Connection"
+        case .receiver, .receiverDemod, .pointwise, .fir, .comb, .modulator, .dac, .matrix, .pal: return "Decoder"
+        case .deflection, .beam, .videoAmp, .blur: return "Beam"
+        case .temporal: return "Phosphor"
+        case .unknown: return "Decoder"
         }
     }
 }
 
-enum ChainType: UInt8, Sendable {
-    case video = 0
-    case audio = 1
-}
-
+enum ChainType: UInt8, Sendable { case video = 0, audio = 1 }
 struct StageInfo: Identifiable, Sendable {
     let id: Int
     let name: String
@@ -42,6 +34,5 @@ struct StageInfo: Identifiable, Sendable {
     let bypassed: Bool
     let timingUs: Double
     let timingAvgUs: Double
-
     var isActive: Bool { enabled && !bypassed }
 }

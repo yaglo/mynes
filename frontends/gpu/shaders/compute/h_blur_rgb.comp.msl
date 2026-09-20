@@ -67,4 +67,3 @@ kernel void main0(constant Params& _25 [[buffer(0)]], device RGBIn& _122 [[buffe
     _164.rgb_out[out_idx + 1u] = sg * inv_wt;
     _164.rgb_out[out_idx + 2u] = sb * inv_wt;
 }
-

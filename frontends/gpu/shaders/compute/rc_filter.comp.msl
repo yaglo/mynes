@@ -51,4 +51,3 @@ kernel void main0(constant Params& _20 [[buffer(0)]], device DataBuf& _63 [[buff
         y_prev = y;
     }
 }
-

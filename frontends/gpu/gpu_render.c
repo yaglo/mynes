@@ -2,6 +2,7 @@
  * gpu_render.c -- GPU texture management, rendering, and color conversion
  */
 #include "gpu_render.h"
+#include "gpu_half.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -173,13 +174,64 @@ void gpu_render_update_dynamic_state(GPURenderCtx *ctx) {
     ctx->frame_counter++;
 }
 
+/* Opt-in capture of our final CRT render, independent of OS screen-recording
+ * permissions. PPM is an SDR preview: EDR values above reference white clip. */
+static void capture_display(GPURenderCtx *ctx, const GPUDisplayParams *params,
+                            int w, int h, const char *path) {
+    SDL_GPUTextureCreateInfo ci = {0};
+    ci.type=SDL_GPU_TEXTURETYPE_2D;
+    ci.format=SDL_GetGPUSwapchainTextureFormat(ctx->gpu,ctx->window);
+    ci.usage=SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
+    ci.width=w; ci.height=h; ci.layer_count_or_depth=1; ci.num_levels=1;
+    SDL_GPUTexture *target=SDL_CreateGPUTexture(ctx->gpu,&ci);
+    int bpp=ctx->hdr_enabled ? 8 : 4;
+    SDL_GPUTransferBufferCreateInfo bi={.usage=SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD,.size=(Uint32)(w*h*bpp)};
+    SDL_GPUTransferBuffer *tb=SDL_CreateGPUTransferBuffer(ctx->gpu,&bi);
+    if(target && tb) {
+        SDL_GPUCommandBuffer *cmd=SDL_AcquireGPUCommandBuffer(ctx->gpu);
+        gpu_display_render(ctx->gpu_disp,ctx->gpu,cmd,ctx->display_tex,
+            ctx->display_tex_w,ctx->display_tex_h,target,w,h,params,NULL);
+        SDL_GPUCopyPass *copy=SDL_BeginGPUCopyPass(cmd);
+        SDL_GPUTextureRegion region={.texture=target,.w=w,.h=h,.d=1};
+        SDL_GPUTextureTransferInfo dst={.transfer_buffer=tb,.pixels_per_row=w,.rows_per_layer=h};
+        SDL_DownloadFromGPUTexture(copy,&region,&dst); SDL_EndGPUCopyPass(copy);
+        SDL_SubmitGPUCommandBuffer(cmd); SDL_WaitForGPUIdle(ctx->gpu);
+        const void *data=SDL_MapGPUTransferBuffer(ctx->gpu,tb,false);
+        FILE *f=data ? fopen(path,"wb") : NULL;
+        if(f) {
+            fprintf(f,"P6\n%d %d\n255\n",w,h);
+            for(int i=0;i<w*h;i++) {
+                uint8_t rgb[3];
+                for(int c=0;c<3;c++) {
+                    if(ctx->hdr_enabled) {
+                        float v=gpu_half_to_float(((const uint16_t *)data)[i*4+c])/params->sdr_white_level;
+                        v=fminf(fmaxf(v,0),1);
+                        v=v<=0.0031308f ? 12.92f*v : 1.055f*powf(v,1.0f/2.4f)-0.055f;
+                        rgb[c]=(uint8_t)lrintf(v*255);
+                    } else {
+                        int channel=(ci.format==SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM) ? 2-c : c;
+                        rgb[c]=((const uint8_t *)data)[i*4+channel];
+                    }
+                }
+                fwrite(rgb,1,3,f);
+            }
+            fclose(f); fprintf(stderr,"Final CRT capture: %s\n",path);
+        }
+        if(data) SDL_UnmapGPUTransferBuffer(ctx->gpu,tb);
+    }
+    if(tb) SDL_ReleaseGPUTransferBuffer(ctx->gpu,tb);
+    if(target) SDL_ReleaseGPUTexture(ctx->gpu,target);
+}
+
 void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
     SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(ctx->gpu);
     if (!cmd) return;
 
+    GPUDisplayParams capture_params = {0};
+    bool can_capture = false;
     SDL_GPUTexture *swapchain_tex = NULL;
     Uint32 sw, sh;
-    if (!SDL_AcquireGPUSwapchainTexture(cmd, ctx->window, &swapchain_tex, &sw, &sh)) {
+    if (!SDL_WaitAndAcquireGPUSwapchainTexture(cmd, ctx->window, &swapchain_tex, &sw, &sh)) {
         SDL_SubmitGPUCommandBuffer(cmd);
         return;
     }
@@ -213,12 +265,17 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
         vp_y = ((float)sh - vp_h) * 0.5f;
     }
 
-    if (ctx->display_tex && ctx->gpu_display_enabled && ctx->crt_shader_enabled) {
+    if (ctx->display_tex && ctx->gpu_display_enabled && (ctx->crt_shader_enabled || !ctx->owns_display_tex)) {
         /* CRT shader: 3-pass render pipeline. */
         GPUDisplayParams disp_params;
         gpu_display_params_from_tv(&disp_params, &chain->tv,
                                    ctx->display_tex_w, ctx->display_tex_h,
                                    (int)vp_w, (int)vp_h);
+        if (!ctx->crt_shader_enabled) {
+            memset(&disp_params, 0, sizeof(disp_params));
+            disp_params.glass_tint = 1;
+            disp_params.hdr_gain = 1;
+        }
         disp_params.frame_brightness = ctx->hv_sag_state;
         disp_params.apl_smoothed = ctx->apl_slow_state;
         disp_params.thermal_r = ctx->thermal_r_state;
@@ -228,9 +285,15 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
         disp_params.audio_bass_rms = ctx->audio_bass_rms;
         disp_params.frame_phase = (float)ctx->frame_counter
                                   * (80.0f * 2.0f * 3.14159265f / 60.0f);
-        /* gamma=2.2 for EDR (sRGB→linear), gamma=0 for SDR (pass-through). */
-        if (!ctx->hdr_enabled)
-            disp_params.gamma = 0.0f;
+        disp_params.input_gamma = (!ctx->owns_display_tex || ctx->hdr_enabled) ? 0.0f : chain->tv.gamma;
+        disp_params.output_hdr = ctx->hdr_enabled;
+        SDL_PropertiesID props = SDL_GetWindowProperties(ctx->window);
+        disp_params.hdr_headroom = ctx->hdr_enabled
+            ? fmaxf(1.0f, SDL_GetFloatProperty(props, SDL_PROP_WINDOW_HDR_HEADROOM_FLOAT, 1.0f)) : 1.0f;
+        disp_params.sdr_white_level = ctx->hdr_enabled
+            ? SDL_GetFloatProperty(props, SDL_PROP_WINDOW_SDR_WHITE_LEVEL_FLOAT, 1.0f) : 1.0f;
+        capture_params = disp_params;
+        can_capture = true;
         SDL_GPUViewport viewport = {0};
         viewport.x = vp_x;
         viewport.y = vp_y;
@@ -287,6 +350,12 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
     }
 
     SDL_SubmitGPUCommandBuffer(cmd);
+    const char *capture_path=SDL_getenv("MYNES_CAPTURE_PATH");
+    static bool captured=false;
+    if(can_capture && !captured && capture_path && ctx->frame_counter>=180) {
+        captured=true;
+        capture_display(ctx,&capture_params,(int)vp_w,(int)vp_h,capture_path);
+    }
 }
 
 uint8_t *gpu_render_float_rgb_to_rgba8(const float *rgb, int pixel_count) {

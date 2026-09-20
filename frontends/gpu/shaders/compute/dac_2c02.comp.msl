@@ -86,4 +86,3 @@ kernel void main0(device IndexBuf& _41 [[buffer(1)]], constant Params& _72 [[buf
         _135.waveform[wave_base + s] = _141;
     }
 }
-

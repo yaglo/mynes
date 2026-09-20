@@ -1,6 +1,6 @@
 {
     "name": "Retro Gaming Setup",
-    "description": "S-Video modded NES, PVM, headphones \u2014 modern retro purist setup",
+    "description": "S-Video modded NES, PVM, headphones — modern retro purist setup",
     "connection": "svideo",
     "comb_type": "none",
     "console_variant": 1,
@@ -60,7 +60,7 @@
         "h_jitter": 0.0003,
         "v_jitter": 0.0001,
         "mask_type": "aperture_grille",
-        "mask_pitch_mm": 1.0,
+        "mask_pitch_px": 1.0,
         "mask_strength": 0.35,
         "subpixel_layout": 0,
         "persistence_ms": 1.2,

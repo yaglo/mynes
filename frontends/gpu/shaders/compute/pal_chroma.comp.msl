@@ -31,7 +31,7 @@ struct UOutBuf
 
 constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
 
-kernel void main0(constant Params& _19 [[buffer(0)]], device VRawBuf& _36 [[buffer(1)]], device URawBuf& _45 [[buffer(2)]], device VOutBuf& _85 [[buffer(3)]], device UOutBuf& _92 [[buffer(4)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+kernel void main0(constant Params& _19 [[buffer(0)]], device VRawBuf& _36 [[buffer(1)]], device URawBuf& _45 [[buffer(2)]], device VOutBuf& _104 [[buffer(3)]], device UOutBuf& _111 [[buffer(4)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
     uint tid = gl_GlobalInvocationID.x;
     if (tid >= _19.count)
@@ -50,8 +50,14 @@ kernel void main0(constant Params& _19 [[buffer(0)]], device VRawBuf& _36 [[buff
         if (line > 0u)
         {
             v = 0.5 * (v + _36.v_raw[tid - _19.samples_per_line]);
+            float previous_u = _45.u_raw[tid - _19.samples_per_line];
+            if (((line - 1u) & 1u) != 0u)
+            {
+                previous_u = -previous_u;
+            }
+            u = 0.5 * (u + previous_u);
         }
     }
-    _85.v_out[tid] = v;
-    _92.u_out[tid] = u;
+    _104.v_out[tid] = v;
+    _111.u_out[tid] = u;
 }

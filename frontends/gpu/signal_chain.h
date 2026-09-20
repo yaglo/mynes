@@ -50,6 +50,9 @@ typedef enum {
     CHAIN_KERNEL_H_BLUR_RGB,      /* h_blur_rgb.comp — horizontal blur on RGB */
     CHAIN_KERNEL_TEMPORAL_BLIT,   /* temporal_blit.comp — blend + blit to texture */
     CHAIN_KERNEL_AGC,             /* agc.comp — automatic gain control */
+    CHAIN_KERNEL_RASTER,          /* active waveform -> complete horizontal raster */
+    CHAIN_KERNEL_RECEIVER,
+    CHAIN_KERNEL_RECEIVER_DEMOD,        /* burst phase + back-porch clamp */
     CHAIN_KERNEL_COUNT
 } ChainKernelType;
 
@@ -61,7 +64,7 @@ typedef enum {
 #define CHAIN_MAX_UNIFORM_SIZE 256
 
 /* Bindings and limits for explicit per-stage I/O. */
-#define CHAIN_STAGE_MAX_RO   3     /* max readonly buffer inputs per stage */
+#define CHAIN_STAGE_MAX_RO   4     /* max readonly buffer inputs per stage */
 #define CHAIN_STAGE_MAX_RW   3     /* max readwrite buffer outputs per stage */
 #define CHAIN_STAGE_MAX_EXT  4     /* max external buffer pointers per stage */
 

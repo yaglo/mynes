@@ -1,6 +1,6 @@
 {
     "name": "Sony PVM-14L2",
-    "description": "NES via composite BNC on a Sony PVM-14L2 \u2014 14\" entry-level pro monitor with visible scanlines",
+    "description": "NES via composite BNC on a Sony PVM-14L2 — 14\" entry-level pro monitor with visible scanlines",
     "connection": "composite",
     "comb_type": "none",
     "console_variant": 1,
@@ -60,7 +60,7 @@
         "h_jitter": 0.0,
         "v_jitter": 0.0001,
         "mask_type": "aperture_grille",
-        "mask_pitch_mm": 1.0,
+        "mask_pitch_px": 1.0,
         "mask_strength": 0.2,
         "subpixel_layout": 0,
         "persistence_ms": 1.3,

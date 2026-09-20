@@ -1,6 +1,6 @@
 {
     "name": "Stas's Favourite",
-    "description": "Basement aesthetic, clean signal \u2014 the best of both worlds",
+    "description": "Basement aesthetic, clean signal — the best of both worlds",
     "connection": "composite",
     "comb_type": "none",
     "console_variant": 1,
@@ -60,7 +60,7 @@
         "h_jitter": 0.0,
         "v_jitter": 0.0,
         "mask_type": "shadow",
-        "mask_pitch_mm": 2.0,
+        "mask_pitch_px": 2.0,
         "mask_strength": 0.22,
         "subpixel_layout": 0,
         "persistence_ms": 5.0,

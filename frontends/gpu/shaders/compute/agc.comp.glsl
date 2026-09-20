@@ -3,7 +3,7 @@
  * ======================================================================
  *
  * Normalizes composite signal amplitude after the RF mod/demod stage.
- * Each thread processes one complete scanline: measures peak amplitude,
+ * Each thread processes one complete scanline: measures sync-to-porch amplitude,
  * computes a target gain, smooths it with an asymmetric attack/release
  * envelope, and applies it uniformly across the line.
  *
@@ -35,9 +35,9 @@ layout(set = 1, binding = 1) buffer CarryBuf {
 
 layout(set = 2, binding = 0) uniform Params {
     uint  total_count;      /* total samples in buffer */
-    uint  samples_per_line; /* 2048 for NTSC, 2560 for PAL */
+    uint  samples_per_line; /* complete 341-dot lines */
     uint  num_lines;        /* number of scanlines (240) */
-    float target_level;     /* desired peak amplitude (0.85–0.95) */
+    float target_level;     /* desired sync-to-porch amplitude */
     float attack_coeff;     /* smoothing for gain decrease (e.g. 0.1) */
     float release_coeff;    /* smoothing for gain increase (e.g. 0.02) */
     float min_gain;         /* floor to prevent over-amplification (e.g. 0.5) */
@@ -53,11 +53,14 @@ void main() {
     if (end > total_count) end = total_count;
     if (start >= total_count) return;
 
-    /* ---- Pass 1: Find peak absolute value in this scanline ---- */
-    float peak = 0.0;
-    for (uint i = start; i < end; i++) {
-        peak = max(peak, abs(data[i]));
-    }
+    // Key the detector to sync and porch; picture content must not pump gain.
+    uint spp = samples_per_line / 341u;
+    float tip = 0.0, porch = 0.0;
+    for (uint x=8u*spp; x<20u*spp; x++) tip += data[start+x];
+    for (uint x=46u*spp; x<49u*spp; x++) porch += data[start+x];
+    tip /= float(12u*spp);
+    porch /= float(3u*spp);
+    float peak = max(porch-tip, 0.0);
 
     /* ---- Pass 2: Compute and smooth gain ---- */
     /* Noise gate: if peak is below noise floor, don't amplify.

@@ -17,4 +17,3 @@ vertex main0_out main0(uint gl_VertexIndex [[vertex_id]])
     out.gl_Position = float4((pos * 2.0) - float2(1.0), 0.0, 1.0);
     return out;
 }
-

@@ -427,16 +427,16 @@ static int test_init_ntsc_defaults(void) {
         printf("  FAIL: fir_c_n=%d (expected 47)\n", sp.fir_c_n);
         return 0;
     }
-    if (sp.phase_line_adv != 6) {
-        printf("  FAIL: phase_line_adv=%d (expected 6)\n", sp.phase_line_adv);
+    if (sp.phase_line_adv != 4) {
+        printf("  FAIL: phase_line_adv=%d (expected 4)\n", sp.phase_line_adv);
         return 0;
     }
-    if (sp.phase_field_adv != 6) {
-        printf("  FAIL: phase_field_adv=%d (expected 6)\n", sp.phase_field_adv);
+    if (sp.phase_field_adv != 4) {
+        printf("  FAIL: phase_field_adv=%d (expected 4)\n", sp.phase_field_adv);
         return 0;
     }
-    if (sp.phase_num_fields != 4) {
-        printf("  FAIL: phase_num_fields=%d (expected 4)\n", sp.phase_num_fields);
+    if (sp.phase_num_fields != 2) {
+        printf("  FAIL: phase_num_fields=%d (expected 2)\n", sp.phase_num_fields);
         return 0;
     }
     ASSERT_NEAR(sp.color_matrix[0][0], 1.03f, 1e-5f, "warm_r");
@@ -565,28 +565,45 @@ static int test_pal_waveform_generate_uses_alt_lines(void) {
 
     int phase_line0 = 0;
     int phase_line1 = ((sp.phase_line_adv % 12) + 12) % 12;
-    float line0_expected = sp.table[0x25][phase_line0];
-    float line1_expected = sp.table_alt[0x25][phase_line1];
-    float line1_wrong    = sp.table[0x25][phase_line1];
-
-    ASSERT_NEAR(waveform[0], line0_expected, 1e-6f,
-                "PAL line 0 uses base waveform table");
-    ASSERT_NEAR(waveform[sp.samples_per_line], line1_expected, 1e-6f,
-                "PAL line 1 uses alt waveform table");
-    if (fabsf(line1_expected - line1_wrong) < 0.05f) {
-        printf("  FAIL: test setup too weak — PAL base/alt too similar\n");
-        return 0;
+    bool differs = false;
+    for (int sample = 0; sample < sp.samples_per_pixel; sample++) {
+        float expected = sp.table_alt[0x25][phase_line1 + sample];
+        float wrong = sp.table[0x25][phase_line1 + sample];
+        ASSERT_NEAR(waveform[sample], sp.table[0x25][phase_line0 + sample], 1e-6f,
+                    "PAL even line waveform");
+        ASSERT_NEAR(waveform[sp.samples_per_line + sample], expected, 1e-6f,
+                    "PAL odd line waveform");
+        differs |= fabsf(expected - wrong) > 0.05f;
     }
-    if (fabsf(waveform[sp.samples_per_line] - line1_wrong) < 1e-4f) {
-        printf("  FAIL: PAL line 1 still matches base table instead of alt\n");
-        return 0;
-    }
+    if (!differs) return 0;
     return 1;
 }
 
 /* ============================================================================
  * Main
  * ============================================================================ */
+
+static int test_clock_phase_and_decay(void) {
+    SignalPrecompute sp;
+    signal_precompute_init(&sp, SIGNAL_REGION_NTSC);
+    unsigned long long dots = 0;
+    for (unsigned frame = 0; frame < 24; frame++) {
+        if (signal_frame_phase(&sp, frame) != (int)(dots * 8 % 12)) return 0;
+        dots += 341 * 262 - (frame & 1);
+    }
+    if (sp.phase_line_adv != (341 * 8) % 12) return 0;
+    sp.frame_phase_override = 10;
+    if (signal_frame_phase(&sp, 3) != 10) return 0;
+    signal_precompute_init(&sp, SIGNAL_REGION_PAL);
+    if (sp.phase_line_adv != (341 * 10) % 12) return 0;
+    for (unsigned f = 0; f < 12; f++)
+        if (signal_frame_phase(&sp, f) != (int)((unsigned long long)f * 341 * 312 * 10 % 12)) return 0;
+    ASSERT_NEAR(signal_persistence_weight(0, 0, 1), 0, 0, "zero decay");
+    ASSERT_NEAR(signal_persistence_weight(0, 20, 0), 0, 0, "zero channel");
+    if (!(signal_persistence_weight(1, 20, 1) < signal_persistence_weight(0, 20, 1))) return 0;
+    if (!(signal_persistence_weight(0, 20, .5f) < signal_persistence_weight(0, 20, 1))) return 0;
+    return 1;
+}
 
 int main(void) {
     printf("=== Signal Precompute Tests ===\n\n");
@@ -610,6 +627,7 @@ int main(void) {
     RUN_TEST(test_fir_symmetric);
 
     printf("\n--- signal_precompute_init ---\n");
+    RUN_TEST(test_clock_phase_and_decay);
     RUN_TEST(test_init_ntsc_defaults);
     RUN_TEST(test_init_pal_dimensions);
     RUN_TEST(test_pal_alt_table_populated);

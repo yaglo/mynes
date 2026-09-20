@@ -236,7 +236,7 @@ typedef struct {
 
     /* Phosphor. */
     VideoMaskType mask_type;
-    float mask_pitch_mm;        /* 0.25-0.80 mm */
+    float mask_pitch_px;        /* phosphor cell spacing in drawable pixels */
     float mask_strength;        /* phosphor mask blend (0=off, 0.6=visible, 1.0=full) */
     int   subpixel_layout;      /* 0=none, 1=RGB stripe, 2=BGR stripe */
     float persistence_ms;       /* phosphor decay time (1-3 ms for P22) */

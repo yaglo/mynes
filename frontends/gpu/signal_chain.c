@@ -31,6 +31,9 @@ static const char *kernel_shader_names[CHAIN_KERNEL_COUNT] = {
     [CHAIN_KERNEL_H_BLUR_RGB] = "h_blur_rgb.comp.spv",
     [CHAIN_KERNEL_TEMPORAL_BLIT] = "temporal_blit.comp.spv",
     [CHAIN_KERNEL_AGC]           = "agc.comp.spv",
+    [CHAIN_KERNEL_RASTER] = "raster_encode.comp.spv",
+    [CHAIN_KERNEL_RECEIVER] = "receiver_lock.comp.spv",
+    [CHAIN_KERNEL_RECEIVER_DEMOD] = "receiver_demod.comp.spv",
 };
 
 /* Workgroup sizes per kernel type. */
@@ -50,7 +53,10 @@ static const int kernel_workgroup_x[CHAIN_KERNEL_COUNT] = {
     [CHAIN_KERNEL_VIDEO_AMP]  = 256,
     [CHAIN_KERNEL_H_BLUR_RGB] = 256,
     [CHAIN_KERNEL_TEMPORAL_BLIT] = 16,  /* 16×16 for 2D dispatch */
-    [CHAIN_KERNEL_AGC]           = 256, /* sequential: 1 thread per scanline */
+    [CHAIN_KERNEL_AGC]           = 256,
+    [CHAIN_KERNEL_RASTER] = 256,
+    [CHAIN_KERNEL_RECEIVER] = 256,
+    [CHAIN_KERNEL_RECEIVER_DEMOD] = 256, /* sequential: 1 thread per scanline */
 };
 
 /* Resource counts per kernel type: {readonly, readwrite, uniform}. */
@@ -63,14 +69,17 @@ static const int kernel_resources[CHAIN_KERNEL_COUNT][3] = {
     [CHAIN_KERNEL_COMB]       = { 1, 2, 1 },  /* signal → Y + C */
     [CHAIN_KERNEL_MODULATOR]  = { 1, 2, 1 },  /* input → out1 + out2 */
     [CHAIN_KERNEL_DAC]        = { 2, 1, 1 },  /* indices + table → waveform */
-    [CHAIN_KERNEL_MATRIX]     = { 3, 1, 1 },  /* Y,I,Q → RGB */
+    [CHAIN_KERNEL_MATRIX]     = { 4, 1, 1 },  /* Y,I,Q → RGB */
     [CHAIN_KERNEL_PAL_CHROMA] = { 2, 2, 1 },  /* V,U raw → V,U corrected */
     [CHAIN_KERNEL_DEFLECTION] = { 0, 2, 1 },  /* params → landing_x + landing_y */
     [CHAIN_KERNEL_BEAM]       = { 3, 1, 1 },  /* RGB + landing maps → RGBA_out */
     [CHAIN_KERNEL_RF]         = { 0, 1, 1 },  /* composite in-place */
     [CHAIN_KERNEL_VIDEO_AMP]  = { 1, 1, 1 },  /* RGB_in → RGB_out */
     [CHAIN_KERNEL_H_BLUR_RGB] = { 0, 2, 1 },  /* RGB_in + RGB_out as readwrite */
-    [CHAIN_KERNEL_TEMPORAL_BLIT] = { 2, 0, 1 },  /* cur+prev readonly, 0 rw (writes to storage texture) */
+    [CHAIN_KERNEL_TEMPORAL_BLIT] = { 2, 1, 1 },  /* cur+prev, recursive history, and output texture */
+    [CHAIN_KERNEL_RASTER] = { 1, 1, 1 },
+    [CHAIN_KERNEL_RECEIVER] = { 1, 1, 1 },
+    [CHAIN_KERNEL_RECEIVER_DEMOD] = { 2, 2, 1 },
     [CHAIN_KERNEL_AGC]           = { 0, 2, 1 },  /* data + carry in-place */
 };
 

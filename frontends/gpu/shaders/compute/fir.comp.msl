@@ -78,4 +78,3 @@ kernel void main0(constant Params& _19 [[buffer(0)]], device TapsBuf& _112 [[buf
     }
     _188.data_out[tid] = sum;
 }
-

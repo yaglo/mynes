@@ -27,7 +27,7 @@ struct CarryBuf
 
 constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
 
-kernel void main0(constant Params& _20 [[buffer(0)]], device DataBuf& _75 [[buffer(1)]], device CarryBuf& _112 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+kernel void main0(constant Params& _20 [[buffer(0)]], device DataBuf& _84 [[buffer(1)]], device CarryBuf& _163 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
     uint line = gl_GlobalInvocationID.x;
     if (line >= _20.num_lines)
@@ -44,42 +44,52 @@ kernel void main0(constant Params& _20 [[buffer(0)]], device DataBuf& _75 [[buff
     {
         return;
     }
-    float peak = 0.0;
-    for (uint i = start; i < end; i++)
+    uint spp = _20.samples_per_line / 341u;
+    float tip = 0.0;
+    float porch = 0.0;
+    uint _70 = 8u * spp;
+    for (uint x = _70; x < (20u * spp); x++)
     {
-        peak = fast::max(peak, abs(_75.data[i]));
+        tip += _84.data[start + x];
     }
-    float _88;
+    uint _98 = 46u * spp;
+    for (uint x_1 = _98; x_1 < (49u * spp); x_1++)
+    {
+        porch += _84.data[start + x_1];
+    }
+    tip /= float(12u * spp);
+    porch /= float(3u * spp);
+    float peak = fast::max(porch - tip, 0.0);
+    float _139;
     if (peak < 0.0199999995529651641845703125)
     {
-        _88 = 1.0;
+        _139 = 1.0;
     }
     else
     {
-        _88 = _20.target_level / peak;
+        _139 = _20.target_level / peak;
     }
-    float desired_gain = _88;
+    float desired_gain = _139;
     desired_gain = fast::clamp(desired_gain, _20.min_gain, _20.max_gain);
-    float prev_gain = ((device float*)&_112.carry[line])[0u];
+    float prev_gain = ((device float*)&_163.carry[line])[0u];
     if (prev_gain <= 0.0)
     {
         prev_gain = desired_gain;
     }
-    float _125;
+    float _176;
     if (desired_gain < prev_gain)
     {
-        _125 = _20.attack_coeff;
+        _176 = _20.attack_coeff;
     }
     else
     {
-        _125 = _20.release_coeff;
+        _176 = _20.release_coeff;
     }
-    float coeff = _125;
+    float coeff = _176;
     float smoothed_gain = prev_gain + (coeff * (desired_gain - prev_gain));
-    for (uint i_1 = start; i_1 < end; i_1++)
+    for (uint i = start; i < end; i++)
     {
-        _75.data[i_1] *= smoothed_gain;
+        _84.data[i] *= smoothed_gain;
     }
-    _112.carry[line] = float2(smoothed_gain, peak);
+    _163.carry[line] = float2(smoothed_gain, peak);
 }
-

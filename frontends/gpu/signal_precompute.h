@@ -48,6 +48,7 @@ typedef struct {
 
     /* Phase parameters for dot crawl. */
     int   phase_base;
+    int   frame_phase_override; /* -1: synthetic frame timing; otherwise clock-derived */
     int   phase_line_adv;
     int   phase_field_adv;
     int   phase_num_fields;
@@ -310,19 +311,14 @@ static inline void signal_precompute_init(SignalPrecompute *sp, int region) {
     signal_design_fir(sp->fir_c, sp->fir_c_n, 0.015f);
     signal_design_fir(sp->fir_q, sp->fir_q_n, 0.015f);
 
-    /* Phase defaults.
-     *   phase_base / phase_line_adv: 180°-per-line flip, identical
-     *      in both regions (shared dot-crawl characteristic).
-     *   demod_rotate: per-region offset aligning our demod axes with
-     *      the 2C02 / 2C07's actual square-wave phase convention.
-     *      NTSC = 4 (x30° = 120°) puts I on the expected 2C02 axis.
-     *      PAL = 3 (x30° = 90°) lines up the raw PAL demod axes so the
-     *      downstream odd-line U fix + 1H V average can recover a
-     *      stable V/U pair. */
+    /* 341 dots include horizontal blanking: NTSC advances 4/12 of a
+     * carrier cycle per line, PAL 2/12. NTSC synthetic frames alternate
+     * 89342 and 89341 dots; live emulation supplies its actual PPU clock. */
     sp->phase_base = 0;
-    sp->phase_line_adv = 6;
-    sp->phase_field_adv = 6;
-    sp->phase_num_fields = 4;
+    sp->frame_phase_override = -1;
+    sp->phase_line_adv = signal_region_line_phase(region);
+    sp->phase_field_adv = region == SIGNAL_REGION_PAL ? 0 : 4;
+    sp->phase_num_fields = region == SIGNAL_REGION_PAL ? 1 : 2;
     sp->demod_rotate = (region == SIGNAL_REGION_PAL) ? 3 : 4;
     sp->chroma_gain = 1.00f;
     /* sp->color_killer removed — now in TVDisplayParams */
@@ -344,6 +340,15 @@ static inline void signal_precompute_init(SignalPrecompute *sp, int region) {
     sp->color_bias[0] = 0.015f;
     sp->color_bias[1] = 0.015f;
     sp->color_bias[2] = 0.018f;
+}
+
+static inline int signal_frame_phase(const SignalPrecompute *sp, unsigned frame) {
+    if (sp->frame_phase_override >= 0) return sp->frame_phase_override % 12;
+    unsigned period = sp->phase_num_fields > 0 ? (unsigned)sp->phase_num_fields : 1u;
+    unsigned field = frame % period;
+    int phase = (int)field * sp->phase_field_adv;
+    if (sp->region == SIGNAL_REGION_NTSC) phase -= (int)(field / 2u) * 8;
+    return (phase % 12 + 12) % 12;
 }
 
 #endif /* SIGNAL_PRECOMPUTE_H */

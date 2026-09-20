@@ -1,6 +1,6 @@
 {
     "name": "Basement TV",
-    "description": "NES on corroded RF to a beat-up basement TV \u2014 hum, snow, nostalgia",
+    "description": "NES on corroded RF to a beat-up basement TV — hum, snow, nostalgia",
     "connection": "rf",
     "comb_type": "none",
     "console_variant": 1,
@@ -60,7 +60,7 @@
         "h_jitter": 0.8,
         "v_jitter": 0.005,
         "mask_type": "shadow",
-        "mask_pitch_mm": 3.0,
+        "mask_pitch_px": 3.0,
         "mask_strength": 0.5,
         "subpixel_layout": 0,
         "persistence_ms": 5.0,

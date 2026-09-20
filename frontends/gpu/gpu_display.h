@@ -62,6 +62,10 @@ typedef struct {
     float black_floor;              /* minimum black level (0-1) */
     float ambient_light;            /* room light reflection (0-0.2) */
     float glass_tint;               /* glass attenuation (0.6-1.0) */
+    float input_gamma;             /* 0 = input already linear */
+    float hdr_headroom;            /* current display peak / SDR white */
+    float sdr_white_level;         /* scRGB white scale */
+    int output_hdr;
     float hdr_gain;                 /* output multiplier (1.0=normal) */
     int   subpixel_layout;          /* 0=none, 1=RGB, 2=BGR */
     float overscan;                 /* bezel crop fraction per edge (0-0.08) */
@@ -119,6 +123,10 @@ typedef struct {
  * Returns true on success. */
 bool gpu_display_init(GPUDisplay *d, SDL_GPUDevice *gpu,
                        SDL_Window *window, const char *shader_dir);
+
+/* Render to an explicitly formatted target, including offscreen validation. */
+bool gpu_display_init_target(GPUDisplay *d, SDL_GPUDevice *gpu,
+    SDL_GPUTextureFormat format, int width, int height, const char *shader_dir);
 
 /* Destroy the display pipeline. */
 void gpu_display_destroy(GPUDisplay *d, SDL_GPUDevice *gpu);

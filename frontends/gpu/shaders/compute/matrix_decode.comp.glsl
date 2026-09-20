@@ -30,6 +30,7 @@ layout(local_size_x = 256) in;
 layout(set = 0, binding = 0) readonly buffer YBuf { float y_in[]; };
 layout(set = 0, binding = 1) readonly buffer IBuf { float i_in[]; };
 layout(set = 0, binding = 2) readonly buffer QBuf { float q_in[]; };
+layout(set = 0, binding = 3) readonly buffer Reference { vec4 reference[]; };
 layout(set = 1, binding = 0) writeonly buffer RGBBuf { float rgb_out[]; };
 
 layout(set = 2, binding = 0) uniform Params {
@@ -40,40 +41,40 @@ layout(set = 2, binding = 0) uniform Params {
     float m20, m21, m22;   /* B row */
     /* Per-channel bias (black level + warm tint folded in) */
     float bias_r, bias_g, bias_b;
-    /* Colour killer: zero chroma when luma < threshold.
-     * Real TVs disable chroma decoder on dark signals to suppress
-     * colour noise. 0 = disabled, typical threshold ~0.05-0.10. */
+    /* Colour killer: gate chroma on measured burst amplitude. */
     float color_killer_threshold;
     /* Chroma delay: shift I/Q relative to Y by this many samples.
      * Real TVs had chroma FIR group delay > luma FIR group delay,
      * causing color to trail brightness on horizontal transitions.
      * Typical: 2-6 samples at signal resolution. 0 = no delay. */
     int   chroma_delay;
-    uint  samples_per_line;  /* for per-scanline boundary clamping */
+    uint samples_per_line;
+    uint active_width, active_offset;
 };
 
 void main() {
     uint tid = gl_GlobalInvocationID.x;
     if (tid >= count) return;
 
-    float Y = y_in[tid];
+    uint line = tid / active_width;
+    uint source = line * samples_per_line + active_offset + tid % active_width;
+    float Y = y_in[source] - reference[line].y;
 
     /* Read I/Q from a delayed position (color trails behind brightness). */
-    int delayed_tid = int(tid);
+    int delayed_tid = int(source);
     if (chroma_delay != 0 && samples_per_line > 0u) {
-        uint line_start = (tid / samples_per_line) * samples_per_line;
+        uint line_start = (source / samples_per_line) * samples_per_line;
         uint line_end = line_start + samples_per_line;
-        delayed_tid = clamp(int(tid) - chroma_delay,
+        delayed_tid = clamp(int(source) - chroma_delay,
                             int(line_start), int(line_end) - 1);
     }
     float I = i_in[delayed_tid];
     float Q = q_in[delayed_tid];
 
-    /* Colour killer: suppress chroma below threshold to prevent
-     * colour noise in dark areas. Smooth transition over small range. */
+    /* Suppress colour when the received burst is too weak to lock. */
     if (color_killer_threshold > 0.0) {
         float kill = smoothstep(color_killer_threshold * 0.7,
-                                color_killer_threshold * 1.3, Y);
+                                color_killer_threshold * 1.3, reference[line].z);
         I *= kill;
         Q *= kill;
     }

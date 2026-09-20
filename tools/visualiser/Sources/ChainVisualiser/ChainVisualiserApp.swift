@@ -14,7 +14,18 @@ struct ChainVisualiserApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView(connection: connection)
+                .task {
+                    // Optional UI review capture of this app's own view.
+                    guard let path = ProcessInfo.processInfo.environment["MYNES_EDITOR_CAPTURE"] else { return }
+                    try? await Task.sleep(for: .seconds(2))
+                    guard let view = NSApplication.shared.windows.first(where: { $0.isVisible })?.contentView,
+                          let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+                    view.cacheDisplay(in: view.bounds, to: bitmap)
+                    if let data = bitmap.representation(using: .png, properties: [:]) {
+                        try? data.write(to: URL(fileURLWithPath: path))
+                    }
+                }
         }
-        .defaultSize(width: 960, height: 640)
+        .defaultSize(width: 1180, height: 820)
     }
 }

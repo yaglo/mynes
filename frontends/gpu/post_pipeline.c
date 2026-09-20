@@ -38,17 +38,18 @@ typedef struct {
     float color_killer_threshold;
     int32_t chroma_delay;
     uint32_t samples_per_line;
+    uint32_t active_width, active_offset;
 } MatrixDecodeParams;
 
 static bool matrix_decode_rebind(struct SignalChainFwd *chain_fwd,
                                  struct ChainStageFwd *stage_fwd,
                                  void *user) {
-    SignalChain *chain = (SignalChain *)chain_fwd;
+    (void)chain_fwd;
     ChainStage *s      = (ChainStage *)stage_fwd;
     VideoGPUChain *vgc = (VideoGPUChain *)user;
 
     s->ro[0] = CBR_BUF_SRC;                /* Y from the main ping-pong */
-    s->ro_count = 3;
+    s->ro_count = 4; s->ro[3] = CBR_EXT3; s->external[3] = vgc->buf_receiver;
     s->rw[0] = CBR_EXT0;
     s->rw_count = 1;
     s->external[0] = vgc->buf_rgb;
@@ -69,7 +70,9 @@ static bool matrix_decode_rebind(struct SignalChainFwd *chain_fwd,
     }
 
     MatrixDecodeParams p;
-    p.count  = (uint32_t)chain->sample_count;
+    p.count  = (uint32_t)vgc->signal_fmt.total_samples;
+    p.active_width = (uint32_t)vgc->signal_fmt.samples_per_line;
+    p.active_offset = (uint32_t)(65 * vgc->signal_fmt.samples_per_pixel);
     p.m00 = vgc->color_matrix[0][0];
     p.m01 = vgc->color_matrix[0][1];
     p.m02 = vgc->color_matrix[0][2];
@@ -83,10 +86,8 @@ static bool matrix_decode_rebind(struct SignalChainFwd *chain_fwd,
     p.bias_g = vgc->color_bias[1];
     p.bias_b = vgc->color_bias[2];
     p.color_killer_threshold = vgc->chain ? vgc->chain->tv.color_killer : 0.0f;
-    p.chroma_delay = (vgc->fir_c_n > vgc->fir_y_n)
-                   ? (vgc->fir_c_n - vgc->fir_y_n) / 2
-                   : 0;
-    p.samples_per_line = (uint32_t)vgc->signal_fmt.samples_per_line;
+    p.chroma_delay = 0; /* Both FIRs are centred on the same source sample. */
+    p.samples_per_line = (uint32_t)vgc->raster_fmt.samples_per_line;
     if (!video_chain_stage_active(vgc->chain, 7)) {
         p.m01 = p.m02 = 0.0f;
         p.m11 = p.m12 = 0.0f;

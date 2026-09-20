@@ -87,6 +87,11 @@
 typedef struct {
     /* --- Generic signal chain runner (owns ping-pong + aux buffers) --- */
     SignalChain sig_chain;
+    SignalFormat raster_fmt; /* full lines upstream; signal_fmt remains active-picture format */
+    int stage_raster, stage_receiver;
+    int signal_phase_base, signal_line_phase;
+    SDL_GPUBuffer *buf_receiver;
+
 
     /* --- Stage indices into sig_chain (for runtime parameter updates) --- */
     int stage_console_hp;       /* Console Output HP (RC, disabled) */
@@ -142,7 +147,11 @@ typedef struct {
     float beam_sigma_wide;          /* wide beam sigma (bright pixels) */
     float beam_h_blur_sigma;        /* horizontal blur sigma in signal samples */
     uint32_t beam_frame_counter;    /* incremented each beam dispatch (for noise) */
-    float temporal_blend;           /* 0.0=no blend (crawl visible), 0.5=full cancel */
+    SDL_GPUBuffer *buf_phosphor_history; /* accumulated linear-light decay */
+    bool temporal_history_valid;
+    bool smoothing_history_valid;
+    uint32_t signal_frame_counter;
+    float temporal_blend;           /* optional display smoothing, independent of decay */
     float blend_r, blend_g, blend_b; /* per-channel phosphor persistence weights */
     float motion_threshold;         /* 3D comb motion detector threshold */
     float edge_focus;               /* beam focus degradation at edges */
@@ -174,6 +183,8 @@ typedef struct {
     bool  vamp_enabled;                 /* whether video amp stage is active */
 
     /* --- Chroma demod parameters --- */
+    SDL_GPUTransferBuffer *indices_transfer;
+    float demod_line_phase;
     float demod_phase;              /* starting phase per scanline (radians) */
     float demod_dp;                 /* phase increment per sample (radians) */
 

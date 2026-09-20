@@ -1,6 +1,6 @@
 {
     "name": "Dying CRT",
-    "description": "Old 1980s TV with visible age \u2014 hum bar, soft focus, HV sag on bright scenes",
+    "description": "Old 1980s TV with visible age — hum bar, soft focus, HV sag on bright scenes",
     "connection": "composite",
     "comb_type": "none",
     "console_variant": 2,
@@ -61,7 +61,7 @@
         "h_jitter": 0.01,
         "v_jitter": 0.002,
         "mask_type": "shadow",
-        "mask_pitch_mm": 3.0,
+        "mask_pitch_px": 3.0,
         "mask_strength": 0.5,
         "subpixel_layout": 0,
         "persistence_ms": 5.5,

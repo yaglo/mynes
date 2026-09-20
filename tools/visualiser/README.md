@@ -1,43 +1,44 @@
-# ChainVisualiser
+# Signal Studio
 
-A macOS SwiftUI app that connects to the experimental GPU frontend's
-debug IPC socket and shows live oscilloscope traces, per-stage
-waveforms, a node-graph of the signal chain, and a performance
-dashboard.
-
-This is a development tool — not needed for normal use of the
-emulator.
-
-## Build
-
-```bash
-cd tools/visualiser
-swift build -c release
-```
-
-Produces `.build/release/ChainVisualiser`.
+Native macOS editor for the SDL3 GPU frontend. The graph follows five physical sections: connection, decoder, beam, phosphor, and glass. Controls change the live emulator through the same update functions as its OSD.
 
 ## Run
 
-1. Start the GPU frontend with the debug socket enabled:
+From the repository root:
 
-   ```bash
-   ./build/bin/nes_gpu --debug-server path/to/game.nes
-   ```
+```sh
+./build/bin/mynes_gpu --debug-server
+swift run --package-path tools/visualiser -c release
+```
 
-2. In a separate terminal, launch the visualiser:
+The emulator opens its ROM browser when no ROM path is supplied. Both programs use `/tmp/mynes_gpu_debug.sock`; set `MYNES_DEBUG_SOCKET` to the same alternate path in both processes to isolate a worktree.
 
-   ```bash
-   ./tools/visualiser/.build/release/ChainVisualiser
-   ```
+## Presets
 
-The app connects to `/tmp/mynes_gpu_debug.sock` by default.
+The selector shows the active preset and whether its settings have been edited. Switch between bundled and user presets, save changes to a user preset, save a copy, rename, or delete a user preset. Bundled files are read-only through this UI. Switching presets preserves the running game's NTSC/PAL region. Deleting the active user preset leaves its live settings available as an unsaved setup.
 
-## Architecture
+Files are managed by the emulator, under `$XDG_CONFIG_HOME/mynes/presets` or `~/.config/mynes/presets`. Writes use a temporary file and atomic rename. The editor does not need filesystem access to that directory. Catalog revisions reject commands referring to a stale list.
 
-`EmulatorConnection.swift` handles the Unix-socket protocol (see
-`frontends/gpu/debug_server.h` for the wire format). Each signal-chain
-stage publishes a snapshot buffer; the app polls at ~30 Hz and renders
-via SwiftUI + Charts.
+The execution list reports CPU command-encoding time, **not GPU execution time**. The footer estimates frame rate from received frame counters. Do not use it as a GPU benchmark on a contended machine.
 
-Platform: macOS 14+ only (uses SwiftUI macOS idioms).
+## Protocol and checks
+
+Little-endian messages use a two-word header: type and payload byte count.
+
+| Type | Direction | Payload |
+| --- | --- | --- |
+| 0 | server → editor | Existing execution-stage snapshot |
+| 5 | server → editor | Version 1, count, 72-byte physical-control records |
+| 6 | editor → server | Control ID and float32 value |
+| 7 | server → editor | Version 1, revision, count, signed active ID, modified flag; 136-byte preset records (ID, user flag, name[128]) |
+| 8 | editor → server | Operation, ID, revision, UTF-8 name[128]; operations 1 load, 2 save, 3 save-as, 4 rename, 5 delete |
+| 9 | server → editor | Operation, success flag, error[128] |
+
+Incoming values are bounded and must be finite. Incomplete messages remain queued until complete. The catalog refreshes twice a second; execution/controls update at most 30 Hz. Waveform-tap protocol types remain reserved; the current editor does not expose waveform traces.
+
+```sh
+swift test --package-path tools/visualiser
+python3 frontends/gpu/tests/test_editor_ipc.py build/bin/mynes_gpu
+```
+
+The IPC test launches a separate frontend with temporary user configuration and tests live edits, preset CRUD, topology changes, read-only bundled files, and stale-command rejection.

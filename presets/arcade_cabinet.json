@@ -1,6 +1,6 @@
 {
     "name": "Arcade Cabinet",
-    "description": "PlayChoice-10, RGB to a 25\" arcade monitor \u2014 bright, loud, in your face",
+    "description": "PlayChoice-10, RGB to a 25\" arcade monitor — bright, loud, in your face",
     "connection": "rgb",
     "comb_type": "none",
     "console_variant": 1,
@@ -60,7 +60,7 @@
         "h_jitter": 0.001,
         "v_jitter": 0.0005,
         "mask_type": "shadow",
-        "mask_pitch_mm": 3.0,
+        "mask_pitch_px": 3.0,
         "mask_strength": 0.5,
         "subpixel_layout": 0,
         "persistence_ms": 1.5,

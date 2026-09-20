@@ -1,6 +1,6 @@
 {
     "name": "RCA ColourTrak 1986",
-    "description": "NES front-loader, composite on a 25\" RCA ColourTrak console \u2014 the quintessential American living room TV",
+    "description": "NES front-loader, composite on a 25\" RCA ColourTrak console — the quintessential American living room TV",
     "connection": "composite",
     "comb_type": "none",
     "console_variant": 1,
@@ -60,7 +60,7 @@
         "h_jitter": 0.3,
         "v_jitter": 0.002,
         "mask_type": "shadow",
-        "mask_pitch_mm": 4.5,
+        "mask_pitch_px": 4.5,
         "mask_strength": 0.0,
         "subpixel_layout": 0,
         "persistence_ms": 2.5,

@@ -60,7 +60,7 @@
         "h_jitter": 0.0005,
         "v_jitter": 0.0003,
         "mask_type": "aperture_grille",
-        "mask_pitch_mm": 2.0,
+        "mask_pitch_px": 2.0,
         "mask_strength": 0.18,
         "subpixel_layout": 1,
         "persistence_ms": 1.5,

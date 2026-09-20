@@ -7,13 +7,13 @@ struct PerformanceDashboardView: View {
         VStack(alignment: .leading, spacing: 12) {
             // Header
             HStack {
-                Text("GPU Performance")
+                Text("CPU command encoding")
                     .font(.headline)
                 Spacer()
-                Text(String(format: "Total: %.0f us/frame", totalUs))
+                Text(String(format: "Dispatch total: %.0f µs", totalUs))
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
-                frameTimeBadge
+                // These are CPU encoding times, not GPU execution durations.
             }
 
             if enabledStages.isEmpty {
@@ -67,21 +67,10 @@ struct PerformanceDashboardView: View {
         }
     }
 
-    private var frameTimeBadge: some View {
-        let frameMs = totalUs / 1000.0
-        let color: Color = frameMs < 16.67 ? .green : frameMs < 33.33 ? .yellow : .red
-        return Text(String(format: "%.2f ms", frameMs))
-            .font(.caption.monospacedDigit().bold())
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(color.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
-            .foregroundStyle(color)
-    }
-
     // MARK: - Helpers
 
     private var enabledStages: [StageInfo] {
-        stages.filter { $0.enabled }
+        stages.filter { $0.isActive }
     }
 
     private var totalUs: Double {

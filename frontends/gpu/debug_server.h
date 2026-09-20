@@ -25,6 +25,15 @@
 
 typedef struct DebugServer DebugServer;
 
+/* Typed physical controls. Values point into the live preset, never uniforms. */
+typedef struct {
+    const char *name, *group;
+    float *value, minimum, maximum;
+    void (*apply)(void);
+} DebugControl;
+void debug_server_set_controls(DebugServer *srv, const DebugControl *controls, int count);
+
+
 /* ============================================================================
  * Lifecycle
  * ============================================================================ */

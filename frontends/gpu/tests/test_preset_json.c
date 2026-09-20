@@ -151,7 +151,7 @@ static void make_distinctive_preset(PhysicalPreset *p)
     p->tv.v_jitter = 0.0025f;
 
     p->tv.mask_type       = VIDEO_MASK_APERTURE_GRILLE;
-    p->tv.mask_pitch_mm   = 2.5f;
+    p->tv.mask_pitch_px   = 2.5f;
     p->tv.mask_strength   = 0.66f;
     p->tv.subpixel_layout = 2;
     p->tv.persistence_ms  = 1.7f;
@@ -293,7 +293,7 @@ static int compare_presets(const PhysicalPreset *a, const PhysicalPreset *b,
     ASSERT_NEAR(b->tv.v_jitter,           a->tv.v_jitter,           FLOAT_TOL, "tv.v_jitter");
 
     ASSERT_EQ_INT(b->tv.mask_type,        a->tv.mask_type,                     "tv.mask_type");
-    ASSERT_NEAR(b->tv.mask_pitch_mm,      a->tv.mask_pitch_mm,      FLOAT_TOL, "tv.mask_pitch_mm");
+    ASSERT_NEAR(b->tv.mask_pitch_px,      a->tv.mask_pitch_px,      FLOAT_TOL, "tv.mask_pitch_px");
     ASSERT_NEAR(b->tv.mask_strength,      a->tv.mask_strength,      FLOAT_TOL, "tv.mask_strength");
     ASSERT_EQ_INT(b->tv.subpixel_layout,  a->tv.subpixel_layout,               "tv.subpixel_layout");
     ASSERT_NEAR(b->tv.persistence_ms,     a->tv.persistence_ms,     FLOAT_TOL, "tv.persistence_ms");
@@ -617,7 +617,7 @@ static int test_missing_fields_use_defaults(void)
     ASSERT_NEAR(p.video_cable.length_meters, 0.0f, 1e-9f, "video cable default 0");
     ASSERT_NEAR(p.audio_cable.length_meters, 0.0f, 1e-9f, "audio cable default 0");
     ASSERT_NEAR(p.tv.gamma,       0.0f, 1e-9f, "tv.gamma default 0");
-    ASSERT_NEAR(p.tv.mask_pitch_mm, 0.0f, 1e-9f, "tv.mask_pitch_mm default 0");
+    ASSERT_NEAR(p.tv.mask_pitch_px, 0.0f, 1e-9f, "tv.mask_pitch_px default 0");
     ASSERT_NEAR(p.tv.hdr_gain,    0.0f, 1e-9f, "tv.hdr_gain default 0");
     ASSERT_EQ_INT(p.rf.enabled ? 1 : 0, 0, "rf.enabled default false");
     ASSERT_NEAR(p.console_coupling_R, 0.0f, 1e-9f, "console_coupling_R default 0");
@@ -920,6 +920,16 @@ static int test_all_mask_types(void)
  * Main
  * ============================================================================ */
 
+static int test_legacy_mask_pitch_key(void) {
+    const char *path = "/tmp/test_legacy_mask_pitch.json";
+    ASSERT_TRUE(write_text_file(path, "{\n  \"tv\": {\n    \"mask_pitch_mm\": 3.5\n  }\n}\n"), "write legacy preset");
+    PhysicalPreset p;
+    ASSERT_TRUE(preset_json_load(&p,path), "load legacy preset");
+    ASSERT_NEAR(p.tv.mask_pitch_px,3.5f,1e-6f,"legacy pixel-pitch alias");
+    unlink(path);
+    return 1;
+}
+
 int main(void)
 {
     printf("=== Preset JSON Save/Load Tests ===\n\n");
@@ -932,6 +942,7 @@ int main(void)
     RUN_TEST(test_string_enum_save);
     RUN_TEST(test_string_enum_load);
     RUN_TEST(test_integer_enum_backward_compat);
+    RUN_TEST(test_legacy_mask_pitch_key);
 
     printf("\n--- Robustness ---\n");
     RUN_TEST(test_missing_fields_use_defaults);

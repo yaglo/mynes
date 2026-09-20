@@ -274,12 +274,21 @@ bool gpu_dispatch_delay(
     SDL_GPUBuffer *buf_prev,       /* secondary input for comb modes */
     const GpuDelayParams *params);
 
+/* Baseband RF impairment model; timing includes horizontal blanking. */
+typedef struct {
+    uint32_t count, samples_per_line;
+    float noise_amplitude, hum_amplitude;
+    uint32_t frame_seed, full_line_samples;
+    float sample_rate, hum_phase, hum_hz;
+} GpuRFParams;
+
 /* Comb filter Y/C separator parameters (matches comb_filter.comp.glsl). */
 typedef struct {
     uint32_t count;             /* total samples */
     uint32_t samples_per_line;  /* 2048 (NTSC) or 2560 (PAL) */
     uint32_t mode;              /* 0=bypass, 1=1line, 2=2line, 3=3line */
     float    blend;             /* comb strength (0..1) */
+    uint32_t delay_samples;     /* receiver 1H delay; 0 = samples_per_line */
 } GpuCombParams;
 
 /* Comb filter dispatch: reads composite signal, writes Y and C. */

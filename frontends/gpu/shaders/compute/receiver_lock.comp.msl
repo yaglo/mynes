@@ -1,0 +1,66 @@
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct Params
+{
+    uint count;
+    uint full_width;
+    uint samples_per_dot;
+    uint region;
+};
+
+struct Raster
+{
+    float raster[1];
+};
+
+struct Reference
+{
+    float4 reference[1];
+};
+
+constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
+
+kernel void main0(constant Params& _19 [[buffer(0)]], device Raster& _64 [[buffer(1)]], device Reference& _189 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+{
+    uint line = gl_GlobalInvocationID.x;
+    if (line >= _19.count)
+    {
+        return;
+    }
+    uint base = line * _19.full_width;
+    float black = 0.0;
+    uint b0 = 46u * _19.samples_per_dot;
+    uint b1 = 49u * _19.samples_per_dot;
+    for (uint x = b0; x < b1; x++)
+    {
+        black += _64.raster[base + x];
+    }
+    black /= float(b1 - b0);
+    uint start = 31u * _19.samples_per_dot;
+    uint n = (((42u * _19.samples_per_dot) - start) / 12u) * 12u;
+    float c = 0.0;
+    float s = 0.0;
+    for (uint x_1 = 0u; x_1 < n; x_1++)
+    {
+        float p = (float(int(start + x_1) - int(65u * _19.samples_per_dot)) * 6.283185482025146484375) / 12.0;
+        float v = _64.raster[(base + start) + x_1] - black;
+        c += (v * cos(p));
+        s += (v * sin(p));
+    }
+    float amplitude = (2.0 * length(float2(c, s))) / float(n);
+    float _164;
+    if (_19.region == 1u)
+    {
+        _164 = ((line & 1u) == 1u) ? 1.5 : 4.5;
+    }
+    else
+    {
+        _164 = 5.5;
+    }
+    float burst_axis = _164;
+    float phase = precise::atan2(-s, c) - ((burst_axis * 6.283185482025146484375) / 12.0);
+    _189.reference[line] = float4(phase, black, amplitude, 0.0);
+}

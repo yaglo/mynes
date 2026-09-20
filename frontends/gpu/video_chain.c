@@ -183,7 +183,7 @@ void video_chain_init_preset(VideoChain *chain, VideoConnectionType conn,
 
     /* Phosphor: shadow mask, P22 persistence. */
     tv->mask_type     = VIDEO_MASK_SHADOW;
-    tv->mask_pitch_mm = 0.50f;                  /* 0.50 mm dot pitch */
+    tv->mask_pitch_px = 0.50f;                  /* 0.50 mm dot pitch */
     tv->mask_strength = 0.5f;                   /* moderate mask visibility */
     tv->hdr_gain = 0.0f;                        /* off by default */
     tv->persistence_ms = 2.0f;                  /* 2.0 ms (P22 phosphor) */

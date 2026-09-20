@@ -5,7 +5,9 @@
  * NTSC composite signal encodes luminance (Y) and chrominance (C) in
  * overlapping frequency bands. A comb filter separates them by exploiting
  * the phase relationship of the color subcarrier (3.579545 MHz) across
- * scanlines: the subcarrier inverts phase every line.
+ * a broadcast receiver delay: 227.5 carrier cycles (2730 samples).
+ * The NES line is only 2728 samples: the 2-sample horizontal offset
+ * is intentional and reproduces a fixed 1H delay-line receiver.
  *
  * By subtracting adjacent scanlines, the low-frequency luma cancels out
  * (same phase), leaving the high-frequency chroma (opposite phase). Then
@@ -41,12 +43,14 @@ layout(set = 2, binding = 0) uniform Params {
     uint samples_per_line;   /* 2048 for NTSC, 2560 for PAL */
     uint mode;               /* 0=bypass, 1=1line, 2=2line, 3=3line */
     float blend;             /* comb strength (0..1, 1.0 = full) */
+    uint delay_samples;
 };
 
 void main() {
     uint tid = gl_GlobalInvocationID.x;
     if (tid >= count) return;
 
+    uint delay = delay_samples > 0u ? delay_samples : samples_per_line;
     float signal = signal_in[tid];
     float y, c;
 
@@ -60,7 +64,7 @@ void main() {
 
         case 1u: /* 1-line comb: Y = average (same between lines), C = difference (inverts) */
         {
-            int prev_idx = int(tid) - int(samples_per_line);
+            int prev_idx = int(tid) - int(delay);
             float prev_signal = (prev_idx >= 0) ? signal_in[prev_idx] : signal;
 
             /* In NTSC, subcarrier inverts 180° each scanline:
@@ -82,8 +86,8 @@ void main() {
 
         case 2u: /* 2-line comb: uses lines N and N-2 (same phase) */
         {
-            int prev1_idx = int(tid) - int(samples_per_line);
-            int prev2_idx = int(tid) - 2 * int(samples_per_line);
+            int prev1_idx = int(tid) - int(delay);
+            int prev2_idx = int(tid) - 2 * int(delay);
 
             float prev1 = (prev1_idx >= 0) ? signal_in[prev1_idx] : signal;
             float prev2 = (prev2_idx >= 0) ? signal_in[prev2_idx] : signal;
@@ -105,9 +109,9 @@ void main() {
 
         case 3u: /* 3-line comb: uses 4 scanlines, best quality */
         {
-            int prev1_idx = int(tid) - int(samples_per_line);
-            int prev2_idx = int(tid) - 2 * int(samples_per_line);
-            int prev3_idx = int(tid) - 3 * int(samples_per_line);
+            int prev1_idx = int(tid) - int(delay);
+            int prev2_idx = int(tid) - 2 * int(delay);
+            int prev3_idx = int(tid) - 3 * int(delay);
 
             float prev1 = (prev1_idx >= 0) ? signal_in[prev1_idx] : signal;
             float prev2 = (prev2_idx >= 0) ? signal_in[prev2_idx] : signal;

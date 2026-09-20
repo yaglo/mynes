@@ -18,6 +18,10 @@ struct Params
     uint frame_counter;
     float hum_bar_amplitude;
     float bloom_gamma;
+    float gamma;
+    float gamma_r;
+    float gamma_g;
+    float gamma_b;
 };
 
 struct RGBIn
@@ -154,9 +158,10 @@ kernel void main0(constant Params& _33 [[buffer(0)]], device RGBIn& _88 [[buffer
         float rd = r_d - float(soff);
         float gd = g_d - float(soff);
         float bd = b_d - float(soff);
-        R += (lR * exp((-(rd * rd)) * inv2s));
-        G += (lG * exp((-(gd * gd)) * inv2s));
-        B += (lB * exp((-(bd * bd)) * inv2s));
+        float energy = 1.0 / fast::max(2.5066282749176025390625 * sv, 0.001000000047497451305389404296875);
+        R += ((powr(fast::max(lR, 0.0), _33.gamma + _33.gamma_r) * exp((-(rd * rd)) * inv2s)) * energy);
+        G += ((powr(fast::max(lG, 0.0), _33.gamma + _33.gamma_g) * exp((-(gd * gd)) * inv2s)) * energy);
+        B += ((powr(fast::max(lB, 0.0), _33.gamma + _33.gamma_b) * exp((-(bd * bd)) * inv2s)) * energy);
     }
     R *= dwell;
     G *= dwell;
@@ -191,11 +196,10 @@ kernel void main0(constant Params& _33 [[buffer(0)]], device RGBIn& _88 [[buffer
         G += (((float(sg & 65535u) / 65535.0) - 0.5) * noise_scale);
         B += (((float(sb & 65535u) / 65535.0) - 0.5) * noise_scale);
     }
-    R = fast::min(fast::max(R, _33.black_floor), 4.0);
-    G = fast::min(fast::max(G, _33.black_floor), 4.0);
-    B = fast::min(fast::max(B, _33.black_floor), 4.0);
+    R = fast::min(fast::max(R, powr(fast::max(_33.black_floor, 0.0), _33.gamma)), 4.0);
+    G = fast::min(fast::max(G, powr(fast::max(_33.black_floor, 0.0), _33.gamma)), 4.0);
+    B = fast::min(fast::max(B, powr(fast::max(_33.black_floor, 0.0), _33.gamma)), 4.0);
     uint idx = pix * 2u;
     _215.rgba_out[idx + 0u] = as_type<uint>(half2(float2(R, G)));
     _215.rgba_out[idx + 1u] = as_type<uint>(half2(float2(B, 1.0)));
 }
-

@@ -1,3 +1,4 @@
+#include "debug_server.h"
 /*
  * preset_apply.c -- Preset application, OSD menu callbacks, overlay compositing
  */
@@ -6,6 +7,8 @@
 #include <string.h>
 #include <math.h>
 #include <time.h>
+#include <unistd.h>
+#include <errno.h>
 #include "ppu/ppu.h"
 #include "preset_json.h"
 #include "config.h"
@@ -502,32 +505,13 @@ static void gpu_cb_update_beam_params(void) {
     vgc->edge_focus = tv->edge_focus;
     vgc->velocity_dim = tv->velocity_dim;
     vgc->motion_threshold = tv->motion_threshold > 0.0f ? tv->motion_threshold : 0.08f;
-    /* Per-channel phosphor persistence: P22 green persists ~2× red/blue.
-     * The temporal-blit shader does  out = mix(current, previous, blend)
-     * so `blend` is the WEIGHT FOR THE PREVIOUS FRAME: higher = more
-     * history retained = slower decay = longer apparent persistence.
-     *
-     * Exponential-decay physics: after one frame of decay time dt, the
-     * phosphor output drops by factor exp(-dt / tau). So the right
-     * weight to carry forward is exactly exp(-dt / tau):
-     *
-     *   persistence_ms = 1.3 (P22)   → weight = exp(-12.8)  ≈ 2.7e-6    (no visible trail)
-     *   persistence_ms = 5           → weight = exp(-3.33)  ≈ 0.036      (tiny afterglow)
-     *   persistence_ms = 20          → weight = exp(-0.83)  ≈ 0.435      (noticeable trail)
-     *   persistence_ms = 100 (P7-ish)→ weight = exp(-0.167) ≈ 0.847      (heavy comet trail)
-     *
-     * NOTE: earlier code used (1 - exp(-dt/tau)) here, which inverted
-     * the relationship — short persistence_ms produced MAX blend, i.e.
-     * the whole frame froze for seconds. That's the bug that caused
-     * "lines darkened for 10 seconds and persisted across preset
-     * switches". Fixed to use exp() directly. */
-    float frame_ms = 16.67f;
-    float pm = tv->persistence_ms > 0.1f ? tv->persistence_ms : 2.0f;
-    float prev_weight = expf(-frame_ms / pm);
-    if (prev_weight > 0.95f) prev_weight = 0.95f;  /* hard ceiling */
-    vgc->blend_r = prev_weight * (tv->persistence_r > 0.0f ? tv->persistence_r : 0.85f);
-    vgc->blend_g = prev_weight * (tv->persistence_g > 0.0f ? tv->persistence_g : 1.00f);
-    vgc->blend_b = prev_weight * (tv->persistence_b > 0.0f ? tv->persistence_b : 0.72f);
+    /* Frame-sampled exponential decay; channel factors scale lifetime.
+     * PAL uses its own frame duration and zero remains a valid off value. */
+    int region = vgc->signal_fmt.region;
+    vgc->blend_r = signal_persistence_weight(region, tv->persistence_ms, tv->persistence_r);
+    vgc->blend_g = signal_persistence_weight(region, tv->persistence_ms, tv->persistence_g);
+    vgc->blend_b = signal_persistence_weight(region, tv->persistence_ms, tv->persistence_b);
+
 }
 
 static void gpu_cb_reinit_stages(void) {
@@ -578,11 +562,26 @@ static void gpu_cb_apply_region(void) {
 static char preset_names[PRESET_MAX][128];
 static char preset_paths[PRESET_MAX][512];
 static int  preset_count = 0;
+static bool preset_user[PRESET_MAX];
+static uint32_t catalog_revision = 1;
+static PhysicalPreset preset_baseline;
+static PhysicalPreset preset_capture_live(void);
 static PhysicalPreset preset_loaded;   /* scratch space for loading */
 
-static void preset_load_by_index_mode(int idx, bool preserve_live_region) {
-    if (idx < 0 || idx >= preset_count) return;
-    if (preset_json_load(&preset_loaded, preset_paths[idx])) {
+static void preset_remember_active(void) {
+    if (!g_ctx || !g_ctx->config) return;
+    int index=*g_ctx->current_preset;
+    const char *path=index>=0 && index<preset_count ? preset_paths[index] : "";
+    const char *base=strrchr(path,'/');
+    mynes_config_set_last_preset(g_ctx->config,base ? base+1 : path);
+    mynes_config_save(g_ctx->config);
+}
+
+static bool preset_load_by_index_mode(int idx, bool preserve_live_region) {
+    if (idx < 0 || idx >= preset_count) return false;
+    PhysicalPreset candidate;
+    if (preset_json_load(&candidate, preset_paths[idx])) {
+        preset_loaded = candidate;
         *g_ctx->current_preset = idx;
         printf("Preset: %s — %s\n",
                preset_loaded.name[0] ? preset_loaded.name : preset_names[idx],
@@ -595,7 +594,11 @@ static void preset_load_by_index_mode(int idx, bool preserve_live_region) {
         }
     } else {
         fprintf(stderr, "Failed to load preset: %s\n", preset_paths[idx]);
+        return false;
     }
+    preset_baseline = preset_capture_live();
+    preset_remember_active();
+    return true;
 }
 
 /* OSD action callbacks (OSD needs void(void) function pointers). One per
@@ -657,13 +660,11 @@ OSDMenuItem preset_menu_root[3];   /* defined below; declared here so the
 /* Public entry points used by main.c. */
 int  preset_load_index(int idx) {
     if (idx < 0 || idx >= preset_count) return -1;
-    preset_load_by_index_mode(idx, true);
-    return idx;
+    return preset_load_by_index_mode(idx, true) ? idx : -1;
 }
 int  preset_load_index_exact(int idx) {
     if (idx < 0 || idx >= preset_count) return -1;
-    preset_load_by_index_mode(idx, false);
-    return idx;
+    return preset_load_by_index_mode(idx, false) ? idx : -1;
 }
 int  preset_total_count(void) { return preset_count; }
 const char *preset_display_name(int idx) {
@@ -697,14 +698,7 @@ static void slugify(const char *src, char *dst, int dst_sz) {
     if (!*dst) snprintf(dst, dst_sz, "preset");
 }
 
-/* Save the live VideoChain + signal state as a JSON preset under
- * ~/.config/mynes/presets/<slug>_custom_<timestamp>.json.
- * Writes the resulting path into out_path. Returns true on success. */
-static bool preset_save_user(char *out_path, int out_path_sz) {
-    if (!g_ctx) return false;
-
-    /* Compose a PhysicalPreset from the currently-loaded preset's
-     * metadata + the live tunable state. */
+static PhysicalPreset preset_capture_live(void) {
     PhysicalPreset p = preset_loaded;
     p.connection         = g_ctx->video_chain->connection;
     p.comb_type          = g_ctx->video_chain->comb_type;
@@ -720,6 +714,19 @@ static bool preset_save_user(char *out_path, int out_path_sz) {
     p.contrast           = g_ctx->sig_state->contrast;
     p.chroma_gain        = g_ctx->sig_state->chroma_gain;
     p.region             = signal_region_normalize(g_ctx->region);
+
+    return p;
+}
+
+/* Save the live VideoChain + signal state as a JSON preset under
+ * ~/.config/mynes/presets/<slug>_custom_<timestamp>.json.
+ * Writes the resulting path into out_path. Returns true on success. */
+static bool preset_save_user(char *out_path, int out_path_sz) {
+    if (!g_ctx) return false;
+
+    /* Compose a PhysicalPreset from the currently-loaded preset's
+     * metadata + the live tunable state. */
+    PhysicalPreset p = preset_capture_live();
 
     /* Strip any prior "(custom …)" suffix so successive saves don't
      * accumulate timestamps in the name. */
@@ -801,12 +808,104 @@ static void gpu_action_save_preset(void) {
     mi.type   = OSD_MI_ACTION;
     mi.action = preset_actions[slot];
     menu_presets[1 + slot] = mi;
+    preset_user[slot] = true;
     preset_count++;
+    catalog_revision++;
 
     /* Bump the Presets submenu count so the OSD picks up the new entry. */
     if (menu_presets_video_idx >= 0)
         menu_video[menu_presets_video_idx].submenu_count = 1 + preset_count;
     preset_menu_root[2].submenu_count = 1 + preset_count;
+}
+
+uint32_t preset_catalog_revision(void) { return catalog_revision; }
+int preset_active_index(void) { return g_ctx ? *g_ctx->current_preset : -1; }
+bool preset_is_user(int index) { return index >= 0 && index < preset_count && preset_user[index]; }
+bool preset_is_modified(void) {
+    if (!g_ctx || preset_active_index() < 0) return true;
+    PhysicalPreset p = preset_capture_live();
+    return memcmp(&p.tv,&preset_baseline.tv,sizeof(p.tv)) ||
+        memcmp(&p.video_cable,&preset_baseline.video_cable,sizeof(p.video_cable)) ||
+        memcmp(&p.rf,&preset_baseline.rf,sizeof(p.rf)) ||
+        p.connection != preset_baseline.connection || p.comb_type != preset_baseline.comb_type ||
+        p.brightness != preset_baseline.brightness || p.contrast != preset_baseline.contrast ||
+        p.chroma_gain != preset_baseline.chroma_gain || p.console_psu_hum != preset_baseline.console_psu_hum;
+}
+
+static void preset_refresh_menu(void) {
+    for(int i=0;i<preset_count;i++) {
+        OSDMenuItem mi={0}; mi.label=preset_names[i]; mi.type=OSD_MI_ACTION; mi.action=preset_actions[i];
+        menu_presets[i+1]=mi;
+    }
+    if(menu_presets_video_idx>=0) menu_video[menu_presets_video_idx].submenu_count=preset_count+1;
+    preset_menu_root[2].submenu_count=preset_count+1;
+    catalog_revision++;
+    preset_remember_active();
+}
+
+static bool preset_write_atomic(const PhysicalPreset *p, const char *path) {
+    char temporary[600];
+    if(snprintf(temporary,sizeof(temporary),"%s.tmp.XXXXXX",path)>=(int)sizeof(temporary)) return false;
+    int fd=mkstemp(temporary); if(fd<0) return false; close(fd);
+    bool ok=preset_json_save(p,temporary) && rename(temporary,path)==0;
+    if(!ok) unlink(temporary);
+    return ok;
+}
+
+bool preset_manage(uint32_t op, int index, uint32_t revision,
+                   const char *name, char *error, size_t error_size) {
+#define REJECT(message) do { snprintf(error,error_size,"%s",message); return false; } while(0)
+    if(!g_ctx) REJECT("Preset registry is unavailable.");
+    if(revision!=catalog_revision) REJECT("The preset list changed. Please try again.");
+    if(op<1 || op>5) REJECT("Unknown preset operation.");
+    if(op!=3 && (index<0 || index>=preset_count)) REJECT("Preset no longer exists.");
+    if(op==1) {
+        if(preset_load_index(index)<0) REJECT("Could not load the preset file.");
+        return true;
+    }
+    if(op!=3 && !preset_is_user(index)) REJECT("Bundled presets are read-only. Save a copy first.");
+    if(op==2 && index!=preset_active_index()) REJECT("Only the active preset can be saved.");
+    if(op==3 || op==4) {
+        if(!name || !name[0] || strlen(name)>100) REJECT("Use a preset name of 1 to 100 UTF-8 bytes.");
+        for(const unsigned char *c=(const unsigned char *)name;*c;c++) if(*c<32) REJECT("Preset names cannot contain control characters.");
+    }
+    if(op==5) {
+        if(unlink(preset_paths[index])!=0) REJECT("Could not delete the preset file.");
+        int active=preset_active_index();
+        for(int i=index;i<preset_count-1;i++) {
+            memcpy(preset_names[i],preset_names[i+1],sizeof(preset_names[i]));
+            memcpy(preset_paths[i],preset_paths[i+1],sizeof(preset_paths[i]));
+            preset_user[i]=preset_user[i+1];
+        }
+        preset_count--;
+        *g_ctx->current_preset=active==index ? -1 : active-(active>index);
+        preset_refresh_menu(); return true;
+    }
+    PhysicalPreset p=preset_capture_live();
+    if(op==4 && !preset_json_load(&p,preset_paths[index])) REJECT("Could not read the preset file.");
+    if(op==3 || op==4) snprintf(p.name,sizeof(p.name),"%s",name);
+    if(op==3) {
+        if(preset_count>=PRESET_MAX) REJECT("The preset library is full.");
+        char dir[MYNES_PATH_MAX],slug[64],path[512];
+        mynes_user_presets_dir(dir,sizeof(dir));
+        if(!mynes_mkdir_p(dir)) REJECT("Could not create the user preset directory.");
+        slugify(name,slug,sizeof(slug));
+        if(snprintf(path,sizeof(path),"%s/%s_XXXXXX.json",dir,slug)>=(int)sizeof(path)) REJECT("Preset path is too long.");
+        int fd=mkstemps(path,5); if(fd<0) REJECT("Could not create the preset file."); close(fd);
+        if(!preset_write_atomic(&p,path)) { unlink(path); REJECT("Could not save the preset file."); }
+        index=preset_count++; preset_user[index]=true;
+        snprintf(preset_paths[index],sizeof(preset_paths[index]),"%s",path);
+        *g_ctx->current_preset=index; preset_loaded=p; preset_baseline=p;
+    } else {
+        if(!preset_write_atomic(&p,preset_paths[index])) REJECT("Could not save the preset file.");
+        if(index==preset_active_index()) {
+            if(op==2) { preset_loaded=p; preset_baseline=p; }
+            else snprintf(preset_loaded.name,sizeof(preset_loaded.name),"%s",p.name);
+        }
+    }
+    snprintf(preset_names[index],sizeof(preset_names[index]),"%s",p.name);
+    preset_refresh_menu(); return true;
+#undef REJECT
 }
 
 /* ============================================================================
@@ -902,6 +1001,13 @@ void preset_ctx_init(PresetCtx *ctx) {
                 (char (*)[512])preset_paths[preset_count], tail);
             preset_count += extra;
         }
+    }
+
+    for (int i=0;i<preset_count;i++) {
+        preset_user[i] = i >= shipped;
+        PhysicalPreset metadata;
+        if(preset_json_load(&metadata,preset_paths[i]) && metadata.name[0])
+            snprintf(preset_names[i],sizeof(preset_names[i]),"%s",metadata.name);
     }
 
     menu_presets[0] = MI_ACTION("Save current as preset...",
@@ -1068,7 +1174,7 @@ void preset_ctx_init(PresetCtx *ctx) {
      * ================================================================ */
     n = 0;
     menu_phosphor[n++] = MI_CYCLIC("Mask type",      &vc->tv.mask_type, 0.0f, 2.0f, gpu_cb_update_beam_params, "%d");
-    menu_phosphor[n++] = MI_FLOAT("Mask pitch px",   &vc->tv.mask_pitch_mm,       0.5f, 1.0f, 20.0f, gpu_cb_update_beam_params, "%.1f");
+    menu_phosphor[n++] = MI_FLOAT("Mask pitch px",   &vc->tv.mask_pitch_px,       0.5f, 1.0f, 20.0f, gpu_cb_update_beam_params, "%.1f");
     menu_phosphor[n++] = MI_FLOAT("Mask strength",   &vc->tv.mask_strength,       0.05f, 0.0f, 1.0f, gpu_cb_update_beam_params, "%.2f");
     /* P22 phosphor persistence: scales the per-channel blend weights below.
      * 2.0ms is the P22 reference; higher = more afterimage smear. Extended
@@ -1216,4 +1322,32 @@ void preset_composite_overlays(PresetCtx *ctx) {
      * The osd_menu_* state is file-static per TU (declared static in osd.h),
      * so it must be checked and rendered in the same TU that manages
      * the menu (main.c handles M key -> osd_menu_open_root). */
+}
+
+/* The editor uses the same physical values and update paths as the OSD. */
+void preset_register_debug_controls(PresetCtx *ctx, DebugServer *server) {
+    TVDisplayParams *tv = &ctx->video_chain->tv;
+    DebugControl controls[] = {
+        {"Luma bandwidth (Hz)", "Decoder", &tv->luma_bandwidth, 500000, 8000000, gpu_cb_redesign_firs},
+        {"Chroma bandwidth (Hz)", "Decoder", &tv->chroma_bandwidth, 100000, 3000000, gpu_cb_redesign_firs},
+        {"Saturation", "Decoder", &tv->saturation, 0, 2, gpu_cb_update_color_matrix},
+        {"Hue (degrees)", "Decoder", &tv->hue_offset, -180, 180, gpu_cb_update_color_matrix},
+        {"Sharpness", "Beam", &tv->beam_sharpness, 0, 1, gpu_cb_update_beam_params},
+        {"Dark beam height", "Beam", &tv->beam_height_min, 0.1f, 2, gpu_cb_update_beam_params},
+        {"Bright beam height", "Beam", &tv->beam_height_max, 0.1f, 3, gpu_cb_update_beam_params},
+        {"Persistence (ms)", "Phosphor", &tv->persistence_ms, 0, 100, gpu_cb_update_beam_params},
+        {"Red lifetime scale", "Phosphor", &tv->persistence_r, 0, 1, gpu_cb_update_beam_params},
+        {"Green lifetime scale", "Phosphor", &tv->persistence_g, 0, 1, gpu_cb_update_beam_params},
+        {"Blue lifetime scale", "Phosphor", &tv->persistence_b, 0, 1, gpu_cb_update_beam_params},
+        {"Mask pitch (pixels)", "Phosphor", &tv->mask_pitch_px, 1, 12, NULL},
+        {"Linear brightness", "Phosphor", &tv->hdr_gain, 0.5f, 3, NULL},
+        {"Mask strength", "Phosphor", &tv->mask_strength, 0, 1, NULL},
+        {"Glass curvature", "Glass", &tv->barrel, 0, 0.1f, NULL},
+        {"Halation", "Glass", &tv->halation, 0, 0.5f, NULL},
+        {"Room light", "Glass", &tv->ambient_light, 0, 0.2f, NULL},
+        {"Cable length (m)", "Connection", &ctx->video_chain->cable.length_meters, 0, 20, gpu_cb_update_rc_params},
+        {"RF hum", "Connection", &ctx->video_chain->console_psu_hum, 0, 0.1f, gpu_cb_reinit_stages},
+        {"RF noise floor (dBm)", "Connection", &ctx->video_chain->rf.noise_floor_dbm, -90, -30, gpu_cb_reinit_stages},
+    };
+    debug_server_set_controls(server, controls, (int)(sizeof(controls)/sizeof(controls[0])));
 }
