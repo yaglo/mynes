@@ -5,7 +5,7 @@ struct PresetEntry: Identifiable, Sendable, Equatable {
     let name: String
     let isUser: Bool
 }
-struct PresetCatalog: Sendable {
+struct PresetCatalog: Sendable, Equatable {
     var revision: UInt32 = 0
     var entries: [PresetEntry] = []
     var activeID: Int = -1

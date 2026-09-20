@@ -3,7 +3,7 @@ import AppKit
 
 @main
 struct ChainVisualiserApp: App {
-    @StateObject private var connection = EmulatorConnection()
+    @State private var connection = EmulatorConnection()
 
     init() {
         // Required for SwiftPM executables: register as a regular GUI app

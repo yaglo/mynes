@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct PresetBar: View {
-    @ObservedObject var connection: EmulatorConnection
+    let connection: EmulatorConnection
     @State private var namingOperation: UInt32 = 0
     @State private var proposedName = ""
     @State private var showName = false

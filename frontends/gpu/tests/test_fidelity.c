@@ -8,6 +8,8 @@
 #include "waveform_gen.h"
 #include "gpu_half.h"
 
+extern bool dispatch_beam_profile_public(VideoGPUChain *, SDL_GPUCommandBuffer *);
+extern bool dispatch_video_amp_public(VideoGPUChain *, SDL_GPUCommandBuffer *);
 extern bool dispatch_temporal_blit_public(VideoGPUChain *, SDL_GPUCommandBuffer *);
 extern int test_display_fidelity(SDL_GPUDevice *gpu);
 static int failures;
@@ -97,11 +99,12 @@ static void receiver(SDL_GPUDevice *gpu) {
         CHECK(chain_init(&sc,gpu,(int)count,"shaders/compute"));
         float *input=calloc(count,sizeof(float)), *raster=calloc(count,sizeof(float));
         for(unsigned i=0;i<256*spp*2;i++) input[i]=0.4f;
-        struct { uint32_t count,width,active_width,spp; float phase,line_phase; uint32_t region,lines; }
-            ep={count,width,256*spp,spp,3,(float)signal_region_line_phase(region),(uint32_t)region,2};
+        struct { uint32_t count,width,active_width,spp; float phase,line_phase; uint32_t region,lines,separate_yc; }
+            ep={count,width,256*spp,spp,3,(float)signal_region_line_phase(region),(uint32_t)region,2,0};
         int encode=chain_add_stage(&sc,"Raster test",CHAIN_KERNEL_RASTER,&ep,sizeof(ep),(count+255)/256,1);
         ChainStage *e=&sc.stages[encode]; e->io_typed=true;
-        e->ro_count=1; e->ro[0]=CBR_BUF_SRC; e->rw_count=1; e->rw[0]=CBR_BUF_DST;
+        e->ro_count=2; e->ro[0]=CBR_BUF_SRC; e->ro[1]=CBR_AUX3;
+        e->rw_count=2; e->rw[0]=CBR_BUF_DST; e->rw[1]=CBR_AUX2;
         CHECK(chain_upload_input(&sc,gpu,input,count*sizeof(float))); CHECK(chain_run(&sc,gpu));
         CHECK(chain_download_output(&sc,gpu,raster,count*sizeof(float)));
         CHECK(fabsf(raster[10*spp]+264.0f/788.0f)<1e-6f);
@@ -141,12 +144,118 @@ static void receiver(SDL_GPUDevice *gpu) {
     }
 }
 
+/* Test energy over pixel area, including fractional scanline scaling. */
+static void beam_energy(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoChain *c) {
+    c->tv.noise_level=0; c->tv.black_floor=0; c->tv.hum_bar_amplitude=0;
+    c->console_psu_hum=0; c->cable.shield_effectiveness=1;
+    float *rgb=malloc(v->rgb_size);
+    for(unsigned i=0;i<v->rgb_size/sizeof(float);i++) rgb[i]=0.5f;
+    CHECK(gpu_buffer_upload(gpu,v->buf_rgb2,rgb,v->rgb_size)); free(rgb);
+    const int heights[]={240,480,721,960};
+    for(int k=0;k<4;k++) for(int wide=0;wide<2;wide++) {
+        int w=8,h=heights[k]; float sigma=wide ? 0.9f : 0.08f;
+        CHECK(video_gpu_set_beam_params(v,gpu,w,h,h/240,sigma,sigma));
+        float *dx=calloc((size_t)w*h*4,sizeof(float)), *dy=calloc((size_t)w*h*4,sizeof(float));
+        uint16_t *out=malloc((size_t)w*h*8);
+        for(int y=0;y<h;y++) for(int x=0;x<w;x++) {
+            int i=(y*w+x)*4;
+            dx[i]=dx[i+1]=dx[i+2]=500; dx[i+3]=1;
+            dy[i]=dy[i+1]=dy[i+2]=y+0.5f; dy[i+3]=1;
+        }
+        CHECK(gpu_buffer_upload(gpu,v->buf_deflection_x,dx,w*h*16));
+        CHECK(gpu_buffer_upload(gpu,v->buf_deflection_y,dy,w*h*16));
+        SDL_GPUCommandBuffer *cmd=SDL_AcquireGPUCommandBuffer(gpu);
+        CHECK(dispatch_beam_profile_public(v,cmd)); CHECK(SDL_SubmitGPUCommandBuffer(cmd));
+        CHECK(gpu_buffer_download(gpu,v->buf_beam_rgba,out,w*h*8));
+        double mean=0; int n=0;
+        // Whole scanlines away from the raster boundary.
+        for(int y=h/4;y<3*h/4;y++) for(int x=0;x<w;x++) {
+            float r=gpu_half_to_float(out[(y*w+x)*4]); CHECK(isfinite(r)); mean+=r; n++;
+        }
+        CHECK(fabs(mean/n-pow(0.5,c->tv.gamma))<0.003);
+        free(dx);free(dy);free(out);
+    }
+}
+
+static void separated_yc(SDL_GPUDevice *gpu) {
+    for(int region=0;region<2;region++) {
+        SignalPrecompute sp; VideoChain c; VideoGPUChain v;
+        signal_precompute_init(&sp,region);
+        video_chain_init_preset(&c,VIDEO_CONN_SVIDEO,VIDEO_COMB_NONE,region);
+        CHECK(video_gpu_init(&v,gpu,&c,"shaders/compute",sp.fir_y,sp.fir_y_n,sp.fir_c,sp.fir_c_n,sp.fir_q,sp.fir_q_n));
+        CHECK(video_gpu_upload_signal_table(&v,gpu,(float *)sp.table,
+            region ? (float *)sp.table_alt : NULL,SIG_TABLE_ENTRIES,SIG_TABLE_STRIDE));
+        uint16_t indices[256*240];
+        for(int i=0;i<256*240;i++) indices[i]=(i&1) ? 0x20 : 0x0f;
+        float *rgb=malloc(v.rgb_size);
+        float matrix[3][3]={{1,0,0},{0,1,0},{0,0,1}},bias[3]={0};
+        video_gpu_set_color_matrix(&v,matrix,bias);
+        video_gpu_set_demod(&v,sp.demod_rotate*6.28318530718f/12,6.28318530718f/12);
+        c.cable.ghost_level = .2f;
+        c.cable.ghost_delay = 17;
+        video_gpu_reinit_stages(&v,&c);
+        CHECK(video_gpu_process_full(&v,gpu,indices,0,sp.phase_line_adv,0,rgb));
+        CHECK(v.sig_chain.stages[v.stage_yc_route].enabled);
+        double false_color=0; float luma_min=1,luma_max=0;
+        for(int y=10;y<230;y++) for(int x=64*sp.samples_per_pixel;x<192*sp.samples_per_pixel;x++) {
+            int i=(y*sp.samples_per_line+x)*3;
+            false_color=fmax(false_color,fmax(fabsf(rgb[i+1]),fabsf(rgb[i+2])));
+            luma_min=fminf(luma_min,rgb[i]);luma_max=fmaxf(luma_max,rgb[i]);
+        }
+        CHECK(false_color<0.0001); CHECK(luma_max-luma_min>0.1f);
+        free(rgb);video_gpu_destroy(&v,gpu);
+    }
+}
+
+static void gun_bandwidth(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoChain *c) {
+    c->tv.r_bandwidth=1.5e6f; c->tv.g_bandwidth=4e6f; c->tv.b_bandwidth=7e6f;
+    video_gpu_reinit_stages(v,c);
+    float *rgb=calloc(1,v->rgb_size), *out=malloc(v->rgb_size);
+    int x=v->signal_fmt.samples_per_line/2;
+    rgb[x*3]=rgb[x*3+1]=rgb[x*3+2]=1;
+    CHECK(gpu_buffer_upload(gpu,v->buf_rgb,rgb,v->rgb_size));
+    SDL_GPUCommandBuffer *cmd=SDL_AcquireGPUCommandBuffer(gpu);
+    CHECK(dispatch_video_amp_public(v,cmd)); CHECK(SDL_SubmitGPUCommandBuffer(cmd));
+    CHECK(gpu_buffer_download(gpu,v->buf_rgb,out,v->rgb_size));
+    CHECK(out[x*3]<out[x*3+1] && out[x*3+1]<out[x*3+2]);
+    for(int channel=0;channel<3;channel++) {
+        double energy=0; for(int i=0;i<v->signal_fmt.samples_per_line;i++) energy+=out[i*3+channel];
+        CHECK(fabs(energy-1)<0.0001);
+    }
+    free(rgb);free(out);
+}
+
+static void decoder_gain(SDL_GPUDevice *gpu) {
+    SignalChain sc; CHECK(chain_init(&sc,gpu,240,"shaders/compute"));
+    float input[240]; const float nominal=(376.0f/788.0f)/(6*sinf(3.14159265359f/12));
+    GpuModulatorParams p={.count=240,.mode=3,.dp=6.28318530718f/12,.param_a=1,.samples_per_line=240};
+    int stage=chain_add_stage(&sc,"Detector gain",CHAIN_KERNEL_RECEIVER_DEMOD,&p,sizeof(p),1,1);
+    ChainStage *d=&sc.stages[stage];d->io_typed=true;d->ro_count=2;d->ro[0]=CBR_BUF_SRC;d->ro[1]=CBR_AUX3;
+    d->rw_count=2;d->rw[0]=CBR_AUX0;d->rw[1]=CBR_AUX1;
+    for(int attenuation=0;attenuation<2;attenuation++) {
+        float gain=attenuation ? 0.5f : 1.0f;
+        float reference[4]={0,0.125f,nominal*gain,0};
+        for(int i=0;i<240;i++) input[i]=0.125f+gain*(0.1f*cosf(i*p.dp)+0.2f*sinf(i*p.dp));
+        CHECK(chain_upload_input(&sc,gpu,input,sizeof(input)));
+        CHECK(gpu_buffer_upload(gpu,sc.aux[3],reference,sizeof(reference))); CHECK(chain_run(&sc,gpu));
+        float iq[240];
+        for(int channel=0;channel<2;channel++) {
+            CHECK(gpu_buffer_download(gpu,sc.aux[channel],iq,sizeof(iq)));
+            float mean=0;for(int i=0;i<240;i++) mean+=iq[i]/240;
+            CHECK(fabsf(mean-(channel ? 0.2f : 0.1f))<0.0001f);
+        }
+    }
+    chain_destroy(&sc,gpu);
+}
+
 int main(int argc, char **argv) {
     CHECK(SDL_Init(SDL_INIT_VIDEO));
     SDL_GPUDevice *gpu = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_MSL, true, NULL);
     if (!gpu) { fprintf(stderr, "%s\n", SDL_GetError()); return 1; }
     failures += test_display_fidelity(gpu);
     receiver(gpu);
+    decoder_gain(gpu);
+    separated_yc(gpu);
     rf(gpu);
     dac_equivalence(gpu, SIGNAL_REGION_NTSC);
     dac_equivalence(gpu, SIGNAL_REGION_PAL);
@@ -158,6 +267,9 @@ int main(int argc, char **argv) {
     CHECK(video_gpu_init(&v, gpu, &c, "shaders/compute", sp.fir_y, sp.fir_y_n, sp.fir_c, sp.fir_c_n, sp.fir_q, sp.fir_q_n));
     CHECK(video_gpu_set_beam_params(&v, gpu, 16, 16, 1, 0.2f, 0.7f));
     c.tv.gamma = 2.2f;
+    gun_bandwidth(gpu,&v,&c);
+    beam_energy(gpu,&v,&c);
+    CHECK(video_gpu_set_beam_params(&v,gpu,16,16,1,0.2f,0.7f));
     v.blend_r = v.blend_g = v.blend_b = 0.5f;
     temporal(gpu, &v, 0x3c003c00, 1.0f); /* first frame must ignore uninitialised history */
     temporal(gpu, &v, 0, 0.5f);
@@ -172,6 +284,9 @@ int main(int argc, char **argv) {
     temporal(gpu, &v, 0x38003800, 0.5f);
     CHECK(video_gpu_set_beam_params(&v, gpu, 32, 16, 1, 0.2f, 0.7f));
     CHECK(!v.temporal_history_valid);
+    v.temporal_history_valid=true;
+    CHECK(video_gpu_set_beam_params(&v,gpu,16,32,1,0.2f,0.7f));
+    CHECK(!v.temporal_history_valid); // Equal pixel area, different texture shape.
     if (argc > 1 && strcmp(argv[1], "--benchmark") == 0) {
         CHECK(video_gpu_set_beam_params(&v, gpu, 640, 480, 2, 0.2f, 0.7f));
         uint16_t indices[256*240];

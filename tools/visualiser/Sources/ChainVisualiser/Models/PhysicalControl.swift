@@ -1,6 +1,6 @@
 import Foundation
 
-struct PhysicalControl: Identifiable, Sendable {
+struct PhysicalControl: Identifiable, Sendable, Equatable {
     let id: Int
     let name: String
     let group: String

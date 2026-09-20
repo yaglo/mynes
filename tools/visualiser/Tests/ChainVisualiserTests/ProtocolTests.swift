@@ -34,3 +34,30 @@ final class ProtocolTests: XCTestCase {
         XCTAssertEqual(KernelType.from(ordinal:18),.receiverDemod)
     }
 }
+
+// High-rate telemetry must not invalidate static chain/editor controls.
+import Observation
+import os
+
+extension ProtocolTests {
+    @MainActor
+    func testTelemetryDoesNotInvalidateTopology() {
+        let connection = EmulatorConnection()
+        func snapshot(frame: UInt32, timing: UInt32, enabled: UInt8 = 1) -> Data {
+            var data = Data()
+            for n: UInt32 in [0, 56, frame, frame * 17, 1] { word(n, into: &data) }
+            data.append(contentsOf: [enabled, 0, 16, 0])
+            word(timing, into: &data); word(timing, into: &data)
+            data.append(Data("Raster".utf8)); data.append(Data(repeating: 0, count: 26))
+            return data
+        }
+        connection.applyMessage(snapshot(frame: 0, timing: 1))
+        let changed = OSAllocatedUnfairLock(initialState: false)
+        withObservationTracking { _ = connection.videoStages } onChange: { changed.withLock { $0 = true } }
+        for frame in 1...120 { connection.applyMessage(snapshot(frame: UInt32(frame), timing: UInt32(frame))) }
+        XCTAssertFalse(changed.withLock { $0 }, "Timing and frame counters must not redraw the chain")
+        XCTAssertEqual(connection.framesPerSecond, 1000.0 / 17, accuracy: 0.01)
+        connection.applyMessage(snapshot(frame: 121, timing: 1, enabled: 0))
+        XCTAssertTrue(changed.withLock { $0 }, "A real topology change must update the chain")
+    }
+}

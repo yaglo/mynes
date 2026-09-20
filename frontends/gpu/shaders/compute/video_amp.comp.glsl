@@ -37,8 +37,8 @@ layout(set = 1, binding = 0) writeonly buffer RGBOut {
 layout(set = 2, binding = 0) uniform Params {
     uint  total_pixels;       /* samples_per_line * 240 */
     uint  samples_per_line;   /* 2048 NTSC */
-    uint  tap_count;          /* number of FIR taps (odd, max 9) */
-    float taps[12];           /* FIR coefficients (padded to vec4 alignment) */
+    uint  tap_count;          /* number of FIR taps (odd, max 31) */
+    vec4 taps[32];           /* FIR coefficients (padded to vec4 alignment) */
     /* §4.1 Velocity modulation: offset sample position by local
      * luminance derivative. Dark→bright beam decelerates (edge
      * widens); bright→dark accelerates (edge sharpens). Zero = off. */
@@ -76,10 +76,10 @@ void main() {
         idx = clamp(idx, line_start, line_end - 1);
 
         uint src = uint(idx) * 3;
-        float h = taps[k];
-        sum_r += h * rgb_in[src + 0];
-        sum_g += h * rgb_in[src + 1];
-        sum_b += h * rgb_in[src + 2];
+        vec3 h = taps[k].rgb;
+        sum_r += h.r * rgb_in[src + 0];
+        sum_g += h.g * rgb_in[src + 1];
+        sum_b += h.b * rgb_in[src + 2];
     }
 
     /* §4.1 Velocity modulation + §5.7 asymmetric rise/fall — both
@@ -116,12 +116,9 @@ void main() {
      * constant blend of the previous line's same column. */
     if (vertical_smear > 0.001 && line_start >= spl) {
         int prev_col = line_start - spl + (base - line_start);
-        sum_r += rgb_in[prev_col * 3 + 0] * vertical_smear * 0.1;
-        sum_g += rgb_in[prev_col * 3 + 1] * vertical_smear * 0.1;
-        sum_b += rgb_in[prev_col * 3 + 2] * vertical_smear * 0.1;
-        sum_r *= (1.0 - vertical_smear * 0.1);
-        sum_g *= (1.0 - vertical_smear * 0.1);
-        sum_b *= (1.0 - vertical_smear * 0.1);
+        sum_r = mix(sum_r, rgb_in[prev_col * 3 + 0], vertical_smear * 0.1);
+        sum_g = mix(sum_g, rgb_in[prev_col * 3 + 1], vertical_smear * 0.1);
+        sum_b = mix(sum_b, rgb_in[prev_col * 3 + 2], vertical_smear * 0.1);
     }
 
     uint dst = tid * 3;

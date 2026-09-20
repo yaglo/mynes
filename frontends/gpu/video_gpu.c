@@ -58,6 +58,7 @@ static bool dispatch_temporal_blit(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd
 bool video_gpu_comb_active_public(const VideoGPUChain *vgc);
 
 static bool video_gpu_comb_active(const VideoGPUChain *vgc) {
+    if (vgc->source_separated) return true;
     if (vgc->stage_comb < 0) return false;
     const ChainStage *s = &vgc->sig_chain.stages[vgc->stage_comb];
     if (!s->enabled || s->bypass) return false;
@@ -82,6 +83,26 @@ static char *build_path(const char *dir, const char *filename) {
     if (need_slash) path[dlen] = '/';
     memcpy(path + dlen + need_slash, filename, flen + 1);
     return path;
+}
+
+/* Gun bandwidths are independent. Averages erase intentional channel
+ * differences; skipping a wide amplifier also skipped its other controls. */
+static void update_video_amp(VideoGPUChain *vgc) {
+    const TVDisplayParams *tv = &vgc->chain->tv;
+    float bandwidth[3] = {tv->r_bandwidth, tv->g_bandwidth, tv->b_bandwidth};
+    float rate = signal_format_sample_rate_hz(&vgc->signal_fmt);
+    float narrowest = fminf(bandwidth[0], fminf(bandwidth[1], bandwidth[2]));
+    float cutoff = fmaxf(narrowest / rate, 0.01f);
+    int count = ((int)ceilf(1.5f / cutoff)) | 1;
+    if (count < 9) count = 9;
+    if (count > 31) count = 31;
+    vgc->vamp_tap_count = count;
+    for (int c = 0; c < 3; c++) {
+        float taps[32] = {0};
+        signal_design_fir(taps, count, fminf(fmaxf(bandwidth[c] / rate, 0.01f), 0.49f));
+        for (int i = 0; i < count; i++) vgc->vamp_taps[i][c] = taps[i];
+    }
+    vgc->vamp_enabled = vgc->buf_rgb2 != NULL;
 }
 
 /* ============================================================================
@@ -196,14 +217,14 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
 
     /* Add blanking/sync/burst before the analogue path so receiver timing
      * and DC restoration observe the same distortions as the picture. */
-    uint32_t raster_params[8] = {0};
+    uint32_t raster_params[9] = {0};
     vgc->stage_raster = chain_add_stage(&vgc->sig_chain, "PPU raster / sync / burst",
         CHAIN_KERNEL_RASTER, raster_params, sizeof(raster_params), dispatch_x_256, 1);
     if (vgc->stage_raster < 0) goto fail;
     ChainStage *raster = &vgc->sig_chain.stages[vgc->stage_raster];
     raster->io_typed = true;
-    raster->ro_count=1; raster->ro[0]=CBR_BUF_SRC;
-    raster->rw_count=1; raster->rw[0]=CBR_BUF_DST;
+    raster->ro_count=2; raster->ro[0]=CBR_BUF_SRC; raster->ro[1]=CBR_AUX3;
+    raster->rw_count=2; raster->rw[0]=CBR_BUF_DST; raster->rw[1]=CBR_AUX2;
 
     /* Stage 0: Console Output HP (coupling capacitor DC blocker).
      * R=75Ω, C=10µF → fc = 1/(2π·R·C) ≈ 0.21 Hz.
@@ -270,6 +291,23 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
         if (vgc->stage_cable_rc >= 0)
             chain_set_stage_enabled(&vgc->sig_chain, vgc->stage_cable_rc,
                 video_chain_stage_active(chain, 3));
+    }
+
+    // The source Y signal follows the same linear console/cable transfer.
+    // Both filters are in-place on AUX2; no extra full-frame buffers needed.
+    int sources[2]={vgc->stage_console_lp,vgc->stage_cable_rc};
+    int *stages[2]={&vgc->stage_y_console,&vgc->stage_y_cable};
+    const char *names[2]={"Y console bandwidth","Y cable bandwidth"};
+    for(int i=0;i<2;i++) {
+        ChainStage *source=&vgc->sig_chain.stages[sources[i]];
+        int index=chain_add_stage(&vgc->sig_chain,names[i],CHAIN_KERNEL_RC_FILTER,
+                                  source->params,source->params_size,1,1);
+        if(index<0) goto fail;
+        *stages[i]=index;
+        ChainStage *stage=&vgc->sig_chain.stages[index];
+        stage->io_typed=true; stage->ro_count=0; stage->rw_count=2;
+        stage->rw[0]=CBR_AUX2; stage->rw[1]=CBR_CARRY;
+        stage->enabled=false;
     }
 
     /* Stage 3: TV Input HP (input coupling capacitor DC blocker).
@@ -377,6 +415,16 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
                 chain->cable.ghost_level > 0.001f);
     }
 
+    ChainStage *ghost = &vgc->sig_chain.stages[vgc->stage_ghosting];
+    vgc->stage_y_ghost = chain_add_stage(&vgc->sig_chain, "Y cable reflection", CHAIN_KERNEL_DELAY,
+        ghost->params, ghost->params_size, dispatch_x_256, 1);
+    if (vgc->stage_y_ghost < 0) goto fail;
+    ChainStage *y_ghost = &vgc->sig_chain.stages[vgc->stage_y_ghost];
+    y_ghost->io_typed = true;
+    y_ghost->ro_count = 2; y_ghost->ro[0] = CBR_AUX2; y_ghost->ro[1] = CBR_AUX0;
+    y_ghost->rw_count = 1; y_ghost->rw[0] = CBR_AUX3;
+    y_ghost->enabled = false;
+
     uint32_t receiver_params[] = {(uint32_t)fmt->lines, (uint32_t)fmt->samples_per_line,
         (uint32_t)fmt->samples_per_pixel, (uint32_t)fmt->region};
     vgc->stage_receiver = chain_add_stage(&vgc->sig_chain, "Burst lock / DC clamp",
@@ -387,6 +435,15 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     receiver->ro_count=1; receiver->ro[0]=CBR_BUF_SRC;
     receiver->rw_count=1; receiver->rw[0]=CBR_EXT0;
     receiver->external[0]=vgc->buf_receiver;
+
+    uint32_t yc_count=(uint32_t)total_samples;
+    vgc->stage_yc_route=chain_add_stage(&vgc->sig_chain,"Separate Y/C input",CHAIN_KERNEL_YC_ROUTE,
+                                      &yc_count,sizeof(yc_count),dispatch_x_256,1);
+    if(vgc->stage_yc_route<0) goto fail;
+    ChainStage *yc=&vgc->sig_chain.stages[vgc->stage_yc_route];
+    yc->io_typed=true; yc->ro_count=2; yc->ro[0]=CBR_BUF_SRC; yc->ro[1]=CBR_AUX2;
+    yc->rw_count=2; yc->rw[0]=CBR_BUF_DST; yc->rw[1]=CBR_AUX0;
+    yc->enabled=false;
 
     /* Stage 6: Comb Filter (Y/C separator).
      * Separates luma and chroma by exploiting the 180° subcarrier phase
@@ -638,7 +695,7 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
         GpuPipelineResources res = {0};
         /* 3 RO = index_data + signal_table + signal_table_alt (PAL). */
         res.num_readonly_storage_buffers = 3;
-        res.num_readwrite_storage_buffers = 1;
+        res.num_readwrite_storage_buffers = 2;
         res.num_uniform_buffers = 1;
         bool ok = gpu_pipeline_create(gpu, &vgc->pipe_dac, path, "main",
                                       256, 1, 1, &res, "video_dac");
@@ -688,21 +745,7 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     vgc->sig_chain.stages[vgc->stage_post_pipeline].snapshot_size = vgc->rgb_size;
     vgc->sig_chain.stages[vgc->stage_post_pipeline].external[0] = vgc->buf_rgb2;
 
-    /* Video amplifier: design FIR from average gun bandwidth. */
-    {
-        float avg_bw = (chain->tv.r_bandwidth + chain->tv.g_bandwidth
-                        + chain->tv.b_bandwidth) / 3.0f;
-        float cutoff = avg_bw / fsample;
-        if (cutoff < 0.005f) cutoff = 0.005f;
-        if (cutoff > 0.200f) cutoff = 0.200f;
-        int ntaps = (int)(0.30f / cutoff) | 1;
-        if (ntaps < 3) ntaps = 3;
-        if (ntaps > 9) ntaps = 9;
-        vgc->vamp_tap_count = ntaps;
-        /* Design windowed-sinc FIR. */
-        signal_design_fir(vgc->vamp_taps, ntaps, cutoff);
-        vgc->vamp_enabled = (vgc->buf_rgb2 != NULL);
-    }
+    update_video_amp(vgc);
 
     vgc->timing_enabled = false;
     vgc->frame_brightness = 0.0f;
@@ -1074,25 +1117,7 @@ void video_gpu_reinit_stages(VideoGPUChain *vgc, const VideoChain *chain)
             video_chain_stage_active(chain, 9));
     }
 
-    /* Video amplifier: re-design FIR from preset bandwidth. */
-    {
-        float fsample = signal_format_sample_rate_hz(&vgc->signal_fmt);
-        float avg_bw = (chain->tv.r_bandwidth + chain->tv.g_bandwidth
-                        + chain->tv.b_bandwidth) / 3.0f;
-        float cutoff = avg_bw / fsample;
-        if (cutoff < 0.005f) cutoff = 0.005f;
-        if (cutoff > 0.200f) cutoff = 0.200f;
-        int ntaps = (int)(0.30f / cutoff) | 1;
-        if (ntaps < 3) ntaps = 3;
-        if (ntaps > 9) ntaps = 9;
-        vgc->vamp_tap_count = ntaps;
-        signal_design_fir(vgc->vamp_taps, ntaps, cutoff);
-        /* Skip video amp when all bandwidths are wide (FIR would be a no-op). */
-        float min_bw = chain->tv.r_bandwidth;
-        if (chain->tv.g_bandwidth < min_bw) min_bw = chain->tv.g_bandwidth;
-        if (chain->tv.b_bandwidth < min_bw) min_bw = chain->tv.b_bandwidth;
-        vgc->vamp_enabled = (vgc->buf_rgb2 != NULL && min_bw < 5.5e6f);
-    }
+    update_video_amp(vgc);
 
     LOGV("video_gpu_reinit_stages: rf=%d comb=%d chroma=%d matrix=%d vamp=%d\n",
             vgc->stage_rf >= 0 ? vgc->sig_chain.stages[vgc->stage_rf].enabled : -1,
@@ -1147,59 +1172,6 @@ static bool dispatch_beam_profile(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd)
  *
  * This dispatches: FIR(aux[src_idx]) -> aux[dst_idx]
  */
-static bool dispatch_aux_fir(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
-                              int stage_idx, int src_aux, int dst_aux)
-{
-    SignalChain *sc = &vgc->sig_chain;
-    ChainStage *s = &sc->stages[stage_idx];
-
-    if (!sc->pipeline_loaded[CHAIN_KERNEL_FIR]) {
-        fprintf(stderr, "dispatch_aux_fir: FIR pipeline not loaded\n");
-        return false;
-    }
-
-    SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(gpu);
-    if (!cmd) return false;
-
-    /* FIR: 2 readonly (input + taps) + 1 readwrite (output) + 1 uniform. */
-    SDL_GPUStorageBufferReadWriteBinding rw_bindings[1] = {0};
-    rw_bindings[0].buffer = sc->aux[dst_aux];
-
-    SDL_GPUComputePass *pass = SDL_BeginGPUComputePass(
-        cmd, NULL, 0, rw_bindings, 1);
-    if (!pass) {
-        SDL_SubmitGPUCommandBuffer(cmd);
-        return false;
-    }
-
-    SDL_BindGPUComputePipeline(pass, sc->pipelines[CHAIN_KERNEL_FIR].pipeline);
-
-    /* Readonly: input (aux[src]) + taps. */
-    SDL_GPUBuffer *ro[] = {
-        sc->aux[src_aux],
-        (s->taps_index < sc->num_tap_bufs) ? sc->tap_bufs[s->taps_index] : sc->aux[src_aux]
-    };
-    SDL_BindGPUComputeStorageBuffers(pass, 0, ro, 2);
-
-    /* Push uniform parameters. */
-    if (s->params_size > 0) {
-        SDL_PushGPUComputeUniformData(cmd, 0, s->params, s->params_size);
-    }
-
-    SDL_DispatchGPUCompute(pass, s->dispatch_x, s->dispatch_y, s->dispatch_z);
-    SDL_EndGPUComputePass(pass);
-
-    SDL_GPUFence *fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
-    if (fence) {
-        SDL_WaitForGPUFences(gpu, true, &fence, 1);
-        SDL_ReleaseGPUFence(gpu, fence);
-    }
-
-    return true;
-}
-
-/* dispatch_aux_fir_cmd: same as dispatch_aux_fir but accepts a shared
- * command buffer instead of creating its own. Caller owns cmd lifecycle. */
 static bool dispatch_aux_fir_cmd(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd,
                                   int stage_idx, int src_aux, int dst_aux)
 {
@@ -1282,12 +1254,25 @@ static void update_demod_params(VideoGPUChain *vgc) {
     struct {
         uint32_t count, full_width, active_width, samples_per_dot;
         float phase_base, line_phase;
-        uint32_t region, lines;
+        uint32_t region, lines, separate_yc;
     } raster = {(uint32_t)vgc->raster_fmt.total_samples, (uint32_t)vgc->raster_fmt.samples_per_line,
         (uint32_t)vgc->signal_fmt.samples_per_line, (uint32_t)vgc->signal_fmt.samples_per_pixel,
         (float)vgc->signal_phase_base, (float)vgc->signal_line_phase,
-        (uint32_t)vgc->signal_fmt.region, (uint32_t)vgc->raster_fmt.lines};
+        (uint32_t)vgc->signal_fmt.region, (uint32_t)vgc->raster_fmt.lines, vgc->source_separated ? 1u : 0u};
     chain_update_params(&vgc->sig_chain, vgc->stage_raster, &raster, sizeof(raster));
+    int source[2]={vgc->stage_console_lp,vgc->stage_cable_rc};
+    int dest[2]={vgc->stage_y_console,vgc->stage_y_cable};
+    for(int i=0;i<2;i++) {
+        ChainStage *s=&vgc->sig_chain.stages[source[i]];
+        chain_update_params(&vgc->sig_chain,dest[i],s->params,s->params_size);
+        chain_set_stage_enabled(&vgc->sig_chain,dest[i],vgc->source_separated && s->enabled && !s->bypass);
+    }
+    ChainStage *ghost = &vgc->sig_chain.stages[vgc->stage_ghosting];
+    bool reflect_y = vgc->source_separated && ghost->enabled && !ghost->bypass;
+    chain_update_params(&vgc->sig_chain, vgc->stage_y_ghost, ghost->params, ghost->params_size);
+    chain_set_stage_enabled(&vgc->sig_chain, vgc->stage_y_ghost, reflect_y);
+    vgc->sig_chain.stages[vgc->stage_yc_route].ro[1] = reflect_y ? CBR_AUX3 : CBR_AUX2;
+    chain_set_stage_enabled(&vgc->sig_chain,vgc->stage_yc_route,vgc->source_separated);
     GpuModulatorParams p = {0};
     p.count = (uint32_t)vgc->raster_fmt.total_samples;
     p.mode = 3;
@@ -1315,6 +1300,7 @@ static void update_signal_time(VideoGPUChain *vgc) {
 bool video_gpu_process(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
                        const float *waveform, float *rgb_out)
 {
+    vgc->source_separated=false; // Externally supplied waveform is composite.
     update_signal_time(vgc);
     const SignalFormat *fmt = &vgc->signal_fmt;
     int total_samples = fmt->total_samples;
@@ -1409,7 +1395,7 @@ bool video_gpu_set_beam_params(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
 
     /* Reallocate RGBA16F output buffer if size changed (8 bytes per pixel). */
     Uint32 needed = (Uint32)(out_w * out_h * 8);  /* 4x float16 = 8 bytes/pixel */
-    if (needed != vgc->beam_rgba_size) {
+    if (needed != vgc->beam_rgba_size || out_w != vgc->beam_out_w || out_h != vgc->beam_out_h) {
         if (vgc->buf_beam_rgba) {
             SDL_ReleaseGPUBuffer(gpu, vgc->buf_beam_rgba);
             vgc->buf_beam_rgba = NULL;
@@ -1431,7 +1417,7 @@ bool video_gpu_set_beam_params(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
             SDL_ReleaseGPUBuffer(gpu, vgc->buf_phosphor_history);
         vgc->buf_phosphor_history = gpu_buffer_create(gpu, needed, GPU_BUF_READWRITE);
         vgc->temporal_history_valid = false;
-    vgc->smoothing_history_valid = false;
+        vgc->smoothing_history_valid = false;
         if (!vgc->buf_beam_prev || !vgc->buf_phosphor_history) return false;
 
         /* Storage texture: compute writes here, CRT shader samples it.
@@ -1584,7 +1570,7 @@ static bool dispatch_video_amp(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd)
         uint32_t samples_per_line;
         uint32_t tap_count;
         uint32_t _pad0;           /* pad to 16-byte boundary before array */
-        float    taps[12][4];     /* each tap is a vec4 in std140 (only .x used) */
+        float    taps[32][4];     /* .rgb: independent gun filters */
         float    velocity_mod;
         float    asym_rise_fall;
         float    vertical_smear;
@@ -1595,8 +1581,7 @@ static bool dispatch_video_amp(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd)
     amp_params.total_pixels    = (uint32_t)total_pixels;
     amp_params.samples_per_line = (uint32_t)fmt->samples_per_line;
     amp_params.tap_count       = (uint32_t)vgc->vamp_tap_count;
-    for (int i = 0; i < vgc->vamp_tap_count && i < 12; i++)
-        amp_params.taps[i][0] = vgc->vamp_taps[i];
+    memcpy(amp_params.taps, vgc->vamp_taps, sizeof(amp_params.taps));
     const TVDisplayParams *tv = vgc->chain ? &vgc->chain->tv : NULL;
     amp_params.velocity_mod    = tv ? tv->velocity_mod   : 0.0f;
     amp_params.asym_rise_fall  = tv ? tv->asym_rise_fall : 0.0f;
@@ -1936,6 +1921,7 @@ bool video_gpu_process_full(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     if (!vgc || !idx_fb || !vgc->pipe_dac.pipeline || !vgc->buf_signal_table) return false;
     const SignalFormat *fmt = &vgc->signal_fmt;
     if (fmt->region == SIGNAL_REGION_PAL && !vgc->buf_signal_table_alt) return false;
+    vgc->source_separated=vgc->chain->connection==VIDEO_CONN_SVIDEO;
     const Uint32 bytes = 256 * 240 * sizeof(uint16_t);
     if (!vgc->buf_indices) {
         vgc->indices_size = bytes;
@@ -1964,9 +1950,9 @@ bool video_gpu_process_full(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     } params = {(uint32_t)fmt->samples_per_pixel, (uint32_t)fmt->samples_per_line,
         (uint32_t)((phase_base % 12 + 12) % 12),
         (uint32_t)((phase_line_adv % 12 + 12) % 12), 0, 0,
-        fmt->region == SIGNAL_REGION_PAL ? 1u : 0u, 0};
-    SDL_GPUStorageBufferReadWriteBinding rw = {.buffer=vgc->sig_chain.buf[0]};
-    SDL_GPUComputePass *pass = SDL_BeginGPUComputePass(cmd, NULL, 0, &rw, 1);
+        fmt->region == SIGNAL_REGION_PAL ? 1u : 0u, vgc->source_separated ? 1u : 0u};
+    SDL_GPUStorageBufferReadWriteBinding rw[2] = {{.buffer=vgc->sig_chain.buf[0]}, {.buffer=vgc->sig_chain.aux[3]}};
+    SDL_GPUComputePass *pass = SDL_BeginGPUComputePass(cmd, NULL, 0, rw, 2);
     if (!pass) { SDL_CancelGPUCommandBuffer(cmd); return false; }
     SDL_GPUBuffer *inputs[] = {vgc->buf_indices, vgc->buf_signal_table,
         vgc->buf_signal_table_alt ? vgc->buf_signal_table_alt : vgc->buf_signal_table};

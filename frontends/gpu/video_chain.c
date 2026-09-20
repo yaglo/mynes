@@ -183,7 +183,8 @@ void video_chain_init_preset(VideoChain *chain, VideoConnectionType conn,
 
     /* Phosphor: shadow mask, P22 persistence. */
     tv->mask_type     = VIDEO_MASK_SHADOW;
-    tv->mask_pitch_px = 0.50f;                  /* 0.50 mm dot pitch */
+    tv->mask_pitch_px = 1.0f;                   /* legacy drawable-pixel fallback */
+    tv->mask_triads = 440.0f;                   /* constant tube density across resize */
     tv->mask_strength = 0.5f;                   /* moderate mask visibility */
     tv->hdr_gain = 0.0f;                        /* off by default */
     tv->persistence_ms = 2.0f;                  /* 2.0 ms (P22 phosphor) */
@@ -201,7 +202,7 @@ void video_chain_init_preset(VideoChain *chain, VideoConnectionType conn,
     tv->black_floor   = 0.02f;                  /* typical consumer CRT */
 
     /* Noise. */
-    tv->noise_level   = 0.01f;                  /* mild default */
+    tv->noise_level   = 0.0f;                  /* mild default */
 
     /* Mains hum. */
     tv->hum_bar_amplitude = 0.0f;               /* none by default */

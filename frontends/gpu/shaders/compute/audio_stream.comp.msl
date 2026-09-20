@@ -1,0 +1,158 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+#pragma clang diagnostic ignored "-Wmissing-braces"
+
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+template<typename T, size_t Num>
+struct spvUnsafeArray
+{
+    T elements[Num ? Num : 1];
+
+    thread T& operator [] (size_t pos) thread
+    {
+        return elements[pos];
+    }
+    constexpr const thread T& operator [] (size_t pos) const thread
+    {
+        return elements[pos];
+    }
+
+    device T& operator [] (size_t pos) device
+    {
+        return elements[pos];
+    }
+    constexpr const device T& operator [] (size_t pos) const device
+    {
+        return elements[pos];
+    }
+
+    constexpr const constant T& operator [] (size_t pos) const constant
+    {
+        return elements[pos];
+    }
+
+    threadgroup T& operator [] (size_t pos) threadgroup
+    {
+        return elements[pos];
+    }
+    constexpr const threadgroup T& operator [] (size_t pos) const threadgroup
+    {
+        return elements[pos];
+    }
+};
+
+struct Params
+{
+    uint count;
+    uint flags;
+    uint pad0;
+    uint pad1;
+    float4 rc[5];
+    float4 speaker[4];
+    float4 effects;
+    float4 harmonics;
+};
+
+struct Input
+{
+    float src[1];
+};
+
+struct Output
+{
+    float dst[1];
+};
+
+constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(1u);
+
+static inline __attribute__((always_inline))
+float filter_rc(thread const int& i, thread const float& x, constant Params& _24, thread spvUnsafeArray<float, 14>& state)
+{
+    float _34;
+    if (_24.rc[i].z != 0.0)
+    {
+        _34 = _24.rc[i].x * ((state[(2 * i) + 1] + x) - state[2 * i]);
+    }
+    else
+    {
+        _34 = (_24.rc[i].x * state[(2 * i) + 1]) + (_24.rc[i].y * x);
+    }
+    float y = _34;
+    state[2 * i] = x;
+    state[(2 * i) + 1] = y;
+    return (_24.rc[i].w != 0.0) ? y : x;
+}
+
+kernel void main0(constant Params& _24 [[buffer(0)]], device Input& _112 [[buffer(1)]], device Output& _347 [[buffer(2)]])
+{
+    spvUnsafeArray<float, 14> state;
+    for (int i = 0; i < 14; i++)
+    {
+        state[i] = _112.src[i];
+    }
+    float phase = _112.src[14];
+    uint rng = as_type<uint>(_112.src[15]);
+    if (rng == 0u)
+    {
+        rng = 42u;
+    }
+    for (uint n = 0u; n < _24.count; n++)
+    {
+        float y = _112.src[16u + n];
+        for (int i_1 = 0; i_1 < 3; i_1++)
+        {
+            int param = i_1;
+            float param_1 = y;
+            float _163 = filter_rc(param, param_1, _24, state);
+            y = _163;
+        }
+        if ((_24.flags & 1u) != 0u)
+        {
+            y = precise::tanh(y * _24.effects.x) / _24.effects.x;
+        }
+        if ((_24.flags & 2u) != 0u)
+        {
+            y += (_24.effects.y * ((sin(phase) + (_24.harmonics.x * sin(2.0 * phase))) + (_24.harmonics.y * sin(3.0 * phase))));
+        }
+        phase += _24.effects.z;
+        if (phase >= 6.283185482025146484375)
+        {
+            phase -= 6.283185482025146484375;
+        }
+        rng ^= (rng << uint(13));
+        rng ^= (rng >> uint(17));
+        rng ^= (rng << uint(5));
+        if ((_24.flags & 4u) != 0u)
+        {
+            y += (((float(rng >> uint(8)) / 8388608.0) - 1.0) * _24.effects.w);
+        }
+        for (int i_2 = 3; i_2 < 5; i_2++)
+        {
+            int param_2 = i_2;
+            float param_3 = y;
+            float _268 = filter_rc(param_2, param_3, _24, state);
+            y = _268;
+        }
+        if ((_24.flags & 8u) != 0u)
+        {
+            for (int i_3 = 0; i_3 < 2; i_3++)
+            {
+                float4 b = _24.speaker[2 * i_3];
+                float z = (b.x * y) + state[10 + (2 * i_3)];
+                state[10 + (2 * i_3)] = ((b.y * y) - (b.w * z)) + state[11 + (2 * i_3)];
+                state[11 + (2 * i_3)] = (b.z * y) - (_24.speaker[(2 * i_3) + 1].x * z);
+                y = z;
+            }
+        }
+        _347.dst[16u + n] = y;
+    }
+    for (int i_4 = 0; i_4 < 14; i_4++)
+    {
+        _347.dst[i_4] = state[i_4];
+    }
+    _347.dst[14] = phase;
+    _347.dst[15] = as_type<float>(rng);
+}

@@ -1,20 +1,5 @@
-/*
- * Modulator / Demodulator — GPU Compute Shader
- * ===============================================
- *
- * Modes:
- *   0: Cosine multiply     y[n] = x[n] · cos(phase + n · dp)
- *   1: Sine multiply       y[n] = x[n] · sin(phase + n · dp)
- *   2: AM modulation       y[n] = (1 + mod_index · x[n]) · cos(phase + n · dp)
- *   3: I/Q demod (2 outputs): I[n] = x[n] · gain · cos, Q[n] = x[n] · gain · sin
- *
- * Phase and dp (phase increment per sample) are precomputed from
- * carrier_freq and sample_rate on the CPU:
- *   dp = 2π · carrier_freq / sample_rate
- *
- * Each sample is independent — trivially parallel.
- */
-
+/* Burst-referenced quadrature detector. Multiplication by 2 restores the
+ * amplitude lost by averaging cos^2/sin^2 in the following lowpass FIRs. */
 #version 450
 
 layout(local_size_x = 256) in;
@@ -42,6 +27,7 @@ void main() {
     if (tid >= count) return;
 
     float x = data_in[tid];
+    float burst_gain = 1.0;
 
     /* Compute phase: if samples_per_line > 0, reset phase per scanline
      * to match the waveform generator's per-scanline phase offset. */
@@ -51,6 +37,10 @@ void main() {
         uint sample_in_line = tid % samples_per_line;
         p = phase + reference[scanline].x + (float(sample_in_line) - active_offset) * dp;
         x -= reference[scanline].y;
+        // Nominal fundamental of the sampled 2C02 burst square wave.
+        // Automatic chroma gain compensates shared cable/receiver attenuation.
+        float received = reference[scanline].z;
+        burst_gain = received > 0.01 ? clamp(((376.0/788.0)/(6.0*sin(3.14159265359/12.0))) / received, 0.25, 4.0) : 0.0;
     } else {
         p = phase + float(tid) * dp;
     }
@@ -73,7 +63,7 @@ void main() {
 
         case 3u: /* I/Q demodulation */
         {
-            float gain = param_a;
+            float gain = 2.0 * param_a * burst_gain;
             float s = x * gain;
             data_out[tid]  = s * cos(p);
             data_out2[tid] = s * sin(p);

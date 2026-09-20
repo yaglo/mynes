@@ -22,16 +22,18 @@ FIXED=0
 # ── Resource counts per compute kernel: U R W ──
 get_resources() {
     case "$1" in
-        raster_encode)  echo "1 1 1" ;;
+        audio_stream)   echo "1 1 1" ;;
+        raster_encode)  echo "1 2 2" ;;
         receiver_lock)  echo "1 1 1" ;;
         receiver_demod) echo "1 2 2" ;;
+        yc_route)       echo "1 2 2" ;;
         agc)            echo "1 0 2" ;;
         pointwise)      echo "1 0 2" ;;
         rc_filter)      echo "1 0 2" ;;
         fir)            echo "1 2 1" ;;
         delay)          echo "1 2 1" ;;
         modulator)      echo "1 1 2" ;;
-        dac_2c02)       echo "1 3 1" ;;
+        dac_2c02)       echo "1 3 2" ;;
         matrix_decode)  echo "1 4 1" ;;
         pal_chroma)     echo "1 2 2" ;;
         deflection)     echo "1 0 2" ;;
@@ -129,7 +131,14 @@ fix_msl_buffers() {
                 uniform_names="${uniform_names:+$uniform_names }$name"
                 ;;
         esac
-    done < <(grep -E 'layout\(set.*binding' "$glsl")
+    done < <(python3 -c '
+import re, sys
+records=[]
+for line in open(sys.argv[1]):
+    m=re.search(r"layout\s*\(\s*set\s*=\s*(\d+)\s*,\s*binding\s*=\s*(\d+)",line)
+    if m: records.append((int(m[1]),int(m[2]),line.rstrip()))
+for _,_,line in sorted(records): print(line)
+' "$glsl")
 
     # Step 2: Parse MSL kernel signature to find struct_name -> current buffer index.
     local sig
@@ -270,6 +279,14 @@ for glsl in "$SCRIPT_DIR"/render/*.frag.glsl; do
     [ -f "$glsl" ] || continue
     compile_shader "$glsl" fragment
 done
+
+# spirv-cross adds a trailing empty line; keep generated assets stable.
+python3 - "$SCRIPT_DIR" <<'PYMSL'
+from pathlib import Path
+import sys
+for path in Path(sys.argv[1]).rglob("*.msl"):
+    path.write_text("\n".join(line.rstrip() for line in path.read_text().rstrip().splitlines()) + "\n")
+PYMSL
 
 # ── Copy to build directory ──
 echo ""

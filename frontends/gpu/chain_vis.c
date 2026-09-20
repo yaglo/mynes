@@ -59,7 +59,7 @@
 
 /* Stage counts. */
 #define VIDEO_STAGE_COUNT  14
-#define AUDIO_STAGE_COUNT  10
+#define AUDIO_STAGE_COUNT  9
 
 /* ============================================================================
  * Mini bitmap font (4x6 pixels, printable ASCII 0x20 .. 0x7E)
@@ -203,7 +203,6 @@ static const char *audio_stage_names[AUDIO_STAGE_COUNT] = {
     "Cable",            /*  7 */
     "TV Input",         /*  8 */
     "Speaker",          /*  9 */
-    "Decimate",         /* 10 */
 };
 
 /* ============================================================================
@@ -213,7 +212,7 @@ static const char *audio_stage_names[AUDIO_STAGE_COUNT] = {
 struct ChainVis {
     /* Borrowed references. */
     const VideoChain *vc;
-    const AudioChain *ac;
+    AudioChain *ac;
 
     /* UI state. */
     bool visible;
@@ -222,7 +221,6 @@ struct ChainVis {
 
     /* Per-stage bypass flags (independent of chain active state). */
     bool video_bypass[VIDEO_STAGE_COUNT];
-    bool audio_bypass[AUDIO_STAGE_COUNT];
 
     /* Per-stage timing in microseconds (filled from GpuTimingLog later). */
     float video_time_us[VIDEO_STAGE_COUNT];
@@ -311,7 +309,7 @@ static void fmt_ms(char *out, int out_sz, float us) {
  * Unlike video, the audio chain uses per-stage `enabled` flags directly.
  */
 
-static bool audio_stage_enabled(const AudioChain *ac, int stage) {
+static bool audio_stage_enabled(AudioChain *ac, int stage) {
     switch (stage) {
     case 0:  return ac->coupling_cap.enabled;
     case 1:  return ac->feedback_network.enabled;
@@ -322,7 +320,6 @@ static bool audio_stage_enabled(const AudioChain *ac, int stage) {
     case 6:  return ac->cable.enabled;
     case 7:  return ac->tv_input_coupling.enabled;
     case 8:  return ac->speaker.enabled;
-    case 9:  return ac->decimation.enabled;
     default: return false;
     }
 }
@@ -331,7 +328,7 @@ static bool audio_stage_enabled(const AudioChain *ac, int stage) {
  * Public API
  * ============================================================================ */
 
-ChainVis *chain_vis_create(const VideoChain *vc, const AudioChain *ac) {
+ChainVis *chain_vis_create(const VideoChain *vc, AudioChain *ac) {
     ChainVis *vis = (ChainVis *)calloc(1, sizeof(ChainVis));
     if (!vis) return NULL;
     vis->vc = vc;
@@ -476,9 +473,9 @@ void chain_vis_update(ChainVis *vis, int current_preset) {
                          vis->selected_row == i);
         draw_stage_row(vis->buf, AUDIO_COL_X, y,
                        audio_stage_names[i], active,
-                       vis->audio_bypass[i],
+                       ((vis->ac->bypass_mask >> i) & 1u),
                        vis->audio_time_us[i], selected, max_time);
-        if (active && !vis->audio_bypass[i])
+        if (active && !((vis->ac->bypass_mask >> i) & 1u))
             audio_total_us += vis->audio_time_us[i];
     }
 
@@ -559,8 +556,7 @@ bool chain_vis_handle_key(ChainVis *vis, int scancode, bool down) {
             vis->video_bypass[vis->selected_row] =
                 !vis->video_bypass[vis->selected_row];
         } else {
-            vis->audio_bypass[vis->selected_row] =
-                !vis->audio_bypass[vis->selected_row];
+            vis->ac->bypass_mask ^= 1u << vis->selected_row;
         }
         return true;
 

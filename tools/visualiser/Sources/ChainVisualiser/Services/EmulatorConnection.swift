@@ -1,5 +1,5 @@
 import Foundation
-import Combine
+import Observation
 
 enum ConnectionState: Sendable, Equatable {
     case disconnected
@@ -17,42 +17,32 @@ enum ConnectionState: Sendable, Equatable {
     }
 }
 
-enum ConnectionError: Error, LocalizedError {
-    case socketCreationFailed
-    case connectFailed(String)
-    case sendFailed
-    case notConnected
-
-    var errorDescription: String? {
-        switch self {
-        case .socketCreationFailed: return "Failed to create socket"
-        case .connectFailed(let msg): return "Connection failed: \(msg)"
-        case .sendFailed: return "Send failed"
-        case .notConnected: return "Not connected"
-        }
-    }
-}
-
 @MainActor
-final class EmulatorConnection: ObservableObject {
-    @Published private(set) var state: ConnectionState = .disconnected
-    @Published private(set) var snapshot: ChainSnapshot = .empty
-    @Published private(set) var tapWaveform: WaveformData? = nil
+@Observable
+final class EmulatorConnection {
+    private(set) var state: ConnectionState = .disconnected
+    private(set) var snapshot: ChainSnapshot = .empty
+    private(set) var tapWaveform: WaveformData? = nil
 
-    @Published private(set) var framesPerSecond: Double = 0
-    private var rateSample: (time: TimeInterval, frame: UInt32)?
+    private(set) var framesPerSecond: Double = 0
+    private(set) var videoStages: [StageInfo] = []
+    private(set) var frameNumber: UInt32 = 0
+    @ObservationIgnored private var rateSample: (time: UInt32, frame: UInt32)?
+    @ObservationIgnored private var lastSnapshotMs: UInt32?
+    @ObservationIgnored private var generation = 0
+    @ObservationIgnored private let logFrames = ProcessInfo.processInfo.environment["MYNES_EDITOR_LOG_FRAMES"] != nil
 
-    @Published private(set) var presets = PresetCatalog()
-    @Published private(set) var presetBusy = false
-    @Published var presetError: String?
+    private(set) var presets = PresetCatalog()
+    private(set) var presetBusy = false
+    var presetError: String?
 
-    @Published private(set) var controls: [PhysicalControl] = []
+    private(set) var controls: [PhysicalControl] = []
 
     let socketPath: String
 
-    private var fd: Int32 = -1
-    private var listenTask: Task<Void, Never>?
-    private var reconnectTask: Task<Void, Never>?
+    @ObservationIgnored private var fd: Int32 = -1
+    @ObservationIgnored private var listenTask: Task<Void, Never>?
+    @ObservationIgnored private var reconnectTask: Task<Void, Never>?
 
     init(socketPath: String? = nil) {
         self.socketPath = socketPath ?? ProcessInfo.processInfo.environment["MYNES_DEBUG_SOCKET"] ?? "/tmp/mynes_gpu_debug.sock"
@@ -71,10 +61,13 @@ final class EmulatorConnection: ObservableObject {
         reconnectTask?.cancel()
         state = .connecting
         listenTask?.cancel()
-        listenTask = Task { await connectAndListen() }
+        generation += 1
+        let currentGeneration = generation
+        listenTask = Task { await connectAndListen(generation: currentGeneration) }
     }
 
     func disconnect() {
+        generation += 1
         listenTask?.cancel()
         reconnectTask?.cancel()
         closeSocket()
@@ -118,8 +111,8 @@ final class EmulatorConnection: ObservableObject {
 
     // MARK: - Connection loop
 
-    private func connectAndListen() async {
-        let connected = await connectSocket()
+    private func connectAndListen(generation: Int) async {
+        let connected = await connectSocket(generation: generation)
         guard !Task.isCancelled else { return }
 
         if !connected {
@@ -140,7 +133,7 @@ final class EmulatorConnection: ObservableObject {
         scheduleReconnect()
     }
 
-    private func connectSocket() async -> Bool {
+    private func connectSocket(generation: Int) async -> Bool {
         let path = socketPath
         let result: Int32 = await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .utility).async {
@@ -182,6 +175,10 @@ final class EmulatorConnection: ObservableObject {
             }
         }
 
+        if generation != self.generation || Task.isCancelled {
+            if result >= 0 { close(result) }
+            return false
+        }
         if result < 0 {
             return false
         }
@@ -209,39 +206,51 @@ final class EmulatorConnection: ObservableObject {
 
             guard let data = messageData, data.count >= 8 else { break }
 
-            // Peek at message type from the header
-            let msgType = data.withUnsafeBytes { ptr in
-                UInt32(littleEndian: ptr.loadUnaligned(fromByteOffset: 0, as: UInt32.self))
-            }
+            guard !Task.isCancelled else { break }
+            applyMessage(data)
+        }
+    }
 
-            switch msgType {
-            case Self.msgTypeSnapshot:
-                if let decoded = ChainSnapshot.decode(from: data) {
-                    let now = ProcessInfo.processInfo.systemUptime
-                    if let previous = rateSample, now - previous.time >= 0.75 {
-                        framesPerSecond = decoded.frameNumber >= previous.frame
-                            ? Double(decoded.frameNumber - previous.frame) / (now - previous.time) : 0
-                        rateSample = (now, decoded.frameNumber)
-                    } else if rateSample == nil { rateSample = (now, decoded.frameNumber) }
-                    self.snapshot = decoded
-                }
-            case 7:
-                if let catalog = PresetCatalog.decode(data) { presets = catalog }
-            case 9:
-                if data.count == 144 {
-                    let ok = data.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: 12, as: UInt32.self) }
-                    presetBusy = false
-                    if ok == 0 { presetError = String(decoding: data[16..<144].prefix { $0 != 0 }, as: UTF8.self) }
-                }
-            case 5:
-                if let controls = PhysicalControl.decode(data) { self.controls = controls }
-            case Self.msgTypeTapData:
-                if let wf = WaveformData.decode(from: data) {
-                    self.tapWaveform = wf
-                }
-            default:
-                break // ignore unknown message types
+    // Keep topology and controls independent of frequently changing telemetry.
+    // Observation then invalidates only the views reading the changed property.
+    func applyMessage(_ data: Data) {
+        guard data.count >= 8 else { return }
+        let msgType = data.withUnsafeBytes {
+            UInt32(littleEndian: $0.loadUnaligned(fromByteOffset: 0, as: UInt32.self))
+        }
+        switch msgType {
+        case Self.msgTypeSnapshot:
+            guard let decoded = ChainSnapshot.decode(from: data) else { return }
+            let topology = decoded.videoStages.map(\.withoutTiming)
+            if videoStages != topology { videoStages = topology }
+            let now = decoded.timestampMs
+            if let previous = rateSample, now &- previous.time >= 1000 {
+                framesPerSecond = Double(decoded.frameNumber &- previous.frame) * 1000 / Double(now &- previous.time)
+                frameNumber = decoded.frameNumber
+                if logFrames { print("Editor received frame \(frameNumber), server timestamp \(now) ms") }
+                rateSample = (now, decoded.frameNumber)
+            } else if rateSample == nil {
+                frameNumber = decoded.frameNumber
+                rateSample = (now, decoded.frameNumber)
             }
+            if lastSnapshotMs == nil || now &- lastSnapshotMs! >= 250 {
+                snapshot = decoded
+                lastSnapshotMs = now
+            }
+        case 7:
+            if let catalog = PresetCatalog.decode(data), presets != catalog { presets = catalog }
+        case 9:
+            if data.count == 144 {
+                let ok = data.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: 12, as: UInt32.self) }
+                presetBusy = false
+                if ok == 0 { presetError = String(decoding: data[16..<144].prefix { $0 != 0 }, as: UTF8.self) }
+            }
+        case 5:
+            if let controls = PhysicalControl.decode(data), self.controls != controls { self.controls = controls }
+        case Self.msgTypeTapData:
+            if let waveform = WaveformData.decode(from: data) { tapWaveform = waveform }
+        default:
+            break
         }
     }
 
@@ -276,6 +285,7 @@ final class EmulatorConnection: ObservableObject {
         var totalRead = 0
         while totalRead < count {
             let n = read(fd, buf.advanced(by: totalRead), count - totalRead)
+            if n < 0 && errno == EINTR { continue }
             if n <= 0 { return false }
             totalRead += n
         }
@@ -285,6 +295,7 @@ final class EmulatorConnection: ObservableObject {
     private func closeSocket() {
         presetBusy = false
         rateSample = nil
+        lastSnapshotMs = nil
         framesPerSecond = 0
         if fd >= 0 {
             shutdown(fd, SHUT_RDWR)
@@ -322,8 +333,4 @@ final class EmulatorConnection: ObservableObject {
         withUnsafeBytes(of: &le) { data.append(contentsOf: $0) }
     }
 
-    private func appendUInt16(_ data: inout Data, _ value: UInt16) {
-        var le = value.littleEndian
-        withUnsafeBytes(of: &le) { data.append(contentsOf: $0) }
-    }
 }

@@ -1,52 +1,21 @@
-/*
- * Audio Signal Chain — Initialization and Coefficient Computation
- * ================================================================
- *
- * Sets up the audio chain with physically-accurate component values
- * based on hardware variant (Famicom, NES, Dendy) and speaker type.
- * Converts R/C values to IIR coefficients for the GPU kernels.
- */
-
 #include "audio_chain.h"
 #include "kernels/rc_filter_ref.h"
-#include "kernels/fir_ref.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 
-/* ============================================================================
- * Hardware variant component values (from NES schematics)
- * ============================================================================
- * These are the actual resistor and capacitor values on the NES/Famicom
- * motherboard that shape the audio signal before it reaches the output jack.
- *
- * Sources: NES hardware schematics, NesDev Wiki APU Mixer docs.
- */
-
-/* Coupling capacitor (DC blocking, between DAC and output stage).
- * R = output load impedance, C = the physical capacitor. */
-static const struct { float R; float C; } coupling_cap_values[] = {
-    [AUDIO_CONSOLE_FAMICOM]   = { 10000.0f, 100e-6f },  /* fc ≈ 0.16 Hz (huge cap, very low cutoff) */
-    [AUDIO_CONSOLE_NES_FRONT] = { 10000.0f, 10e-6f  },  /* fc ≈ 1.6 Hz */
-    [AUDIO_CONSOLE_NES_TOP]   = { 10000.0f, 10e-6f  },  /* fc ≈ 1.6 Hz */
-    [AUDIO_CONSOLE_DENDY]     = { 10000.0f, 47e-6f  },  /* fc ≈ 0.34 Hz */
+/* Nominal filter corners; these are equivalent RC networks, not claimed
+ * component measurements of individual consoles. NES: 90/440/14000 Hz. */
+static const AudioFilterCorners console_corners[] = {
+    AUDIO_CORNERS_FAMICOM, AUDIO_CORNERS_NES_FRONT,
+    AUDIO_CORNERS_NES_TOP, AUDIO_CORNERS_DENDY
 };
 
-/* Feedback network high-pass (shapes bass response). */
-static const struct { float R; float C; } feedback_values[] = {
-    [AUDIO_CONSOLE_FAMICOM]   = { 10000.0f, 0.033e-6f }, /* fc ≈ 482 Hz */
-    [AUDIO_CONSOLE_NES_FRONT] = { 10000.0f, 0.036e-6f }, /* fc ≈ 442 Hz */
-    [AUDIO_CONSOLE_NES_TOP]   = { 10000.0f, 0.036e-6f }, /* fc ≈ 442 Hz */
-    [AUDIO_CONSOLE_DENDY]     = { 10000.0f, 0.036e-6f }, /* fc ≈ 442 Hz */
-};
-
-/* Amplifier bandwidth low-pass (op-amp GBW limit). */
-static const struct { float R; float C; } amp_bw_values[] = {
-    [AUDIO_CONSOLE_FAMICOM]   = { 75.0f, 0.22e-9f },   /* fc ≈ 9.6 kHz */
-    [AUDIO_CONSOLE_NES_FRONT] = { 75.0f, 0.15e-9f },   /* fc ≈ 14.1 kHz */
-    [AUDIO_CONSOLE_NES_TOP]   = { 75.0f, 0.18e-9f },   /* fc ≈ 11.8 kHz */
-    [AUDIO_CONSOLE_DENDY]     = { 75.0f, 0.27e-9f },   /* fc ≈ 7.9 kHz */
-};
+static AudioRCStage rc_stage(float corner, bool highpass) {
+    return (AudioRCStage){ .enabled = true, .is_highpass = highpass,
+        .resistance = 10000.0f,
+        .capacitance = 1.0f / (2.0f * 3.14159265f * 10000.0f * corner) };
+}
 
 /* Speaker presets (from audio_format.h). */
 static const SpeakerParams speaker_presets[] = {
@@ -65,29 +34,14 @@ static const SpeakerParams speaker_presets[] = {
 void audio_chain_init_preset(AudioChain *chain, int console_variant,
                               int speaker_type, int region) {
     memset(chain, 0, sizeof(AudioChain));
+    if (console_variant < 0 || console_variant > AUDIO_CONSOLE_DENDY) console_variant = AUDIO_CONSOLE_NES_FRONT;
+    if (speaker_type < 0 || speaker_type > AUDIO_SPEAKER_FAMICOM_RF) speaker_type = AUDIO_SPEAKER_SMALL_TV;
     chain->console_variant = console_variant;
-
-    /* Set processing rate based on region. */
-    chain->sample_rate = (region == 1) ? (float)AUDIO_PAL_CPU_CLOCK
-                                        : (float)AUDIO_NTSC_CPU_CLOCK;
-
-    /* Stage 1: Coupling capacitor (DC blocking high-pass). */
-    chain->coupling_cap.enabled = true;
-    chain->coupling_cap.is_highpass = true;
-    chain->coupling_cap.resistance = coupling_cap_values[console_variant].R;
-    chain->coupling_cap.capacitance = coupling_cap_values[console_variant].C;
-
-    /* Stage 2: Feedback network (bass shaping high-pass). */
-    chain->feedback_network.enabled = true;
-    chain->feedback_network.is_highpass = true;
-    chain->feedback_network.resistance = feedback_values[console_variant].R;
-    chain->feedback_network.capacitance = feedback_values[console_variant].C;
-
-    /* Stage 3: Amplifier bandwidth (low-pass). */
-    chain->amp_bandwidth.enabled = true;
-    chain->amp_bandwidth.is_highpass = false;
-    chain->amp_bandwidth.resistance = amp_bw_values[console_variant].R;
-    chain->amp_bandwidth.capacitance = amp_bw_values[console_variant].C;
+    chain->sample_rate = AUDIO_STREAM_RATE;
+    AudioFilterCorners corners = console_corners[console_variant];
+    chain->coupling_cap = rc_stage(corners.hp1_hz, true);
+    chain->feedback_network = rc_stage(corners.hp2_hz, true);
+    chain->amp_bandwidth = rc_stage(corners.lp_hz, false);
 
     /* Stage 4: Amplifier saturation. */
     chain->amp_saturation.enabled = false;  /* off by default (linear) */
@@ -99,12 +53,10 @@ void audio_chain_init_preset(AudioChain *chain, int console_variant,
     chain->psu_hum.amplitude = 0.0f;
     chain->psu_hum.harmonic_2 = 0.0f;
     chain->psu_hum.harmonic_3 = 0.0f;
-    chain->psu_hum.phase = 0.0f;
 
     /* Stage 6: Noise floor. */
     chain->noise_floor.enabled = false;
     chain->noise_floor.amplitude = 0.0f;
-    chain->noise_floor.rng_state = 42;
 
     /* Stage 7: Cable capacitance (depends on cable length).
      * Default: 2m cable, 67 pF/m shunt capacitance, 75Ω impedance. */
@@ -122,13 +74,6 @@ void audio_chain_init_preset(AudioChain *chain, int console_variant,
     /* Stage 9: Speaker. */
     chain->speaker.enabled = (speaker_type != AUDIO_SPEAKER_HEADPHONES);
     chain->speaker.params = speaker_presets[speaker_type];
-
-    /* Stage 10: Decimation (1.79 MHz → 48 kHz). */
-    chain->decimation.enabled = true;
-    chain->decimation.decimation_ratio =
-        (int)(chain->sample_rate / (float)AUDIO_OUTPUT_SAMPLE_RATE);
-    chain->decimation.tap_count = 65;  /* Kaiser-windowed sinc */
-    chain->decimation.taps = NULL;     /* allocated in prepare() */
 
     /* Compute coefficients. */
     audio_chain_prepare(chain);
@@ -205,22 +150,65 @@ void audio_chain_prepare(AudioChain *chain) {
             sr);
     }
 
-    /* Decimation FIR. */
-    if (chain->decimation.enabled) {
-        if (chain->decimation.taps) free(chain->decimation.taps);
-        chain->decimation.taps = (float *)malloc(
-            chain->decimation.tap_count * sizeof(float));
-        /* Cutoff at Nyquist of output rate (normalized to input rate). */
-        float cutoff = 0.5f / (float)chain->decimation.decimation_ratio;
-        fir_design_lowpass(chain->decimation.taps,
-                           chain->decimation.tap_count,
-                           cutoff);
-    }
 }
 
-void audio_chain_destroy(AudioChain *chain) {
-    if (chain->decimation.taps) {
-        free(chain->decimation.taps);
-        chain->decimation.taps = NULL;
+void audio_chain_params(const AudioChain *c, int count, AudioParams *p) {
+    memset(p, 0, sizeof(*p));
+    p->count = count;
+    p->flags = (c->amp_saturation.enabled && !(c->bypass_mask & (1u << 3)) ? 1u : 0u) |
+               (c->psu_hum.enabled && !(c->bypass_mask & (1u << 4)) ? 2u : 0u) |
+               (c->noise_floor.enabled && !(c->bypass_mask & (1u << 5)) ? 4u : 0u) |
+               (c->speaker.enabled && !(c->bypass_mask & (1u << 8)) ? 8u : 0u);
+    const AudioRCStage *stages[] = { &c->coupling_cap, &c->feedback_network,
+        &c->amp_bandwidth, &c->cable, &c->tv_input_coupling };
+    for (int i = 0; i < 5; ++i) {
+        p->rc[i][0] = stages[i]->a;
+        p->rc[i][1] = stages[i]->b;
+        p->rc[i][2] = stages[i]->is_highpass;
+        const int stage_bits[] = {0, 1, 2, 6, 7};
+        p->rc[i][3] = stages[i]->enabled && !(c->bypass_mask & (1u << stage_bits[i]));
+    }
+    memcpy(p->speaker[0], c->speaker.biquad_resonance, 5 * sizeof(float));
+    memcpy(p->speaker[1], c->speaker.biquad_rolloff, 5 * sizeof(float));
+    p->effects[0] = fmaxf(c->amp_saturation.drive, 0.01f);
+    p->effects[1] = c->psu_hum.amplitude;
+    p->effects[2] = 2.0f * 3.14159265f * c->psu_hum.frequency / c->sample_rate;
+    p->effects[3] = c->noise_floor.amplitude;
+    p->harmonics[0] = c->psu_hum.harmonic_2;
+    p->harmonics[1] = c->psu_hum.harmonic_3;
+}
+
+static float process_rc(const float *p, float *state, float x) {
+    float y = p[2] != 0 ? p[0] * (state[1] + x - state[0])
+                        : p[0] * state[1] + p[1] * x;
+    state[0] = x;
+    state[1] = y;
+    return p[3] != 0 ? y : x;
+}
+
+void audio_chain_process(const AudioChain *c, AudioState *s,
+                         const float *input, float *output, int count) {
+    AudioParams p;
+    audio_chain_params(c, count, &p);
+    if (!s->rng) s->rng = 42;
+    for (int n = 0; n < count; ++n) {
+        float y = input[n];
+        for (int i = 0; i < 3; ++i) y = process_rc(p.rc[i], s->rc[i], y);
+        if (p.flags & 1) y = tanhf(y * p.effects[0]) / p.effects[0];
+        if (p.flags & 2) y += p.effects[1] * (sinf(s->hum_phase) +
+            p.harmonics[0] * sinf(2 * s->hum_phase) + p.harmonics[1] * sinf(3 * s->hum_phase));
+        s->hum_phase += p.effects[2];
+        if (s->hum_phase >= 2 * 3.14159265f) s->hum_phase -= 2 * 3.14159265f;
+        s->rng ^= s->rng << 13; s->rng ^= s->rng >> 17; s->rng ^= s->rng << 5;
+        if (p.flags & 4) y += ((float)(s->rng >> 8) / 8388608.0f - 1.0f) * p.effects[3];
+        for (int i = 3; i < 5; ++i) y = process_rc(p.rc[i], s->rc[i], y);
+        if (p.flags & 8) for (int i = 0; i < 2; ++i) {
+            const float *b = p.speaker[i];
+            float z = b[0] * y + s->speaker[i][0];
+            s->speaker[i][0] = b[1] * y - b[3] * z + s->speaker[i][1];
+            s->speaker[i][1] = b[2] * y - b[4] * z;
+            y = z;
+        }
+        output[n] = y;
     }
 }

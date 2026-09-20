@@ -544,8 +544,8 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
 
         crt_ubo.src_w = (float)comp_w;
         crt_ubo.src_h = (float)comp_h;
-        crt_ubo.out_w = (float)sw;
-        crt_ubo.out_h = (float)sh;
+        crt_ubo.out_w = viewport ? viewport->w : (float)sw;
+        crt_ubo.out_h = viewport ? viewport->h : (float)sh;
         crt_ubo.barrel = params->barrel;
         crt_ubo.barrel_v = params->barrel_v;
         crt_ubo.convergence_static = params->convergence_static;
@@ -676,7 +676,9 @@ void gpu_display_params_from_tv(GPUDisplayParams *out, const TVDisplayParams *tv
 
     /* Phosphor cell spacing in drawable pixels; legacy JSON used a misleading mm key. */
     out->mask_pitch_px = tv->mask_pitch_px;
-    if (out->mask_pitch_px < 1.0f) out->mask_pitch_px = 1.0f;
+    if (tv->mask_triads > 0.0f)
+        out->mask_pitch_px = (float)win_w / (3.0f * tv->mask_triads);
+    out->mask_pitch_px = fmaxf(out->mask_pitch_px, 0.05f);
 
     out->halation_strength = tv->halation;
     out->halation_tint_r   = tv->halation_tint_r;

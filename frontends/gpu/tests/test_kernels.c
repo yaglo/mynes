@@ -421,14 +421,6 @@ static int test_signal_format_ntsc(void) {
     return 1;
 }
 
-static int test_audio_format_ntsc(void) {
-    AudioFormat fmt;
-    audio_format_init(&fmt, 0 /* NTSC */);
-    if (fmt.samples_per_frame < 29000) { printf("  FAIL: NTSC audio samples\n"); return 0; }
-    if (fmt.output_samples_per_frame != 800) { printf("  FAIL: NTSC output samples\n"); return 0; }
-    return 1;
-}
-
 /* ============================================================================
  * Comb filter with blend (imperfect separation)
  * ============================================================================ */
@@ -750,7 +742,6 @@ int main(void) {
 
     printf("\n--- Signal/Audio Format ---\n");
     RUN_TEST(test_signal_format_ntsc);
-    RUN_TEST(test_audio_format_ntsc);
 
     printf("\n=== Results: %d/%d tests passed ===\n", tests_passed, tests_run);
     return (tests_passed == tests_run) ? 0 : 1;

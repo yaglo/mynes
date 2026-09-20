@@ -17,11 +17,7 @@ struct Params
     uint phase_field_adv;
     uint frame_field;
     uint use_alt_table;
-};
-
-struct WaveformBuf
-{
-    float waveform[1];
+    uint separate_yc;
 };
 
 struct SignalTableAlt
@@ -34,9 +30,19 @@ struct SignalTable
     float signal_table[1];
 };
 
+struct LumaBuf
+{
+    float source_y[1];
+};
+
+struct WaveformBuf
+{
+    float waveform[1];
+};
+
 constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
 
-kernel void main0(device IndexBuf& _41 [[buffer(1)]], constant Params& _72 [[buffer(0)]], device WaveformBuf& _135 [[buffer(4)]], device SignalTableAlt& _147 [[buffer(3)]], device SignalTable& _158 [[buffer(2)]], uint3 gl_LocalInvocationID [[thread_position_in_threadgroup]], uint3 gl_WorkGroupID [[threadgroup_position_in_grid]])
+kernel void main0(device IndexBuf& _41 [[buffer(1)]], constant Params& _72 [[buffer(0)]], device SignalTableAlt& _146 [[buffer(3)]], device SignalTable& _158 [[buffer(2)]], device LumaBuf& _190 [[buffer(5)]], device WaveformBuf& _199 [[buffer(4)]], uint3 gl_LocalInvocationID [[thread_position_in_threadgroup]], uint3 gl_WorkGroupID [[threadgroup_position_in_grid]])
 {
     uint px = gl_LocalInvocationID.x;
     uint sy = gl_WorkGroupID.y;
@@ -72,17 +78,38 @@ kernel void main0(device IndexBuf& _41 [[buffer(1)]], constant Params& _72 [[buf
         _120 = _114;
     }
     bool alt = _120;
-    float _141;
+    float dc = 0.0;
+    if (_72.separate_yc != 0u)
+    {
+        float _140;
+        for (uint p = 0u; p < 12u; p++)
+        {
+            if (alt)
+            {
+                _140 = _146.signal_table_alt[(entry * 24u) + p];
+            }
+            else
+            {
+                _140 = _158.signal_table[(entry * 24u) + p];
+            }
+            dc += (_140 / 12.0);
+        }
+    }
+    float _204;
     for (uint s = 0u; s < _72.samples_per_pixel; s++)
     {
+        if (_72.separate_yc != 0u)
+        {
+            _190.source_y[wave_base + s] = dc;
+        }
         if (alt)
         {
-            _141 = _147.signal_table_alt[table_base + s];
+            _204 = _146.signal_table_alt[table_base + s];
         }
         else
         {
-            _141 = _158.signal_table[table_base + s];
+            _204 = _158.signal_table[table_base + s];
         }
-        _135.waveform[wave_base + s] = _141;
+        _199.waveform[wave_base + s] = _204;
     }
 }

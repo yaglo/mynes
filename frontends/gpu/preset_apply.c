@@ -64,11 +64,6 @@ static void preset_apply_cpu_state_ex(PresetCtx *ctx, const PhysicalPreset *p,
      * don't set these, so we fix them up after the struct copy. */
     if (ctx->video_chain->tv.h_size < 0.01f) ctx->video_chain->tv.h_size = 1.0f;
     if (ctx->video_chain->tv.v_size < 0.01f) ctx->video_chain->tv.v_size = 1.0f;
-    /* Back-compat: presets that predate luma_notch_depth (0 in JSON) get
-     * the PVM-clean default so they look unchanged. Explicitly setting
-     * the field to a low value opens the subcarrier leak. */
-    if (ctx->video_chain->tv.luma_notch_depth <= 0.0001f)
-        ctx->video_chain->tv.luma_notch_depth = 0.95f;
     ctx->video_chain->cable = p->video_cable;
     ctx->video_chain->rf = p->rf;
     ctx->video_chain->console_coupling_R = p->console_coupling_R;
@@ -97,7 +92,7 @@ static void preset_apply_cpu_state_ex(PresetCtx *ctx, const PhysicalPreset *p,
     /* --- SignalPrecompute: brightness/contrast/chroma_gain from preset --- */
     ctx->sig_state->brightness = p->brightness;  /* 0.0 is a valid default */
     ctx->sig_state->contrast = (p->contrast > 0.0f) ? p->contrast : 1.0f;
-    ctx->sig_state->chroma_gain = (p->chroma_gain > 0.0f) ? p->chroma_gain : 1.30f;
+    ctx->sig_state->chroma_gain = p->chroma_gain;
 
     /* --- SignalPrecompute: color matrix from preset TV params --- */
     rebuild_color_matrix(ctx);
@@ -105,6 +100,10 @@ static void preset_apply_cpu_state_ex(PresetCtx *ctx, const PhysicalPreset *p,
     /* --- AudioChain --- */
     audio_chain_init_preset(ctx->audio_chain, p->console_variant,
                             p->speaker_type, new_region);
+    ctx->audio_chain->cable.capacitance = fmaxf(p->audio_cable_length_m, 0.0f) * 67e-12f;
+    if (p->audio_hum_frequency > 0) ctx->audio_chain->psu_hum.frequency = p->audio_hum_frequency;
+    ctx->audio_chain->psu_hum.harmonic_2 = p->audio_hum_harmonic_2;
+    ctx->audio_chain->psu_hum.harmonic_3 = p->audio_hum_harmonic_3;
     if (p->audio_psu_hum_amplitude > 0) {
         ctx->audio_chain->psu_hum.enabled = true;
         ctx->audio_chain->psu_hum.amplitude = p->audio_psu_hum_amplitude;
@@ -262,16 +261,7 @@ bool preset_set_region(PresetCtx *ctx, int new_region) {
      *    matrix stays at the old region's coefficients and PAL
      *    decodes with YIQ (looks "just like NTSC" — sky goes
      *    purple instead of blue). */
-    ctx->audio_chain->sample_rate = (new_region == SIGNAL_REGION_PAL)
-                                    ? (float)AUDIO_PAL_CPU_CLOCK
-                                    : (float)AUDIO_NTSC_CPU_CLOCK;
-    ctx->audio_chain->psu_hum.frequency = (new_region == SIGNAL_REGION_PAL)
-                                          ? 50.0f : 60.0f;
-    if (ctx->audio_chain->decimation.enabled) {
-        ctx->audio_chain->decimation.decimation_ratio =
-            (int)(ctx->audio_chain->sample_rate
-                  / (float)AUDIO_OUTPUT_SAMPLE_RATE);
-    }
+    ctx->audio_chain->psu_hum.frequency = (new_region == SIGNAL_REGION_PAL) ? 50.0f : 60.0f;
     audio_chain_prepare(ctx->audio_chain);
 
     ctx->region = new_region;
@@ -302,46 +292,24 @@ static void rebuild_color_matrix(PresetCtx *ctx) {
     float hue_rad = vc->tv.hue_offset * (float)M_PI / 180.0f;
     float sat = vc->tv.saturation;
 
-    /* Physical decode matrices — one per region. Each matches the
-     * chroma pair handed to Matrix Decode.
-     *
-     * NTSC:
-     *   demod_rotate = 4 yields the familiar I/Q pair.
-     *
-     * PAL:
-     *   demod_rotate = 3 plus the PAL correction stage in the GPU
-     *   chain produce a stable (V, U) pair after odd-line U sign
-     *   compensation and 1H V averaging, mirroring the PAL-CRT-style
-     *   CPU decoder in src/nes/composite.h.
-     *
-     * The matrices are the textbook BT.601 YIQ->RGB (NTSC) and
-     * BT.470 YUV->RGB (PAL), scaled x1.15 to match the mild decoder-IC
-     * saturation boost used by the CPU path.
-     *
-     * The column convention here is (Y, chroma_col1, chroma_col2)
-     * where chroma_col1/col2 are the decoder's two outputs:
-     *   NTSC: col1 = I, col2 = Q
-     *   PAL:  col1 = V, col2 = U
-     *
-     * So the PAL coefficients are a column-swapped YUV matrix:
-     *   R = Y + 1.140 V + 0.000 U
-     *   G = Y − 0.581 V − 0.395 U
-     *   B = Y + 0.000 V + 2.032 U */
+    /* Quadrature demodulation restores carrier amplitude (2*cos/sin).
+     * These matrices have no additional, hidden saturation multiplier.
+     * Columns: NTSC Y/I/Q; PAL Y/V/U after parity correction. */
     static const float base_ntsc[3][3] = {
-        { 1.0f,  1.1222f,  0.7391f },
-        { 1.0f, -0.3192f, -0.7384f },
-        { 1.0f, -1.2374f,  1.9058f },
+        { 1.0f,  0.9563f,  0.6210f },
+        { 1.0f, -0.2721f, -0.6474f },
+        { 1.0f, -1.1070f,  1.7046f },
     };
     static const float base_pal[3][3] = {
-        { 1.0f,  1.311f,   0.000f  },   /* 1.140 * 1.15 */
-        { 1.0f, -0.668f,  -0.454f  },   /* -0.581*1.15, -0.395*1.15 */
-        { 1.0f,  0.000f,   2.337f  },   /* 2.032 * 1.15 */
+        { 1.0f,  1.140f,  0.000f },
+        { 1.0f, -0.581f, -0.395f },
+        { 1.0f,  0.000f,  2.032f },
     };
     const float (*base)[3] = (sp->region == SIGNAL_REGION_PAL)
                              ? base_pal : base_ntsc;
     float ch = cosf(hue_rad), sh = sinf(hue_rad);
 
-    float temp_norm = (vc->tv.color_temperature - 6500.0f) / 3500.0f;
+    float temp_norm = (6500.0f - vc->tv.color_temperature) / 3500.0f;
     float warm_r = 1.0f + temp_norm * 0.03f;
     float warm_g = 1.0f + temp_norm * 0.01f;
     float warm_b = 1.0f - temp_norm * 0.03f;
@@ -431,7 +399,7 @@ static void rebuild_signal_filters(PresetCtx *ctx, float y_cutoff,
     float notch_depth = vc->tv.luma_notch_depth;
     if (notch_depth < 0.0f) notch_depth = 0.0f;
     if (notch_depth > 1.0f) notch_depth = 1.0f;
-    if (notch_depth > 0.01f && sp->fir_y_n >= 23) {
+    if (video_chain_stage_active(vc, 6) && notch_depth > 0.01f && sp->fir_y_n >= 23) {
         signal_design_fir_notch(sp->fir_y, sp->fir_y_n, y_cutoff,
                                 subcarrier_norm, notch_depth);
     }
@@ -534,8 +502,20 @@ static void gpu_cb_apply_comb(void) {
     }
 }
 
+static void gpu_cb_display_bypass(void) {
+    g_ctx->render_ctx->crt_shader_enabled = !g_ctx->display_bypass;
+}
+
+static void gpu_cb_audio_backend(void) {
+    if (!*g_ctx->gpu_audio_enabled) *g_ctx->use_gpu_audio = 0;
+}
+
 static void gpu_cb_audio_prepare(void) {
-    audio_chain_prepare(g_ctx->audio_chain);
+    AudioChain *ac = g_ctx->audio_chain;
+    ac->amp_saturation.enabled = ac->amp_saturation.drive > 1.01f;
+    ac->psu_hum.enabled = ac->psu_hum.amplitude > 0;
+    ac->noise_floor.enabled = ac->noise_floor.amplitude > 0;
+    audio_chain_prepare(ac);
 }
 
 static void gpu_cb_apply_region(void) {
@@ -654,7 +634,7 @@ static int menu_presets_video_idx = -1;
 /* Forward declarations — actual storage lives further down. The save
  * action callback (also further down) needs to update these tables. */
 static OSDMenuItem menu_video[15];
-OSDMenuItem preset_menu_root[3];   /* defined below; declared here so the
+OSDMenuItem preset_menu_root[4];   /* defined below; declared here so the
                                     * save callback can update it. */
 
 /* Public entry points used by main.c. */
@@ -714,6 +694,13 @@ static PhysicalPreset preset_capture_live(void) {
     p.contrast           = g_ctx->sig_state->contrast;
     p.chroma_gain        = g_ctx->sig_state->chroma_gain;
     p.region             = signal_region_normalize(g_ctx->region);
+    AudioChain *ac = g_ctx->audio_chain;
+    p.audio_saturation_drive = ac->amp_saturation.drive;
+    p.audio_psu_hum_amplitude = ac->psu_hum.amplitude;
+    p.audio_hum_frequency = ac->psu_hum.frequency;
+    p.audio_hum_harmonic_2 = ac->psu_hum.harmonic_2;
+    p.audio_hum_harmonic_3 = ac->psu_hum.harmonic_3;
+    p.audio_noise_floor = ac->noise_floor.amplitude;
 
     return p;
 }
@@ -829,7 +816,13 @@ bool preset_is_modified(void) {
         memcmp(&p.rf,&preset_baseline.rf,sizeof(p.rf)) ||
         p.connection != preset_baseline.connection || p.comb_type != preset_baseline.comb_type ||
         p.brightness != preset_baseline.brightness || p.contrast != preset_baseline.contrast ||
-        p.chroma_gain != preset_baseline.chroma_gain || p.console_psu_hum != preset_baseline.console_psu_hum;
+        p.chroma_gain != preset_baseline.chroma_gain || p.console_psu_hum != preset_baseline.console_psu_hum ||
+        p.audio_saturation_drive != preset_baseline.audio_saturation_drive ||
+        p.audio_psu_hum_amplitude != preset_baseline.audio_psu_hum_amplitude ||
+        p.audio_hum_frequency != preset_baseline.audio_hum_frequency ||
+        p.audio_hum_harmonic_2 != preset_baseline.audio_hum_harmonic_2 ||
+        p.audio_hum_harmonic_3 != preset_baseline.audio_hum_harmonic_3 ||
+        p.audio_noise_floor != preset_baseline.audio_noise_floor;
 }
 
 static void preset_refresh_menu(void) {
@@ -933,7 +926,8 @@ static OSDMenuItem menu_audio_chain[9];
 /* Mid-level submenus. menu_video[] + preset_menu_root[] are forward-
  * declared near the top of this file so the save action can reach them. */
 static OSDMenuItem menu_audio_top[3];
-int         preset_menu_root_count = 3;
+static OSDMenuItem menu_diagnostics[1];
+int         preset_menu_root_count = 4;
 
 /* Helper to populate an OSDMenuItem. */
 static OSDMenuItem make_item(const char *label, OSDMenuItemType type,
@@ -1174,6 +1168,7 @@ void preset_ctx_init(PresetCtx *ctx) {
      * ================================================================ */
     n = 0;
     menu_phosphor[n++] = MI_CYCLIC("Mask type",      &vc->tv.mask_type, 0.0f, 2.0f, gpu_cb_update_beam_params, "%d");
+    menu_phosphor[n++] = MI_FLOAT("Mask triads (0=pixels)", &vc->tv.mask_triads, 10.0f, 0.0f, 1200.0f, NULL, "%.0f");
     menu_phosphor[n++] = MI_FLOAT("Mask pitch px",   &vc->tv.mask_pitch_px,       0.5f, 1.0f, 20.0f, gpu_cb_update_beam_params, "%.1f");
     menu_phosphor[n++] = MI_FLOAT("Mask strength",   &vc->tv.mask_strength,       0.05f, 0.0f, 1.0f, gpu_cb_update_beam_params, "%.2f");
     /* P22 phosphor persistence: scales the per-channel blend weights below.
@@ -1251,8 +1246,6 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_audio_chain[n++] = MI_FLOAT("PSU 2nd harm",    &ac->psu_hum.harmonic_2,      0.05f, 0.0f, 1.0f, gpu_cb_audio_prepare, "%.2f");
     menu_audio_chain[n++] = MI_FLOAT("PSU 3rd harm",    &ac->psu_hum.harmonic_3,      0.02f, 0.0f, 0.5f, gpu_cb_audio_prepare, "%.2f");
     menu_audio_chain[n++] = MI_FLOAT("Noise amp",       &ac->noise_floor.amplitude,   0.001f, 0.0f, 0.05f, gpu_cb_audio_prepare, "%.3f");
-    menu_audio_chain[n++] = MI_FLOAT("Coupling R",      &ac->coupling_cap.resistance, 5.0f, 10.0f, 200.0f, gpu_cb_audio_prepare, "%.0f");
-    menu_audio_chain[n++] = MI_FLOAT("Amp BW R",        &ac->amp_bandwidth.resistance, 5.0f, 10.0f, 500.0f, gpu_cb_audio_prepare, "%.0f");
 
     /* ================================================================
      * Video submenu — organized by signal chain stage
@@ -1278,15 +1271,18 @@ void preset_ctx_init(PresetCtx *ctx) {
      * Audio submenu
      * ================================================================ */
     n = 0;
+    menu_audio_top[n++] = MI_TOGGLE("Use GPU audio", ctx->use_gpu_audio, gpu_cb_audio_backend);
     menu_audio_top[n++] = MI_SUB("APU DAC",      menu_apu,         6);
-    menu_audio_top[n++] = MI_SUB("Chain stages",  menu_audio_chain, 8);
+    menu_audio_top[n++] = MI_SUB("Chain stages",  menu_audio_chain, 6);
 
     /* ================================================================
      * Root menu
      * ================================================================ */
     preset_menu_root[0] = MI_SUB("Video",   menu_video,    video_count);
-    preset_menu_root[1] = MI_SUB("Audio",   menu_audio_top, 2);
+    preset_menu_root[1] = MI_SUB("Audio",   menu_audio_top, 3);
     preset_menu_root[2] = MI_SUB("Presets", menu_presets,   1 + preset_count);
+    menu_diagnostics[0] = MI_TOGGLE("Mask/glass bypass", &ctx->display_bypass, gpu_cb_display_bypass);
+    preset_menu_root[3] = MI_SUB("Diagnostics", menu_diagnostics, 1);
 }
 
 /* ============================================================================
@@ -1327,6 +1323,7 @@ void preset_composite_overlays(PresetCtx *ctx) {
 /* The editor uses the same physical values and update paths as the OSD. */
 void preset_register_debug_controls(PresetCtx *ctx, DebugServer *server) {
     TVDisplayParams *tv = &ctx->video_chain->tv;
+    AudioChain *ac = ctx->audio_chain;
     DebugControl controls[] = {
         {"Luma bandwidth (Hz)", "Decoder", &tv->luma_bandwidth, 500000, 8000000, gpu_cb_redesign_firs},
         {"Chroma bandwidth (Hz)", "Decoder", &tv->chroma_bandwidth, 100000, 3000000, gpu_cb_redesign_firs},
@@ -1339,6 +1336,7 @@ void preset_register_debug_controls(PresetCtx *ctx, DebugServer *server) {
         {"Red lifetime scale", "Phosphor", &tv->persistence_r, 0, 1, gpu_cb_update_beam_params},
         {"Green lifetime scale", "Phosphor", &tv->persistence_g, 0, 1, gpu_cb_update_beam_params},
         {"Blue lifetime scale", "Phosphor", &tv->persistence_b, 0, 1, gpu_cb_update_beam_params},
+        {"Mask triads across", "Phosphor", &tv->mask_triads, 0, 1200, NULL},
         {"Mask pitch (pixels)", "Phosphor", &tv->mask_pitch_px, 1, 12, NULL},
         {"Linear brightness", "Phosphor", &tv->hdr_gain, 0.5f, 3, NULL},
         {"Mask strength", "Phosphor", &tv->mask_strength, 0, 1, NULL},
@@ -1348,6 +1346,12 @@ void preset_register_debug_controls(PresetCtx *ctx, DebugServer *server) {
         {"Cable length (m)", "Connection", &ctx->video_chain->cable.length_meters, 0, 20, gpu_cb_update_rc_params},
         {"RF hum", "Connection", &ctx->video_chain->console_psu_hum, 0, 0.1f, gpu_cb_reinit_stages},
         {"RF noise floor (dBm)", "Connection", &ctx->video_chain->rf.noise_floor_dbm, -90, -30, gpu_cb_reinit_stages},
+        {"Amplifier drive", "Audio", &ac->amp_saturation.drive, 1, 6, gpu_cb_audio_prepare},
+        {"Mains hum", "Audio", &ac->psu_hum.amplitude, 0, 0.05f, gpu_cb_audio_prepare},
+        {"Mains frequency (Hz)", "Audio", &ac->psu_hum.frequency, 50, 120, gpu_cb_audio_prepare},
+        {"Second harmonic", "Audio", &ac->psu_hum.harmonic_2, 0, 1, gpu_cb_audio_prepare},
+        {"Third harmonic", "Audio", &ac->psu_hum.harmonic_3, 0, 0.5f, gpu_cb_audio_prepare},
+        {"Noise floor", "Audio", &ac->noise_floor.amplitude, 0, 0.05f, gpu_cb_audio_prepare},
     };
     debug_server_set_controls(server, controls, (int)(sizeof(controls)/sizeof(controls[0])));
 }

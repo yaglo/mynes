@@ -8,7 +8,7 @@ struct Params
     uint total_pixels;
     uint samples_per_line;
     uint tap_count;
-    float4 taps[12];
+    float4 taps[32];
     float velocity_mod;
     float asym_rise_fall;
     float vertical_smear;
@@ -26,22 +26,22 @@ struct RGBOut
 
 constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
 
-kernel void main0(constant Params& _22 [[buffer(0)]], device RGBIn& _119 [[buffer(1)]], device RGBOut& _358 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+kernel void main0(constant Params& _23 [[buffer(0)]], device RGBIn& _124 [[buffer(1)]], device RGBOut& _342 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
     uint tid = gl_GlobalInvocationID.x;
-    if (tid >= _22.total_pixels)
+    if (tid >= _23.total_pixels)
     {
         return;
     }
-    int halfN = int(_22.tap_count) / 2;
-    int spl = int(_22.samples_per_line);
+    int halfN = int(_23.tap_count) / 2;
+    int spl = int(_23.samples_per_line);
     int base = int(tid);
     int line_start = (base / spl) * spl;
     int line_end = line_start + spl;
     float sum_r = 0.0;
     float sum_g = 0.0;
     float sum_b = 0.0;
-    for (uint k = 0u; k < _22.tap_count; k++)
+    for (uint k = 0u; k < _23.tap_count; k++)
     {
         int idx = (base - halfN) + int(k);
         if (idx < line_start)
@@ -54,53 +54,50 @@ kernel void main0(constant Params& _22 [[buffer(0)]], device RGBIn& _119 [[buffe
         }
         idx = clamp(idx, line_start, line_end - 1);
         uint src = uint(idx) * 3u;
-        float h = _22.taps[k].x;
-        sum_r += (h * _119.rgb_in[src + 0u]);
-        sum_g += (h * _119.rgb_in[src + 1u]);
-        sum_b += (h * _119.rgb_in[src + 2u]);
+        float3 h = _23.taps[k].xyz;
+        sum_r += (h.x * _124.rgb_in[src + 0u]);
+        sum_g += (h.y * _124.rgb_in[src + 1u]);
+        sum_b += (h.z * _124.rgb_in[src + 2u]);
     }
-    bool _151 = _22.velocity_mod > 0.001000000047497451305389404296875;
-    bool _159;
-    if (!_151)
+    bool _159 = _23.velocity_mod > 0.001000000047497451305389404296875;
+    bool _167;
+    if (!_159)
     {
-        _159 = _22.asym_rise_fall > 0.001000000047497451305389404296875;
+        _167 = _23.asym_rise_fall > 0.001000000047497451305389404296875;
     }
     else
     {
-        _159 = _151;
+        _167 = _159;
     }
-    if (_159)
+    if (_167)
     {
         int ip = clamp(base - 1, line_start, line_end - 1);
         int in_ = clamp(base + 1, line_start, line_end - 1);
-        float lp = ((_119.rgb_in[(ip * 3) + 0] * 0.2989999949932098388671875) + (_119.rgb_in[(ip * 3) + 1] * 0.58700001239776611328125)) + (_119.rgb_in[(ip * 3) + 2] * 0.114000000059604644775390625);
-        float ln = ((_119.rgb_in[(in_ * 3) + 0] * 0.2989999949932098388671875) + (_119.rgb_in[(in_ * 3) + 1] * 0.58700001239776611328125)) + (_119.rgb_in[(in_ * 3) + 2] * 0.114000000059604644775390625);
+        float lp = ((_124.rgb_in[(ip * 3) + 0] * 0.2989999949932098388671875) + (_124.rgb_in[(ip * 3) + 1] * 0.58700001239776611328125)) + (_124.rgb_in[(ip * 3) + 2] * 0.114000000059604644775390625);
+        float ln = ((_124.rgb_in[(in_ * 3) + 0] * 0.2989999949932098388671875) + (_124.rgb_in[(in_ * 3) + 1] * 0.58700001239776611328125)) + (_124.rgb_in[(in_ * 3) + 2] * 0.114000000059604644775390625);
         float dL = (ln - lp) * 0.5;
-        float3 vm = float3(dL) * _22.velocity_mod;
+        float3 vm = float3(dL) * _23.velocity_mod;
         sum_r += vm.x;
         sum_g += vm.y;
         sum_b += vm.z;
-        if (_22.asym_rise_fall > 0.001000000047497451305389404296875)
+        if (_23.asym_rise_fall > 0.001000000047497451305389404296875)
         {
-            float rise = fast::max(dL, 0.0) * _22.asym_rise_fall;
-            float fall = (fast::max(-dL, 0.0) * _22.asym_rise_fall) * 0.5;
+            float rise = fast::max(dL, 0.0) * _23.asym_rise_fall;
+            float fall = (fast::max(-dL, 0.0) * _23.asym_rise_fall) * 0.5;
             sum_r += (fall - rise);
             sum_g += (fall - rise);
             sum_b += (fall - rise);
         }
     }
-    if ((_22.vertical_smear > 0.001000000047497451305389404296875) && (line_start >= spl))
+    if ((_23.vertical_smear > 0.001000000047497451305389404296875) && (line_start >= spl))
     {
         int prev_col = (line_start - spl) + (base - line_start);
-        sum_r += ((_119.rgb_in[(prev_col * 3) + 0] * _22.vertical_smear) * 0.100000001490116119384765625);
-        sum_g += ((_119.rgb_in[(prev_col * 3) + 1] * _22.vertical_smear) * 0.100000001490116119384765625);
-        sum_b += ((_119.rgb_in[(prev_col * 3) + 2] * _22.vertical_smear) * 0.100000001490116119384765625);
-        sum_r *= (1.0 - (_22.vertical_smear * 0.100000001490116119384765625));
-        sum_g *= (1.0 - (_22.vertical_smear * 0.100000001490116119384765625));
-        sum_b *= (1.0 - (_22.vertical_smear * 0.100000001490116119384765625));
+        sum_r = mix(sum_r, _124.rgb_in[(prev_col * 3) + 0], _23.vertical_smear * 0.100000001490116119384765625);
+        sum_g = mix(sum_g, _124.rgb_in[(prev_col * 3) + 1], _23.vertical_smear * 0.100000001490116119384765625);
+        sum_b = mix(sum_b, _124.rgb_in[(prev_col * 3) + 2], _23.vertical_smear * 0.100000001490116119384765625);
     }
     uint dst = tid * 3u;
-    _358.rgb_out[dst + 0u] = sum_r;
-    _358.rgb_out[dst + 1u] = sum_g;
-    _358.rgb_out[dst + 2u] = sum_b;
+    _342.rgb_out[dst + 0u] = sum_r;
+    _342.rgb_out[dst + 1u] = sum_g;
+    _342.rgb_out[dst + 2u] = sum_b;
 }

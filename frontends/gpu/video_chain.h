@@ -236,6 +236,7 @@ typedef struct {
 
     /* Phosphor. */
     VideoMaskType mask_type;
+    float mask_triads;          /* RGB triads across the tube; 0 uses legacy pixel pitch */
     float mask_pitch_px;        /* phosphor cell spacing in drawable pixels */
     float mask_strength;        /* phosphor mask blend (0=off, 0.6=visible, 1.0=full) */
     int   subpixel_layout;      /* 0=none, 1=RGB stripe, 2=BGR stripe */

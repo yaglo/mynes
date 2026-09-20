@@ -5,11 +5,13 @@
 #version 450
 layout(local_size_x=256) in;
 layout(set=0,binding=0) readonly buffer Active { float picture[]; };
+layout(set=0,binding=1) readonly buffer SourceY { float source_y[]; };
+layout(set=1,binding=1) writeonly buffer RasterY { float raster_y[]; };
 layout(set=1,binding=0) writeonly buffer Raster { float raster[]; };
 layout(set=2,binding=0) uniform Params {
     uint count, full_width, active_width, samples_per_dot;
     float phase_base, line_phase;
-    uint region, lines;
+    uint region, lines, separate_yc;
 };
 void main() {
     uint i=gl_GlobalInvocationID.x;
@@ -30,4 +32,10 @@ void main() {
     if(line<240u && x>=start && x<start+active_width)
         value=picture[line*active_width+x-start];
     raster[i]=value;
+    if (separate_yc != 0u) {
+        float y=dot<25u ? sync : 0.0; // Sync travels on Y; burst travels on C.
+        if (line<240u && x>=start && x<start+active_width)
+            y=source_y[line*active_width+x-start];
+        raster_y[i]=y;
+    }
 }

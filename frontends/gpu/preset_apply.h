@@ -24,6 +24,9 @@ typedef struct {
     VideoGPUChain    *video_gpu_chain;
     SDL_GPUDevice    *gpu;
     bool             *gpu_video_enabled;
+    bool             *gpu_audio_enabled;
+    int              *use_gpu_audio;
+    int               display_bypass;
     int              *current_preset;
     MynesConfig      *config;
     int               region;

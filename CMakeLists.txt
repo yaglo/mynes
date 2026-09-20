@@ -347,9 +347,9 @@ if(NES_BUILD_GPU_FRONTEND)
         file(MAKE_DIRECTORY ${SHADER_OUT_DIR}/compute)
         file(MAKE_DIRECTORY ${SHADER_OUT_DIR}/render)
 
-        file(GLOB GLSL_COMPUTE_SOURCES ${SHADER_SRC_DIR}/compute/*.comp.glsl)
-        file(GLOB GLSL_VERT_SOURCES ${SHADER_SRC_DIR}/render/*.vert.glsl)
-        file(GLOB GLSL_FRAG_SOURCES ${SHADER_SRC_DIR}/render/*.frag.glsl)
+        file(GLOB GLSL_COMPUTE_SOURCES CONFIGURE_DEPENDS ${SHADER_SRC_DIR}/compute/*.comp.glsl)
+        file(GLOB GLSL_VERT_SOURCES CONFIGURE_DEPENDS ${SHADER_SRC_DIR}/render/*.vert.glsl)
+        file(GLOB GLSL_FRAG_SOURCES CONFIGURE_DEPENDS ${SHADER_SRC_DIR}/render/*.frag.glsl)
         set(ALL_GLSL_SOURCES ${GLSL_COMPUTE_SOURCES} ${GLSL_VERT_SOURCES} ${GLSL_FRAG_SOURCES})
 
         # Stamp file tracks when shaders were last compiled.
@@ -405,6 +405,15 @@ if(NES_BUILD_GPU_FRONTEND)
             add_test(NAME gpu_preset_json_tests
                 COMMAND test_preset_json
                 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+            add_executable(test_audio
+                frontends/gpu/tests/test_audio.c
+                frontends/gpu/audio_chain.c frontends/gpu/audio_gpu.c
+                frontends/gpu/gpu_compute.c frontends/gpu/gpu_log.c)
+            target_include_directories(test_audio PRIVATE frontends/gpu)
+            target_link_libraries(test_audio PRIVATE ${MYNES_SDL3_TARGET} m)
+            add_dependencies(test_audio gpu_shaders)
+            add_test(NAME gpu_audio_tests COMMAND test_audio)
 
             # GPU pipeline integration test (headless SDL3 GPU compute)
             add_executable(test_pipeline

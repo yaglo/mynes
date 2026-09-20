@@ -2,7 +2,7 @@ import SwiftUI
 
 struct ParameterEditorView: View {
     let group: String
-    @ObservedObject var connection: EmulatorConnection
+    let connection: EmulatorConnection
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {

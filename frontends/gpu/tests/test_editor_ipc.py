@@ -65,16 +65,16 @@ with tempfile.TemporaryDirectory(prefix="mynes-editor-") as tmp:
                 assert actual_op == op and bool(ok) == success, result
                 return catalog()
 
-            def edit(value):
+            def edit(value, name=b"Saturation"):
                 data = receive(5)
                 _, count = struct.unpack_from("<II", data)
                 records = [struct.unpack_from("<Ifff32s24s", data, 8 + i * 72) for i in range(count)]
-                ident = next(r[0] for r in records if r[4].split(b"\0")[0] == b"Saturation")
+                ident = next(r[0] for r in records if r[4].split(b"\0")[0] == name)
                 packet = struct.pack("<IIIf", 6, 8, ident, value)
                 client.sendall(packet[:3])
                 time.sleep(0.02)
                 client.sendall(packet[3:])
-                for _ in range(10):
+                for _ in range(40):
                     state = catalog()
                     if state[2]:
                         return state
@@ -84,7 +84,7 @@ with tempfile.TemporaryDirectory(prefix="mynes-editor-") as tmp:
             assert active >= 0 and not dirty, (active, dirty)
             # A macOS menu tracking loop can temporarily stall MainActor reads.
             # Backpressure must not disconnect the editor or lose its selection.
-            time.sleep(3)
+            time.sleep(8)
             edit(0.85)
             revision, active, dirty, entries = command(3, active, revision, "IPC test CRT")
             assert not dirty and entries[active][1:]==(True,"IPC test CRT")
@@ -92,18 +92,28 @@ with tempfile.TemporaryDirectory(prefix="mynes-editor-") as tmp:
             paths = list((Path(tmp)/"mynes/presets").glob("*.json"))
             assert len(paths)==1 and abs(json.loads(paths[0].read_text())["tv"]["saturation"]-.85)<1e-5
             edit(0.75)
+            edit(0.012, b"Mains hum")
+            edit(0.35, b"Second harmonic")
             revision, active, dirty, entries = command(2, active, revision)
             assert not dirty and abs(json.loads(paths[0].read_text())["tv"]["saturation"]-.75)<1e-5
+            saved = json.loads(paths[0].read_text())
+            assert abs(saved["audio_psu_hum_amplitude"]-.012)<1e-5
+            assert abs(saved["audio_hum_harmonic_2"]-.35)<1e-5
             revision, active, dirty, entries = command(4, active, revision, "Renamed CRT")
             assert entries[active][2]=="Renamed CRT"
             bundled = next(e[0] for e in entries if not e[1] and "Bedroom" in e[2])
-            time.sleep(3)  # Preset selection must also survive a stalled reader.
+            time.sleep(8)  # Preset selection must also survive a stalled reader.
             revision, active, dirty, entries = command(1, bundled, revision)
             assert active == bundled and not dirty
             command(5, bundled, revision, success=False)
             command(1, user_id, revision-1, success=False)
             revision, active, dirty, entries = command(1, user_id, revision)
-            assert active == user_id
+            assert active == user_id and not dirty
+            data = receive(5)
+            _, count = struct.unpack_from("<II", data)
+            controls = [struct.unpack_from("<Ifff32s24s", data, 8+i*72) for i in range(count)]
+            hum = next(c[1] for c in controls if c[4].split(b"\0")[0] == b"Mains hum")
+            assert abs(hum-.012)<1e-5
             revision, active, dirty, entries = command(5, user_id, revision)
             assert active == -1 and dirty and not paths[0].exists()
             print("Preset IPC: active preset, dirty state, stalled reader, fragmented edits, save-as, save, rename, topology switch, bundled protection, stale revision rejection, delete: PASS")

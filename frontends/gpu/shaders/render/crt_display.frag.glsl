@@ -2,19 +2,9 @@
  * CRT Display — Fragment Shader
  * ===============================
  *
- * Display-domain effects applied AFTER the CPU composite pipeline has
- * produced a 1170x960 RGB texture. These effects run at native display
- * resolution and simulate the physical CRT screen:
- *
- *   a. Barrel distortion (CRT glass curvature)
- *   b. Composite texture sample (bilinear)
- *   c. Tube-face / mask / glass optics
- *   d. Phosphor mask at native resolution (shadow mask / aperture grille / slot)
- *   e. Halation blend (light scattering in glass)
- *   f. Vignette (radial cos^4 falloff)
- *   g. Gamma correction (CRT phosphor response)
- *   h. Black floor (ambient light reflection / CRT cutoff)
- *   i. Tone mapping (SDR clamp; HDR path skips this)
+ * Linear-light beam and phosphor history enter this pass. It applies the
+ * fixed phosphor mask, glass scattering and room reflection, then encodes
+ * SDR sRGB or extended linear sRGB for the swapchain.
  *
  * Dispatch: bind fullscreen.vert, draw 3 vertices.
  */
@@ -25,8 +15,8 @@ layout(location = 0) in vec2 uv;
 layout(location = 0) out vec4 frag_color;
 
 /* Textures. */
-layout(set = 0, binding = 0) uniform sampler2D tex_composite;  /* CPU output */
-layout(set = 0, binding = 1) uniform sampler2D tex_halation;   /* blurred bright areas */
+layout(set = 0, binding = 0) uniform sampler2D tex_composite;  /* linear beam/history */
+layout(set = 0, binding = 1) uniform sampler2D tex_halation;   /* scattered linear beam light */
 
 /* Uniforms matching TVDisplayParams fields. */
 layout(set = 1, binding = 0) uniform DisplayParams {
@@ -99,55 +89,15 @@ layout(set = 1, binding = 0) uniform DisplayParams {
     int output_hdr;
 };
 
-/* -----------------------------------------------------------------------
- * (a) Barrel distortion
- * -----------------------------------------------------------------------
- * Cubic radial distortion: r' = r * (1 + k*r^2).
- * Input/output in centered UV space [-0.5, 0.5].
- */
-vec2 barrel_distort(vec2 coord, float k_h, float k_v) {
-    vec2 centered = coord - 0.5;
-    float r2 = dot(centered, centered);
-    /* Asymmetric: different curvature in horizontal vs vertical.
-     * Real CRT deflection yokes create slightly more pincushion
-     * vertically than horizontally due to yoke geometry. */
-    centered.x *= (1.0 + k_h * r2);
-    centered.y *= (1.0 + k_v * r2);
-    return centered + 0.5;
-}
-
-/* -----------------------------------------------------------------------
- * (d) Phosphor mask
- * -----------------------------------------------------------------------
- * Operates at NATIVE display resolution using viewport-local pixel
- * centers derived from `uv * out_size`, so the phosphor phase stays
- * locked to the actual drawable even when the window origin moves.
- */
-
-/* -----------------------------------------------------------------------
- * (d) Phosphor emission with beam spot convolution
- * -----------------------------------------------------------------------
- * The electron beam has a Gaussian spot profile (~0.3-0.8mm diameter).
- * This spot is LARGER than a single phosphor dot (~0.25-0.31mm pitch).
- * So a beam at any position excites multiple phosphor dots simultaneously
- * with varying intensity (Gaussian falloff from beam centre).
- *
- * For each display pixel, we convolve: sum contributions from nearby
- * phosphor dots, each weighted by the beam's Gaussian at that dot's
- * position. Each dot emits only its phosphor colour (R, G, or B).
- *
- * This naturally produces:
- *   - Colour fringing at sharp edges (beam tail excites adjacent triads)
- *   - Mask wash-out on bright content (wide beam covers many dots)
- *   - Clean blacks (zero beam = zero emission regardless of dot pattern)
- */
-
+/* Mask coordinates are local to the CRT viewport. Each stripe is one
+ * phosphor; three stripes form an RGB triad. The beam has already spread
+ * upstream: mask coverage must not blur RGB samples a second time. */
 float mask_effective_pitch(float pitch, int subpixel_mode) {
     /* RGB/BGR selection should only control left-to-right phosphor
      * order. Forcing the whole mask to a 1-pixel pitch creates a
      * strong beat pattern against the real panel and makes moire
      * worse, especially on sharp presets. */
-    return max(pitch, 1.0);
+    return max(pitch, 0.05);
 }
 
 /* Which phosphor colour is at this screen position? Returns (1,0,0), (0,1,0), or (0,0,1).
@@ -233,12 +183,16 @@ float stripe_integral(float x, float left) {
     return floor(t/3.0)*0.86 + clamp(mod(t,3.0),0.0,0.86);
 }
 vec3 phosphor_mask(vec2 pos) {
+    // Fade detail approaching the output Nyquist limit. Energy remains one
+    // when triads cannot be resolved, avoiding false color and resize moire.
+    float unresolved = smoothstep(0.25, 0.5, 1.0 / (3.0 * max(mask_pitch_pixels,0.05)));
+    if (unresolved >= 0.999) return vec3(1.0);
     if(mask_type==1) {
-        float pitch=max(mask_pitch_pixels,1.0);
+        float pitch=max(mask_pitch_pixels,0.05);
         float a=(pos.x-0.5)/pitch, b=(pos.x+0.5)/pitch;
         vec3 m;
         for(int c=0;c<3;c++) m[c]=(stripe_integral(b,float(c)+0.07)-stripe_integral(a,float(c)+0.07))*pitch*3.0/0.86;
-        return subpixel_layout==2 ? m.bgr : m;
+        return mix(subpixel_layout==2 ? m.bgr : m, vec3(1.0), unresolved);
     }
     vec3 coverage = vec3(0.0);
     for (int y=0; y<4; y++) for (int x=0; x<4; x++) {
@@ -251,7 +205,7 @@ vec3 phosphor_mask(vec2 pos) {
     // energy; local phosphor peaks require HDR headroom.
     float area = mask_type == 1 ? 0.86 : (mask_type == 2 ? 0.84*0.74 : 0.42*0.34*3.14159265*0.83);
     vec3 resolved = coverage * (3.0 / (16.0*area));
-    float unresolved = mask_alias_risk(pos,mask_type,mask_pitch_pixels,subpixel_layout);
+    unresolved = max(unresolved, mask_alias_risk(pos,mask_type,mask_pitch_pixels,subpixel_layout));
     return mix(resolved,vec3(1.0),unresolved);
 }
 vec3 beam_light(vec2 p) {
@@ -441,11 +395,6 @@ void main() {
 
     /* (f) Vignette. */
     color *= vignette_factor(uv, vignette_strength);
-
-    /* (g) Gamma: skip — the beam profile shader already outputs
-     * display-ready values. Applying 1/gamma here would double-encode
-     * and wash out the image. If the beam output were linear light,
-     * we'd apply pow(color, 1/gamma) to encode for sRGB display. */
 
     /* (h) Black floor already applied in beam shader — don't double it.
      *     Only add ambient light reflection on the glass surface. */

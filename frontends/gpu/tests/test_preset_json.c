@@ -151,6 +151,7 @@ static void make_distinctive_preset(PhysicalPreset *p)
     p->tv.v_jitter = 0.0025f;
 
     p->tv.mask_type       = VIDEO_MASK_APERTURE_GRILLE;
+    p->tv.mask_triads     = 550.0f;
     p->tv.mask_pitch_px   = 2.5f;
     p->tv.mask_strength   = 0.66f;
     p->tv.subpixel_layout = 2;
@@ -212,6 +213,9 @@ static void make_distinctive_preset(PhysicalPreset *p)
 
     /* Audio overrides. */
     p->audio_psu_hum_amplitude = 0.006f;
+    p->audio_hum_frequency = 60.0f;
+    p->audio_hum_harmonic_2 = 0.3f;
+    p->audio_hum_harmonic_3 = 0.15f;
     p->audio_noise_floor       = 0.0015f;
     p->audio_saturation_drive  = 1.4f;
     p->audio_cable_length_m    = 2.5f;
@@ -294,6 +298,7 @@ static int compare_presets(const PhysicalPreset *a, const PhysicalPreset *b,
 
     ASSERT_EQ_INT(b->tv.mask_type,        a->tv.mask_type,                     "tv.mask_type");
     ASSERT_NEAR(b->tv.mask_pitch_px,      a->tv.mask_pitch_px,      FLOAT_TOL, "tv.mask_pitch_px");
+    ASSERT_NEAR(b->tv.mask_triads,      a->tv.mask_triads,      FLOAT_TOL, "tv.mask_triads");
     ASSERT_NEAR(b->tv.mask_strength,      a->tv.mask_strength,      FLOAT_TOL, "tv.mask_strength");
     ASSERT_EQ_INT(b->tv.subpixel_layout,  a->tv.subpixel_layout,               "tv.subpixel_layout");
     ASSERT_NEAR(b->tv.persistence_ms,     a->tv.persistence_ms,     FLOAT_TOL, "tv.persistence_ms");
@@ -353,6 +358,9 @@ static int compare_presets(const PhysicalPreset *a, const PhysicalPreset *b,
     ASSERT_NEAR(b->chroma_gain, a->chroma_gain, FLOAT_TOL, "chroma_gain");
 
     /* Audio overrides. */
+    ASSERT_NEAR(b->audio_hum_frequency, a->audio_hum_frequency, FLOAT_TOL, "audio_hum_frequency");
+    ASSERT_NEAR(b->audio_hum_harmonic_2, a->audio_hum_harmonic_2, FLOAT_TOL, "audio_hum_harmonic_2");
+    ASSERT_NEAR(b->audio_hum_harmonic_3, a->audio_hum_harmonic_3, FLOAT_TOL, "audio_hum_harmonic_3");
     ASSERT_NEAR(b->audio_psu_hum_amplitude, a->audio_psu_hum_amplitude, FLOAT_TOL, "audio_psu_hum_amplitude");
     ASSERT_NEAR(b->audio_noise_floor,       a->audio_noise_floor,       FLOAT_TOL, "audio_noise_floor");
     ASSERT_NEAR(b->audio_saturation_drive,  a->audio_saturation_drive,  FLOAT_TOL, "audio_saturation_drive");
@@ -613,7 +621,7 @@ static int test_missing_fields_use_defaults(void)
     ASSERT_EQ_INT(p.region, 0,           "region default 0");
     ASSERT_NEAR(p.brightness,  0.0f, 1e-9f, "brightness default 0");
     ASSERT_NEAR(p.contrast,    0.0f, 1e-9f, "contrast default 0");
-    ASSERT_NEAR(p.chroma_gain, 0.0f, 1e-9f, "chroma_gain default 0");
+    ASSERT_NEAR(p.chroma_gain, 1.0f, 1e-9f, "chroma_gain default unity");
     ASSERT_NEAR(p.video_cable.length_meters, 0.0f, 1e-9f, "video cable default 0");
     ASSERT_NEAR(p.audio_cable.length_meters, 0.0f, 1e-9f, "audio cable default 0");
     ASSERT_NEAR(p.tv.gamma,       0.0f, 1e-9f, "tv.gamma default 0");

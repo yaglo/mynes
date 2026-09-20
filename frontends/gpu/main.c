@@ -36,6 +36,7 @@
 #include "gpu_display.h"
 #include "audio_chain.h"
 #include "audio_gpu.h"
+#include "audio_sync.h"
 #include "video_chain.h"
 #include "presets.h"
 #include "chain_vis.h"
@@ -76,9 +77,8 @@ static GPUDisplay       gpu_disp;
 static bool             gpu_video_enabled = false;
 static bool             gpu_audio_enabled = false;
 static bool             gpu_display_enabled = false;
-static bool             use_gpu_audio = false;       /* A: toggle between CPU and GPU audio */
+static int              use_gpu_audio = false;       /* A: toggle between CPU and GPU audio */
 static bool             composite_enabled = true;   /* C: composite vs raw RGB */
-static bool             crt_shader_enabled = true;   /* S: CRT shader (on by default) */
 static int              current_preset = 0;   /* index into scanned presets/ */
 
 /* Test signal mode: 0=NES, 1=color bars, 2=sine sweep */
@@ -87,29 +87,17 @@ static int              test_signal_mode = 0;
 /* CPU waveform + GPU RGB output buffers. */
 static float           *waveform_buf = NULL;
 static float           *gpu_rgb_out = NULL;
-static uint8_t         *beam_rgba_out = NULL;   /* beam profile RGBA8 output */
 static unsigned         frame_count = 0;
 
-/* Audio buffers for A/B verification. */
-static float           *cpu_audio_frame = NULL; /* APU samples collected per frame */
-static float           *gpu_audio_out = NULL;   /* GPU processed audio output */
-static int              audio_frame_samples = 0; /* samples per frame (region-dependent) */
-static int              audio_frame_pos = 0;    /* write position in current frame buffer */
-
-/* Audio sync: integral rate controller.
- * NES runs at 60.0988 Hz (NTSC) but vsync locks video to the display's
- * refresh rate (typically 60.000 Hz). Without compensation, audio drifts
- * ~1.2 samples/sec vs video. We query SDL3's audio stream fill level each
- * frame and nudge the APU sample rate to keep production matched to
- * consumption — identical to the SDL2 frontend's proven approach, but
- * using SDL_GetAudioStreamAvailable() instead of a manual ring buffer. */
-#define AUDIO_SYNC_TARGET       2048  /* target buffered samples (~46ms) */
-#define AUDIO_RATE_ADJUST_MAX   220   /* ±0.5% of 44100 */
-
-typedef struct {
-    double integral;
-} AudioRateCtrl;
+/* One block per emulated frame; both backends preserve the same state. */
+static float cpu_audio_frame[AUDIO_BLOCK_CAPACITY];
+static float audio_output[AUDIO_BLOCK_CAPACITY];
+static int audio_frame_pos;
+static AudioState audio_state;
 static AudioRateCtrl audio_rate_ctrl;
+static bool audio_playing;
+static int audio_fade_remaining;
+static FILE *audio_capture, *audio_trace;
 
 /* Chain visualiser. */
 static ChainVis        *chain_vis = NULL;
@@ -198,68 +186,70 @@ static bool frame_wanted(unsigned frame, const int *list, int n) {
 static void apu_sample_callback(void *user_data, float sample) {
     (void)user_data;
 
-    /* Always collect samples for GPU path if enabled. */
-    if (gpu_audio_enabled && cpu_audio_frame && audio_frame_pos < audio_frame_samples) {
+    if (audio_frame_pos < AUDIO_BLOCK_CAPACITY)
         cpu_audio_frame[audio_frame_pos++] = sample;
-    }
-
-    /* §6.2 Microphonic tracker — single-pole lowpass of s² isolates
-     * the bass band's RMS envelope. Smoothing constant chosen to
-     * attenuate anything above ~150 Hz; the decay half-life at 44.1
-     * kHz is a few ms, so the tracker follows a kick drum's envelope
-     * but not the waveform itself. Kept as file-static so the render
-     * loop can sample it without synchronisation. */
-    {
-        extern float g_audio_bass_rms;
-        const float a = 0.9995f;   /* very slow — isolates <~80 Hz */
-        g_audio_bass_rms = g_audio_bass_rms * a + sample * sample * (1.0f - a);
-    }
-
-    /* Send to SDL unless GPU audio is currently active. */
-    if (audio_stream && !use_gpu_audio) {
-        float s = sample * 1.5f;
-        if (s > 1.0f) s = 1.0f;
-        if (s < -1.0f) s = -1.0f;
-        SDL_PutAudioStreamData(audio_stream, &s, sizeof(float));
-    }
 }
 
-/* §6.2 Module-scope tracker updated by audio_submit_sample and
- * copied into the render context each frame. */
 float g_audio_bass_rms = 0.0f;
 
-/* Audio rate control — called once per frame before nes_run_frame().
- * Measures SDL3 audio stream fill level and adjusts APU sample rate
- * via an integral controller with slow leak (zero steady-state error,
- * no audible pitch warble). */
-static void audio_adjust_rate(void) {
+static void audio_reset(void) {
+    if (audio_stream) {
+        SDL_ClearAudioStream(audio_stream);
+        SDL_SetAudioStreamFrequencyRatio(audio_stream, 1.0f);
+    }
+    memset(&audio_state, 0, sizeof(audio_state));
+    memset(&audio_rate_ctrl, 0, sizeof(audio_rate_ctrl));
+    audio_frame_pos = 0;
+    audio_fade_remaining = AUDIO_STREAM_RATE / 200;
+    g_audio_bass_rms = 0;
+    nes.apu.hp_filter1 = nes.apu.hp_filter2 = nes.apu.lp_filter = 0;
+    nes.apu.hp_prev_input1 = nes.apu.hp_prev_input2 = 0;
+}
+
+static void audio_adjust_rate(double frame_seconds) {
     if (!audio_stream) return;
+    int bytes = SDL_GetAudioStreamQueued(audio_stream);
+    if (bytes >= 0) SDL_SetAudioStreamFrequencyRatio(audio_stream,
+        audio_sync_ratio(&audio_rate_ctrl, bytes / (int)sizeof(float), frame_seconds));
+}
 
-    int avail_bytes = SDL_GetAudioStreamAvailable(audio_stream);
-    if (avail_bytes < 0) return;
-    int fill = avail_bytes / (int)sizeof(float);  /* mono F32 → sample count */
-    int error = fill - AUDIO_SYNC_TARGET;
-
-    /* Dead band: ignore small fluctuations so the controller doesn't
-     * chase per-frame jitter. 200 samples ≈ 4.5ms at 44.1kHz. */
-    const int DEAD_BAND = 200;
-    int effective = 0;
-    if (error > DEAD_BAND)        effective = error - DEAD_BAND;
-    else if (error < -DEAD_BAND)  effective = error + DEAD_BAND;
-
-    /* Integral with slow leak — τ ≈ 50 frames (~0.8s). */
-    const double LEAK = 0.02;
-    const double INTEGRAL_GAIN = 0.015;
-    audio_rate_ctrl.integral += (double)effective;
-    audio_rate_ctrl.integral *= (1.0 - LEAK);
-
-    int adjust = (int)(audio_rate_ctrl.integral * INTEGRAL_GAIN);
-    if (adjust >  AUDIO_RATE_ADJUST_MAX) adjust =  AUDIO_RATE_ADJUST_MAX;
-    if (adjust < -AUDIO_RATE_ADJUST_MAX) adjust = -AUDIO_RATE_ADJUST_MAX;
-
-    /* Overfull → lower rate → fewer samples emitted per second.
-     * Underfull → raise rate → more samples emitted. */
-    nes.apu.sample_rate = APU_SAMPLE_RATE - adjust;
+static void audio_submit_frame(void) {
+    int count = audio_frame_pos;
+    audio_frame_pos = 0;
+    if (!count || !audio_stream) return;
+    bool processed = use_gpu_audio && gpu_audio_enabled &&
+        audio_gpu_process(&audio_gpu, gpu, &audio_state, cpu_audio_frame, audio_output, count);
+    if (!processed) {
+        if (use_gpu_audio) {
+            fprintf(stderr, "GPU audio failed; continuing with CPU chain: %s\n", SDL_GetError());
+            use_gpu_audio = false;
+        }
+        audio_chain_process(&audio_chain, &audio_state, cpu_audio_frame, audio_output, count);
+    }
+    int bytes = SDL_GetAudioStreamQueued(audio_stream);
+    if (bytes >= 0 && audio_sync_stale(bytes / (int)sizeof(float), count)) {
+        // A long presentation/OS stall must not leave old gameplay queued.
+        SDL_ClearAudioStream(audio_stream);
+        memset(&audio_rate_ctrl, 0, sizeof(audio_rate_ctrl));
+        SDL_SetAudioStreamFrequencyRatio(audio_stream, 1.0f);
+        audio_fade_remaining = AUDIO_STREAM_RATE / 200;
+    }
+    for (int i = 0; i < count; ++i) {
+        float sample = fmaxf(-1.0f, fminf(1.0f, audio_output[i] * 1.5f));
+        // Track post-coupling acoustic energy, not the APU DAC's DC bias.
+        g_audio_bass_rms = .9995f * g_audio_bass_rms + .0005f * sample * sample;
+        if (audio_fade_remaining > 0) {
+            sample *= 1.0f - (float)audio_fade_remaining / (AUDIO_STREAM_RATE / 200);
+            --audio_fade_remaining;
+        }
+        audio_output[i] = sample;
+    }
+    if (audio_capture) fwrite(audio_output, sizeof(float), count, audio_capture);
+    if (audio_trace) fprintf(audio_trace, "%u,%d,%d,%.7f,%d\n", frame_count, count,
+        SDL_GetAudioStreamQueued(audio_stream) / (int)sizeof(float),
+        SDL_GetAudioStreamFrequencyRatio(audio_stream), use_gpu_audio);
+    if (!SDL_PutAudioStreamData(audio_stream, audio_output, count * sizeof(float)))
+        fprintf(stderr, "Audio submission failed: %s\n", SDL_GetError());
 }
 
 /* ============================================================================
@@ -539,6 +529,8 @@ int main(int argc, char **argv) {
     preset_ctx.sig_state = &sig_state;
     preset_ctx.video_chain = &video_chain;
     preset_ctx.audio_chain = &audio_chain;
+    preset_ctx.gpu_audio_enabled = &gpu_audio_enabled;
+    preset_ctx.use_gpu_audio = &use_gpu_audio;
     preset_ctx.video_gpu_chain = &video_gpu_chain;
     preset_ctx.gpu = gpu;
     preset_ctx.gpu_video_enabled = &gpu_video_enabled;
@@ -566,14 +558,11 @@ int main(int argc, char **argv) {
     if (startup_preset_idx < 0 && mynes_config.last_preset[0])
         startup_preset_idx = preset_find_by_slug(mynes_config.last_preset);
     if (startup_preset_idx < 0)
-        startup_preset_idx = preset_find_by_slug("stass_favourite");
+        startup_preset_idx = preset_find_by_slug("reference_composite");
     if (startup_preset_idx < 0 && preset_total_count() > 0)
         startup_preset_idx = 0;
     if (startup_preset_idx >= 0) {
         preset_load_index_exact(startup_preset_idx);
-        mynes_config_set_last_preset(&mynes_config,
-            preset_display_name(startup_preset_idx));
-        mynes_config_save(&mynes_config);
     }
 
     /* --- Resolve shader directory --- */
@@ -588,28 +577,17 @@ int main(int argc, char **argv) {
     }
     const char *shader_dir = shader_dir_buf;
 
-    /* --- GPU audio chain --- */
-    if (audio_gpu_init(&audio_gpu, gpu, &audio_chain, shader_dir)) {
-        gpu_audio_enabled = true;
-        /* Allocate for the PAL maximum so mid-session region flips never
-         * truncate the A/B capture path. */
-        audio_frame_samples = AUDIO_OUTPUT_PAL_SAMPLES;
-        cpu_audio_frame = (float *)malloc(audio_frame_samples * sizeof(float));
-        gpu_audio_out = (float *)malloc(audio_frame_samples * sizeof(float));
-        if (cpu_audio_frame && gpu_audio_out) {
-            LOGV("GPU audio chain: initialized (A/B mode, %d samples/frame)\n",
-                 audio_frame_samples);
-        } else {
-            printf("GPU audio chain: buffer allocation failed\n");
-            free(cpu_audio_frame);
-            free(gpu_audio_out);
-            cpu_audio_frame = NULL;
-            gpu_audio_out = NULL;
-            gpu_audio_enabled = false;
-        }
-    } else {
-        printf("GPU audio chain: not available\n");
-        gpu_audio_enabled = false;
+    /* GPU and CPU backends consume the same band-limited APU samples. */
+    gpu_audio_enabled = audio_gpu_init(&audio_gpu, gpu, &audio_chain, shader_dir);
+    if (!gpu_audio_enabled) fprintf(stderr, "GPU audio unavailable; CPU chain remains active\n");
+    use_gpu_audio = gpu_audio_enabled && getenv("MYNES_GPU_AUDIO") != NULL;
+    audio_reset();
+    const char *audio_capture_path = getenv("MYNES_AUDIO_CAPTURE");
+    const char *audio_trace_path = getenv("MYNES_AUDIO_TRACE");
+    if (audio_capture_path) audio_capture = fopen(audio_capture_path, "wb");
+    if (audio_trace_path) {
+        audio_trace = fopen(audio_trace_path, "w");
+        if (audio_trace) fprintf(audio_trace, "frame,samples,queued,ratio,gpu\n");
     }
 
     /* --- GPU video signal chain --- */
@@ -679,20 +657,19 @@ int main(int argc, char **argv) {
             }
             beam_rps = beam_h / 240;
             if (beam_rps < 1) beam_rps = 1;
-            beam_h = 240 * beam_rps;  /* snap to exact scanline multiple */
+
             LOGV("Pixel-perfect beam: %dx%d (%d rps, window %dx%d)\n",
                  beam_w, beam_h, beam_rps, win_pw, win_ph);
             if (video_gpu_set_beam_params(&video_gpu_chain, gpu,
                                           beam_w, beam_h, beam_rps,
                                           0.20f, 0.70f)) {
-                beam_rgba_out = (uint8_t *)calloc(beam_w * beam_h * 8, 1);  /* float16x4 */
                 LOGV("Beam profile: %dx%d (%d rows/scanline)\n",
                      beam_w, beam_h, beam_rps);
                 /* Push preset beam params — the hardcoded sigma above is just
                  * for buffer allocation. The real values come from the preset. */
                 {
                     TVDisplayParams *tv = &video_chain.tv;
-                    float sig_n = 0.35f - tv->beam_sharpness * 0.20f;
+                    float sig_n = (0.35f - tv->beam_sharpness * 0.20f) * (0.4f + tv->beam_height_min * 0.8f);
                     float sig_w = 0.30f + tv->beam_height_max * 0.33f;
                     if (sig_n < 0.10f) sig_n = 0.10f;
                     if (sig_w < 0.20f) sig_w = 0.20f;
@@ -739,7 +716,7 @@ int main(int argc, char **argv) {
     render_ctx.display_tex_h = 0;
     render_ctx.gpu_disp = &gpu_disp;
     render_ctx.gpu_display_enabled = gpu_display_enabled;
-    render_ctx.crt_shader_enabled = crt_shader_enabled;
+    render_ctx.crt_shader_enabled = true;
     render_ctx.hdr_enabled = hdr_available;
 
     /* --- Chain visualiser --- */
@@ -867,6 +844,7 @@ int main(int argc, char **argv) {
                                         new_region == SIGNAL_REGION_PAL ? 1 : 0);
                                 }
                                 nes_reset(&nes);
+                                audio_reset();
                                 rom = new_rom;
                                 rom_loaded = true;
                                 free(static_frame_buf);
@@ -931,19 +909,12 @@ int main(int argc, char **argv) {
                         } else {
                             composite_enabled = !composite_enabled;
                             /* Raw palette mode → no CRT shader. */
-                            crt_shader_enabled = composite_enabled;
-                            render_ctx.crt_shader_enabled = crt_shader_enabled;
+                            render_ctx.crt_shader_enabled = composite_enabled;
+                            preset_ctx.display_bypass = 0;
                             printf("Composite: %s (CRT auto %s)\n",
                                    composite_enabled ? "ON" : "OFF (raw RGB)",
-                                   crt_shader_enabled ? "on" : "off");
+                                   render_ctx.crt_shader_enabled ? "on" : "off");
                         }
-                    }
-                    /* S: toggle CRT shader. */
-                    if (ev.key.scancode == SDL_SCANCODE_S) {
-                        crt_shader_enabled = !crt_shader_enabled;
-                        render_ctx.crt_shader_enabled = crt_shader_enabled;
-                        printf("CRT shader: %s\n",
-                               crt_shader_enabled ? "ON" : "OFF (blit)");
                     }
                     /* F11 or F: toggle fullscreen + hide cursor. */
                     if (ev.key.scancode == SDL_SCANCODE_F11 ||
@@ -1102,9 +1073,6 @@ int main(int argc, char **argv) {
                         if (n > 0) {
                             int next = (current_preset + 1) % n;
                             preset_load_index(next);
-                            mynes_config_set_last_preset(&mynes_config,
-                                preset_display_name(next));
-                            mynes_config_save(&mynes_config);
                         }
                     }
                     /* T: cycle test signal patterns. */
@@ -1119,7 +1087,7 @@ int main(int argc, char **argv) {
                         if (gpu_audio_enabled) {
                             use_gpu_audio = !use_gpu_audio;
                             printf("Audio: %s\n",
-                                   use_gpu_audio ? "GPU chain" : "CPU (real-time)");
+                                   use_gpu_audio ? "GPU chain" : "CPU chain");
                         }
                         break;
                     }
@@ -1137,6 +1105,19 @@ int main(int argc, char **argv) {
                     break;
 
                 case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+                    if (gpu_video_enabled && video_gpu_chain.beam_out_w > 0) {
+                        int w = ev.window.data1, h = ev.window.data2;
+                        if (w * 3 > h * 4) w = h * 4 / 3;
+                        else h = w * 3 / 4;
+                        if (w > 0 && h > 0 && (w != video_gpu_chain.beam_out_w || h != video_gpu_chain.beam_out_h)) {
+                            // No stale texture pointer may survive the beam allocation change.
+                            if (!render_ctx.owns_display_tex) render_ctx.display_tex = NULL;
+                            if (!video_gpu_set_beam_params(&video_gpu_chain, gpu, w, h,
+                                    h / 240 > 0 ? h / 240 : 1,
+                                    video_gpu_chain.beam_sigma_narrow, video_gpu_chain.beam_sigma_wide))
+                                fprintf(stderr, "Could not resize CRT beam: %s\n", SDL_GetError());
+                        }
+                    }
                     if (gpu_display_enabled) {
                         gpu_display_resize(&gpu_disp, gpu,
                                            ev.window.data1, ev.window.data2);
@@ -1154,8 +1135,17 @@ int main(int argc, char **argv) {
         if (now < frame_deadline) SDL_DelayPrecise(frame_deadline - now);
         frame_deadline += period;
 
-        /* --- Audio sync — adjust APU rate before producing samples --- */
-        audio_adjust_rate();
+        /* --- Audio sync: correct device clock drift before producing a block --- */
+        bool play_audio = rom_loaded && !browser_active && !static_frame_buf;
+        if (play_audio != audio_playing) {
+            audio_reset();
+            audio_playing = play_audio;
+        }
+        if (play_audio) audio_adjust_rate(period / 1e9);
+        // The frontend owns the analog chain; retain core anti-alias FIR and
+        // DAC mixing but avoid applying the console filters a second time.
+        nes.apu.filter_config = (APUFilterConfig){1.0, 1.0, 1.0};
+        nes.apu.sample_rate = AUDIO_STREAM_RATE;
 
         /* --- Run one NES frame (skip when the browser is the source).
          * The browser writes directly into the PPU framebuffer below,
@@ -1190,21 +1180,8 @@ int main(int argc, char **argv) {
         }
         Uint64 t_emu1 = SDL_GetPerformanceCounter();
 
-        /* --- Audio GPU processing (A/B verification) --- */
-        if (gpu_audio_enabled && use_gpu_audio && audio_frame_pos > 0) {
-            if (audio_gpu_process(&audio_gpu, gpu, cpu_audio_frame, audio_frame_pos,
-                                  gpu_audio_out, audio_frame_samples)) {
-                /* Send GPU-processed audio to SDL. */
-                for (int i = 0; i < audio_frame_pos; i++) {
-                    float s = gpu_audio_out[i] * 1.5f;
-                    if (s > 1.0f) s = 1.0f;
-                    if (s < -1.0f) s = -1.0f;
-                    SDL_PutAudioStreamData(audio_stream, &s, sizeof(float));
-                }
-            }
-        }
-        /* Reset frame buffer for next frame. */
-        audio_frame_pos = 0;
+        if (play_audio) audio_submit_frame();
+        else audio_frame_pos = 0;
 
         /* --- Overlays (before signal processing) --- */
         preset_composite_overlays(&preset_ctx);
@@ -1270,12 +1247,13 @@ int main(int argc, char **argv) {
             /* Generate the DAC waveform on GPU when no CPU-only edge effects
              * or waveform diagnostics are requested. Both paths use PPU codes. */
             const TVDisplayParams *tv = &video_chain.tv;
-            bool gpu_dac = test_signal_mode == 0 && !debug_dump &&
+            bool gpu_dac = test_signal_mode == 0 &&
                 video_gpu_chain.pipe_dac.pipeline && video_gpu_chain.buf_signal_table &&
-                tv->beam_edge_fade == 0 && tv->beam_edge_overshoot == 0 &&
-                (tv->burst_lock_drift == 0 || tv->burst_lock_drift_width == 0) &&
-                tv->beam_current_load == 0;
-            if (test_signal_mode == 0 && !gpu_dac) {
+                (video_chain.connection == VIDEO_CONN_SVIDEO || (!debug_dump &&
+                 tv->beam_edge_fade == 0 && tv->beam_edge_overshoot == 0 &&
+                 (tv->burst_lock_drift == 0 || tv->burst_lock_drift_width == 0) &&
+                 tv->beam_current_load == 0));
+            if (test_signal_mode == 0 && (!gpu_dac || debug_dump)) {
                 waveform_generate(waveform_buf, nes.ppu.index_framebuffer,
                                   &sig_state, frame_count);
                 waveform_apply_beam_edges(waveform_buf,
@@ -1334,7 +1312,7 @@ int main(int argc, char **argv) {
                                         render_ctx.hv_sag_state,
                                         render_ctx.audio_bass_rms);
             t_gpu0 = SDL_GetPerformanceCounter();
-            float *readback = (dump_this_frame || screenshot_after > 0 ||
+            float *readback = (dump_this_frame || (screenshot_after > 0 && frame_count >= (unsigned)screenshot_after) ||
                 !video_gpu_get_beam_texture(&video_gpu_chain)) ? gpu_rgb_out : NULL;
             bool gpu_ok = gpu_dac
                 ? video_gpu_process_full(&video_gpu_chain, gpu, nes.ppu.index_framebuffer,
@@ -1540,18 +1518,16 @@ int main(int argc, char **argv) {
      * Cleanup
      * ======================================================================== */
 
+    if (audio_capture) fclose(audio_capture);
+    if (audio_trace) fclose(audio_trace);
     if (debug_srv) debug_server_destroy(debug_srv);
     if (tap_mgr) debug_tap_destroy(tap_mgr);
     chain_vis_destroy(chain_vis);
     if (gpu_display_enabled) gpu_display_destroy(&gpu_disp, gpu);
     free(waveform_buf);
     free(gpu_rgb_out);
-    free(beam_rgba_out);
-    free(cpu_audio_frame);
-    free(gpu_audio_out);
     if (gpu_video_enabled) video_gpu_destroy(&video_gpu_chain, gpu);
     if (gpu_audio_enabled) audio_gpu_destroy(&audio_gpu, gpu);
-    audio_chain_destroy(&audio_chain);
     if (render_ctx.display_tex && render_ctx.owns_display_tex)
         SDL_ReleaseGPUTexture(gpu, render_ctx.display_tex);
     nes_rom_free(&rom);

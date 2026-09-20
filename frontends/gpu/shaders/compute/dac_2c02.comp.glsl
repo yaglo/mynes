@@ -52,6 +52,8 @@ layout(set = 1, binding = 0) writeonly buffer WaveformBuf {
     float waveform[];
 };
 
+layout(set = 1, binding = 1) writeonly buffer LumaBuf { float source_y[]; };
+
 layout(set = 2, binding = 0) uniform Params {
     uint  samples_per_pixel;   /* 8 (NTSC) or 10 (PAL) */
     uint  samples_per_line;    /* 2048 (NTSC) or 2560 (PAL) */
@@ -60,6 +62,7 @@ layout(set = 2, binding = 0) uniform Params {
     uint  phase_field_adv;     /* phase advance per frame (not used here, CPU tracks) */
     uint  frame_field;         /* field index within dot crawl cycle */
     uint  use_alt_table;       /* 1 = PAL (alternate odd lines), 0 = NTSC */
+    uint separate_yc;
 };
 
 void main() {
@@ -100,7 +103,15 @@ void main() {
      * precompute time. NTSC sets use_alt_table=0 and always samples
      * signal_table, keeping the hot loop branch-free on that path. */
     bool alt = (use_alt_table != 0u) && ((sy & 1u) == 1u);
+    // Ideal separated-output modification: DC and AC components of the
+    // same DAC code. This is a voltage-cycle mean, never an RGB palette.
+    float dc = 0.0;
+    if (separate_yc != 0u) {
+        for (uint p=0u; p<12u; p++)
+            dc += (alt ? signal_table_alt[entry*24u+p] : signal_table[entry*24u+p]) / 12.0;
+    }
     for (uint s = 0; s < samples_per_pixel; s++) {
+        if (separate_yc != 0u) source_y[wave_base+s] = dc;
         waveform[wave_base + s] = alt
             ? signal_table_alt[table_base + s]
             : signal_table[table_base + s];

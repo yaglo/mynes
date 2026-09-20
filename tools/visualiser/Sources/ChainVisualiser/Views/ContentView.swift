@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ContentView: View {
-    @ObservedObject var connection: EmulatorConnection
+    let connection: EmulatorConnection
     @State private var group = "Decoder"
     @State private var showTiming = false
     var body: some View {
@@ -22,7 +22,13 @@ struct ContentView: View {
             Divider()
             PresetBar(connection: connection)
             Divider()
-            NodeGraphView(stages: connection.snapshot.videoStages, selectedGroup: $group)
+            HStack {
+                Text("Video signal path").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button { group = "Audio" } label: { Label("Audio controls", systemImage: "speaker.wave.2") }
+                    .tint(group == "Audio" ? .cyan : .secondary)
+            }.padding(.horizontal, 24).padding(.top, 12)
+            NodeGraphView(stages: connection.videoStages, selectedGroup: $group)
             Divider()
             HSplitView {
                 VStack(alignment: .leading, spacing: 16) {
@@ -31,15 +37,15 @@ struct ContentView: View {
                         Spacer()
                         Toggle("CPU dispatch timing", isOn: $showTiming).toggleStyle(.checkbox).font(.caption)
                     }
-                    if connection.snapshot.videoStages.isEmpty {
+                    if connection.videoStages.isEmpty {
                         ContentUnavailableView("Waiting for the emulator", systemImage: "waveform.path",
                             description: Text("Launch mynes_gpu with --debug-server. The graph and controls will follow the running chain."))
                     } else if showTiming {
-                        PerformanceDashboardView(stages: connection.snapshot.videoStages)
+                        LiveTimingView(connection: connection)
                     } else {
                         ScrollView {
                             LazyVStack(spacing: 5) {
-                                ForEach(connection.snapshot.videoStages) { stage in
+                                ForEach(connection.videoStages) { stage in
                                     Button { group = stage.kernelType.group } label: {
                                         HStack(spacing: 12) {
                                             Text(String(format: "%02d", stage.id + 1)).font(.caption.monospaced()).foregroundStyle(.tertiary)
@@ -63,15 +69,27 @@ struct ContentView: View {
                 ParameterEditorView(group: group, connection: connection).frame(minWidth: 340, idealWidth: 370, maxWidth: 460)
             }
             Divider()
-            HStack {
-                Text(connection.socketPath)
-                Spacer()
-                Text(String(format: "%.1f fps · Frame %u", connection.framesPerSecond, connection.snapshot.frameNumber))
-            }.font(.caption.monospaced()).foregroundStyle(.tertiary).padding(12)
+            ConnectionFooter(connection: connection)
         }
         .background(Color(red: 0.055, green: 0.07, blue: 0.085))
         .preferredColorScheme(.dark)
         .frame(minWidth: 900, minHeight: 650)
         .onAppear { connection.connect() }
+    }
+}
+
+private struct LiveTimingView: View {
+    let connection: EmulatorConnection
+    var body: some View { PerformanceDashboardView(stages: connection.snapshot.videoStages) }
+}
+
+private struct ConnectionFooter: View {
+    let connection: EmulatorConnection
+    var body: some View {
+        HStack {
+            Text(connection.socketPath)
+            Spacer()
+            Text(String(format: "%.1f fps · Frame %u", connection.framesPerSecond, connection.frameNumber))
+        }.font(.caption.monospaced()).foregroundStyle(.tertiary).padding(12)
     }
 }

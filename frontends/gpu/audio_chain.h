@@ -1,33 +1,5 @@
-/*
- * Audio Signal Chain — Stage Definitions
- * ========================================
- *
- * Defines the audio signal path from APU DAC output to speaker output
- * as a sequence of composable kernel stages. Each stage maps to one or
- * more GPU compute dispatches.
- *
- * The chain is:
- *   [CPU: APU channels → DAC → mixer → float samples]
- *     ↓ upload to GPU
- *   Stage 1: Coupling capacitor (RC high-pass, DC blocking)
- *   Stage 2: Feedback network (RC high-pass, bass shaping)
- *   Stage 3: Amplifier bandwidth (RC low-pass)
- *   Stage 4: Amplifier saturation (pointwise, tanh soft-clip)
- *   Stage 5: PSU hum injection (pointwise, additive sine)
- *   Stage 6: Noise floor (pointwise, additive white noise)
- *   Stage 7: Cable capacitance (RC low-pass, length-dependent)
- *   Stage 8: TV input coupling (RC high-pass)
- *   Stage 9: Speaker model (FIR or biquad chain)
- *   Stage 10: Decimation (FIR, 1.79 MHz → 48 kHz)
- *     ↓ readback to CPU → audio output
- *
- * NOTE: This is the VERIFICATION path — CPU audio is the primary
- * real-time output. The GPU chain exists for A/B testing, offline
- * rendering, and future latency-hiding use.
- *
- * Every stage can be individually bypassed (enabled flag). Connection
- * type determines which cable/TV stages are active.
- */
+/* Streaming console → cable → speaker audio, after APU anti-alias resampling.
+ * CPU and GPU backends share coefficients and state. No second decimator. */
 
 #ifndef AUDIO_CHAIN_H
 #define AUDIO_CHAIN_H
@@ -66,14 +38,12 @@ typedef struct {
     float frequency;        /* 60 Hz (NTSC) or 50 Hz (PAL) */
     float harmonic_2;       /* 2nd harmonic amplitude (120/100 Hz) */
     float harmonic_3;       /* 3rd harmonic amplitude (180/150 Hz) */
-    float phase;            /* streaming phase state (updated per frame) */
 } AudioHumStage;
 
 /* Noise floor (stage 6). */
 typedef struct {
     bool  enabled;
     float amplitude;        /* peak noise level (0-0.02) */
-    uint32_t rng_state;     /* xorshift32 seed (streaming) */
 } AudioNoiseStage;
 
 /* Speaker model (stage 9). */
@@ -84,14 +54,6 @@ typedef struct {
     float biquad_resonance[5]; /* a0, a1, a2, b1, b2 for resonance peak */
     float biquad_rolloff[5];   /* a0, a1, a2, b1, b2 for high-freq rolloff */
 } AudioSpeakerStage;
-
-/* Decimation (stage 10). */
-typedef struct {
-    bool  enabled;
-    int   tap_count;        /* FIR taps (65-129) */
-    int   decimation_ratio; /* input_rate / output_rate */
-    float *taps;            /* FIR coefficients (allocated) */
-} AudioDecimationStage;
 
 /* ============================================================================
  * Complete audio chain configuration
@@ -111,27 +73,45 @@ typedef struct {
     AudioRCStage        cable;              /* Stage 7: cable capacitance */
     AudioRCStage        tv_input_coupling;  /* Stage 8: TV input cap */
     AudioSpeakerStage   speaker;            /* Stage 9: speaker model */
-    AudioDecimationStage decimation;        /* Stage 10: downsample */
 
-    /* Processing rate (= CPU clock rate). */
+    /* Processing rate of the band-limited APU callback, in Hz. */
     float sample_rate;
+    uint32_t bypass_mask;       /* runtime diagnostics, nine stage bits */
 } AudioChain;
 
 /* ============================================================================
  * Preset initialization
  * ============================================================================ */
 
-/* Initialize audio chain with physically-accurate default values for a
- * given hardware variant + speaker type. */
+/* Initialize nominal console filter corners and a generic speaker model. */
 void audio_chain_init_preset(AudioChain *chain, int console_variant,
                               int speaker_type, int region);
 
-/* Prepare the chain for processing: compute IIR/FIR coefficients from
+/* Prepare the chain for processing: compute IIR coefficients from
  * the physical component values. Call after changing any R/C value. */
 void audio_chain_prepare(AudioChain *chain);
 
-/* Free dynamically allocated resources (FIR taps). */
-void audio_chain_destroy(AudioChain *chain);
+/* State is independent of frame boundaries and can move between backends. */
+typedef struct {
+    float rc[5][2];             /* previous input/output per RC stage */
+    float speaker[2][2];        /* transposed direct-form II delays */
+    float hum_phase;
+    uint32_t rng;
+} AudioState;
+
+typedef struct {
+    uint32_t count, flags, pad[2];
+    float rc[5][4];             /* a, b, highpass, enabled */
+    float speaker[2][8];        /* five biquad coefficients, padded to vec4 */
+    float effects[4];           /* drive, hum amplitude, phase step, noise */
+    float harmonics[4];         /* relative second/third hum harmonics */
+} AudioParams;
+
+#define AUDIO_STREAM_RATE 44100
+#define AUDIO_BLOCK_CAPACITY 2048
+void audio_chain_params(const AudioChain *chain, int count, AudioParams *params);
+void audio_chain_process(const AudioChain *chain, AudioState *state,
+                         const float *input, float *output, int count);
 
 /* ============================================================================
  * Console variant + speaker type enums

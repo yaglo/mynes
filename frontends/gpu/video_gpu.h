@@ -89,6 +89,8 @@ typedef struct {
     SignalChain sig_chain;
     SignalFormat raster_fmt; /* full lines upstream; signal_fmt remains active-picture format */
     int stage_raster, stage_receiver;
+    int stage_y_console, stage_y_cable, stage_y_ghost, stage_yc_route;
+    bool source_separated;
     int signal_phase_base, signal_line_phase;
     SDL_GPUBuffer *buf_receiver;
 
@@ -178,7 +180,7 @@ typedef struct {
     int   fir_q_n;                  /* number of Q (narrower chroma) taps (odd) */
 
     /* --- Video amplifier FIR (per-channel RGB bandwidth limit) --- */
-    float vamp_taps[12];                /* FIR coefficients (max 9 taps, padded) */
+    float vamp_taps[32][4];             /* independent R/G/B FIR coefficients, std140 vec4 */
     int   vamp_tap_count;               /* number of taps (odd) */
     bool  vamp_enabled;                 /* whether video amp stage is active */
 

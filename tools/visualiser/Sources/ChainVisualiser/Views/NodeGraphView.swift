@@ -10,7 +10,9 @@ struct ChainGroup: Identifiable {
         .init(name: "Phosphor", symbol: "sparkles", subtitle: "Light over time", detail: "Control the phosphor mask and exponential afterglow. Zero persistence disables decay history."),
         .init(name: "Glass", symbol: "display", subtitle: "Screen → room", detail: "Adjust screen geometry, scattered light, and the viewing environment.")
     ]
-    static func named(_ name: String) -> ChainGroup { all.first { $0.name == name } ?? all[0] }
+    static let audio = ChainGroup(name: "Audio", symbol: "speaker.wave.2", subtitle: "APU → speaker",
+        detail: "Adjust amplifier compression, power-supply hum, and noise. CPU and GPU audio use the same continuous console, cable, and speaker model. Switch processing with A in the emulator or Setup → Audio.")
+    static func named(_ name: String) -> ChainGroup { name == "Audio" ? audio : all.first { $0.name == name } ?? all[0] }
 }
 
 struct NodeGraphView: View {

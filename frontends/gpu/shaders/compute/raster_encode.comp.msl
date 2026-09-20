@@ -22,6 +22,7 @@ struct Params
     float line_phase;
     uint region;
     uint lines;
+    uint separate_yc;
 };
 
 struct Active
@@ -34,9 +35,19 @@ struct Raster
     float raster[1];
 };
 
+struct SourceY
+{
+    float source_y[1];
+};
+
+struct RasterY
+{
+    float raster_y[1];
+};
+
 constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
 
-kernel void main0(constant Params& _20 [[buffer(0)]], device Active& _144 [[buffer(1)]], device Raster& _158 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+kernel void main0(constant Params& _20 [[buffer(0)]], device Active& _144 [[buffer(1)]], device Raster& _158 [[buffer(3)]], device SourceY& _193 [[buffer(2)]], device RasterY& _207 [[buffer(4)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
     uint i = gl_GlobalInvocationID.x;
     if (i >= _20.count)
@@ -84,4 +95,23 @@ kernel void main0(constant Params& _20 [[buffer(0)]], device Active& _144 [[buff
         value = _144.picture[((line * _20.active_width) + x) - start];
     }
     _158.raster[i] = value;
+    if (_20.separate_yc != 0u)
+    {
+        float y = (_dot < 25u) ? sync : 0.0;
+        bool _178 = (line < 240u) && (x >= start);
+        bool _187;
+        if (_178)
+        {
+            _187 = x < (start + _20.active_width);
+        }
+        else
+        {
+            _187 = _178;
+        }
+        if (_187)
+        {
+            y = _193.source_y[((line * _20.active_width) + x) - start];
+        }
+        _207.raster_y[i] = y;
+    }
 }

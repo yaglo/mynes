@@ -74,6 +74,20 @@ float sample_rgb_channel_linear(float sx, int sy, uint channel) {
     return mix(a, b, tx);
 }
 
+// Integral of a unit-area Gaussian over a drawable pixel. Point sampling
+// narrow spots loses energy at small sizes and makes scanlines shimmer.
+float erf_approx(float x) {
+    float t = 1.0 / (1.0 + 0.3275911 * abs(x));
+    float p = (((((1.061405429*t - 1.453152027)*t) + 1.421413741)*t
+                - 0.284496736)*t + 0.254829592)*t;
+    return sign(x) * (1.0 - p * exp(-x*x));
+}
+float beam_coverage(float distance, float sigma, float width) {
+    float scale = 0.70710678118 / max(sigma, 0.01);
+    return max(0.0, 0.5 * (erf_approx((distance + 0.5*width)*scale)
+                         - erf_approx((distance - 0.5*width)*scale)) / width);
+}
+
 void main() {
     uint ox = gl_GlobalInvocationID.x;
     uint oy = gl_GlobalInvocationID.y;
@@ -99,16 +113,16 @@ void main() {
         return;
     }
 
-    uint rps = rows_per_scanline;
+    float rows_per_line = float(out_h) / 240.0;
     uint out_h_clamped = max(out_h, 1u);
 
     float r_vy_clamped = clamp(r_vy, 0.0, float(out_h_clamped - 1u));
     float g_vy_clamped = clamp(g_vy, 0.0, float(out_h_clamped - 1u));
     float b_vy_clamped = clamp(b_vy, 0.0, float(out_h_clamped - 1u));
 
-    float r_linef = r_vy_clamped / float(rps);
-    float g_linef = g_vy_clamped / float(rps);
-    float b_linef = b_vy_clamped / float(rps);
+    float r_linef = r_vy_clamped / rows_per_line;
+    float g_linef = g_vy_clamped / rows_per_line;
+    float b_linef = b_vy_clamped / rows_per_line;
 
     float r_d = fract(r_linef) - 0.5;
     float g_d = fract(g_linef) - 0.5;
@@ -120,7 +134,9 @@ void main() {
 
     float R = 0.0, G = 0.0, B = 0.0;
 
-    for (int soff = -1; soff <= 1; soff++) {
+    int radius = min(4, int(ceil(3.0 * clamp(max(sigma_narrow,sigma_wide)*focus_scale,0.05,1.0)
+                               + 0.5/rows_per_line)));
+    for (int soff = -radius; soff <= radius; soff++) {
         float lR = 0.0;
         float lG = 0.0;
         float lB = 0.0;
@@ -137,7 +153,8 @@ void main() {
         float bloom_t = pow(lY, bloom_gamma);
         float sv = (sigma_narrow + (sigma_wide - sigma_narrow) * bloom_t)
                  * focus_scale;
-        float inv2s = 1.0 / max(2.0 * sv * sv, 1e-5);
+        sv = clamp(sv, 0.05, 1.0);
+        float pixel_width = 1.0 / rows_per_line;
 
         float rd = r_d - float(soff);
         float gd = g_d - float(soff);
@@ -145,10 +162,9 @@ void main() {
 
         // Gun voltage becomes light before spatial beam deposition.
         // Unit-area spots conserve current as focus/bloom changes width.
-        float energy = 1.0 / max(2.50662827463 * sv, 0.001);
-        R += pow(max(lR,0.0),gamma+gamma_r) * exp(-(rd * rd) * inv2s) * energy;
-        G += pow(max(lG,0.0),gamma+gamma_g) * exp(-(gd * gd) * inv2s) * energy;
-        B += pow(max(lB,0.0),gamma+gamma_b) * exp(-(bd * bd) * inv2s) * energy;
+        R += pow(max(lR,0.0),gamma+gamma_r) * beam_coverage(rd, sv, pixel_width);
+        G += pow(max(lG,0.0),gamma+gamma_g) * beam_coverage(gd, sv, pixel_width);
+        B += pow(max(lB,0.0),gamma+gamma_b) * beam_coverage(bd, sv, pixel_width);
     }
 
     R *= dwell;

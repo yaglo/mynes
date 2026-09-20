@@ -10,12 +10,12 @@
 static int failures;
 #define CHECK(x) do { if (!(x)) { fprintf(stderr,"Display FAIL %d: %s\n",__LINE__,#x); failures++; } } while(0)
 
-static void render(SDL_GPUDevice *gpu, GPUDisplay *d, SDL_GPUTexture *input,
-                   SDL_GPUTexture *target, GPUDisplayParams *p, float avg[3], float *peak) {
+static void render_region(SDL_GPUDevice *gpu, GPUDisplay *d, SDL_GPUTexture *input,
+                   SDL_GPUTexture *target, GPUDisplayParams *p, const SDL_GPUViewport *viewport, float avg[3], float *peak) {
     SDL_GPUTransferBufferCreateInfo bi = {.usage=SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD,.size=W*H*8};
     SDL_GPUTransferBuffer *download = SDL_CreateGPUTransferBuffer(gpu,&bi);
     SDL_GPUCommandBuffer *cmd=SDL_AcquireGPUCommandBuffer(gpu);
-    gpu_display_render(d,gpu,cmd,input,W,H,target,W,H,p,NULL);
+    gpu_display_render(d,gpu,cmd,input,W,H,target,W,H,p,viewport);
     SDL_GPUCopyPass *copy=SDL_BeginGPUCopyPass(cmd);
     SDL_GPUTextureRegion region={.texture=target,.w=W,.h=H,.d=1};
     SDL_GPUTextureTransferInfo dst={.transfer_buffer=download,.pixels_per_row=W,.rows_per_layer=H};
@@ -32,6 +32,11 @@ static void render(SDL_GPUDevice *gpu, GPUDisplay *d, SDL_GPUTexture *input,
         SDL_UnmapGPUTransferBuffer(gpu,download);
     }
     SDL_ReleaseGPUTransferBuffer(gpu,download);
+}
+
+static void render(SDL_GPUDevice *gpu, GPUDisplay *d, SDL_GPUTexture *input,
+                   SDL_GPUTexture *target, GPUDisplayParams *p, float avg[3], float *peak) {
+    render_region(gpu,d,input,target,p,NULL,avg,peak);
 }
 
 int test_display_fidelity(SDL_GPUDevice *gpu) {
@@ -69,6 +74,22 @@ int test_display_fidelity(SDL_GPUDevice *gpu) {
     render(gpu,&d,input,target,&p,avg,&peak); CHECK(peak<=1.501f);
     p.mask_strength=0; p.hdr_gain=1; p.sdr_white_level=2;
     render(gpu,&d,input,target,&p,avg,&peak); CHECK(fabsf(avg[0]-0.5f)<0.001f);
+    // A mask smaller than Nyquist must converge to neutral unit energy.
+    p.sdr_white_level=1; p.mask_strength=1; p.mask_pitch_px=0.5f;
+    for(int type=0;type<3;type++) {
+        p.mask_type=type; render(gpu,&d,input,target,&p,avg,&peak);
+        for(int c=0;c<3;c++) CHECK(fabsf(avg[c]-0.25f)<0.001f);
+    }
+    p.mask_strength=0; p.ambient_light=0.1f;
+    SDL_GPUViewport viewport={.x=W/4,.y=0,.w=W/2,.h=H,.min_depth=0,.max_depth=1};
+    render_region(gpu,&d,input,target,&p,&viewport,avg,&peak);
+    CHECK(fabsf(avg[0]-(0.015f+0.25f*0.5f))<0.001f);
+    TVDisplayParams tv={.mask_triads=500,.mask_pitch_px=3};
+    GPUDisplayParams scaled;
+    gpu_display_params_from_tv(&scaled,&tv,W,H,1500,1125);
+    CHECK(fabsf(scaled.mask_pitch_px-1)<0.0001f);
+    gpu_display_params_from_tv(&scaled,&tv,W,H,750,563);
+    CHECK(fabsf(scaled.mask_pitch_px-0.5f)<0.0001f);
     SDL_ReleaseGPUTexture(gpu,input); SDL_ReleaseGPUTexture(gpu,target); gpu_display_destroy(&d,gpu);
     return failures;
 }

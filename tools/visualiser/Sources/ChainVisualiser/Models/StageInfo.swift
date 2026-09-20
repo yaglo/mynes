@@ -6,16 +6,17 @@ enum KernelType: String, CaseIterable, Sendable {
     case pal = "PAL correction", deflection = "Deflection", beam = "Electron beam", rf = "RF"
     case videoAmp = "Video amplifier", blur = "Beam width", temporal = "Persistence", agc = "AGC"
     case raster = "PPU raster", receiver = "Burst lock", receiverDemod = "Chroma detector"
+    case separatedYC = "Separated Y/C"
     case unknown = "Unknown"
 
     static func from(ordinal: UInt8) -> KernelType {
         let types: [KernelType] = [.pointwise, .rcFilter, .fir, .delay, .comb, .modulator, .dac,
-                                  .matrix, .pal, .deflection, .beam, .rf, .videoAmp, .blur, .temporal, .agc, .raster, .receiver, .receiverDemod]
+                                  .matrix, .pal, .deflection, .beam, .rf, .videoAmp, .blur, .temporal, .agc, .raster, .receiver, .receiverDemod, .separatedYC]
         return Int(ordinal) < types.count ? types[Int(ordinal)] : .unknown
     }
     var group: String {
         switch self {
-        case .raster, .rcFilter, .delay, .rf, .agc: return "Connection"
+        case .separatedYC, .raster, .rcFilter, .delay, .rf, .agc: return "Connection"
         case .receiver, .receiverDemod, .pointwise, .fir, .comb, .modulator, .dac, .matrix, .pal: return "Decoder"
         case .deflection, .beam, .videoAmp, .blur: return "Beam"
         case .temporal: return "Phosphor"
@@ -25,7 +26,7 @@ enum KernelType: String, CaseIterable, Sendable {
 }
 
 enum ChainType: UInt8, Sendable { case video = 0, audio = 1 }
-struct StageInfo: Identifiable, Sendable {
+struct StageInfo: Identifiable, Sendable, Equatable {
     let id: Int
     let name: String
     let kernelType: KernelType
@@ -34,5 +35,9 @@ struct StageInfo: Identifiable, Sendable {
     let bypassed: Bool
     let timingUs: Double
     let timingAvgUs: Double
+    var withoutTiming: StageInfo {
+        .init(id: id, name: name, kernelType: kernelType, chainType: chainType,
+              enabled: enabled, bypassed: bypassed, timingUs: 0, timingAvgUs: 0)
+    }
     var isActive: Bool { enabled && !bypassed }
 }

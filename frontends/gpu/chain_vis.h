@@ -25,7 +25,7 @@
 typedef struct ChainVis ChainVis;
 
 /* Create a chain visualiser. vc and ac are borrowed (not owned). */
-ChainVis *chain_vis_create(const VideoChain *vc, const AudioChain *ac);
+ChainVis *chain_vis_create(const VideoChain *vc, AudioChain *ac);
 
 /* Free all resources. Safe to call with NULL. */
 void chain_vis_destroy(ChainVis *vis);

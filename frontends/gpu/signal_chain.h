@@ -53,6 +53,7 @@ typedef enum {
     CHAIN_KERNEL_RASTER,          /* active waveform -> complete horizontal raster */
     CHAIN_KERNEL_RECEIVER,
     CHAIN_KERNEL_RECEIVER_DEMOD,        /* burst phase + back-porch clamp */
+    CHAIN_KERNEL_YC_ROUTE,        /* separated source Y/C receiver routing */
     CHAIN_KERNEL_COUNT
 } ChainKernelType;
 

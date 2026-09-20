@@ -389,7 +389,7 @@ void debug_server_frame(DebugServer *srv,
     }
 
     uint64_t now = SDL_GetTicks();
-    if (now - state->last_snapshot_ms < 33) return;
+    if (now - state->last_snapshot_ms < 250) return;
     state->last_snapshot_ms = now;
 
     if(!state->last_catalog_ms || now-state->last_catalog_ms>=500) {

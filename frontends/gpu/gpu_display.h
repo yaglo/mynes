@@ -2,20 +2,10 @@
  * GPU Display Pipeline — CRT Display-Domain Render Shaders
  * ==========================================================
  *
- * Manages the SDL_GPU graphics pipeline for the display-domain effects:
- *   Pass 1: Halation H blur (quarter-res FBO, threshold extract + Gaussian)
- *   Pass 2: Halation V blur (quarter-res FBO)
- *   Pass 3: CRT display composite (barrel + mask + halation
- *           blend + gamma + vignette + black floor → swapchain)
- *
- * Input: the composite output texture (uploaded from CPU pipeline).
- * Output: rendered to the swapchain texture (presented to display).
- *
- * When this pipeline is active, it REPLACES SDL_BlitGPUTexture with
- * a multi-pass render that applies CRT physics at native display
- * resolution. The CPU composite pipeline still does signal-domain work
- * (waveform → FIR → comb → beam profile); the GPU adds display effects
- * that benefit from running at the monitor's native pixel count.
+ * Consumes linear beam/phosphor history from the GPU signal chain.
+ * Optional separable glass-scatter blur precedes the mask/glass pass.
+ * The last pass writes SDR sRGB or extended linear sRGB to the swapchain.
+ * It also supports offscreen targets for numerical and visual validation.
  */
 
 #ifndef GPU_DISPLAY_H

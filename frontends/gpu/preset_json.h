@@ -257,6 +257,7 @@ static inline bool preset_json_save(const PhysicalPreset *p, const char *path)
     fprintf(f, "        \"v_jitter\": %.6f,\n",             p->tv.v_jitter);
     /* Phosphor. */
     fprintf(f, "        \"mask_type\": \"%s\",\n",          preset_json__mask_name((int)p->tv.mask_type));
+    fprintf(f, "        \"mask_triads\": %.6f,\n",        p->tv.mask_triads);
     fprintf(f, "        \"mask_pitch_px\": %.6f,\n",        p->tv.mask_pitch_px);
     fprintf(f, "        \"mask_strength\": %.6f,\n",        p->tv.mask_strength);
     fprintf(f, "        \"subpixel_layout\": %d,\n",        p->tv.subpixel_layout);
@@ -376,6 +377,9 @@ static inline bool preset_json_save(const PhysicalPreset *p, const char *path)
 
     /* ---- Audio overrides ---- */
     fprintf(f, "    \"audio_psu_hum_amplitude\": %.6f,\n",  p->audio_psu_hum_amplitude);
+    fprintf(f, "    \"audio_hum_frequency\": %.6f,\n", p->audio_hum_frequency);
+    fprintf(f, "    \"audio_hum_harmonic_2\": %.6f,\n", p->audio_hum_harmonic_2);
+    fprintf(f, "    \"audio_hum_harmonic_3\": %.6f,\n", p->audio_hum_harmonic_3);
     fprintf(f, "    \"audio_noise_floor\": %.6f,\n",        p->audio_noise_floor);
     fprintf(f, "    \"audio_saturation_drive\": %.6f,\n",   p->audio_saturation_drive);
     fprintf(f, "    \"audio_cable_length_m\": %.6f\n",      p->audio_cable_length_m);
@@ -427,6 +431,8 @@ static inline bool preset_json_load(PhysicalPreset *p, const char *path)
     /* Identity-transform defaults for fields whose "zero = identity" would
      * be wrong (HPOS/VPOS/HSIZE/VSIZE: 0 would collapse the raster). If
      * the JSON specifies them, they'll be overwritten below. */
+    p->chroma_gain = 1.0f;
+    p->tv.luma_notch_depth = 0.95f;
     p->tv.h_size = 1.0f;
     p->tv.v_size = 1.0f;
     p->tv.top_band_start = 18.0f;
@@ -550,6 +556,9 @@ static inline bool preset_json_load(PhysicalPreset *p, const char *path)
 
         /* Audio overrides. */
         else MATCH_FLOAT(PJSON_SEC_TOP, "audio_psu_hum_amplitude",  p->audio_psu_hum_amplitude)
+        else MATCH_FLOAT(PJSON_SEC_TOP, "audio_hum_frequency", p->audio_hum_frequency)
+        else MATCH_FLOAT(PJSON_SEC_TOP, "audio_hum_harmonic_2", p->audio_hum_harmonic_2)
+        else MATCH_FLOAT(PJSON_SEC_TOP, "audio_hum_harmonic_3", p->audio_hum_harmonic_3)
         else MATCH_FLOAT(PJSON_SEC_TOP, "audio_noise_floor",        p->audio_noise_floor)
         else MATCH_FLOAT(PJSON_SEC_TOP, "audio_saturation_drive",   p->audio_saturation_drive)
         else MATCH_FLOAT(PJSON_SEC_TOP, "audio_cable_length_m",     p->audio_cable_length_m)
@@ -617,6 +626,7 @@ static inline bool preset_json_load(PhysicalPreset *p, const char *path)
             char *u = preset_json__unescape(val);
             p->tv.mask_type = (VideoMaskType)preset_json__mask_from(u);
         }
+        else MATCH_FLOAT(PJSON_SEC_TV, "mask_triads",        p->tv.mask_triads)
         else MATCH_FLOAT(PJSON_SEC_TV, "mask_pitch_px",        p->tv.mask_pitch_px)
         else MATCH_FLOAT(PJSON_SEC_TV, "mask_pitch_mm",        p->tv.mask_pitch_px)
         else MATCH_FLOAT(PJSON_SEC_TV, "mask_strength",        p->tv.mask_strength)

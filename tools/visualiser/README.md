@@ -1,6 +1,6 @@
 # Signal Studio
 
-Native macOS editor for the SDL3 GPU frontend. The graph follows five physical sections: connection, decoder, beam, phosphor, and glass. Controls change the live emulator through the same update functions as its OSD.
+Native macOS editor for the SDL3 GPU frontend. The graph follows five physical sections: connection, decoder, beam, phosphor, and glass. Controls change the live emulator through the same update functions as its OSD. The separate Audio controls button opens amplifier, mains-hum and noise controls; these values participate in preset save/load and dirty-state tracking.
 
 ## Run
 
@@ -34,7 +34,7 @@ Little-endian messages use a two-word header: type and payload byte count.
 | 8 | editor → server | Operation, ID, revision, UTF-8 name[128]; operations 1 load, 2 save, 3 save-as, 4 rename, 5 delete |
 | 9 | server → editor | Operation, success flag, error[128] |
 
-Incoming values are bounded and must be finite. Incomplete messages remain queued until complete. The catalog refreshes twice a second; execution/controls update at most 30 Hz. Waveform-tap protocol types remain reserved; the current editor does not expose waveform traces.
+Incoming values are bounded and must be finite. Incomplete messages remain queued until complete. The catalog refreshes twice a second; execution/controls update at most 4 Hz. Waveform-tap protocol types remain reserved; the current editor does not expose waveform traces.
 
 ```sh
 swift test --package-path tools/visualiser
@@ -42,3 +42,9 @@ python3 frontends/gpu/tests/test_editor_ipc.py build/bin/mynes_gpu
 ```
 
 The IPC test launches a separate frontend with temporary user configuration and tests live edits, preset CRUD, topology changes, read-only bundled files, and stale-command rejection.
+
+The UI uses property-level Observation. Topology, controls and catalogs publish
+only when their values change. Timing updates affect only the timing view; the
+frame/FPS footer refreshes once a second using server timestamps. To verify a
+CPU sample covers a live connection, launch with `MYNES_EDITOR_LOG_FRAMES=1` and
+check that received frame numbers keep advancing throughout the sample.

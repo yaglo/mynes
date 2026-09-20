@@ -78,6 +78,9 @@ typedef struct {
 
     /* ---- Audio-specific overrides ---- */
     float audio_psu_hum_amplitude;  /* peak hum voltage (0-0.02) */
+    float audio_hum_frequency;     /* 0 = region mains frequency */
+    float audio_hum_harmonic_2;    /* relative to fundamental */
+    float audio_hum_harmonic_3;
     float audio_noise_floor;        /* peak noise level (0-0.02) */
     float audio_saturation_drive;   /* 1.0 = linear, 4.0 = heavy */
     float audio_cable_length_m;     /* audio cable length (may differ from video) */
