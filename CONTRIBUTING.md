@@ -63,7 +63,8 @@ Less welcome without discussion first:
   `test_gpu_kernels`, `test_signal_precompute`, `test_presets`, and
   `test_preset_json` suites.
 - For PPU / CPU changes, include a before/after AccuracyCoin breakdown
-  (`./bin/test_runner tests/accuracy_coin/AccuracyCoin.nes <page>`).
+  (`./build/bin/accuracy_coin tests/accuracy_coin/AccuracyCoin.nes <page>`
+  from the repository root).
 
 ## Testing philosophy
 

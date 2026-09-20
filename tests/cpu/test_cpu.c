@@ -32,6 +32,8 @@ static void run_until_nop(CPU *cpu, int max_cycles, int trace) {
 
 int test_lda_sta(void) {
     CPU cpu;
+    /* Initialization must clear interrupt latches even on reused storage. */
+    memset(&cpu, 0xFF, sizeof(cpu));
     cpu_init(&cpu);
     cpu.mem_read = mem_read;
     cpu.mem_write = mem_write;

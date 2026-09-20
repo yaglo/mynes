@@ -14,7 +14,10 @@ typedef struct CPU {
     uint16_t last_read_addr;  /* Last address read by CPU (for DMA halt cycles) */
     uint8_t effective_i; /* I flag value used for next IRQ poll (1-instr delayed for CLI/SEI/PLP) */
     uint8_t ignore_h;  /* SHA/SHX/SHY/TAS: skip H register in store value when DMA halts on the dummy-read cycle (AccuracyCoin SHA test sub-test 7+, mirrors C# Emulator.cs IgnoreH) */
-    uint8_t irq_armed; /* IRQ recognition delayed by 1 instruction: armed at case 0, fires at NEXT case 0 (mirrors real hw poll-before-last-cycle latency) */
+    uint16_t interrupt_vector;
+    uint8_t irq_sampled;
+    uint8_t nmi_sampled, nmi_armed;
+    uint8_t irq_armed; /* Interrupt sampled before the final cycle, dispatched at fetch */
     uint64_t cycles;
     uint8_t (*mem_read)(struct CPU *cpu, uint16_t addr);
     void (*mem_write)(struct CPU *cpu, uint16_t addr, uint8_t val);
@@ -32,7 +35,9 @@ static inline void cpu_init(CPU *cpu) {
     cpu->last_read_addr = 0;
     cpu->effective_i = 1;  /* I flag set at init */
     cpu->ignore_h = 0;
-    cpu->irq_armed = 0;
+    cpu->interrupt_vector = 0;
+    cpu->irq_sampled = cpu->nmi_sampled = 0;
+    cpu->irq_armed = cpu->nmi_armed = 0;
     cpu->cycles = 0;
 }
 

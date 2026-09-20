@@ -86,21 +86,12 @@
 ;; IRQ Handler: 7 cycles (like BRK but reads IRQ vector, B flag clear)
 ;; Uses hijack vectors to support NMI hijacking during IRQ
 (state irq-handler
-  (cycle (dummy pc) (when nmi-pending (goto nmi-handler)))
-  (cycle (write sp pch) (sp-1) (when nmi-pending (goto nmi-handler)))
-  (cycle (write sp pcl) (sp-1) (when nmi-pending (goto nmi-handler)))
-  (cycle (prep-push-p irq) (write sp dl) (sp-1) (when nmi-pending (goto nmi-handler)))
-  (cycle (set-flag i) (snapshot-i) (read adl vec-irq-hijack-lo) (when nmi-pending (goto nmi-handler)))
-  (cycle (when nmi-pending
-          (read adl vec-nmi-lo)
-          (goto nmi-handler-next))
-        (read adh vec-irq-hijack-hi)
-        (mov pcl adl) (mov pch adh))
-  (goto fetch))
-
-;; NMI handler continuation for hijacked IRQ
-(state nmi-handler-next
-  (cycle (read adh vec-nmi-hi) (mov pcl adl) (mov pch adh))
+  (cycle (dummy pc))
+  (cycle (write sp pch) (sp-1))
+  (cycle (write sp pcl) (sp-1))
+  (cycle (select-interrupt-vector) (prep-push-p irq) (write sp dl) (sp-1))
+  (cycle (set-flag i) (snapshot-i) (read adl vec-irq-hijack-lo))
+  (cycle (read adh vec-irq-hijack-hi) (mov pcl adl) (mov pch adh))
   (goto fetch))
 
 ;; RESET Handler: Sets up CPU and reads reset vector
@@ -657,7 +648,7 @@
   (cycle (dummy sp) (sp+1))
   (cycle (read adl sp) (sp+1))
   (cycle (read adh sp))
-  (cycle (mov pcl adl) (mov pch adh) (pc+1))
+  (cycle (dummy ad) (mov pcl adl) (mov pch adh) (pc+1))
  )
 
 ;; RTI: 6 cycles (T6 reads PCH and loads PC)
@@ -705,7 +696,7 @@
   (cycle (dummy pc) (pc+1))
   (cycle (write sp pch) (sp-1))
   (cycle (write sp pcl) (sp-1))
-  (cycle (prep-push-p brk) (write sp dl) (sp-1))
+  (cycle (select-interrupt-vector) (prep-push-p brk) (write sp dl) (sp-1))
   (cycle (set-flag i) (snapshot-i) (read adl vec-irq-hijack-lo))
   (cycle (read adh vec-irq-hijack-hi) (mov pcl adl) (mov pch adh))
  )

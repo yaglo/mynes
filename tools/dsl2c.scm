@@ -4,12 +4,26 @@
 (import (chicken base)
         (chicken io)
         (chicken format)
-        (chicken process-context)
-        (srfi-1))
+        (chicken process-context))
 
 ;; ============================================================================
 ;; Utilities
 ;; ============================================================================
+
+;; Only single-list predicates are needed; keep the generator usable with a
+;; stock Chicken installation, without separately installed eggs.
+(define (find pred xs)
+  (cond ((null? xs) #f)
+        ((pred (car xs)) (car xs))
+        (else (find pred (cdr xs)))))
+
+(define (any pred xs)
+  (and (pair? xs) (or (pred (car xs)) (any pred (cdr xs)))))
+
+(define (filter pred xs)
+  (cond ((null? xs) '())
+        ((pred (car xs)) (cons (car xs) (filter pred (cdr xs))))
+        (else (filter pred (cdr xs)))))
 
 (define (flatmap f lst)
   (apply append (map f lst)))
@@ -185,16 +199,9 @@
     ((vec-nmi-lo) "0xFFFA") ((vec-nmi-hi) "0xFFFB")
     ((vec-irq-lo) "0xFFFE") ((vec-irq-hi) "0xFFFF")
     ;; NMI hijacking: use NMI vector if NMI pending during BRK/IRQ
-    ((vec-irq-hijack-lo) "(cpu->nmi_pending ? 0xFFFA : 0xFFFE)")
-    ((vec-irq-hijack-hi) "(cpu->nmi_pending ? (cpu->nmi_pending = 0, 0xFFFB) : 0xFFFF)")
+    ((vec-irq-hijack-lo) "cpu->interrupt_vector")
+    ((vec-irq-hijack-hi) "(cpu->interrupt_vector + 1)")
     (else "0")))
-
-;; Side-effect-free version of addr->expr for the peek function.
-;; Identical to addr->expr except vec-irq-hijack-hi doesn't clear nmi_pending.
-(define (addr->expr-pure a)
-  (case a
-    ((vec-irq-hijack-hi) "(cpu->nmi_pending ? 0xFFFB : 0xFFFF)")
-    (else (addr->expr a))))
 
 (define (flag->mask f)
   (case f
@@ -411,14 +418,14 @@
               (reg->field (cadr op)))
      (fprintf port "        else cpu->PC = (cpu->PC + 0x100) & 0xFFFF;~%"))
 
+    ((select-interrupt-vector)
+     (fprintf port "        cpu->interrupt_vector = cpu->nmi_pending ? 0xFFFA : 0xFFFE;~%")
+     (fprintf port "        cpu->nmi_pending = 0;~%"))
+
     ((prep-push-p)
      (case (cadr op)
        ((php) (fprintf port "        cpu->DL = cpu->P | 0x30;~%"))
-       ((brk)
-        ;; NMI hijacking: if NMI becomes pending before this cycle of BRK,
-        ;; the BRK is hijacked into running an NMI handler. The pushed P
-        ;; flags use NMI semantics (B clear) instead of BRK (B set).
-        (fprintf port "        cpu->DL = cpu->nmi_pending ? ((cpu->P | 0x20) & ~~0x10) : (cpu->P | 0x30);~%"))
+       ((brk) (fprintf port "        cpu->DL = cpu->P | 0x30;~%"))
        (else (fprintf port "        cpu->DL = (cpu->P | 0x20) & ~~0x10;~%"))))
 
     ;; Unofficial opcode operations
@@ -471,17 +478,17 @@
   (and (pair? form) (memq (car form) '(fetch read write dummy))))
 
 ;; Returns the C expression for the address of a bus op.
-;; Uses addr->expr-pure (side-effect-free) for the peek function.
+;; Uses addr->expr (side-effect-free) for the peek function.
 ;; - (fetch dl)        → cpu->PC
 ;; - (fetch dl pc)     → cpu->PC
-;; - (read dl ad)      → addr->expr-pure of "ad" (third element)
-;; - (dummy ad)        → addr->expr-pure of "ad" (second element)
+;; - (read dl ad)      → addr->expr of "ad" (third element)
+;; - (dummy ad)        → addr->expr of "ad" (second element)
 ;; - (write ad reg)    → #f (DMC DMA cannot halt on write cycles)
 (define (bus-op-addr-expr op)
   (case (car op)
     ((fetch) "cpu->PC")
-    ((read)  (addr->expr-pure (caddr op)))
-    ((dummy) (addr->expr-pure (cadr op)))
+    ((read)  (addr->expr (caddr op)))
+    ((dummy) (addr->expr (cadr op)))
     ((write) #f)  ;; DMC DMA can't interrupt a write cycle
     (else #f)))
 
@@ -615,7 +622,7 @@
                 (reset-base (or (assoc-ref *state-base* 'reset-handler) 0)))
             (lambda (port)
               (fprintf port "        if (cpu->reset_pending) { cpu->reset_pending = 0; cpu->uPC = ~a; return; }~%" reset-base)
-              (fprintf port "        if (cpu->nmi_pending) { cpu->nmi_pending = 0; cpu->uPC = ~a; return; }~%" nmi-base)
+              (fprintf port "        if (cpu->nmi_armed) { cpu->nmi_armed = 0; cpu->nmi_pending = 0; cpu->uPC = ~a; return; }~%" nmi-base)
               ;; IRQ recognition is delayed by 1 instruction. The "armed" flag
               ;; is set during the previous instruction's case-0 poll if the
               ;; IRQ was pending then; this instruction's case 0 fires the IRQ
@@ -623,8 +630,8 @@
               ;; current irq_pending. Mirrors real hardware "poll happens
               ;; before the last cycle of an instruction, IRQ runs at the
               ;; next opcode fetch" two-stage pipeline.
-              (fprintf port "        if (cpu->irq_armed && !cpu->effective_i) { cpu->irq_armed = 0; cpu->irq_pending = 0; cpu->uPC = ~a; return; }~%" irq-base)
-              (fprintf port "        cpu->irq_armed = cpu->irq_pending;~%")
+              (fprintf port "        if (cpu->irq_armed) { cpu->irq_armed = 0; cpu->irq_pending = 0; cpu->uPC = ~a; return; }~%" irq-base)
+
               (fprintf port "        cpu->effective_i = (cpu->P >> 2) & 1;~%")))
           #f))
 
@@ -772,7 +779,7 @@
   (fprintf port "    uint16_t last_read_addr;  /* Last address read by CPU (for DMA halt cycles) */~%")
   (fprintf port "    uint8_t effective_i; /* I flag value used for next IRQ poll (1-instr delayed for CLI/SEI/PLP) */~%")
   (fprintf port "    uint8_t ignore_h;  /* SHA/SHX/SHY/TAS: skip H register in store value when DMA halts on the dummy-read cycle (AccuracyCoin SHA test sub-test 7+, mirrors C# Emulator.cs IgnoreH) */~%")
-  (fprintf port "    uint8_t irq_armed; /* IRQ recognition delayed by 1 instruction: armed at case 0, fires at NEXT case 0 (mirrors real hw poll-before-last-cycle latency) */~%")
+  (fprintf port "    uint16_t interrupt_vector;~%    uint8_t irq_sampled;~%    uint8_t nmi_sampled, nmi_armed;~%    uint8_t irq_armed; /* Interrupt sampled before the final cycle, dispatched at fetch */~%")
   (fprintf port "    uint64_t cycles;~%")
   (fprintf port "    uint8_t (*mem_read)(struct CPU *cpu, uint16_t addr);~%")
   (fprintf port "    void (*mem_write)(struct CPU *cpu, uint16_t addr, uint8_t val);~%")
@@ -788,7 +795,9 @@
   (fprintf port "    cpu->last_read_addr = 0;~%")
   (fprintf port "    cpu->effective_i = 1;  /* I flag set at init */~%")
   (fprintf port "    cpu->ignore_h = 0;~%")
-  (fprintf port "    cpu->irq_armed = 0;~%")
+  (fprintf port "    cpu->interrupt_vector = 0;~%")
+  (fprintf port "    cpu->irq_sampled = cpu->nmi_sampled = 0;~%")
+  (fprintf port "    cpu->irq_armed = cpu->nmi_armed = 0;~%")
   (fprintf port "    cpu->cycles = 0;~%")
   (fprintf port "}~%~%"))
 
@@ -822,7 +831,7 @@
             (fprintf output-port "/* Auto-generated 6502 microcode - DO NOT EDIT */~%")
             (fprintf output-port "#include \"cpu_gen.h\"~%~%")
 
-            (fprintf output-port "void cpu_step(CPU *cpu) {~%")
+            (fprintf output-port "static void cpu_microcycle(CPU *cpu) {~%")
             (fprintf output-port "    cpu->cycles++;~%")
             (fprintf output-port "    /* RDY line - when low, CPU is halted (for DMA) */~%")
             (fprintf output-port "    if (!cpu->rdy) return;~%")
@@ -833,6 +842,15 @@
              (reverse *states*))
 
             (fprintf output-port "    default: cpu->uPC = 0; return;~%    }~%}~%~%")
+
+            (fprintf output-port "void cpu_step(CPU *cpu) {~%")
+            (fprintf output-port "    bool running = cpu->rdy;~%    uint16_t old_upc = cpu->uPC;~%")
+            (fprintf output-port "    uint8_t poll = cpu->irq_sampled;~%    cpu->nmi_sampled = cpu->nmi_pending;~%")
+            (fprintf output-port "    cpu->irq_sampled = cpu->irq_pending && !(cpu->P & 4);~%")
+            (fprintf output-port "    cpu_microcycle(cpu);~%")
+            (fprintf output-port "    if (running && cpu->uPC == 0) cpu->irq_armed = old_upc > ~a && cpu->IR != 0 ? poll : 0;~%" (assoc-ref *state-base* 'illegal))
+            (fprintf output-port "    if (running && cpu->uPC == 0) cpu->nmi_armed = old_upc > ~a && cpu->IR != 0 ? cpu->nmi_sampled : 0;~%" (assoc-ref *state-base* 'illegal))
+            (fprintf output-port "}~%~%")
 
             ;; Emit cpu_get_next_read_addr — returns the address the CPU
             ;; would drive on its bus during the next cpu_step call,

@@ -16,6 +16,7 @@
 #include "gpu_display.h"
 #include "gpu_log.h"
 #include <stdio.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -640,7 +641,7 @@ void gpu_display_params_from_tv(GPUDisplayParams *out, const TVDisplayParams *tv
     out->barrel_v = tv->barrel_v;
     out->convergence_static = tv->convergence_static;
     out->convergence_dynamic = tv->convergence_dynamic;
-    out->mask_strength = tv->mask_strength > 0 ? tv->mask_strength : 0.5f;
+    out->mask_strength = fminf(fmaxf(tv->mask_strength, 0.0f), 1.0f);
     out->mask_type = (int)tv->mask_type;
 
     /* Mask pitch: use the mm value directly as pixels.

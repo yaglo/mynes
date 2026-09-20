@@ -115,7 +115,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     const PhysicalPreset *preset = &loaded;
-    printf("Preset: %s\n", preset->name ? preset->name : preset_path);
+    printf("Preset: %s\n", preset->name[0] ? preset->name : preset_path);
 
     /* Video chain */
     VideoChain chain;

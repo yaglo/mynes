@@ -115,6 +115,9 @@ typedef struct PPU {
     uint8_t oam[PPU_OAM_SIZE];           /* Primary OAM (64 sprites * 4 bytes) */
     uint8_t oam_secondary[32];           /* Secondary OAM (8 sprites for next scanline) */
     uint8_t sprite_oam_indices[8];       /* Primary OAM index for each secondary OAM entry */
+    uint8_t oam_latch, secondary_addr, eval_byte, eval_overflow_bytes;
+    bool secondary_full, eval_done, eval_first;
+    uint8_t fetch_y, fetch_tile, fetch_attr;
     uint8_t sprite_count;                /* Sprites found for next scanline */
 
     /* Sprite rendering (current scanline) */
@@ -124,6 +127,7 @@ typedef struct PPU {
     uint8_t sprite_attributes[8];
     uint8_t sprite_indices[8];           /* Original OAM indices (for sprite 0) */
     uint8_t sprites_on_line;
+    bool sprite_counters_active;
 
     /* Sprite 0 hit detection */
     bool sprite_zero_on_line;
@@ -479,38 +483,12 @@ static inline uint8_t ppu_reg_read(PPU *ppu, uint16_t addr) {
         break;
 
     case 4: /* OAMDATA */
-        /* During rendering on a render scanline (visible or pre-render):
-         *   - Dots 1-64: secondary OAM clear phase — reads always return $FF.
-         *   - Dots 65-256: sprite eval phase — real hardware steps OAMADDR
-         *     every other dot, so reads see different OAM bytes throughout
-         *     the eval. We approximate this by mapping the dot to an OAM
-         *     index: read returns ppu->oam[(dot - 65) / 2 & 0xFF]. The
-         *     AccuracyCoin $2004 BEHAVIOR test 8 just checks the read isn't
-         *     $00 or $FF — this approximation is good enough.
-         *   - Dots 257-320: sprite tile fetch — OAMADDR is forced to 0,
-         *     and all reads return $FF (real hardware behavior).
-         */
         if ((ppu->mask & (MASK_BG_ENABLE | MASK_SPRITE_ENABLE)) &&
             (ppu->scanline < 240 || ppu->scanline == ppu->prerender_line)) {
-            if (ppu->dot >= 1 && ppu->dot <= 64) {
-                data = 0xFF;
-            } else if (ppu->dot >= 257 && ppu->dot <= 320) {
-                data = 0xFF;
-            } else if (ppu->dot >= 65 && ppu->dot <= 256) {
-                /* Sprite eval phase — return the OAM byte the eval would
-                 * be examining at this dot. */
-                uint8_t idx = (uint8_t)(((ppu->dot - 65) / 2) & 0xFF);
-                data = ppu->oam[idx];
-                if ((idx & 0x03) == 2) data &= 0xE3;
-            } else {
-                data = ppu->oam[ppu->oam_addr];
-                if ((ppu->oam_addr & 0x03) == 2) data &= 0xE3;
-            }
+            data = ppu->oam_latch;
         } else {
             data = ppu->oam[ppu->oam_addr];
-            if ((ppu->oam_addr & 0x03) == 2) {
-                data &= 0xE3;
-            }
+            if ((ppu->oam_addr & 3) == 2) data &= 0xE3;
         }
         ppu_refresh_decay(ppu, data);
         break;
@@ -575,10 +553,7 @@ static inline void ppu_reg_write(PPU *ppu, uint16_t addr, uint8_t val) {
         break;
 
     case 1: /* PPUMASK */
-        /* Note: nesdev says "Toggling rendering takes effect ~3-4 dots after write"
-         * but this appears to apply to v register behavior and palette corruption,
-         * not to shift register clocking. Tests expect immediate mask application
-         * for determining whether shift registers operate. */
+        /* Rendering enable passes through the PPU's delayed mask latch. */
         {
             bool was_rendering = (ppu->mask & (MASK_BG_ENABLE | MASK_SPRITE_ENABLE)) != 0;
             bool now_rendering = (val & (MASK_BG_ENABLE | MASK_SPRITE_ENABLE)) != 0;
@@ -607,7 +582,8 @@ static inline void ppu_reg_write(PPU *ppu, uint16_t addr, uint8_t val) {
                 ppu->oam_corruption_row = row;
             }
         }
-        ppu->mask = val;
+        ppu->mask_pending = val;
+        ppu->mask_delay = 3;
         break;
 
     case 3: /* OAMADDR */
@@ -753,7 +729,7 @@ static inline void ppu_load_bg_shifters(PPU *ppu) {
 static inline void ppu_shift_bg(PPU *ppu) {
     if (ppu->mask & (MASK_BG_ENABLE | MASK_SPRITE_ENABLE)) {
         ppu->bg_shift_pattern_lo <<= 1;
-        ppu->bg_shift_pattern_hi <<= 1;
+        ppu->bg_shift_pattern_hi = (ppu->bg_shift_pattern_hi << 1) | 1;
         ppu->bg_shift_attrib_lo <<= 1;
         ppu->bg_shift_attrib_hi <<= 1;
     }
@@ -766,7 +742,6 @@ static inline void ppu_shift_bg(PPU *ppu) {
 static inline void ppu_fetch_bg(PPU *ppu) {
     switch ((ppu->dot - 1) & 0x07) {
     case 0: /* Nametable byte */
-        ppu_load_bg_shifters(ppu);
         ppu->bg_next_tile_id = ppu_read(ppu, 0x2000 | (ppu->v & 0x0FFF));
         break;
 
@@ -801,6 +776,7 @@ static inline void ppu_fetch_bg(PPU *ppu) {
         break;
 
     case 7: /* Increment coarse X */
+        ppu_load_bg_shifters(ppu);
         ppu_inc_x(ppu);
         break;
     }
@@ -811,146 +787,118 @@ static inline void ppu_fetch_bg(PPU *ppu) {
  * ============================================================================ */
 
 static inline void ppu_sprite_evaluation(PPU *ppu) {
-    /* Only clear secondary OAM on dot 1 (runs on all scanlines) */
     if (ppu->dot == 1) {
-        /* Clear secondary OAM */
-        memset(ppu->oam_secondary, 0xFF, 32);
+        ppu->secondary_addr = 0;
         ppu->sprite_count = 0;
         ppu->sprite_zero_on_line = false;
     }
-
-    /* Evaluate sprites on visible scanlines AND pre-render line.
-     * Pre-render eval uses (scanline & 255) for the in-range check
-     * (= 5 for NTSC line 261) so sprites in range of "line 5" can be
-     * loaded into secondary OAM and drawn on scanline 0. AccuracyCoin
-     * SPRITES ON SCANLINE 0 test 2 verifies this pre-render quirk.
-     * Uses OAMADDR as the starting cursor — non-zero OAMADDR causes
-     * "misaligned OAM" where the bytes get reinterpreted. */
-    if (ppu->dot == 65 && (ppu->scanline < 240 || ppu->scanline == ppu->prerender_line)) {
-        uint8_t sprite_height = (ppu->ctrl & CTRL_SPRITE_SIZE) ? 16 : 8;
-        uint16_t addr = ppu->oam_addr;
-        uint8_t initial_addr = ppu->oam_addr;
-        bool first_iter = true;
-        int eval_scanline = (ppu->scanline == ppu->prerender_line)
-                          ? (int)(ppu->scanline & 0xFF)
-                          : (int)ppu->scanline;
-
-        while (addr < 256 && ppu->sprite_count < 8) {
-            uint8_t y = ppu->oam[addr];
-            int diff = eval_scanline - (int)y;
-
-            if (diff >= 0 && diff < sprite_height && y < 0xF0) {
-                /* In range — copy 4 bytes to secondary, OAMADDR += 1 each */
-                ppu->oam_secondary[ppu->sprite_count * 4 + 0] = ppu->oam[addr];
-                ppu->oam_secondary[ppu->sprite_count * 4 + 1] = ppu->oam[(addr + 1) & 0xFF];
-                ppu->oam_secondary[ppu->sprite_count * 4 + 2] = ppu->oam[(addr + 2) & 0xFF];
-                ppu->oam_secondary[ppu->sprite_count * 4 + 3] = ppu->oam[(addr + 3) & 0xFF];
-                ppu->sprite_oam_indices[ppu->sprite_count] = (uint8_t)(addr / 4);
-
-                /* Sprite-zero detection: the FIRST sprite copied is the
-                 * "sprite zero" of this scanline, regardless of its OAM index.
-                 * EXCEPT on pre-render — sprites loaded during pre-render eval
-                 * are for scanline 0, but the actual sprite zero hit detection
-                 * for scanline 0 should come from scanline 0's own eval (which
-                 * also runs and overrides this). */
-                if (first_iter && ppu->scanline != ppu->prerender_line)
-                    ppu->sprite_zero_on_line = true;
-
-                ppu->sprite_count++;
-                addr = (addr + 4) & 0xFFFF;
-            } else {
-                /* Not in range — increment by 4 and AND with $FC.
-                 * This re-aligns OAMADDR to a 4-byte boundary. */
-                addr = ((addr + 4) & 0xFC) | (addr & 0xFF00);
-                /* Ensure we make progress in misaligned case */
-                if (addr <= initial_addr && !first_iter) break;
-            }
-            first_iter = false;
+    if (ppu->dot == 63) ppu->secondary_full = false;
+    if (ppu->dot <= 64) {
+        ppu->oam_latch = 0xFF;
+        if (!(ppu->dot & 1)) {
+            ppu->oam_secondary[ppu->secondary_addr] = 0xFF;
+            ppu->secondary_addr = (ppu->secondary_addr + 1) & 31;
         }
-
-        /* Check for 9th sprite (overflow) — simplified: count remaining
-         * sprites in standard alignment from where we stopped */
-        if (ppu->sprite_count >= 8) {
-            for (uint16_t a = addr; a < 256; a += 4) {
-                uint8_t y = ppu->oam[a];
-                if (y < 0xF0) {
-                    int diff = eval_scanline - (int)y;
-                    if (diff >= 0 && diff < sprite_height) {
-                        ppu->status |= STATUS_OVERFLOW;
-                        break;
-                    }
-                }
-            }
-        }
+        return;
     }
+    if (ppu->dot == 65) {
+        ppu->eval_byte = 0;
+        ppu->eval_overflow_bytes = 0;
+        ppu->eval_done = false;
+        ppu->eval_first = true;
+    }
+    if (ppu->dot == 255) ppu->secondary_full = false;
+    if (ppu->dot & 1) {
+        ppu->oam_latch = ppu->oam[ppu->oam_addr];
+        if ((ppu->oam_addr & 3) == 2) ppu->oam_latch &= 0xE3;
+        return;
+    }
+    uint8_t height = (ppu->ctrl & CTRL_SPRITE_SIZE) ? 16 : 8;
+    int row = (int)(ppu->scanline & 255) - ppu->oam_latch;
+    bool in_range = row >= 0 && row < height;
+    uint8_t old_addr = ppu->oam_addr;
+    if (!ppu->eval_done && ppu->sprite_count < 8) {
+        ppu->oam_secondary[ppu->secondary_addr] = ppu->oam_latch;
+        if (ppu->eval_byte || in_range) {
+            if (!ppu->eval_byte) {
+                if (ppu->eval_first) ppu->sprite_zero_on_line = true;
+                ppu->sprite_oam_indices[ppu->secondary_addr >> 2] = ppu->oam_addr >> 2;
+            }
+            ppu->oam_addr++;
+            ppu->secondary_addr = (ppu->secondary_addr + 1) & 31;
+            ppu->eval_byte = (ppu->eval_byte + 1) & 3;
+            if (!ppu->eval_byte) {
+                ppu->sprite_count++;
+                if (ppu->secondary_addr == 0) ppu->secondary_full = true;
+            }
+        } else {
+            ppu->oam_addr = (ppu->oam_addr + 4) & 0xFC;
+        }
+        ppu->eval_first = false;
+    } else {
+        if (!ppu->eval_done) {
+            if (ppu->eval_overflow_bytes) {
+                ppu->oam_addr++;
+                if (--ppu->eval_overflow_bytes == 0) ppu->oam_addr &= 0xFC;
+            } else if (in_range) {
+                ppu->status |= STATUS_OVERFLOW;
+                ppu->oam_addr++;
+                ppu->eval_overflow_bytes = 3;
+            } else {
+                ppu->oam_addr = ((ppu->oam_addr + 4) & 0xFC) | ((ppu->oam_addr + 1) & 3);
+            }
+        } else {
+            ppu->oam_addr += 4;
+        }
+        ppu->oam_latch = ppu->oam_secondary[ppu->secondary_addr];
+    }
+    if (ppu->oam_addr < old_addr) ppu->eval_done = true;
 }
 
-/* ============================================================================
- * Sprite Pattern Fetch (cycles 257-320)
- * ============================================================================ */
+static inline uint8_t ppu_reverse_byte(uint8_t v) {
+    v = (v >> 4) | (v << 4);
+    v = ((v & 0xCC) >> 2) | ((v & 0x33) << 2);
+    return ((v & 0xAA) >> 1) | ((v & 0x55) << 1);
+}
 
 static inline void ppu_fetch_sprites(PPU *ppu) {
+    unsigned slot = (ppu->dot - 257) >> 3;
+    unsigned phase = (ppu->dot - 257) & 7;
+    ppu->oam_addr = 0;
     if (ppu->dot == 257) {
-        /* Load sprite data for current scanline */
-        ppu->sprites_on_line = ppu->sprite_count;
+        ppu->secondary_addr = 0;
+        ppu->sprites_on_line = 8;
         ppu->sprite_zero_being_rendered = ppu->sprite_zero_on_line;
-
-        uint8_t sprite_height = (ppu->ctrl & CTRL_SPRITE_SIZE) ? 16 : 8;
-
-        for (int i = 0; i < ppu->sprites_on_line; i++) {
-            uint8_t y = ppu->oam_secondary[i * 4 + 0];
-            uint8_t tile = ppu->oam_secondary[i * 4 + 1];
-            uint8_t attrib = ppu->oam_secondary[i * 4 + 2];
-            uint8_t x = ppu->oam_secondary[i * 4 + 3];
-
-            ppu->sprite_attributes[i] = attrib;
-            ppu->sprite_positions[i] = x;
-            ppu->sprite_indices[i] = ppu->sprite_oam_indices[i];
-
-            uint16_t addr;
-            /* On the pre-render line, sprites loaded into secondary OAM
-             * during the pre-render eval should be fetched as if from
-             * "scanline 5" (matching the eval). When they're rendered on
-             * scanline 0, the rows align correctly. */
-            int eval_line = (ppu->scanline == ppu->prerender_line)
-                          ? (int)(ppu->scanline & 0xFF)
-                          : (int)ppu->scanline;
-            int row = eval_line - y;
-
-            if (attrib & SPRITE_FLIP_V)
-                row = sprite_height - 1 - row;
-
-            if (ppu->ctrl & CTRL_SPRITE_SIZE) {
-                /* 8x16 sprites */
-                uint16_t table = (tile & 0x01) ? 0x1000 : 0x0000;
-                tile &= 0xFE;
-                if (row >= 8) {
-                    tile++;
-                    row -= 8;
-                }
-                addr = table + (tile << 4) + row;
-            } else {
-                /* 8x8 sprites */
-                uint16_t table = (ppu->ctrl & CTRL_SPRITE_TABLE) ? 0x1000 : 0x0000;
-                addr = table + (tile << 4) + row;
-            }
-
-            uint8_t lo = ppu_read(ppu, addr);
-            uint8_t hi = ppu_read(ppu, addr + 8);
-
-            /* Horizontal flip */
-            if (attrib & SPRITE_FLIP_H) {
-                lo = ((lo & 0xF0) >> 4) | ((lo & 0x0F) << 4);
-                lo = ((lo & 0xCC) >> 2) | ((lo & 0x33) << 2);
-                lo = ((lo & 0xAA) >> 1) | ((lo & 0x55) << 1);
-                hi = ((hi & 0xF0) >> 4) | ((hi & 0x0F) << 4);
-                hi = ((hi & 0xCC) >> 2) | ((hi & 0x33) << 2);
-                hi = ((hi & 0xAA) >> 1) | ((hi & 0x55) << 1);
-            }
-
-            ppu->sprite_patterns_lo[i] = lo;
-            ppu->sprite_patterns_hi[i] = hi;
+    }
+    if (phase < 4) {
+        ppu->oam_latch = ppu->oam_secondary[ppu->secondary_addr];
+        switch (phase) {
+        case 0: ppu->fetch_y = ppu->oam_latch; break;
+        case 1: ppu->fetch_tile = ppu->oam_latch; break;
+        case 2: ppu->fetch_attr = ppu->oam_latch; ppu->sprite_attributes[slot] = ppu->oam_latch; break;
+        case 3: ppu->sprite_positions[slot] = ppu->oam_latch; break;
         }
+        if (!ppu->secondary_full) {
+            ppu->secondary_addr = (ppu->secondary_addr + 1) & 31;
+            if (ppu->secondary_addr == 0) ppu->secondary_full = true;
+        }
+    }
+    if (phase == 4 || phase == 6) {
+        unsigned row = (ppu->scanline - ppu->fetch_y) & 15;
+        unsigned tile = ppu->fetch_tile;
+        unsigned addr;
+        if (ppu->fetch_attr & SPRITE_FLIP_V) row ^= 15;
+        if (ppu->ctrl & CTRL_SPRITE_SIZE)
+            addr = ((tile & 1) << 12) | ((tile & 0xFE) << 4) | ((row & 8) << 1) | (row & 7);
+        else
+            addr = ((ppu->ctrl & CTRL_SPRITE_TABLE) ? 0x1000 : 0) | (tile << 4) | (row & 7);
+        uint8_t data = ppu_read(ppu, addr + (phase == 6 ? 8 : 0));
+        int sprite_row = (int)(ppu->scanline & 255) - ppu->fetch_y;
+        if (sprite_row < 0 || sprite_row >= ((ppu->ctrl & CTRL_SPRITE_SIZE) ? 16 : 8))
+            data = 0;
+        if (ppu->fetch_attr & SPRITE_FLIP_H) data = ppu_reverse_byte(data);
+        if (phase == 4) ppu->sprite_patterns_lo[slot] = data;
+        else ppu->sprite_patterns_hi[slot] = data;
     }
 }
 
@@ -987,7 +935,7 @@ static inline void ppu_render_pixel(PPU *ppu) {
     if (ppu->mask & MASK_SPRITE_ENABLE) {
         if ((ppu->mask & MASK_SPRITE_LEFT) || x >= 8) {
             for (int i = 0; i < ppu->sprites_on_line; i++) {
-                int offset = x - ppu->sprite_positions[i];
+                int offset = ppu->sprite_counters_active && ppu->sprite_positions[i] ? -1 : 0;
                 if (offset >= 0 && offset < 8) {
                     uint8_t p0 = (ppu->sprite_patterns_lo[i] >> (7 - offset)) & 1;
                     uint8_t p1 = (ppu->sprite_patterns_hi[i] >> (7 - offset)) & 1;
@@ -1130,14 +1078,17 @@ static inline void ppu_step(PPU *ppu) {
 
     /* ===== Rendering ===== */
     if (rendering) {
+        /* Sample the pixel before clocking the background shift registers. */
+        if (visible_scanline && visible_dot) ppu_render_pixel(ppu);
+
         /* Background rendering */
         if (render_scanline && fetch_dot) {
             ppu_shift_bg(ppu);
             ppu_fetch_bg(ppu);
         }
 
-        /* Sprite evaluation - also run on pre-render to clear state for scanline 0 */
-        if ((visible_scanline || prerender_scanline) && ppu->dot >= 1 && ppu->dot <= 256) {
+        /* No primary OAM evaluation on the pre-render scanline. */
+        if (visible_scanline && ppu->dot >= 1 && ppu->dot <= 256) {
             ppu_sprite_evaluation(ppu);
         }
 
@@ -1148,7 +1099,12 @@ static inline void ppu_step(PPU *ppu) {
 
         /* Pixel output */
         if (visible_scanline && visible_dot) {
-            ppu_render_pixel(ppu);
+            for (int i = 0; i < ppu->sprites_on_line; i++) {
+                if (!ppu->sprite_counters_active || !ppu->sprite_positions[i]) {
+                    ppu->sprite_patterns_lo[i] <<= 1;
+                    ppu->sprite_patterns_hi[i] <<= 1;
+                }
+            }
         }
 
         /* End of visible scanline: increment Y */
@@ -1166,6 +1122,20 @@ static inline void ppu_step(PPU *ppu) {
             ppu_transfer_y(ppu);
         }
     }
+
+    if (render_scanline && visible_dot && ppu->sprite_counters_active) {
+        bool counting = false;
+        for (int i = 0; i < ppu->sprites_on_line; i++) {
+            if (ppu->sprite_positions[i]) { ppu->sprite_positions[i]--; counting = true; }
+        }
+        if (!counting) ppu->sprite_counters_active = false;
+    }
+    if (render_scanline && ppu->dot == 339 && rendering) {
+        ppu->sprite_counters_active = true;
+        ppu->secondary_full = false;
+    }
+    if (render_scanline && rendering && ppu->dot >= 321)
+        ppu->oam_latch = ppu->oam_secondary[ppu->secondary_addr];
 
     /* ===== VBlank ===== */
     /* VBL flag is set at dot 1 (second tick) of scanline 241 per nesdev wiki. */

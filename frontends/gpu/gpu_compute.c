@@ -426,7 +426,7 @@ bool gpu_dispatch(SDL_GPUCommandBuffer *cmd, const GpuDispatchDesc *desc)
  * ============================================================================ */
 
 /*
- * Shader binding summary (from shaders/compute/*.comp.glsl):
+ * Shader binding summary (from the compute shader sources):
  *
  * pointwise.comp.glsl:
  *   set=0, binding=0: InputBuf  (buffer, read)

@@ -12,7 +12,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 
-RUNNER="./build/bin/test_runner"
+RUNNER="${NES_BUILD_DIR:-build}/bin/test_runner"
+if [[ ! -x "$RUNNER" ]]; then
+    echo "Build test_runner first: cmake --build ${NES_BUILD_DIR:-build} --target test_runner" >&2
+    exit 1
+fi
 PASS=0; FAIL=0; TIMEOUT=0; SKIP=0
 
 RED='\033[0;31m'
@@ -25,22 +29,22 @@ run_blargg() {
     local name
     name=$(basename "$rom" .nes)
 
-    [[ ! -f "$rom" ]] && { printf "  %-40s ${YELLOW}SKIP${NC}\n" "$name"; ((SKIP++)) || true; return; }
+    [[ ! -f "$rom" ]] && { printf "  %-40s ${YELLOW}SKIP${NC}\n" "$name"; ((++SKIP)) || true; return; }
 
     local code
-    "$RUNNER" "$rom" --blargg --frames 18000 >/dev/null 2>&1
-    code=$?
+    code=0
+    "$RUNNER" "$rom" --blargg --frames 18000 >/dev/null 2>&1 || code=$?
 
     case $code in
-        0) printf "  %-40s ${GREEN}PASS${NC}\n" "$name"; ((PASS++)) ;;
-        1) printf "  %-40s ${RED}FAIL${NC}\n" "$name"; ((FAIL++)) ;;
-        2) printf "  %-40s ${YELLOW}TIMEOUT${NC}\n" "$name"; ((TIMEOUT++)) ;;
-        *) printf "  %-40s ${YELLOW}SKIP${NC}\n" "$name"; ((SKIP++)) ;;
+        0) printf "  %-40s ${GREEN}PASS${NC}\n" "$name"; ((++PASS)) ;;
+        1) printf "  %-40s ${RED}FAIL${NC}\n" "$name"; ((++FAIL)) ;;
+        2) printf "  %-40s ${YELLOW}TIMEOUT${NC}\n" "$name"; ((++TIMEOUT)) ;;
+        *) printf "  %-40s ${YELLOW}SKIP${NC}\n" "$name"; ((++SKIP)) ;;
     esac
 }
 
 # === Unit tests + AccuracyCoin (via priority script) ===
-./scripts/run_priority_tests.sh || true
+./scripts/run_priority_tests.sh || ((++FAIL))
 echo ""
 
 # === Blargg CPU Instruction Tests ===

@@ -27,6 +27,8 @@
 
 cmake_minimum_required(VERSION 3.16)
 
+include(cmake/AppleSDK.cmake)
+
 project(MyNES
     VERSION 0.2.0
     DESCRIPTION "Cycle-accurate NES emulator with DSL-based CPU"
@@ -214,7 +216,8 @@ if(NES_BUILD_TESTS)
     target_link_libraries(accuracy_coin PRIVATE nes_static)
     add_test(NAME accuracy_coin_tests COMMAND accuracy_coin)
     set_tests_properties(accuracy_coin_tests PROPERTIES
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        TIMEOUT 120)
 
     # Convenience targets
     add_custom_target(cputest COMMAND test_cpu DEPENDS test_cpu)
@@ -248,12 +251,12 @@ if(NES_BUILD_FRONTENDS)
     else()
         find_package(PkgConfig QUIET)
         if(PKG_CONFIG_FOUND)
-            pkg_check_modules(SDL2 sdl2)
+            pkg_check_modules(SDL2 IMPORTED_TARGET sdl2)
             if(SDL2_FOUND)
                 add_executable(mynes frontends/sdl/main.c ${MYNES_SHARED_SOURCES})
                 target_include_directories(mynes PRIVATE
                     ${SDL2_INCLUDE_DIRS} frontends/shared)
-                target_link_libraries(mynes PRIVATE nes_static ${SDL2_LIBRARIES})
+                target_link_libraries(mynes PRIVATE nes_static PkgConfig::SDL2)
                 message(STATUS "SDL2 found via pkg-config - building SDL frontend")
             else()
                 message(STATUS "SDL2 not found - skipping SDL frontend")
@@ -286,23 +289,32 @@ endif()
 option(NES_BUILD_GPU_FRONTEND "Build the GPU frontend (requires SDL3)" OFF)
 
 if(NES_BUILD_GPU_FRONTEND)
-    find_package(PkgConfig QUIET)
-    if(PKG_CONFIG_FOUND)
-        pkg_check_modules(SDL3 sdl3)
-    endif()
-
-    if(NOT SDL3_FOUND)
-        # Try direct find
-        find_path(SDL3_INCLUDE_DIRS SDL3/SDL.h
-            HINTS /opt/homebrew/include /usr/local/include)
-        find_library(SDL3_LIBRARIES SDL3
-            HINTS /opt/homebrew/lib /usr/local/lib)
-        if(SDL3_INCLUDE_DIRS AND SDL3_LIBRARIES)
-            set(SDL3_FOUND TRUE)
+    find_package(SDL3 CONFIG QUIET)
+    if(TARGET SDL3::SDL3)
+        set(MYNES_SDL3_TARGET SDL3::SDL3)
+    else()
+        find_package(PkgConfig QUIET)
+        if(PKG_CONFIG_FOUND)
+            pkg_check_modules(SDL3 QUIET IMPORTED_TARGET sdl3)
+        endif()
+        if(TARGET PkgConfig::SDL3)
+            set(MYNES_SDL3_TARGET PkgConfig::SDL3)
+        else()
+            find_path(MYNES_SDL3_INCLUDE_DIR SDL3/SDL.h
+                HINTS /opt/homebrew/include /usr/local/include)
+            find_library(MYNES_SDL3_LIBRARY SDL3
+                HINTS /opt/homebrew/lib /usr/local/lib)
+            if(MYNES_SDL3_INCLUDE_DIR AND MYNES_SDL3_LIBRARY)
+                add_library(mynes_sdl3 UNKNOWN IMPORTED)
+                set_target_properties(mynes_sdl3 PROPERTIES
+                    IMPORTED_LOCATION "${MYNES_SDL3_LIBRARY}"
+                    INTERFACE_INCLUDE_DIRECTORIES "${MYNES_SDL3_INCLUDE_DIR}")
+                set(MYNES_SDL3_TARGET mynes_sdl3)
+            endif()
         endif()
     endif()
 
-    if(SDL3_FOUND)
+    if(MYNES_SDL3_TARGET)
         add_executable(mynes_gpu
             frontends/gpu/main.c
             frontends/gpu/gpu_render.c
@@ -323,8 +335,8 @@ if(NES_BUILD_GPU_FRONTEND)
             ${MYNES_SHARED_SOURCES}
         )
         target_include_directories(mynes_gpu PRIVATE
-            ${SDL3_INCLUDE_DIRS} frontends/shared)
-        target_link_libraries(mynes_gpu PRIVATE nes_static ${SDL3_LIBRARIES} pthread)
+            frontends/shared)
+        target_link_libraries(mynes_gpu PRIVATE nes_static ${MYNES_SDL3_TARGET} pthread)
         message(STATUS "SDL3 found - building GPU frontend")
 
         # Compile GLSL shaders to SPIR-V + MSL at build time.
@@ -353,64 +365,66 @@ if(NES_BUILD_GPU_FRONTEND)
         add_custom_target(gpu_shaders DEPENDS ${SHADER_STAMP})
         add_dependencies(mynes_gpu gpu_shaders)
 
-        # GPU kernel tests (no SDL3 dependency)
-        add_executable(test_gpu_kernels frontends/gpu/tests/test_kernels.c)
-        target_include_directories(test_gpu_kernels PRIVATE frontends/gpu)
-        target_link_libraries(test_gpu_kernels PRIVATE m)
-        add_test(NAME gpu_kernel_tests COMMAND test_gpu_kernels)
+        if(NES_BUILD_TESTS)
+            # GPU kernel tests (no SDL3 dependency)
+            add_executable(test_gpu_kernels frontends/gpu/tests/test_kernels.c)
+            target_include_directories(test_gpu_kernels PRIVATE frontends/gpu)
+            target_link_libraries(test_gpu_kernels PRIVATE m)
+            add_test(NAME gpu_kernel_tests COMMAND test_gpu_kernels)
 
-        # Signal precompute tests (DAC model, FIR design, windows)
-        add_executable(test_signal_precompute frontends/gpu/tests/test_signal_precompute.c)
-        target_include_directories(test_signal_precompute PRIVATE frontends/gpu)
-        target_link_libraries(test_signal_precompute PRIVATE m)
-        add_test(NAME gpu_signal_precompute_tests COMMAND test_signal_precompute)
+            # Signal precompute tests (DAC model, FIR design, windows)
+            add_executable(test_signal_precompute frontends/gpu/tests/test_signal_precompute.c)
+            target_include_directories(test_signal_precompute PRIVATE frontends/gpu)
+            target_link_libraries(test_signal_precompute PRIVATE m)
+            add_test(NAME gpu_signal_precompute_tests COMMAND test_signal_precompute)
 
-        # Video-chain helper tests (comb enum mapping, half-float conversion)
-        add_executable(test_video_chain_helpers
-            frontends/gpu/tests/test_video_chain_helpers.c
-            frontends/gpu/video_chain.c)
-        target_include_directories(test_video_chain_helpers PRIVATE frontends/gpu)
-        target_link_libraries(test_video_chain_helpers PRIVATE m)
-        add_test(NAME gpu_video_chain_helper_tests COMMAND test_video_chain_helpers)
+            # Video-chain helper tests (comb enum mapping, half-float conversion)
+            add_executable(test_video_chain_helpers
+                frontends/gpu/tests/test_video_chain_helpers.c
+                frontends/gpu/video_chain.c)
+            target_include_directories(test_video_chain_helpers PRIVATE frontends/gpu)
+            target_link_libraries(test_video_chain_helpers PRIVATE m)
+            add_test(NAME gpu_video_chain_helper_tests COMMAND test_video_chain_helpers)
 
-        # JSON preset validation (ranges, invariants) — scans presets/*.json
-        add_executable(test_presets
-            frontends/gpu/tests/test_presets.c
-            frontends/gpu/video_chain.c)
-        target_include_directories(test_presets PRIVATE frontends/gpu)
-        target_link_libraries(test_presets PRIVATE m)
-        add_test(NAME gpu_preset_tests
-            COMMAND test_presets
-            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+            # JSON preset validation (ranges, invariants) — scans presets/*.json
+            add_executable(test_presets
+                frontends/gpu/tests/test_presets.c
+                frontends/gpu/video_chain.c)
+            target_include_directories(test_presets PRIVATE frontends/gpu)
+            target_link_libraries(test_presets PRIVATE m)
+            add_test(NAME gpu_preset_tests
+                COMMAND test_presets
+                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
-        # JSON preset save/load round-trip + string enum tests
-        add_executable(test_preset_json
-            frontends/gpu/tests/test_preset_json.c
-            frontends/gpu/video_chain.c)
-        target_include_directories(test_preset_json PRIVATE frontends/gpu)
-        target_link_libraries(test_preset_json PRIVATE m)
-        add_test(NAME gpu_preset_json_tests
-            COMMAND test_preset_json
-            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+            # JSON preset save/load round-trip + string enum tests
+            add_executable(test_preset_json
+                frontends/gpu/tests/test_preset_json.c
+                frontends/gpu/video_chain.c)
+            target_include_directories(test_preset_json PRIVATE frontends/gpu)
+            target_link_libraries(test_preset_json PRIVATE m)
+            add_test(NAME gpu_preset_json_tests
+                COMMAND test_preset_json
+                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
-        # GPU pipeline integration test (headless SDL3 GPU compute)
-        add_executable(test_pipeline
-            frontends/gpu/tests/test_pipeline.c
-            frontends/gpu/gpu_compute.c
-            frontends/gpu/video_gpu.c
-            frontends/gpu/chroma_pipeline.c
-            frontends/gpu/post_pipeline.c
-            frontends/gpu/signal_chain.c
-            frontends/gpu/video_chain.c
-            frontends/gpu/gpu_log.c
-        )
-        target_include_directories(test_pipeline PRIVATE
-            frontends/gpu
-            ${SDL3_INCLUDE_DIRS}
-        )
-        target_link_libraries(test_pipeline PRIVATE nes_static ${SDL3_LIBRARIES} m)
-        add_dependencies(test_pipeline gpu_shaders)
-        add_test(NAME gpu_pipeline_test COMMAND test_pipeline)
+            # GPU pipeline integration test (headless SDL3 GPU compute)
+            add_executable(test_pipeline
+                frontends/gpu/tests/test_pipeline.c
+                frontends/gpu/gpu_compute.c
+                frontends/gpu/video_gpu.c
+                frontends/gpu/chroma_pipeline.c
+                frontends/gpu/post_pipeline.c
+                frontends/gpu/signal_chain.c
+                frontends/gpu/video_chain.c
+                frontends/gpu/gpu_log.c
+            )
+            target_include_directories(test_pipeline PRIVATE
+                frontends/gpu
+            )
+            target_link_libraries(test_pipeline PRIVATE nes_static ${MYNES_SDL3_TARGET} m)
+            add_dependencies(test_pipeline gpu_shaders)
+            add_test(NAME gpu_pipeline_test COMMAND test_pipeline)
+
+        endif()
 
         # GPU image processor — run real pipeline on PNG screenshots
         add_executable(gpu_process
@@ -425,9 +439,8 @@ if(NES_BUILD_GPU_FRONTEND)
         )
         target_include_directories(gpu_process PRIVATE
             frontends/gpu
-            ${SDL3_INCLUDE_DIRS}
         )
-        target_link_libraries(gpu_process PRIVATE nes_static ${SDL3_LIBRARIES} m)
+        target_link_libraries(gpu_process PRIVATE nes_static ${MYNES_SDL3_TARGET} m)
         add_dependencies(gpu_process gpu_shaders)
     else()
         message(STATUS "SDL3 not found - skipping GPU frontend (install with: brew install sdl3)")

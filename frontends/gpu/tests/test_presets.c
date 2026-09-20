@@ -76,11 +76,11 @@ static int test_all_presets_loadable(void) {
     }
     for (int i = 0; i < preset_count; i++) {
         const PhysicalPreset *p = &presets[i];
-        if (!p->name || p->name[0] == '\0') {
+        if (p->name[0] == '\0') {
             printf("\n  FAIL: preset %s has null/empty name", preset_paths_buf[i]);
             return 0;
         }
-        if (!p->description || p->description[0] == '\0') {
+        if (p->description[0] == '\0') {
             printf("\n  FAIL: preset %s has null/empty description", p->name);
             return 0;
         }

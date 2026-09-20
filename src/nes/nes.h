@@ -53,29 +53,22 @@ struct NES {
     uint8_t controller_strobe;  /* Strobe state (bit 0) */
     bool controller_strobed;    /* Latched once per APU put cycle while strobe is high */
 
-    /* OAM DMA pending start delay. Real hardware: after a $4014 write, the
-     * OAM DMA can't start until a "get" cycle, which means the CPU's current
-     * instruction has to finish. This matters for INC $4014 where the RMW
-     * instruction does TWO writes — without this delay, our model would
-     * start the DMA between the two writes and use the wrong page. */
-    uint8_t oam_dma_start_delay;
-
     /* DMA Controller State */
     struct {
         /* OAM DMA */
         bool oam_pending;        /* OAM DMA requested */
         uint8_t oam_page;        /* Source page for OAM DMA */
-        uint8_t oam_start_addr;  /* OAMADDR at DMA start (writes to this + i) */
         bool oam_active;         /* OAM DMA in progress */
         uint16_t oam_cycle;      /* Current cycle within OAM DMA (0-513) */
-        bool oam_read_cycle;     /* Saved odd/even start for alignment */
 
         /* DMC DMA */
-        bool dmc_pending;        /* DMC DMA requested */
         uint8_t dmc_cycle;       /* Current cycle within DMC DMA (0-3) */
         bool dmc_active;         /* DMC DMA in progress */
 
         /* RDY line - when low, CPU is halted */
+        uint16_t halt_addr;
+        uint8_t oam_data;
+        bool oam_data_ready;
         bool cpu_halted;         /* CPU cannot execute (DMA owns bus) */
     } dma;
 
@@ -85,6 +78,7 @@ struct NES {
 
     /* Open bus - last value on data bus */
     uint8_t open_bus;
+    uint8_t internal_bus;
 
     /* Master Clock Scheduler.
      *
@@ -168,7 +162,16 @@ static inline uint8_t nes_cpu_read(CPU *cpu, uint16_t addr) {
         nes->open_bus = val;
     }
     else if (addr < 0x4000) {
+        /* PPUSTATUS latches VBlank at M2 rise, whereas OAMDATA and the
+         * sprite status bits remain driven until M2 falls (~two dots). */
+        if ((addr & 7) == 4)
+            ppu_advance_to_master_tick(&nes->ppu, nes->master_tick + nes->cpu_phase_offset + 7);
         val = ppu_reg_read(&nes->ppu, addr);
+        if ((addr & 7) == 2) {
+            ppu_advance_to_master_tick(&nes->ppu, nes->master_tick + nes->cpu_phase_offset + 7);
+            val = (val & 0x9F) | (nes->ppu.status & 0x60);
+            ppu_refresh_decay(&nes->ppu, val);
+        }
         nes->open_bus = val;
     }
     else if (addr < 0x4018) {
@@ -195,13 +198,13 @@ static inline uint8_t nes_cpu_read(CPU *cpu, uint16_t addr) {
         }
         else if (addr == 0x4015) {
             val = apu_read_status(&nes->apu);
-            val = (val & 0xDF) | (nes->open_bus & 0x20);
+            val = (val & 0xDF) | (nes->internal_bus & 0x20);
         }
         else {
             val = nes->open_bus;
         }
     }
-    else if (addr < 0x5000) {
+    else if (addr < 0x6000 && (!nes->mapper_loaded || nes->mapper.number != 5)) {
         val = nes->open_bus;
     }
     else {
@@ -217,6 +220,8 @@ static inline uint8_t nes_cpu_read(CPU *cpu, uint16_t addr) {
         nes->open_bus = val;
     }
 
+    if (addr == 0x4016 || addr == 0x4017) nes->open_bus = val;
+    if (cpu->rdy) nes->internal_bus = val;
     HOOK_MEM_ACCESS(addr, val, false);
     return val;
 }
@@ -226,6 +231,7 @@ static inline void nes_cpu_write(CPU *cpu, uint16_t addr, uint8_t val) {
 
     /* All writes update the data bus */
     nes->open_bus = val;
+    nes->internal_bus = val;
     HOOK_MEM_ACCESS(addr, val, true);
 
     if (addr < 0x2000) {
@@ -239,14 +245,10 @@ static inline void nes_cpu_write(CPU *cpu, uint16_t addr, uint8_t val) {
     else if (addr < 0x4018) {
         /* APU and I/O */
         if (addr == 0x4014) {
-            /* OAM DMA. Delay start by 2 CPU cycles so RMW instructions
-             * (e.g. INC $4014) get to do BOTH writes before the DMA starts.
-             * Real hardware: DMA only starts on a "get" cycle (read), so
-             * during a write-cycle sequence the DMA waits. AccuracyCoin
-             * INC $4014 test 3 depends on this. */
+            /* DMA waits for a CPU read cycle. Consecutive RMW writes
+             * therefore update the page before the CPU can be halted. */
             nes->oam_dma_pending = true;
             nes->oam_dma_page = val;
-            nes->oam_dma_start_delay = 2;
         }
         else if (addr == 0x4016) {
             /* Controller strobe. The actual latching of the button state
@@ -321,101 +323,80 @@ static inline void nes_ppu_write(PPU *ppu, uint16_t addr, uint8_t val) {
  * OAM DMA - Cycle-Stealing Implementation
  * ============================================================================ */
 
-/* OAM DMA State Machine:
- * - Triggered by write to $4014
- * - Waits for CPU to finish current cycle (alignment)
- * - Halts CPU via RDY line
- * - Takes 513 cycles (or 514 if starting on odd cycle):
- *   - 1 (or 2) alignment cycles
- *   - 256 read cycles + 256 write cycles interleaved
- * - PPU and APU continue running during DMA
- */
-
-/* Process one DMA cycle, returns true if DMA is still active */
-static inline bool nes_dma_step(NES *nes) {
-    /* Check if OAM DMA should start */
-    if (nes->dma.oam_pending && !nes->dma.oam_active) {
-        /* Start DMA - halt CPU */
-        nes->dma.oam_active = true;
-        nes->dma.oam_pending = false;
-        nes->dma.oam_page = nes->oam_dma_page;
-        nes->dma.oam_start_addr = nes->ppu.oam_addr;  /* Save OAMADDR at start */
-        nes->dma.oam_cycle = 0;
-        nes->cpu.rdy = false;  /* Halt CPU */
-
-        /* DMA alignment: if starting on odd CPU cycle, add extra dummy cycle */
-        /* On real hardware, DMA waits for a "get" cycle before starting */
-        /* Total cycles: 1 alignment (+ 1 if odd) + 256*2 transfer = 513 or 514 */
-        nes->dma.oam_read_cycle = (nes->cpu.cycles & 1) != 0;  /* Save odd/even start */
-    }
-
-    if (!nes->dma.oam_active) {
-        return false;  /* No DMA active */
-    }
-
-    /* OAM DMA cycle processing */
-    uint16_t cycle = nes->dma.oam_cycle;
-    bool started_odd = nes->dma.oam_read_cycle;  /* Saved from DMA start */
-    uint16_t alignment_cycles = started_odd ? 2 : 1;  /* Extra cycle if started odd */
-
-    if (cycle < alignment_cycles) {
-        /* Alignment cycle(s) - CPU repeats the read cycle it was halted on.
-         * This is important for side-effect registers like $4016, $4015, $2007 */
-        (void)nes_cpu_read(&nes->cpu, nes->cpu.last_read_addr);
-    } else {
-        /* Transfer cycles: 256 reads + 256 writes = 512 cycles */
-        uint16_t transfer_cycle = cycle - alignment_cycles;  /* 0-511 */
-        uint8_t byte_idx = transfer_cycle >> 1;  /* 0-255 */
-        bool is_read = (transfer_cycle & 1) == 0;
-
-        if (is_read) {
-            /* Read from source address - store in DL for write cycle.
-             *
-             * APU register chip-select quirk (AccuracyCoin APU REGISTER
-             * ACTIVATION test 4): the APU registers ($4000-$401F) only
-             * respond when the 6502's *own* address bus is in that range.
-             * If the OAM DMA reads from page $40 while the CPU's halted
-             * address is somewhere else, the APU registers are inactive
-             * and the read returns open bus rather than reading $4015 etc.
-             * (mirrors C# Emulator.cs Fetch APU range check on addressBus
-             * vs Address). */
-            uint16_t src_addr = ((uint16_t)nes->dma.oam_page << 8) | byte_idx;
-            if (src_addr >= 0x4000 && src_addr < 0x4020) {
-                uint16_t cpu_addr = cpu_get_next_read_addr(&nes->cpu);
-                bool apu_active = (cpu_addr >= 0x4000 && cpu_addr < 0x4020);
-                if (!apu_active) {
-                    /* APU not selected — open bus stays whatever it was. */
-                    /* (no nes_cpu_read call → no $4015 clear, etc.) */
-                } else {
-                    nes->open_bus = nes_cpu_read(&nes->cpu, src_addr);
-                }
-            } else {
-                nes->open_bus = nes_cpu_read(&nes->cpu, src_addr);
-            }
-        } else {
-            /* Write to OAM - DMA writes to (OAMADDR + byte_idx) & 0xFF
-             * without modifying OAMADDR itself. Use OAMDATA write path */
-            uint8_t oam_offset = (nes->dma.oam_start_addr + byte_idx) & 0xFF;
-            /* Save current oam_addr, write to OAM, then restore */
-            uint8_t saved_oam_addr = nes->ppu.oam_addr;
-            nes->ppu.oam_addr = oam_offset;
-            ppu_reg_write(&nes->ppu, 0x2004, nes->open_bus);
-            nes->ppu.oam_addr = saved_oam_addr;
+/* DMA uses the same bus phase and master clock as normal CPU accesses.
+ * The CPU's address remains fixed while DMA substitutes external addresses. */
+static inline uint8_t nes_dma_read(NES *nes, uint16_t addr) {
+    bool apu_selected = nes->dma.halt_addr >= 0x4000 && nes->dma.halt_addr < 0x4020;
+    uint8_t value = nes->open_bus;
+    if (addr < 0x4000 || addr >= 0x4020)
+        value = nes_cpu_read(&nes->cpu, addr);
+    if (apu_selected) {
+        uint16_t reg = 0x4000 | (addr & 0x1F);
+        if (reg == 0x4015) {
+            value = (apu_read_status(&nes->apu) & 0xDF) | (value & 0x20);
+        } else if (reg == 0x4016 || reg == 0x4017) {
+            uint8_t controller = nes_cpu_read(&nes->cpu, reg);
+            if (addr >= 0x2000) value = controller;
+            nes->open_bus = value;
         }
     }
+    return value;
+}
 
-    nes->dma.oam_cycle++;
+static inline bool nes_dma_step(NES *nes) {
+    bool dmc_request = apu_dmc_needs_sample(&nes->apu);
+    bool active = nes->dma.oam_active || nes->dma.dmc_active;
+    if (!active && (nes->oam_dma_pending || dmc_request)) {
+        if (cpu_next_is_write(&nes->cpu)) return false;
+        nes->dma.halt_addr = cpu_get_next_read_addr(&nes->cpu);
+        nes->dma.cpu_halted = true;
+    }
+    if (!active && !nes->dma.cpu_halted) return false;
 
-    /* Check if DMA is complete */
-    uint16_t total_cycles = alignment_cycles + 512;  /* 513 or 514 */
-    if (nes->dma.oam_cycle >= total_cycles) {
-        /* DMA complete - release CPU */
-        nes->dma.oam_active = false;
-        nes->cpu.rdy = true;  /* Resume CPU */
-        return false;
+    nes->cpu.rdy = false;
+    bool halted_now = !active;
+    if (nes->oam_dma_pending && !nes->dma.oam_active) {
+        nes->dma.oam_active = true;
+        nes->oam_dma_pending = false;
+        nes->dma.oam_page = nes->oam_dma_page;
+        nes->dma.oam_cycle = 0;
+        nes->dma.oam_data_ready = false;
+    }
+    if (dmc_request && !nes->dma.dmc_active) {
+        nes->dma.dmc_active = true;
+        nes->dma.dmc_cycle = 0;
+        if (cpu_next_is_sha_dummy_read(&nes->cpu)) nes->cpu.ignore_h = 1;
     }
 
-    return true;  /* DMA still active */
+    bool bus_used = false;
+    /* Halt and dummy cycles precede the DMC get; OAM can continue on both. */
+    if (nes->dma.dmc_active) {
+        if (nes->dma.dmc_cycle >= 2 && !nes->apu.put_cycle) {
+            uint8_t sample = nes_dma_read(nes, nes->apu.dmc.current_address);
+            apu_dmc_load_sample(&nes->apu, sample);
+            nes->dma.dmc_active = false;
+            bus_used = true;
+        } else {
+            nes->dma.dmc_cycle++;
+        }
+    }
+    if (nes->dma.oam_active && !halted_now && !bus_used) {
+        if (!nes->apu.put_cycle) {
+            uint16_t addr = ((uint16_t)nes->dma.oam_page << 8) | nes->dma.oam_cycle;
+            nes->dma.oam_data = nes_dma_read(nes, addr);
+            nes->dma.oam_data_ready = true;
+            bus_used = true;
+        } else if (nes->dma.oam_data_ready) {
+            nes->open_bus = nes->dma.oam_data;
+            ppu_reg_write(&nes->ppu, 0x2004, nes->dma.oam_data);
+            nes->dma.oam_data_ready = false;
+            bus_used = true;
+            if (++nes->dma.oam_cycle == 256) nes->dma.oam_active = false;
+        }
+    }
+    if (!bus_used) (void)nes_cpu_read(&nes->cpu, nes->dma.halt_addr);
+    nes->dma.cpu_halted = nes->dma.oam_active || nes->dma.dmc_active;
+    return true;
 }
 
 /* ============================================================================
@@ -458,18 +439,6 @@ static inline void nes_cpu_step_traced(NES *nes) {
 }
 
 static inline void nes_step(NES *nes) {
-    /* Check for new OAM DMA request (from $4014 write).
-     * The 2-cycle start delay (set by $4014 write) gives RMW instructions
-     * like INC $4014 time to do BOTH writes before the DMA starts. */
-    if (nes->oam_dma_start_delay > 0) {
-        nes->oam_dma_start_delay--;
-    }
-    if (nes->oam_dma_pending && nes->oam_dma_start_delay == 0
-        && !nes->dma.oam_active) {
-        nes->dma.oam_pending = true;
-        nes->oam_dma_pending = false;
-    }
-
     /* Step APU FIRST so IRQ is set before CPU checks for interrupts */
     apu_step(&nes->apu);
 
@@ -489,68 +458,6 @@ static inline void nes_step(NES *nes) {
             nes->controller_strobed = false;
         }
     }
-
-    /* DMC DMA cycle stealing.
-     *
-     * Real hardware: when the DMC needs a sample, the CPU is halted on its
-     * next read cycle and the bus is held at the address the CPU was about
-     * to drive. DMA cannot halt on write cycles — it waits.
-     *
-     * We replicate this by:
-     *   1. Checking cpu_next_is_write() — if the next cycle is a write,
-     *      defer the DMA (the test ROM verifies this for STA $2007).
-     *   2. Calling cpu_get_next_read_addr() — a side-effect-free generated
-     *      function that inspects the current uPC and returns the address
-     *      the next cpu_step would drive on its bus.
-     *   3. Doing 2-3 dummy reads of that address (each with full side
-     *      effects: clears VBL on $2002, increments v on $2007, clears
-     *      frame IRQ on $4015, etc.).
-     *   4. Doing the actual sample read from the DMC current address.
-     *
-     * This must run BEFORE cpu_step (legacy timing — INSTRUCTION TIMING and
-     * other tests depend on cpu->cycles being one BEHIND the current cycle
-     * when the DMA halt parity is computed). */
-    if (apu_dmc_needs_sample(&nes->apu) && nes->cpu.rdy
-        && !cpu_next_is_write(&nes->cpu)) {
-        nes->cpu.rdy = false;
-
-        bool need_alignment = (nes->cpu.cycles & 1) != 0;
-        int total_dmc_cycles = need_alignment ? 4 : 3;
-        uint16_t halt_addr = cpu_get_next_read_addr(&nes->cpu);
-
-        /* SHA/SHX/SHY/TAS quirk: when DMC DMA halts on the dummy-read
-         * cycle (the cycle right before the actual write), the upcoming
-         * SHA-family store ignores the H register entirely — the value
-         * stored is just A & X (or X, or Y) without the AND with the
-         * high byte of the target address. AccuracyCoin SHA test sub-test
-         * 7+, mirrors C# Emulator.cs IgnoreH. */
-        if (cpu_next_is_sha_dummy_read(&nes->cpu)) {
-            nes->cpu.ignore_h = 1;
-        }
-
-        for (int dmc_cycle = 0; dmc_cycle < total_dmc_cycles; dmc_cycle++) {
-            if (dmc_cycle == total_dmc_cycles - 1) {
-                /* Last cycle: actual sample read */
-                uint8_t sample = nes_cpu_read(&nes->cpu, nes->apu.dmc_current_addr);
-                apu_dmc_load_sample(&nes->apu, sample);
-            } else {
-                /* Halt/dummy/alignment cycles: re-read the upcoming bus addr */
-                (void)nes_cpu_read(&nes->cpu, halt_addr);
-            }
-            ppu_step(&nes->ppu);
-            ppu_step(&nes->ppu);
-            ppu_step(&nes->ppu);
-            apu_step(&nes->apu);
-            nes->master_tick += 12;
-        }
-
-        if (!nes->dma.oam_active) {
-            nes->cpu.rdy = true;
-        }
-    }
-
-    /* Process OAM DMA (cycle-stealing) */
-    nes_dma_step(nes);
 
     /* IRQ line — level-sensitive, reflects current state of all sources.
      * On real hardware, the CPU /IRQ pin is active-low and directly driven
@@ -592,11 +499,12 @@ static inline void nes_step(NES *nes) {
          * is < cpu_bus_tick — the state the cpu sees at bus access. */
         ppu_advance_to_master_tick(&nes->ppu, cpu_bus_tick);
 
+        bool dma_cycle = nes_dma_step(nes);
+        nes->cpu.rdy = !dma_cycle;
         nes_cpu_step_traced(nes);
+        nes->cpu.rdy = !nes->dma.cpu_halted;
 
-        /* Advance master tick to end of CPU cycle. DMC DMA (above) has
-         * already advanced master_tick if it fired, but cpu_cycle_start
-         * was captured AFTER that, so this is consistent. */
+        /* DMA and CPU work share this single CPU cycle. */
         nes->master_tick = cpu_cycle_start + 12;
         ppu_advance_to_master_tick(&nes->ppu, nes->master_tick);
     }
@@ -633,7 +541,9 @@ static inline void nes_step(NES *nes) {
      */
     if (nes->ppu.suppress_nmi_edge) {
         nes->nmi_edge_detected = false;
-        nes->cpu.nmi_pending = false;  /* Cancel pending NMI */
+        nes->cpu.nmi_pending = false;
+        nes->cpu.nmi_armed = false;
+        nes->cpu.nmi_sampled = false;
         nes->prev_nmi = nes->ppu.nmi_output;  /* Prevent edge detection */
         nes->ppu.suppress_nmi_edge = false;
         nes->ppu.nmi_edge_pending = false;  /* Suppression beats sticky edge */
@@ -649,18 +559,7 @@ static inline void nes_step(NES *nes) {
             nes->ppu.nmi_edge_pending = false;
         }
 
-        /* Check for NMI from PPU - edge triggered (low-to-high transition)
-         * When NMI edge is detected, we delay setting nmi_pending until the CPU
-         * is in the MIDDLE of an instruction (uPC != 0). This way:
-         * 1. Edge detected at end of instruction N (e.g., STA $2000)
-         * 2. Instruction N+1 starts (uPC goes from 0 to non-zero)
-         * 3. We set nmi_pending during instruction N+1
-         * 4. CPU finishes N+1, sees nmi_pending at case 0, fires NMI
-         *
-         * If nmi_output goes LOW before we transfer to nmi_pending, cancel the
-         * pending edge. This handles the case where NMI is disabled right after
-         * VBL is set but before NMI actually fires.
-         */
+        /* Cancel an edge that disappears before reaching the CPU latch. */
         if (nes->ppu.nmi_output && !nes->prev_nmi) {
             nes->nmi_edge_detected = true;
         } else if (!nes->ppu.nmi_output && nes->nmi_edge_detected) {
@@ -670,11 +569,9 @@ static inline void nes_step(NES *nes) {
         nes->prev_nmi = nes->ppu.nmi_output;
     }
 
-    /* Transfer NMI to CPU during instruction execution.
-     * NMI is edge-triggered: fires once per low→high transition of nmi_output.
-     * Set nmi_pending when uPC != 0 (mid-instruction); the CPU's dispatch
-     * loop picks it up at the next uPC == 0 boundary. */
-    if (nes->nmi_edge_detected && nes->cpu.uPC != 0) {
+    /* Latch the edge. The CPU polls it at the instruction's interrupt
+     * sampling cycle; fetching an opcode does not itself poll NMI. */
+    if (nes->nmi_edge_detected) {
         nes->cpu.nmi_pending = true;
         nes->nmi_edge_detected = false;
     }

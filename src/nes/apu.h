@@ -608,6 +608,7 @@ static inline bool apu_clock_dmc_timer(APU *apu) {
                 d->silence_flag = false;
                 d->shift_register = d->sample_buffer;
                 d->sample_buffer_empty = true;
+                if (apu->dmc_dma_delay < 1) apu->dmc_dma_delay = 1;
             }
         }
     }
@@ -947,9 +948,7 @@ static inline void apu_step(APU *apu) {
     step_dirty |= apu_clock_triangle_timer(&apu->triangle);
     step_dirty |= apu_clock_noise_timer(&apu->noise);
 
-    if (apu->dmc.enabled || apu->dmc.bytes_remaining > 0 || !apu->dmc.silence_flag) {
-        step_dirty |= apu_clock_dmc_timer(apu);
-    }
+    step_dirty |= apu_clock_dmc_timer(apu);
 
     /* Only re-evaluate the mixer when at least one channel has
      * reported a state change. Otherwise reuse the cached value —
@@ -1049,8 +1048,10 @@ static inline uint8_t apu_read_status(APU *apu) {
      * for 'we are clearing bit 6 on the next APU get cycle' to be set
      * inside the 'read $4015' code."
      */
-    apu->frame_irq_clear_pending = true;
-    apu->frame_irq_clear_delay = apu->put_cycle ? 0 : 1;
+    if (!apu->frame_irq_clear_pending) {
+        apu->frame_irq_clear_pending = true;
+        apu->frame_irq_clear_delay = apu->put_cycle ? 0 : 1;
+    }
 
     return status;
 }
@@ -1224,12 +1225,8 @@ static inline void apu_write(APU *apu, uint16_t addr, uint8_t val) {
                      * tests where the dummy reads must land on the
                      * register-access cycle. */
                     if (!was_enabled) {
-                        /* Empirically (sweep delay 1..8): values 4 or 6 are
-                         * the only ones that win the DMC DMA + $2002 read
-                         * test on AccuracyCoin page 13 — pick the smaller
-                         * one. The C# emulator uses ~2 APU cycles which
-                         * is 4 of our half-cycle counts. */
-                        apu->dmc_dma_delay = 4;
+                        /* Align the initial load request to the APU get cycle. */
+                        apu->dmc_dma_delay = apu->put_cycle ? 3 : 2;
                     }
                 }
             }

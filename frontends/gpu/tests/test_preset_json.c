@@ -443,7 +443,7 @@ static int test_shipped_presets_roundtrip(void)
             return 0;
         }
 
-        if (!compare_presets(&src, &dst, src.name ? src.name : names[i])) {
+        if (!compare_presets(&src, &dst, src.name[0] ? src.name : names[i])) {
             printf("  (above mismatch was in shipped preset: %s)\n", paths[i]);
             unlink(tmp);
             return 0;

@@ -6,6 +6,7 @@ CTestTestfile.cmake
 Makefile
 Testing/
 build/
+/build-*/
 
 # Output directories
 bin/
@@ -34,7 +35,7 @@ roms/
 !docs/images/*.png
 output_*
 screenshot_*
-accuracy_*
+/accuracy_*
 chr_tiles*
 
 # OS files

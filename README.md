@@ -125,6 +125,11 @@ cmake ..
 cmake --build . -j
 ```
 
+On macOS, CMake resolves the SDK from the selected developer tools and
+defaults the minimum deployment version to the running macOS version.
+An explicit `-DCMAKE_OSX_DEPLOYMENT_TARGET=...` overrides this default;
+dependencies must support that version too.
+
 The main build options are:
 
 ```bash
@@ -186,6 +191,8 @@ Useful individual targets and tools:
 ```bash
 cmake --build build --target test_cpu test_cpu_cycles test_ppu test_nes test_rom
 cmake --build build --target accuracy_coin
+./build/bin/accuracy_coin # all 144 AccuracyCoin tests; failures return nonzero
+./build/bin/accuracy_coin tests/accuracy_coin/AccuracyCoin.nes 14 # one page
 ./build/bin/test_runner tests/nes-test-roms/.../some-test.nes --blargg
 ```
 
