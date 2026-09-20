@@ -422,8 +422,9 @@ static inline void nes_cpu_step_traced(NES *nes) {
 
     cpu_step(&nes->cpu);
 
-    /* CPU instruction completed (uPC returned to 0). */
-    if (prev_upc != 0 && nes->cpu.uPC == 0) {
+    /* CPU instruction completed (uPC returned to 0). Avoid the extra opcode
+     * lookup, including mapper dispatch, when no trace consumer is installed. */
+    if (debug_hooks.on_cpu_step && prev_upc != 0 && nes->cpu.uPC == 0) {
         uint16_t tpc = nes->last_instr_pc;
         uint8_t actual_op;
         if (tpc < 0x2000)

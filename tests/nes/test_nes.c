@@ -411,6 +411,44 @@ int test_dmc_stop_during_request(void) {
     return pass;
 }
 
+static unsigned traced_instructions;
+static bool trace_matches;
+static uint64_t last_trace_cycle;
+
+static void check_instruction_trace(uint16_t pc, uint8_t opcode, uint64_t cycles) {
+    trace_matches &= pc >= 0x8000 && pc <= 0x8003;
+    trace_matches &= opcode == test_rom[pc & 0x7FFF];
+    trace_matches &= cycles > last_trace_cycle;
+    last_trace_cycle = cycles;
+    traced_instructions++;
+}
+
+int test_trace_callback_toggle(void) {
+    setup();
+    uint8_t program[] = {0xEA, 0x4C, 0x00, 0x80}; /* NOP; JMP $8000 */
+    write_program(0x8000, program, sizeof(program));
+    set_reset_vector(0x8000);
+    nes_reset(&nes);
+    traced_instructions = 0;
+    last_trace_cycle = 0;
+    trace_matches = true;
+    debug_hooks.on_cpu_step = NULL;
+    run_cycles(31);
+    debug_hooks.on_cpu_step = check_instruction_trace;
+    run_cycles(50);
+    bool pass = traced_instructions > 0 && trace_matches;
+    unsigned count = traced_instructions;
+    debug_hooks.on_cpu_step = NULL;
+    run_cycles(31);
+    pass &= traced_instructions == count;
+    debug_hooks.on_cpu_step = check_instruction_trace;
+    run_cycles(50);
+    pass &= traced_instructions > count && trace_matches;
+    debug_hooks.on_cpu_step = NULL;
+    printf("TEST trace_callback_toggle: %s\n", pass ? "PASS" : "FAIL");
+    return pass;
+}
+
 /* ============================================================================
  * Main
  * ============================================================================ */
@@ -433,6 +471,7 @@ int main(void) {
     total++; passed += test_oam_dma();
     total++; passed += test_full_frame();
     total++; passed += test_vblank_flag_read();
+    total++; passed += test_trace_callback_toggle();
 
     printf("\n=== Results: %d/%d tests passed ===\n", passed, total);
 

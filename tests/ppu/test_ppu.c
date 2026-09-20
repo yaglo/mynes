@@ -461,6 +461,58 @@ int test_nmi_disable_gates_output(void) {
     return pass;
 }
 
+/* Check the sprite clock boundary independently of pixel color: reaching X=0
+ * must not shift early, and a pending enable uses the old latch for shifting.
+ * Include forced blanking and pre-render, where counters clock without shifts. */
+int test_sprite_clock_order(void) {
+    static const uint8_t positions[8] = {0, 1, 2, 255, 0, 7, 1, 128};
+    bool pass = true;
+    for (int count = 0; count <= 8; count++) {
+        for (int flags = 0; flags < 16; flags++) {
+            bool active = (flags & 1) != 0;
+            bool pending = (flags & 2) != 0;
+            bool rendering = (flags & 4) != 0;
+            bool prerender = (flags & 8) != 0;
+            test_ppu_init();
+            ppu.scanline = prerender ? ppu.prerender_line : 5;
+            ppu.dot = 10;
+            ppu.mask = rendering ? MASK_BG_ENABLE : 0;
+            ppu.sprites_on_line = count;
+            ppu.sprite_counters_active = active;
+            ppu.sprite_counters_pending = pending;
+            memcpy(ppu.sprite_positions, positions, sizeof(positions));
+            memset(ppu.sprite_patterns_lo, 0xA5, 8);
+            memset(ppu.sprite_patterns_hi, 0xC3, 8);
+            ppu_step(&ppu);
+            bool counting = false;
+            for (int i = 0; i < 8; i++) {
+                bool clock = i < count && (active || pending);
+                bool shift = i < count && rendering && !prerender &&
+                             (!active || positions[i] == 0);
+                uint8_t expected_x = positions[i] - (clock && positions[i] != 0);
+                pass &= ppu.sprite_positions[i] == expected_x;
+                pass &= ppu.sprite_patterns_lo[i] == (shift ? 0x4A : 0xA5);
+                pass &= ppu.sprite_patterns_hi[i] == (shift ? 0x86 : 0xC3);
+                counting |= clock && positions[i] != 0;
+            }
+            pass &= ppu.sprite_counters_active == counting;
+            pass &= !ppu.sprite_counters_pending;
+        }
+    }
+    test_ppu_init();
+    ppu.scanline = ppu.prerender_line;
+    ppu.dot = 340;
+    ppu.sprite_counters_pending = true;
+    ppu.sprites_on_line = 1;
+    ppu.sprite_positions[0] = 1;
+    ppu.sprite_patterns_lo[0] = 0x80;
+    ppu_step(&ppu);
+    pass &= ppu.sprite_counters_active && !ppu.sprite_counters_pending;
+    pass &= ppu.sprite_positions[0] == 1 && ppu.sprite_patterns_lo[0] == 0x80;
+    printf("TEST sprite_clock_order: %s\n", pass ? "PASS" : "FAIL");
+    return pass;
+}
+
 /* ============================================================================
  * Main
  * ============================================================================ */
@@ -490,6 +542,7 @@ int main(void) {
     total++; passed += test_secondary_oam_restart();
     total++; passed += test_oam_output_latch();
     total++; passed += test_nmi_disable_gates_output();
+    total++; passed += test_sprite_clock_order();
 
     printf("\n=== Results: %d/%d tests passed ===\n", passed, total);
 

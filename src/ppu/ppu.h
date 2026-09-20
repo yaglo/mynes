@@ -954,10 +954,9 @@ static inline void ppu_render_pixel(PPU *ppu) {
     if (ppu->mask & MASK_SPRITE_ENABLE) {
         if ((ppu->mask & MASK_SPRITE_LEFT) || x >= 8) {
             for (int i = 0; i < ppu->sprites_on_line; i++) {
-                int offset = ppu->sprite_counters_active && ppu->sprite_positions[i] ? -1 : 0;
-                if (offset >= 0 && offset < 8) {
-                    uint8_t p0 = (ppu->sprite_patterns_lo[i] >> (7 - offset)) & 1;
-                    uint8_t p1 = (ppu->sprite_patterns_hi[i] >> (7 - offset)) & 1;
+                if (!ppu->sprite_counters_active || !ppu->sprite_positions[i]) {
+                    uint8_t p0 = ppu->sprite_patterns_lo[i] >> 7;
+                    uint8_t p1 = ppu->sprite_patterns_hi[i] >> 7;
                     uint8_t pixel = p0 | (p1 << 1);
 
                     if (pixel != 0) {
@@ -1069,7 +1068,6 @@ static inline void ppu_step(PPU *ppu) {
     bool prerender_scanline = ppu->scanline == ppu->prerender_line;
     bool render_scanline = visible_scanline || prerender_scanline;
     bool visible_dot = ppu->dot >= 1 && ppu->dot <= 256;
-    bool fetch_dot = (ppu->dot >= 1 && ppu->dot <= 256) || (ppu->dot >= 321 && ppu->dot <= 336);
 
     /* This address-increment inhibit is cleared on pre-render too, even
      * though that scanline does not perform primary OAM evaluation. */
@@ -1105,65 +1103,57 @@ static inline void ppu_step(PPU *ppu) {
     ppu_clock_bus(ppu, rendering, render_scanline);
 
     /* ===== Rendering ===== */
-    if (rendering) {
-        /* Sample the pixel before clocking the background shift registers. */
-        if (visible_scanline && visible_dot) ppu_render_pixel(ppu);
-
-        /* Background rendering */
-        if (render_scanline && fetch_dot) {
+    if (rendering && render_scanline) {
+        if (visible_dot) {
+            /* Sample pixels before shifting. Pre-render clocks the background
+             * but neither outputs pixels nor evaluates primary OAM. */
+            if (visible_scanline) ppu_render_pixel(ppu);
             ppu_shift_bg(ppu);
             ppu_fetch_bg(ppu);
-        }
-
-        /* No primary OAM evaluation on the pre-render scanline. */
-        if (visible_scanline && ppu->dot >= 1 && ppu->dot <= 256) {
-            ppu_sprite_evaluation(ppu);
-        }
-
-        /* Sprite fetching */
-        if (render_scanline && ppu->dot >= 257 && ppu->dot <= 320) {
+            if (visible_scanline) ppu_sprite_evaluation(ppu);
+            if (ppu->dot == 256) ppu_inc_y(ppu);
+        } else if (ppu->dot >= 257 && ppu->dot <= 320) {
             ppu_fetch_sprites(ppu);
-        }
-
-        /* Pixel output */
-        if (visible_scanline && visible_dot) {
-            for (int i = 0; i < ppu->sprites_on_line; i++) {
-                if (!ppu->sprite_counters_active || !ppu->sprite_positions[i]) {
-                    ppu->sprite_patterns_lo[i] <<= 1;
-                    ppu->sprite_patterns_hi[i] <<= 1;
-                }
-            }
-        }
-
-        /* End of visible scanline: increment Y */
-        if (render_scanline && ppu->dot == 256) {
-            ppu_inc_y(ppu);
-        }
-
-        /* Start of hblank: transfer X */
-        if (render_scanline && ppu->dot == 257) {
-            ppu_transfer_x(ppu);
-        }
-
-        /* Pre-render scanline: transfer Y */
-        if (prerender_scanline && ppu->dot >= 280 && ppu->dot <= 304) {
-            ppu_transfer_y(ppu);
+            if (ppu->dot == 257) ppu_transfer_x(ppu);
+            if (prerender_scanline && ppu->dot >= 280 && ppu->dot <= 304)
+                ppu_transfer_y(ppu);
+        } else if (ppu->dot >= 321 && ppu->dot <= 336) {
+            ppu_shift_bg(ppu);
+            ppu_fetch_bg(ppu);
         }
     }
 
     /* The counter-enable latch is clocked after the pixel shifters. On an
      * odd pre-render line dot 340 is omitted, so it reaches the counters
      * after the first pixel of scanline zero instead. */
-    if (render_scanline && (ppu->dot == 340 || visible_dot) && ppu->sprite_counters_pending) {
+    if (render_scanline && visible_dot) {
+        bool shift = rendering && visible_scanline;
+        bool was_active = ppu->sprite_counters_active;
+        if (was_active || ppu->sprite_counters_pending) {
+            /* Select shifts using the old latch, then clock counters using the
+             * new latch. A position of one reaches zero without shifting yet. */
+            uint8_t counting = 0;
+            for (int i = 0; i < ppu->sprites_on_line; i++) {
+                uint8_t position = ppu->sprite_positions[i];
+                if (shift && (!was_active || !position)) {
+                    ppu->sprite_patterns_lo[i] <<= 1;
+                    ppu->sprite_patterns_hi[i] <<= 1;
+                }
+                counting |= position;
+                ppu->sprite_positions[i] = position - (position != 0);
+            }
+            ppu->sprite_counters_active = counting != 0;
+            ppu->sprite_counters_pending = false;
+        } else if (shift) {
+            /* Once all counters stop, every pattern shifts unconditionally. */
+            for (int i = 0; i < ppu->sprites_on_line; i++) {
+                ppu->sprite_patterns_lo[i] <<= 1;
+                ppu->sprite_patterns_hi[i] <<= 1;
+            }
+        }
+    } else if (render_scanline && ppu->dot == 340 && ppu->sprite_counters_pending) {
         ppu->sprite_counters_active = true;
         ppu->sprite_counters_pending = false;
-    }
-    if (render_scanline && visible_dot && ppu->sprite_counters_active) {
-        bool counting = false;
-        for (int i = 0; i < ppu->sprites_on_line; i++) {
-            if (ppu->sprite_positions[i]) { ppu->sprite_positions[i]--; counting = true; }
-        }
-        if (!counting) ppu->sprite_counters_active = false;
     }
     if (render_scanline && ppu->dot == 339 && rendering) {
         ppu->sprite_counters_pending = true;
