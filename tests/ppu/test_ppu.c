@@ -14,6 +14,10 @@ static void test_ppu_init(void) {
     ppu.dot = 0;
 }
 
+static void run_dots(unsigned count) {
+    while (count--) ppu_step(&ppu);
+}
+
 /* Run to specific scanline/dot */
 static void run_to(int scanline, int dot) {
     while (ppu.scanline != scanline || ppu.dot != dot) {
@@ -81,6 +85,12 @@ int test_ppuaddr_write(void) {
     /* Write $2006 twice to set address $2108 */
     ppu_reg_write(&ppu, 0x2006, 0x21);
     ppu_reg_write(&ppu, 0x2006, 0x08);
+    run_dots(2);
+    if (ppu.v != 0 || ppu.t != 0x2108) {
+        printf("TEST ppuaddr_write: FAIL (address transfer was not delayed)\n");
+        return 0;
+    }
+    ppu_step(&ppu);
 
     if (ppu.v == 0x2108 && ppu.w == false) {
         printf("TEST ppuaddr_write: PASS (v=%04X)\n", ppu.v);
@@ -118,6 +128,7 @@ int test_ppudata_write_increment(void) {
     /* Set address to $2000 */
     ppu_reg_write(&ppu, 0x2006, 0x20);
     ppu_reg_write(&ppu, 0x2006, 0x00);
+    run_dots(3);
 
     /* Write with increment=1 (default) */
     ppu_reg_write(&ppu, 0x2007, 0x42);
@@ -131,6 +142,7 @@ int test_ppudata_write_increment(void) {
     ppu_reg_write(&ppu, 0x2000, CTRL_INCREMENT);
     ppu_reg_write(&ppu, 0x2006, 0x20);
     ppu_reg_write(&ppu, 0x2006, 0x00);
+    run_dots(3);
     ppu_reg_write(&ppu, 0x2007, 0x55);
 
     if (ppu.v == 0x2020) {
@@ -278,12 +290,15 @@ int test_palette_mirror(void) {
     /* Write to $3F00 (universal background) */
     ppu_reg_write(&ppu, 0x2006, 0x3F);
     ppu_reg_write(&ppu, 0x2006, 0x00);
+    run_dots(3);
     ppu_reg_write(&ppu, 0x2007, 0x0F);
 
     /* Read from $3F10 (should mirror $3F00) */
     ppu_reg_write(&ppu, 0x2006, 0x3F);
     ppu_reg_write(&ppu, 0x2006, 0x10);
+    run_dots(3);
     ppu_reg_read(&ppu, 0x2007); /* Priming read */
+    run_dots(4);
     uint8_t val = ppu_reg_read(&ppu, 0x2007);
 
     /* Actually check directly */
@@ -370,6 +385,82 @@ int test_rendering_basic(void) {
     }
 }
 
+int test_hybrid_fetch_address(void) {
+    test_ppu_init();
+    ppu_write(&ppu, 0x2C19, 0x11);
+    ppu_write(&ppu, 0x2F19, 0xCA);
+    ppu.mask = MASK_BG_ENABLE;
+    ppu.v = 0x2C19;
+    ppu.dot = 1;
+    ppu_step(&ppu); /* ALE captures $19. */
+    ppu.v = 0x2F00; /* High pins change before /RD; the octal latch does not. */
+    ppu_step(&ppu);
+    bool pass = ppu.bg_next_tile_id == 0xCA;
+    printf("TEST hybrid_fetch_address: %s\n", pass ? "PASS" : "FAIL");
+    return pass;
+}
+
+int test_ppudata_read_sequencer(void) {
+    test_ppu_init();
+    ppu.v = 0x2108;
+    ppu.read_buffer = 0x42;
+    ppu_write(&ppu, 0x2108, 0xAB);
+    uint8_t value = ppu_reg_read(&ppu, 0x2007);
+    run_dots(3);
+    bool pass = value == 0x42 && ppu.read_buffer == 0x42 && ppu.v == 0x2108;
+    ppu_step(&ppu);
+    pass &= ppu.read_buffer == 0xAB && ppu.v == 0x2109;
+    printf("TEST ppudata_read_sequencer: %s\n", pass ? "PASS" : "FAIL");
+    return pass;
+}
+
+int test_secondary_oam_restart(void) {
+    test_ppu_init();
+    memset(ppu.oam, 0xFF, sizeof(ppu.oam));
+    ppu.oam[0] = 5;
+    ppu.oam[1] = 0xC5;
+    ppu.mask = MASK_SPRITE_ENABLE;
+    ppu.scanline = 5;
+    ppu.dot = 1;
+    run_dots(14);
+    ppu.mask = 0;
+    run_dots(18); /* Skipping part of OAM clear must not offset evaluation. */
+    ppu.mask = MASK_SPRITE_ENABLE;
+    run_dots(40);
+    bool pass = ppu.oam_secondary[0] == 5 && ppu.oam_secondary[1] == 0xC5;
+    printf("TEST secondary_oam_restart: %s\n", pass ? "PASS" : "FAIL");
+    return pass;
+}
+
+int test_oam_output_latch(void) {
+    test_ppu_init();
+    ppu.mask = MASK_SPRITE_ENABLE;
+    ppu.scanline = 5;
+    ppu.dot = 65;
+    ppu.oam[0] = 4;
+    ppu.oam_latch = 0xFF;
+    ppu_step(&ppu); /* Primary OAM feeds evaluation before the CPU output. */
+    bool pass = ppu.oam_latch == 4 && ppu_reg_read(&ppu, 0x2004) == 0xFF;
+    ppu_step(&ppu);
+    pass &= ppu_reg_read(&ppu, 0x2004) == 4;
+    printf("TEST oam_output_latch: %s\n", pass ? "PASS" : "FAIL");
+    return pass;
+}
+
+int test_nmi_disable_gates_output(void) {
+    test_ppu_init();
+    ppu.nmi_occurred = true;
+    ppu_reg_write(&ppu, 0x2000, CTRL_NMI_ENABLE);
+    run_dots(2);
+    bool pass = ppu.nmi_output && ppu.nmi_edge_pending;
+    ppu_reg_write(&ppu, 0x2000, 0);
+    pass &= !ppu.nmi_output && !ppu.nmi_edge_pending;
+    run_dots(3);
+    pass &= !ppu.nmi_output;
+    printf("TEST nmi_disable_gates_output: %s\n", pass ? "PASS" : "FAIL");
+    return pass;
+}
+
 /* ============================================================================
  * Main
  * ============================================================================ */
@@ -394,6 +485,11 @@ int main(void) {
     total++; passed += test_coarse_x_increment();
     total++; passed += test_fine_y_increment();
     total++; passed += test_rendering_basic();
+    total++; passed += test_hybrid_fetch_address();
+    total++; passed += test_ppudata_read_sequencer();
+    total++; passed += test_secondary_oam_restart();
+    total++; passed += test_oam_output_latch();
+    total++; passed += test_nmi_disable_gates_output();
 
     printf("\n=== Results: %d/%d tests passed ===\n", passed, total);
 

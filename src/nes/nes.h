@@ -164,7 +164,7 @@ static inline uint8_t nes_cpu_read(CPU *cpu, uint16_t addr) {
     else if (addr < 0x4000) {
         /* PPUSTATUS latches VBlank at M2 rise, whereas OAMDATA and the
          * sprite status bits remain driven until M2 falls (~two dots). */
-        if ((addr & 7) == 4)
+        if ((addr & 7) == 4 || (addr & 7) == 7)
             ppu_advance_to_master_tick(&nes->ppu, nes->master_tick + nes->cpu_phase_offset + 7);
         val = ppu_reg_read(&nes->ppu, addr);
         if ((addr & 7) == 2) {
@@ -346,6 +346,15 @@ static inline uint8_t nes_dma_read(NES *nes, uint16_t addr) {
 static inline bool nes_dma_step(NES *nes) {
     bool dmc_request = apu_dmc_needs_sample(&nes->apu);
     bool active = nes->dma.oam_active || nes->dma.dmc_active;
+    bool abort = nes->apu.dmc_abort_pending;
+    nes->apu.dmc_abort_pending = false;
+    if (abort && !active && !dmc_request && !nes->oam_dma_pending) {
+        /* Unlike a normal request, an aborted one is lost on a CPU write. */
+        if (cpu_next_is_write(&nes->cpu)) return false;
+        nes->cpu.rdy = false;
+        (void)nes_cpu_read(&nes->cpu, cpu_get_next_read_addr(&nes->cpu));
+        return true;
+    }
     if (!active && (nes->oam_dma_pending || dmc_request)) {
         if (cpu_next_is_write(&nes->cpu)) return false;
         nes->dma.halt_addr = cpu_get_next_read_addr(&nes->cpu);
@@ -605,7 +614,7 @@ static inline void nes_init(NES *nes) {
     /* Default CPU/PPU alignment. cpu_phase_offset = 5 in the master-tick
      * driven model means the CPU bus access master tick is 5, after PPU
      * dots at master ticks 0 and 4 have been processed, before dot at
-     * tick 8. This is "PPU PPU CPU PPU" — maximum AccuracyCoin pass rate.
+     * tick 8. This is the fixed power-on CPU/PPU phase used by frontends.
      * Override via nes_set_cpu_align() or nes_set_cpu_phase_offset(). */
     nes->cpu_align = 2;
     nes->cpu_phase_offset = 5;

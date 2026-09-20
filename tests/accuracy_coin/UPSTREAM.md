@@ -15,4 +15,6 @@ Run `accuracy_coin` from the repository root for all tests, or
 `accuracy_coin tests/accuracy_coin/AccuracyCoin.nes 14` for one page.
 Any failure, skipped/unrun test, invalid fixture, or timeout returns nonzero.
 The runner reads the ROM's menu table and result bytes without changing them.
-`NES_CPU_PHASE=0..11` and `NES_ALIGN=0..2` select CPU/PPU clock alignment.
+The runner uses the same default CPU/PPU phase as the frontends.
+`NES_CPU_PHASE=0..11` and `NES_ALIGN=0..2` override it through the core's
+phase/alignment setters. The default phase passes all 144 tests.

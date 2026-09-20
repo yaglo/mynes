@@ -76,6 +76,7 @@ typedef struct PPU {
     uint8_t ctrl;       /* $2000 PPUCTRL */
     uint8_t mask;       /* $2001 PPUMASK */
     uint8_t status;     /* $2002 PPUSTATUS */
+    uint8_t sprite_flags_pending; /* Pixel/evaluation result latched next dot */
     uint8_t oam_addr;   /* $2003 OAMADDR */
 
     /* Rendering toggle delay (nesdev: "takes effect ~3-4 dots after write") */
@@ -105,6 +106,12 @@ typedef struct PPU {
     uint16_t bg_shift_attrib_lo;
     uint16_t bg_shift_attrib_hi;
 
+    /* External PPU bus: low address pins share the data pins. */
+    uint8_t bus_low, bus_data;
+    uint16_t bus_address;
+    uint8_t data_read_delay;
+    uint8_t address_write_delay;
+
     /* Background latches */
     uint8_t bg_next_tile_id;
     uint8_t bg_next_tile_attrib;
@@ -116,6 +123,7 @@ typedef struct PPU {
     uint8_t oam_secondary[32];           /* Secondary OAM (8 sprites for next scanline) */
     uint8_t sprite_oam_indices[8];       /* Primary OAM index for each secondary OAM entry */
     uint8_t oam_latch, secondary_addr, eval_byte, eval_overflow_bytes;
+    uint8_t oam_read_buffer; /* CPU-visible output of the OAM read latch */
     bool secondary_full, eval_done, eval_first;
     uint8_t fetch_y, fetch_tile, fetch_attr;
     uint8_t sprite_count;                /* Sprites found for next scanline */
@@ -128,6 +136,7 @@ typedef struct PPU {
     uint8_t sprite_indices[8];           /* Original OAM indices (for sprite 0) */
     uint8_t sprites_on_line;
     bool sprite_counters_active;
+    bool sprite_counters_pending;
 
     /* Sprite 0 hit detection */
     bool sprite_zero_on_line;
@@ -159,14 +168,8 @@ typedef struct PPU {
      * dot-1 nmi_occurred clear. */
     bool nmi_edge_pending;
 
-    /* Delayed NMI-enable bit — matches C# Emulator.cs PPU_Update2000Delay.
-     * Real hardware delays the effect of $2000 bit 7 (NMI enable) on the
-     * NMI line by 1-2 PPU cycles. Other PPUCTRL bits apply immediately.
-     * This delay is critical for AccuracyCoin NMI AT VBLANK END test.
-     *
-     * When ctrl_nmi_delay > 0, the NMI line uses ctrl_nmi_pending instead
-     * of (ctrl & 0x80). At zero, ctrl is updated to apply ctrl_nmi_pending
-     * to bit 7. */
+    /* NMI enable crosses the PPU clock domain; disabling it immediately
+     * gates the output and cancels any edge not yet seen by the CPU. */
     uint8_t ctrl_nmi_delay;   /* PPU cycles until pending NMI enable applies */
     bool    ctrl_nmi_pending; /* Latched NMI enable bit from $2000 write */
 
@@ -485,7 +488,7 @@ static inline uint8_t ppu_reg_read(PPU *ppu, uint16_t addr) {
     case 4: /* OAMDATA */
         if ((ppu->mask & (MASK_BG_ENABLE | MASK_SPRITE_ENABLE)) &&
             (ppu->scanline < 240 || ppu->scanline == ppu->prerender_line)) {
-            data = ppu->oam_latch;
+            data = ppu->oam_read_buffer;
         } else {
             data = ppu->oam[ppu->oam_addr];
             if ((ppu->oam_addr & 3) == 2) data &= 0xE3;
@@ -506,22 +509,10 @@ static inline uint8_t ppu_reg_read(PPU *ppu, uint16_t addr) {
             /* Greyscale mode masks lower 4 bits to 0 (only upper 2 color bits) */
             if (ppu->mask & MASK_GREYSCALE) pal_val &= 0x30;
             data = (pal_val & 0x3F) | (ppu->data_bus & 0xC0);
-            /* Buffer gets nametable value at $2F00-$2FFF */
-            ppu->read_buffer = ppu_read(ppu, ppu->v & 0x2FFF);
-        } else {
-            ppu->read_buffer = ppu_read(ppu, ppu->v);
         }
-
-        /* During rendering on visible/pre-render scanlines, $2007 access
-         * triggers both coarse-X and fine-Y increments instead of adding
-         * 1 or 32 to v. This is a known PPU quirk. */
-        if ((ppu->mask & (MASK_BG_ENABLE | MASK_SPRITE_ENABLE)) &&
-            (ppu->scanline < 240 || ppu->scanline == ppu->prerender_line)) {
-            ppu_inc_x(ppu);
-            ppu_inc_y(ppu);
-        } else {
-            ppu->v += (ppu->ctrl & CTRL_INCREMENT) ? 32 : 1;
-        }
+        /* The external read sequencer starts at the end of the CPU read.
+         * ALE and /RD occur on separate dots; rendering shares these pins. */
+        if (!ppu->data_read_delay) ppu->data_read_delay = 4;
         ppu_refresh_decay(ppu, data);
         break;
     }
@@ -538,17 +529,17 @@ static inline void ppu_reg_write(PPU *ppu, uint16_t addr, uint8_t val) {
     switch (addr & 0x07) {
     case 0: /* PPUCTRL */
         {
-            /* All PPUCTRL bits except NMI enable apply immediately — that's
-             * what most emulators do, and it's what unit tests expect. */
+            /* Scroll/control bits are written directly. */
             uint8_t new_ctrl = (ppu->ctrl & 0x80) | (val & 0x7F);
             ppu->ctrl = new_ctrl;
             ppu->t = (ppu->t & 0xF3FF) | ((uint16_t)(val & 0x03) << 10);
-            /* The NMI enable bit (bit 7) is latched and applies 1 PPU
-             * cycle later. This matches real hardware (per C# Emulator.cs
-             * PPU_Update2000Delay) and creates the timing window needed
-             * for AccuracyCoin NMI AT VBLANK END test. */
             ppu->ctrl_nmi_pending = (val & CTRL_NMI_ENABLE) != 0;
-            ppu->ctrl_nmi_delay = 2;
+            ppu->ctrl_nmi_delay = ppu->ctrl_nmi_pending ? 2 : 0;
+            if (!ppu->ctrl_nmi_pending) {
+                ppu->ctrl &= ~CTRL_NMI_ENABLE;
+                ppu->nmi_output = false;
+                ppu->nmi_edge_pending = false;
+            }
         }
         break;
 
@@ -639,8 +630,8 @@ static inline void ppu_reg_write(PPU *ppu, uint16_t addr, uint8_t val) {
             /* Second write: low byte */
             /* t: ....... ABCDEFGH <- val: ABCDEFGH */
             ppu->t = (ppu->t & 0xFF00) | val;
-            /* v <- t */
-            ppu->v = ppu->t;
+            /* The address transfer crosses into the PPU clock domain. */
+            ppu->address_write_delay = 3;
         }
         ppu->w = !ppu->w;
         break;
@@ -739,46 +730,83 @@ static inline void ppu_shift_bg(PPU *ppu) {
  * Background Fetching
  * ============================================================================ */
 
+static inline uint16_t ppu_bg_address(PPU *ppu) {
+    unsigned phase = (ppu->dot - 1) & 7;
+    if (phase < 2) return 0x2000 | (ppu->v & 0x0FFF);
+    if (phase < 4) return 0x23C0 | (ppu->v & 0x0C00)
+        | ((ppu->v >> 4) & 0x38) | ((ppu->v >> 2) & 7);
+    return ((ppu->ctrl & CTRL_BG_TABLE) ? 0x1000 : 0)
+        | ((uint16_t)ppu->bg_next_tile_id << 4) | FINE_Y(ppu->v)
+        | (phase >= 6 ? 8 : 0);
+}
+
 static inline void ppu_fetch_bg(PPU *ppu) {
-    switch ((ppu->dot - 1) & 0x07) {
-    case 0: /* Nametable byte */
-        ppu->bg_next_tile_id = ppu_read(ppu, 0x2000 | (ppu->v & 0x0FFF));
+    switch ((ppu->dot - 1) & 7) {
+    case 1: ppu->bg_next_tile_id = ppu->bus_data; break;
+    case 3: {
+        uint8_t attrib = ppu->bus_data;
+        if (COARSE_Y(ppu->v) & 2) attrib >>= 4;
+        if (COARSE_X(ppu->v) & 2) attrib >>= 2;
+        ppu->bg_next_tile_attrib = attrib & 3;
         break;
-
-    case 2: /* Attribute byte */
-        {
-            uint16_t addr = 0x23C0 | (ppu->v & 0x0C00)
-                          | ((ppu->v >> 4) & 0x38)
-                          | ((ppu->v >> 2) & 0x07);
-            uint8_t attrib = ppu_read(ppu, addr);
-            if (COARSE_Y(ppu->v) & 0x02) attrib >>= 4;
-            if (COARSE_X(ppu->v) & 0x02) attrib >>= 2;
-            ppu->bg_next_tile_attrib = attrib & 0x03;
-        }
-        break;
-
-    case 4: /* Pattern table low */
-        {
-            uint16_t addr = ((ppu->ctrl & CTRL_BG_TABLE) ? 0x1000 : 0x0000)
-                          + ((uint16_t)ppu->bg_next_tile_id << 4)
-                          + FINE_Y(ppu->v);
-            ppu->bg_next_tile_lo = ppu_read(ppu, addr);
-        }
-        break;
-
-    case 6: /* Pattern table high */
-        {
-            uint16_t addr = ((ppu->ctrl & CTRL_BG_TABLE) ? 0x1000 : 0x0000)
-                          + ((uint16_t)ppu->bg_next_tile_id << 4)
-                          + FINE_Y(ppu->v) + 8;
-            ppu->bg_next_tile_hi = ppu_read(ppu, addr);
-        }
-        break;
-
-    case 7: /* Increment coarse X */
+    }
+    case 5: ppu->bg_next_tile_lo = ppu->bus_data; break;
+    case 7:
+        ppu->bg_next_tile_hi = ppu->bus_data;
         ppu_load_bg_shifters(ppu);
         ppu_inc_x(ppu);
         break;
+    }
+}
+
+static inline uint16_t ppu_sprite_address(PPU *ppu) {
+    unsigned row = (ppu->scanline - ppu->fetch_y) & 15;
+    unsigned tile = ppu->fetch_tile;
+    if (ppu->fetch_attr & SPRITE_FLIP_V) row ^= 15;
+    uint16_t addr;
+    if (ppu->ctrl & CTRL_SPRITE_SIZE)
+        addr = ((tile & 1) << 12) | ((tile & 0xFE) << 4) | ((row & 8) << 1) | (row & 7);
+    else
+        addr = ((ppu->ctrl & CTRL_SPRITE_TABLE) ? 0x1000 : 0) | (tile << 4) | (row & 7);
+    return addr | (((ppu->dot - 257) & 7) >= 6 ? 8 : 0);
+}
+
+/* Merge the rendering cadence with the CPU PPUDATA sequencer. */
+static inline void ppu_clock_bus(PPU *ppu, bool rendering, bool render_scanline) {
+    uint16_t address = ppu->v & 0x3FFF;
+    bool ale = false, read = false;
+    if (rendering && render_scanline) {
+        ale = (ppu->dot & 1) || ppu->dot == 0;
+        read = !ale;
+        if ((ppu->dot >= 1 && ppu->dot <= 256) ||
+            (ppu->dot >= 321 && ppu->dot <= 336))
+            address = ppu_bg_address(ppu);
+        else if (ppu->dot >= 257 && ppu->dot <= 320 && ((ppu->dot - 257) & 7) >= 4)
+            address = ppu_sprite_address(ppu);
+        else
+            address = 0x2000 | (ppu->v & 0x0FFF);
+    }
+    bool cpu_read = false;
+    if (ppu->data_read_delay) {
+        --ppu->data_read_delay;
+        ale |= ppu->data_read_delay == 2;
+        cpu_read = ppu->data_read_delay == 0;
+        read |= cpu_read;
+    }
+    if (ale) {
+        /* With ALE and /RD together, data feeds back into the octal latch.
+         * The deterministic case is a stable memory/data fixed point. */
+        ppu->bus_low = read ? ppu->bus_data : (uint8_t)address;
+    }
+    ppu->bus_address = (address & 0x3F00) | ppu->bus_low;
+    if (read) ppu->bus_data = ppu_read(ppu, ppu->bus_address >= 0x3F00
+        ? ppu->bus_address & 0x2FFF : ppu->bus_address);
+    if (cpu_read) {
+        ppu->read_buffer = ppu->bus_data;
+        if (rendering && render_scanline) {
+            ppu_inc_x(ppu);
+            ppu_inc_y(ppu);
+        } else ppu->v += (ppu->ctrl & CTRL_INCREMENT) ? 32 : 1;
     }
 }
 
@@ -792,7 +820,6 @@ static inline void ppu_sprite_evaluation(PPU *ppu) {
         ppu->sprite_count = 0;
         ppu->sprite_zero_on_line = false;
     }
-    if (ppu->dot == 63) ppu->secondary_full = false;
     if (ppu->dot <= 64) {
         ppu->oam_latch = 0xFF;
         if (!(ppu->dot & 1)) {
@@ -802,12 +829,12 @@ static inline void ppu_sprite_evaluation(PPU *ppu) {
         return;
     }
     if (ppu->dot == 65) {
+        ppu->secondary_addr = 0;
         ppu->eval_byte = 0;
         ppu->eval_overflow_bytes = 0;
         ppu->eval_done = false;
         ppu->eval_first = true;
     }
-    if (ppu->dot == 255) ppu->secondary_full = false;
     if (ppu->dot & 1) {
         ppu->oam_latch = ppu->oam[ppu->oam_addr];
         if ((ppu->oam_addr & 3) == 2) ppu->oam_latch &= 0xE3;
@@ -841,7 +868,7 @@ static inline void ppu_sprite_evaluation(PPU *ppu) {
                 ppu->oam_addr++;
                 if (--ppu->eval_overflow_bytes == 0) ppu->oam_addr &= 0xFC;
             } else if (in_range) {
-                ppu->status |= STATUS_OVERFLOW;
+                ppu->sprite_flags_pending |= STATUS_OVERFLOW;
                 ppu->oam_addr++;
                 ppu->eval_overflow_bytes = 3;
             } else {
@@ -883,21 +910,13 @@ static inline void ppu_fetch_sprites(PPU *ppu) {
             if (ppu->secondary_addr == 0) ppu->secondary_full = true;
         }
     }
-    if (phase == 4 || phase == 6) {
-        unsigned row = (ppu->scanline - ppu->fetch_y) & 15;
-        unsigned tile = ppu->fetch_tile;
-        unsigned addr;
-        if (ppu->fetch_attr & SPRITE_FLIP_V) row ^= 15;
-        if (ppu->ctrl & CTRL_SPRITE_SIZE)
-            addr = ((tile & 1) << 12) | ((tile & 0xFE) << 4) | ((row & 8) << 1) | (row & 7);
-        else
-            addr = ((ppu->ctrl & CTRL_SPRITE_TABLE) ? 0x1000 : 0) | (tile << 4) | (row & 7);
-        uint8_t data = ppu_read(ppu, addr + (phase == 6 ? 8 : 0));
+    if (phase == 5 || phase == 7) {
+        uint8_t data = ppu->bus_data;
         int sprite_row = (int)(ppu->scanline & 255) - ppu->fetch_y;
         if (sprite_row < 0 || sprite_row >= ((ppu->ctrl & CTRL_SPRITE_SIZE) ? 16 : 8))
             data = 0;
         if (ppu->fetch_attr & SPRITE_FLIP_H) data = ppu_reverse_byte(data);
-        if (phase == 4) ppu->sprite_patterns_lo[slot] = data;
+        if (phase == 5) ppu->sprite_patterns_lo[slot] = data;
         else ppu->sprite_patterns_hi[slot] = data;
     }
 }
@@ -972,7 +991,7 @@ static inline void ppu_render_pixel(PPU *ppu) {
     } else {
         /* Both opaque -> sprite 0 hit and priority */
         if (sp_zero && x < 255) {
-            ppu->status |= STATUS_SPRITE_ZERO;
+            ppu->sprite_flags_pending |= STATUS_SPRITE_ZERO;
         }
         if (sp_priority) {
             final_pixel = bg_pixel;
@@ -1012,14 +1031,13 @@ static inline void ppu_render_pixel(PPU *ppu) {
  * ============================================================================ */
 
 static inline void ppu_step(PPU *ppu) {
+    ppu->oam_read_buffer = ppu->oam_latch;
+    ppu->status |= ppu->sprite_flags_pending;
+    ppu->sprite_flags_pending = 0;
     /* Advance master tick — the next dot will start at next_dot_master_tick + 4. */
     ppu->next_dot_master_tick += 4;
 
-    /* ===== Apply delayed NMI enable bit =====
-     * Real hardware delays $2000 bit 7 (NMI enable) by 1 PPU cycle before
-     * it takes effect on the NMI line. Other PPUCTRL bits apply immediately
-     * (handled in ppu_reg_write). This delay is the source of the NMI VBL
-     * End test timing window. */
+    /* Apply the synchronized NMI enable. */
     if (ppu->ctrl_nmi_delay > 0) {
         ppu->ctrl_nmi_delay--;
         if (ppu->ctrl_nmi_delay == 0) {
@@ -1053,6 +1071,12 @@ static inline void ppu_step(PPU *ppu) {
     bool visible_dot = ppu->dot >= 1 && ppu->dot <= 256;
     bool fetch_dot = (ppu->dot >= 1 && ppu->dot <= 256) || (ppu->dot >= 321 && ppu->dot <= 336);
 
+    /* This address-increment inhibit is cleared on pre-render too, even
+     * though that scanline does not perform primary OAM evaluation. */
+    if (rendering && render_scanline &&
+        (ppu->dot == 63 || ppu->dot == 255 || ppu->dot == 339))
+        ppu->secondary_full = false;
+
     /* ===== OAMADDR forcing during sprite fetch ===== */
     /* nesdev wiki: "During dots 257-320, OAMADDR is forced to 0" */
     if (rendering && render_scanline) {
@@ -1075,6 +1099,10 @@ static inline void ppu_step(PPU *ppu) {
         }
         ppu->oam_corruption_pending = false;
     }
+
+    if (ppu->address_write_delay && --ppu->address_write_delay == 0)
+        ppu->v = ppu->t;
+    ppu_clock_bus(ppu, rendering, render_scanline);
 
     /* ===== Rendering ===== */
     if (rendering) {
@@ -1123,6 +1151,13 @@ static inline void ppu_step(PPU *ppu) {
         }
     }
 
+    /* The counter-enable latch is clocked after the pixel shifters. On an
+     * odd pre-render line dot 340 is omitted, so it reaches the counters
+     * after the first pixel of scanline zero instead. */
+    if (render_scanline && (ppu->dot == 340 || visible_dot) && ppu->sprite_counters_pending) {
+        ppu->sprite_counters_active = true;
+        ppu->sprite_counters_pending = false;
+    }
     if (render_scanline && visible_dot && ppu->sprite_counters_active) {
         bool counting = false;
         for (int i = 0; i < ppu->sprites_on_line; i++) {
@@ -1131,8 +1166,7 @@ static inline void ppu_step(PPU *ppu) {
         if (!counting) ppu->sprite_counters_active = false;
     }
     if (render_scanline && ppu->dot == 339 && rendering) {
-        ppu->sprite_counters_active = true;
-        ppu->secondary_full = false;
+        ppu->sprite_counters_pending = true;
     }
     if (render_scanline && rendering && ppu->dot >= 321)
         ppu->oam_latch = ppu->oam_secondary[ppu->secondary_addr];
@@ -1264,6 +1298,12 @@ static inline void ppu_reset(PPU *ppu) {
     ppu->w = false;
     ppu->odd_frame = false;
     ppu->read_buffer = 0;
+    ppu->data_read_delay = ppu->address_write_delay = 0;
+    ppu->sprite_flags_pending = 0;
+    ppu->sprite_counters_pending = false;
+    ppu->ctrl_nmi_delay = ppu->mask_delay = 0;
+    ppu->ctrl_nmi_pending = false;
+    ppu->nmi_output = ppu->nmi_edge_pending = false;
 }
 
 #endif /* NES_PPU_H */

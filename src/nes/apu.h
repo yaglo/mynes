@@ -294,6 +294,9 @@ typedef struct APU {
      * before the CPU is halted. Decrements per apu_step. While > 0,
      * apu_dmc_needs_sample() returns false (DMA gated). */
     uint8_t dmc_dma_delay;
+    uint8_t dmc_abort_delay;
+    bool dmc_abort_pending;
+    bool dmc_late_request;
 
     /* Register storage */
     uint8_t regs[0x18];
@@ -875,28 +878,43 @@ static inline float apu_mix_sample(APU *apu) {
  * DMC Sample Fetching (for DMA integration)
  * ============================================================================ */
 
+/* The stop signal can race the output-unit reload request. A stop in the
+ * preceding APU cycle leaves a one-cycle RDY pulse; a request already
+ * reaching the reader completes its fetch. */
+static inline void apu_dmc_stop(APU *apu, bool explicit_stop) {
+    APU_DMC *d = &apu->dmc;
+    if (d->bits_remaining == 1 && d->timer >= 1 && d->timer <= 2)
+        apu->dmc_abort_delay = (uint8_t)(d->timer + 1);
+    if (explicit_stop && d->sample_buffer_empty && apu->dmc_dma_delay <= 1)
+        apu->dmc_late_request = true;
+}
+
 static inline bool apu_dmc_needs_sample(APU *apu) {
     /* Gate by dmc_dma_delay so the DMA doesn't fire on the very next read
      * after $4015 enables the DMC. Real hardware: ~2 APU cycles delay
      * between the write that enables DMC and the actual halt. */
-    return apu->dmc.sample_buffer_empty && apu->dmc.bytes_remaining > 0
-           && apu->dmc_dma_delay == 0;
+    return apu->dmc.sample_buffer_empty &&
+           (apu->dmc.bytes_remaining > 0 || apu->dmc_late_request) &&
+           apu->dmc_dma_delay == 0;
 }
 
 static inline void apu_dmc_load_sample(APU *apu, uint8_t sample) {
+    bool had_remaining = apu->dmc.bytes_remaining > 0;
     apu->dmc.sample_buffer = sample;
     apu->dmc.sample_buffer_empty = false;
     apu->dmc.current_address = (apu->dmc.current_address + 1) | 0x8000;
     if (apu->dmc.current_address == 0)
         apu->dmc.current_address = 0x8000;
-    apu->dmc.bytes_remaining--;
+    apu->dmc_late_request = false;
+    if (had_remaining) apu->dmc.bytes_remaining--;
 
-    if (apu->dmc.bytes_remaining == 0) {
+    if (had_remaining && apu->dmc.bytes_remaining == 0) {
         if (apu->dmc.loop_flag) {
             apu->dmc.current_address = apu->dmc.sample_address;
             apu->dmc.bytes_remaining = apu->dmc.sample_length;
-        } else if (apu->dmc.irq_enabled) {
-            apu->dmc.irq_flag = true;
+        } else {
+            apu_dmc_stop(apu, false);
+            if (apu->dmc.irq_enabled) apu->dmc.irq_flag = true;
         }
     }
 
@@ -936,6 +954,9 @@ static inline void apu_step(APU *apu) {
     if (apu->dmc_dma_delay > 0) {
         apu->dmc_dma_delay--;
     }
+
+    if (apu->dmc_abort_delay && --apu->dmc_abort_delay == 0)
+        apu->dmc_abort_pending = true;
 
     apu_clock_frame_counter(apu);  /* may set apu->dirty via quarter/half frame */
 
@@ -1209,9 +1230,9 @@ static inline void apu_write(APU *apu, uint16_t addr, uint8_t val) {
             apu->noise.length_counter = 0;
 
         {
-            bool was_enabled = apu->dmc.enabled;
             apu->dmc.enabled = (val & 0x10) != 0;
             if (!apu->dmc.enabled) {
+                if (apu->dmc.bytes_remaining > 0) apu_dmc_stop(apu, true);
                 apu->dmc.bytes_remaining = 0;
             } else {
                 if (apu->dmc.bytes_remaining == 0) {
@@ -1224,10 +1245,8 @@ static inline void apu_write(APU *apu, uint16_t addr, uint8_t val) {
                      * a couple of cycles, breaking DMC DMA + $2002/$4015
                      * tests where the dummy reads must land on the
                      * register-access cycle. */
-                    if (!was_enabled) {
-                        /* Align the initial load request to the APU get cycle. */
-                        apu->dmc_dma_delay = apu->put_cycle ? 3 : 2;
-                    }
+                    /* Enable reaches the reader on the second following get. */
+                    apu->dmc_dma_delay = apu->put_cycle ? 3 : 4;
                 }
             }
             apu->dmc.irq_flag = false;
