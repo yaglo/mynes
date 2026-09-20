@@ -33,6 +33,13 @@ The rewrite has two ideas behind it:
   experimental GPU frontend running the analog signal / CRT pipeline.</em>
 </p>
 
+## USB output to a CRT
+
+The SDL2 frontend can stream PPU frames to a programmed Tang Nano 20K while
+keeping the Mac preview running. Build with `-DNES_CRT_USB=ON`, then launch
+`./build-crt/bin/mynes --crt-usb your-ntsc-rom.nes`.
+See [setup and hardware requirements](docs/crt-usb.md).
+
 ## Status
 
 The normal frontend is `mynes`, an SDL2 desktop emulator intended for

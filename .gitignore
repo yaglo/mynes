@@ -63,3 +63,6 @@ coverage/
 .claude/
 .zed/
 tools/__pycache__/
+
+# Optional CRT USB build
+/build-crt/

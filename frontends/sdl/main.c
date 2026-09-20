@@ -25,6 +25,13 @@
 #include "nes/rom.h"
 #include "nes/nes.h"
 #include "nes/composite.h"
+#ifdef MYNES_CRT_CAPTURE
+#include "crt_capture.h"
+#include "crt_live.h"
+static crt_live *crt_usb;
+static FILE *crt_capture_file;
+static int crt_capture_failed;
+#endif
 
 /* Shared frontend helpers (fullscreen ROM browser + persistent
  * recent/last-preset config). */
@@ -2498,6 +2505,7 @@ int main(int argc, char *argv[]) {
     /* No ROM argument is fine — we'll open the fullscreen ROM browser
      * once SDL is initialised. To keep the existing arg-parsing happy,
      * detect that case here and skip the help-print. */
+    bool crt_usb_requested = false;
     bool show_help_and_exit = false;
     if (argc < 2) {
         /* Bare invocation → start the browser. */
@@ -2509,6 +2517,7 @@ int main(int argc, char *argv[]) {
         printf("Usage: %s [rom_file] [options]\n\n", argv[0]);
         printf("If no ROM is given, the fullscreen ROM browser opens.\n\n");
         printf("Options:\n");
+        printf("  --crt-usb                Stream PPU frames to a CRT Tang Bridge\n");
         printf("  -f, --fast               Start in fast mode (no FPS limit)\n");
         printf("  --pal                    PAL region (312 scanlines, 50Hz)\n");
         printf("  --composite              Start with NTSC composite simulation on\n");
@@ -2529,6 +2538,7 @@ int main(int argc, char *argv[]) {
 
     /* First positional argument that isn't a recognised option is the ROM. */
     for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--crt-usb") == 0) { crt_usb_requested = true; continue; }
         if (argv[i][0] != '-' && !rom_path) { rom_path = argv[i]; continue; }
         if (strcmp(argv[i], "-f") == 0 || strcmp(argv[i], "--fast") == 0) {
             fast_mode = true;
@@ -2582,6 +2592,16 @@ int main(int argc, char *argv[]) {
             }
         }
     }
+
+    const char *crt_usb_enabled = getenv("MYNES_CRT_USB");
+    crt_usb_requested = crt_usb_requested ||
+        (crt_usb_enabled && strcmp(crt_usb_enabled, "1") == 0);
+#ifndef MYNES_CRT_CAPTURE
+    if (crt_usb_requested) {
+        fprintf(stderr, "CRT USB support is not built; configure with -DNES_CRT_USB=ON\n");
+        return 1;
+    }
+#endif
 
     if (fast_mode) {
         printf("Fast mode enabled (no FPS limit)\n");
@@ -2778,6 +2798,26 @@ int main(int argc, char *argv[]) {
      * pipeline will produce. */
     palette_refresh_composite_derived();
 
+#ifdef MYNES_CRT_CAPTURE
+    const char *crt_capture_path = getenv("MYNES_CRT_CAPTURE");
+    if (crt_capture_path && *crt_capture_path) {
+        crt_capture_file = fopen(crt_capture_path, "wb");
+        if (!crt_capture_file) { perror("CRT capture"); return 1; }
+    }
+#endif
+
+#ifdef MYNES_CRT_CAPTURE
+    if (crt_usb_requested) {
+        char error[256];
+        crt_usb = crt_live_open(error, sizeof(error));
+        if (!crt_usb) {
+            fprintf(stderr, "CRT USB: %s\n", error);
+            if (crt_capture_file) fclose(crt_capture_file);
+            return 1;
+        }
+    }
+#endif
+
     /* Match the display refresh rate / vsync policy to the NES region's
      * native frame rate. PAL on a 60 Hz display is the most visible
      * mismatch — apply_display_for_nes_region tries exclusive display
@@ -2874,6 +2914,19 @@ int main(int argc, char *argv[]) {
                     apply_static_frame_to_ppu();
                 } else {
                     nes_run_frame(&nes);
+#ifdef MYNES_CRT_CAPTURE
+                    if (crt_usb && crt_live_submit(crt_usb, nes.ppu.index_framebuffer)) {
+                        fprintf(stderr, "CRT USB stopped; emulator preview continues\n");
+                        crt_live_close(crt_usb);
+                        crt_usb = NULL;
+                    }
+                    if (crt_capture_file && crt_capture_frame(crt_capture_file, nes.ppu.index_framebuffer)) {
+                        fprintf(stderr, "CRT capture write failed\n");
+                        crt_capture_failed = 1;
+                        running = false;
+                        break;
+                    }
+#endif
                     /* Apply scheduled RAM pokes after the frame runs.
                      * We poke AFTER so our values win against the
                      * game's frame-start initialization. */
@@ -2949,6 +3002,19 @@ int main(int argc, char *argv[]) {
                 apply_static_frame_to_ppu();
             } else {
                 nes_run_frame(&nes);
+#ifdef MYNES_CRT_CAPTURE
+                if (crt_usb && crt_live_submit(crt_usb, nes.ppu.index_framebuffer)) {
+                    fprintf(stderr, "CRT USB stopped; emulator preview continues\n");
+                    crt_live_close(crt_usb);
+                    crt_usb = NULL;
+                }
+                if (crt_capture_file && crt_capture_frame(crt_capture_file, nes.ppu.index_framebuffer)) {
+                    fprintf(stderr, "CRT capture write failed\n");
+                    crt_capture_failed = 1;
+                    running = false;
+                    break;
+                }
+#endif
                 frame_counter++;
                 for (int k = 0; k < ram_pokes_n; k++) {
                     if (frame_counter >= ram_pokes[k].trigger_frame)
@@ -2968,6 +3034,17 @@ int main(int argc, char *argv[]) {
         }
     }
 
+#ifdef MYNES_CRT_CAPTURE
+    if (crt_capture_file && fclose(crt_capture_file)) crt_capture_failed = 1;
+    if (crt_usb) {
+        uint64_t sent, replaced;
+        crt_live_stats(crt_usb, &sent, &replaced);
+        fprintf(stderr, "CRT USB: %llu verified frames, %llu replaced pending frames\n",
+                (unsigned long long)sent, (unsigned long long)replaced);
+        crt_live_close(crt_usb);
+    }
+#endif
+
     printf("\nShutting down...\n");
 
     if (audio_device) {
@@ -2984,5 +3061,9 @@ int main(int argc, char *argv[]) {
 
     nes_rom_free(&rom);
 
+#ifdef MYNES_CRT_CAPTURE
+    return crt_capture_failed ? 1 : 0;
+#else
     return 0;
+#endif
 }
