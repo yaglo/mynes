@@ -134,11 +134,14 @@ Required for the core and tests:
   locally. Pre-generated CPU code is committed as a fallback.
 
 The GPU frontend is enabled by default and requires SDL3, `glslc` (provided
-by **shaderc**), `spirv-cross`, and Python 3 for shader compilation.
+by **shaderc**), `spirv-cross`, and Python 3 for shader compilation. On macOS,
+CMake downloads and statically links pinned SDL 3.4.16 with upstream Metal
+fence fixes; Homebrew SDL is not used by the default build. The first configure
+needs network access. See [the dependency notes](cmake/patches/README.md).
 On macOS:
 
 ```bash
-brew install cmake sdl3 shaderc spirv-cross python
+brew install cmake shaderc spirv-cross python
 command -v glslc spirv-cross python3
 glslc --version
 ```

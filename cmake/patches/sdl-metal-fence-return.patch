@@ -1,0 +1,68 @@
+From 10309e32409032d07170a85727b948b5b1f6bb55 Mon Sep 17 00:00:00 2001
+From: William Horvath <william@horvath.blog>
+Date: Sat, 29 Aug 2026 16:13:37 +0900
+Subject: [PATCH] metal: Read the fence in SubmitAndAcquireFence while
+ submitLock is held
+
+Once the lock is released, another thread can clean up the completed
+command buffer, return it to the pool and resubmit it with a different
+fence before we read metalCommandBuffer->fence, handing the caller a
+fence it doesn't own.
+---
+ src/gpu/metal/SDL_gpu_metal.m | 22 ++++++++++++++++++----
+ 1 file changed, 18 insertions(+), 4 deletions(-)
+
+diff --git a/src/gpu/metal/SDL_gpu_metal.m b/src/gpu/metal/SDL_gpu_metal.m
+index 583e9f4a0ece7..2f14bd59cb459 100644
+--- a/src/gpu/metal/SDL_gpu_metal.m
++++ b/src/gpu/metal/SDL_gpu_metal.m
+@@ -4069,8 +4069,9 @@ static bool METAL_SetAllowedFramesInFlight(
+ 
+ // Submission
+ 
+-static bool METAL_Submit(
+-    SDL_GPUCommandBuffer *commandBuffer)
++static bool METAL_INTERNAL_Submit(
++    SDL_GPUCommandBuffer *commandBuffer,
++    SDL_GPUFence **fence)
+ {
+     @autoreleasepool {
+         MetalCommandBuffer *metalCommandBuffer = (MetalCommandBuffer *)commandBuffer;
+@@ -4083,6 +4084,12 @@ static bool METAL_Submit(
+             return false;
+         }
+ 
++        // Return the fence while submitLock is held, another thread could
++        // recycle this command buffer as soon as the lock is released.
++        if (fence) {
++            *fence = (SDL_GPUFence *)metalCommandBuffer->fence;
++        }
++
+         // Enqueue present requests, if applicable
+         for (Uint32 i = 0; i < metalCommandBuffer->windowDataCount; i += 1) {
+             MetalWindowData *windowData = metalCommandBuffer->windowDatas[i];
+@@ -4129,15 +4136,22 @@ static bool METAL_Submit(
+     }
+ }
+ 
++static bool METAL_Submit(
++    SDL_GPUCommandBuffer *commandBuffer)
++{
++    return METAL_INTERNAL_Submit(commandBuffer, NULL);
++}
++
+ static SDL_GPUFence *METAL_SubmitAndAcquireFence(
+     SDL_GPUCommandBuffer *commandBuffer)
+ {
+     MetalCommandBuffer *metalCommandBuffer = (MetalCommandBuffer *)commandBuffer;
++    SDL_GPUFence *fence = NULL;
+     metalCommandBuffer->autoReleaseFence = false;
+-    if (!METAL_Submit(commandBuffer)) {
++    if (!METAL_INTERNAL_Submit(commandBuffer, &fence)) {
+         return NULL;
+     }
+-    return (SDL_GPUFence *)metalCommandBuffer->fence;
++    return fence;
+ }
+ 
+ static bool METAL_Cancel(

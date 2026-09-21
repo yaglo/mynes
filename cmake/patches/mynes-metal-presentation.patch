@@ -1,0 +1,57 @@
+# MyNES local extension: scheduled presentation and optional drawable timestamps.
+--- a/src/gpu/metal/SDL_gpu_metal.m
++++ b/src/gpu/metal/SDL_gpu_metal.m
+@@ -465,6 +465,9 @@
+     MetalTextureContainer textureContainer;
+     SDL_GPUFence *inFlightFences[MAX_FRAMES_IN_FLIGHT];
+     Uint32 frameCounter;
++    CFTimeInterval mynesPresentTime;
++    Sint64 mynesPresentInterval;
++    Sint64 mynesSourceFrame;
+ } MetalWindowData;
+ 
+ typedef struct MetalShader
+@@ -4087,7 +4090,42 @@
+         // Enqueue present requests, if applicable
+         for (Uint32 i = 0; i < metalCommandBuffer->windowDataCount; i += 1) {
+             MetalWindowData *windowData = metalCommandBuffer->windowDatas[i];
+-            [metalCommandBuffer->handle presentDrawable:windowData->drawable];
++            Sint64 intervalNS = SDL_GetNumberProperty(SDL_GetWindowProperties(windowData->window),
++                "mynes.gpu.metal.present_interval_ns", 0);
++            Sint64 sourceFrame = SDL_GetNumberProperty(SDL_GetWindowProperties(windowData->window),
++                "mynes.gpu.metal.source_frame", 0);
++            if (intervalNS > 0) {
++                CFTimeInterval interval = intervalNS * 1e-9;
++                CFTimeInterval now = CACurrentMediaTime();
++                /* Keep source skips as skipped intervals; rebase after a stall.
++                 * Two intervals of startup lead cover encoding and GPU work. */
++                Sint64 advance = sourceFrame > windowData->mynesSourceFrame
++                    ? sourceFrame - windowData->mynesSourceFrame : 1;
++                if (intervalNS != windowData->mynesPresentInterval || advance > 3 ||
++                    windowData->mynesPresentTime < now - interval * 3) {
++                    windowData->mynesPresentTime = now + interval * 2;
++                } else {
++                    windowData->mynesPresentTime += interval * advance;
++                }
++            } else {
++                windowData->mynesPresentTime = 0;
++            }
++            windowData->mynesPresentInterval = intervalNS;
++            windowData->mynesSourceFrame = sourceFrame;
++            if (SDL_GetHintBoolean("MYNES_METAL_PRESENT_TRACE", false)) {
++                static Uint64 trace_frame = 0;
++                Uint64 frame = ++trace_frame;
++                CFTimeInterval target = windowData->mynesPresentTime, submitted = CACurrentMediaTime();
++                [windowData->drawable addPresentedHandler:^(id<MTLDrawable> drawable) {
++                    SDL_Log("MYNES_METAL_PRESENT %llu %.9f %.9f %.9f %lld", (unsigned long long)frame, drawable.presentedTime, target, submitted, (long long)sourceFrame);
++                }];
++            }
++
++            if (intervalNS > 0) {
++                [metalCommandBuffer->handle presentDrawable:windowData->drawable atTime:windowData->mynesPresentTime];
++            } else {
++                [metalCommandBuffer->handle presentDrawable:windowData->drawable];
++            }
+             windowData->drawable = nil;
+ 
+             windowData->inFlightFences[windowData->frameCounter] = (SDL_GPUFence *)metalCommandBuffer->fence;

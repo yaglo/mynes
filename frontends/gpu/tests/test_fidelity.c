@@ -227,6 +227,34 @@ static void dac_equivalence(SDL_GPUDevice *gpu, int region) {
     video_gpu_destroy(&v,gpu);
 }
 
+/* A stationary composite colour edge may alternate with the carrier phase,
+ * but must not develop a slower beat in the decoder itself. Keep both phases
+ * distinct: freezing/averaging them would hide a presentation regression. */
+static void composite_edge_phase(SDL_GPUDevice *gpu) {
+    SignalPrecompute sp; VideoChain c; VideoGPUChain v;
+    signal_precompute_init(&sp,SIGNAL_REGION_NTSC);
+    video_chain_init_preset(&c,VIDEO_CONN_COMPOSITE,VIDEO_COMB_NONE,SIGNAL_REGION_NTSC);
+    c.console_psu_hum=0; c.tv.noise_level=0; c.cable.shield_effectiveness=1;
+    CHECK(video_gpu_init(&v,gpu,&c,"shaders/compute",sp.fir_y,sp.fir_y_n,sp.fir_c,sp.fir_c_n,sp.fir_q,sp.fir_q_n));
+    CHECK(video_gpu_upload_signal_table(&v,gpu,(float *)sp.table,NULL,SIG_TABLE_ENTRIES,SIG_TABLE_STRIDE));
+    uint16_t codes[256*240];
+    for(int i=0;i<256*240;i++) codes[i]=(i%256<128) ? 0x0f : 0x21;
+    float *rgb=malloc(v.rgb_size), edges[2][48*3];
+    float repeat_error=0, phase_difference=0;
+    for(unsigned f=0;f<120;f++) {
+        int phase=signal_frame_phase(&sp,f);
+        video_gpu_set_demod(&v,(phase+sp.demod_rotate)*6.28318530718f/12,6.28318530718f/12);
+        CHECK(video_gpu_process_full(&v,gpu,codes,phase,sp.phase_line_adv,0,rgb));
+        float *edge=rgb+(120*sp.samples_per_line+128*sp.samples_per_pixel-24)*3;
+        if(f<2) memcpy(edges[f],edge,sizeof(edges[0]));
+        else for(int i=0;i<48*3;i++) repeat_error=fmaxf(repeat_error,fabsf(edge[i]-edges[f%2][i]));
+    }
+    for(int i=0;i<48*3;i++) phase_difference=fmaxf(phase_difference,fabsf(edges[0][i]-edges[1][i]));
+    printf("Composite edge: phase difference %.7f, same-phase drift %.7f\n",phase_difference,repeat_error);
+    CHECK(phase_difference>.001f); CHECK(repeat_error<.0001f);
+    free(rgb); video_gpu_destroy(&v,gpu);
+}
+
 /* RGB modifications skip reception, but still drive the complete CRT.
  * Check the source against an independent 12-phase integral and verify a
  * phase change cannot introduce composite crawl into ideal RGB. */
@@ -818,6 +846,7 @@ int main(void) {
     rf_temporal_continuity(gpu);
     dac_equivalence(gpu, SIGNAL_REGION_NTSC);
     dac_equivalence(gpu, SIGNAL_REGION_PAL);
+    composite_edge_phase(gpu);
     SignalPrecompute sp;
     VideoChain c;
     VideoGPUChain v;

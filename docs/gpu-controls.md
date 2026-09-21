@@ -105,7 +105,7 @@ The companion PFM capture preserves signed HDR values; PPM clips to SDR white.
 
 ## High-refresh presentation
 
-**Host display → Presentation → 60 Hz hold** paces picture submissions at
+**Host display → Presentation → 60 Hz hold** targets picture presentation at
 60 per second, without dark-frame insertion. The command-line equivalent is
 `--presentation 60hz`. Each picture remains visible until its replacement,
 including across additional panel refreshes. This is a session preference,
@@ -118,9 +118,14 @@ playback), with matching audio resampling. This avoids periodic frame drops
 from running a faster source against a 60 Hz presentation clock. Absolute
 presentation deadlines prevent timer overshoot from accumulating. PAL remains
 about 50 frames/s. Audio continues independently if rendering stalls.
-The mode adds one frame of presentation margin and limits frames in flight to
-one, trading about 16.7 ms of initial video latency for resistance to preparation
-jitter. It cannot hide a sustained rendering overload or OS scheduling stall.
+The bundled macOS Metal backend submits work early and uses timed drawable
+presentation. Its initial deadline is two source intervals ahead (about 33 ms
+for NTSC), with two frames allowed in flight. Hold uses the native source
+interval; 60 Hz hold uses 16.667 ms for NTSC. Skipped source frames retain their
+place in the schedule, and long stalls reset the deadline. This trades video
+latency for consistent exposure of the alternating composite phases. Other
+backends and offscreen tests retain CPU submission pacing in 60 Hz mode.
+Neither path can hide a sustained rendering overload or OS scheduling stall.
 The option controls application timing; it does not change the monitor's
 refresh rate. A fixed 144 Hz panel still cannot show 60 evenly spaced updates
 without a matching display mode or variable refresh.
@@ -132,6 +137,11 @@ intermittent shimmer. `MYNES_PRESENT_TRACE=/tmp/presentation.csv` records each
 submission's source frame, carrier phase, presentation mode and refresh slot.
 This helps distinguish missed pictures from normal phase changes; submission
 timestamps alone cannot establish what the panel actually displayed.
+The bundled Metal backend also supports `MYNES_METAL_PRESENT_TRACE=1`, which
+logs actual drawable presentation timestamps, deadlines and source frames.
+`frontends/gpu/tests/test_metal_presentation.py` runs a windowed composite/GPU
+audio review and reports visible intervals. Keep its window visible; a zero
+Metal presentation timestamp is not a successful displayed frame.
 
 Host display → Presentation → BFI enables optional dark-frame insertion.
 `--presentation bfi --dark-frame-level 0.15` gives each dark refresh 15% of

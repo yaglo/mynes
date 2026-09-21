@@ -260,9 +260,22 @@ void gpu_render_presentation_update(GPURenderCtx *ctx, float source_hz) {
         !ctx->presentation_blocked && ctx->gpu_display_enabled && ctx->crt_shader_enabled &&
         !ctx->split_mode ? gpu_presentation_slots(hz, source_hz) : 1;
     if (ctx->presentation_slots == 1) ctx->presentation_slot = 0;
+#ifdef MYNES_BUNDLED_SDL3
+    /* The bundled Metal backend schedules scanout, rather than delaying CPU
+     * submission until a deadline the GPU can then miss. */
+    ctx->scheduled_present = !ctx->offscreen_w &&
+        ctx->presentation_mode != GPU_PRESENT_BFI && source_hz > 0 &&
+        strcmp(SDL_GetGPUDeviceDriver(ctx->gpu), "metal") == 0;
+    uint64_t interval = source_hz > 0 ? gpu_presentation_period_ns(ctx->presentation_mode,
+        (uint64_t)llround(1e9 / source_hz)) : 0;
+    SDL_SetNumberProperty(SDL_GetWindowProperties(ctx->window),
+        "mynes.gpu.metal.present_interval_ns",
+        ctx->scheduled_present ? interval : 0);
+#endif
     /* SDL flushes the queue here: never reconfigure while holding an acquired
      * drawable waiting for a source picture. Apply at the next free boundary. */
-    int in_flight = ctx->presentation_slots > 1 || ctx->presentation_mode == GPU_PRESENT_60HZ ? 1 : 2;
+    int in_flight = ctx->presentation_slots > 1 ||
+        (ctx->presentation_mode == GPU_PRESENT_60HZ && !ctx->scheduled_present) ? 1 : 2;
     if (!ctx->present_cmd && ctx->frames_in_flight != in_flight &&
         SDL_SetGPUAllowedFramesInFlight(ctx->gpu, in_flight))
         ctx->frames_in_flight = in_flight;
@@ -295,11 +308,14 @@ bool gpu_render_prepare(GPURenderCtx *ctx) {
     SDL_GPUCommandBuffer *cmd=SDL_AcquireGPUCommandBuffer(ctx->gpu);
     if(!cmd) return false;
     Uint64 wait_start=SDL_GetTicksNS();
-    bool acquired=SDL_WaitAndAcquireGPUSwapchainTexture(cmd,ctx->window,
+    /* Poll frame capacity so a slow fence cannot trap the event loop in
+     * waitUntilCompleted. Cancel empty attempts to keep command buffers bounded.
+     * The platform's drawable acquisition may still wait for vblank. */
+    bool acquired=SDL_AcquireGPUSwapchainTexture(cmd,ctx->window,
         &ctx->present_texture,&ctx->present_w,&ctx->present_h);
     ctx->swap_wait_ns=SDL_GetTicksNS()-wait_start;
     if(!acquired || !ctx->present_texture) {
-        SDL_SubmitGPUCommandBuffer(cmd);
+        SDL_CancelGPUCommandBuffer(cmd);
         return false;
     }
     ctx->present_cmd=cmd;
@@ -465,7 +481,7 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
         SDL_BlitGPUTexture(cmd, &split);
     }
 
-    if (ctx->presentation_mode == GPU_PRESENT_60HZ) {
+    if (ctx->presentation_mode == GPU_PRESENT_60HZ && !ctx->scheduled_present) {
         uint64_t now = SDL_GetTicksNS();
         /* Start one interval ahead so source wakeup/processing jitter does not
          * immediately move the presentation deadline. Only this mode pays
@@ -475,6 +491,10 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
         if (ctx->pacing_deadline_ns > now)
             SDL_DelayPrecise(ctx->pacing_deadline_ns - now);
     }
+#ifdef MYNES_BUNDLED_SDL3
+    SDL_SetNumberProperty(SDL_GetWindowProperties(ctx->window),
+        "mynes.gpu.metal.source_frame", (Sint64)ctx->frame_counter);
+#endif
     if(ctx->offscreen_w) {
         ctx->offscreen_fence=SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
         if(ctx->offscreen_fence) ctx->submit_ns=SDL_GetTicksNS();

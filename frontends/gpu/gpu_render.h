@@ -29,6 +29,7 @@ typedef struct {
     SDL_DisplayID   presentation_display;
     float           presentation_hz, presentation_source_hz;
     bool            presentation_blocked;
+    bool            scheduled_present;  /* bundled Metal presentation deadlines */
     uint64_t        cadence_start_ns;
     uint64_t        pacing_deadline_ns;
     int             source_phase;
@@ -96,8 +97,8 @@ void gpu_render_update_dynamic_state(GPURenderCtx *ctx);
 /* Shared by rendering and OSD; hidden review uses its fixed headroom. */
 float gpu_render_headroom(const GPURenderCtx *ctx);
 
-/* Wait for display capacity before taking a picture from the playback
- * mailbox. Keeping this wait after encoding used to present stale pictures. */
+/* Check display capacity before taking a picture from the playback mailbox.
+ * Returns false when full so the caller can pump events and retry. */
 bool gpu_render_prepare(GPURenderCtx *ctx);
 /* Refresh capability and reset cadence when the monitor or source changes. */
 void gpu_render_presentation_update(GPURenderCtx *ctx, float source_hz);

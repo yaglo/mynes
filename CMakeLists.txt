@@ -302,9 +302,14 @@ endif()
 # =============================================================================
 
 option(NES_BUILD_GPU_FRONTEND "Build the GPU frontend (requires SDL3)" ON)
+option(MYNES_BUNDLED_SDL3 "Build pinned SDL3 with Metal fence fixes" ${APPLE})
 
 if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
-    find_package(SDL3 CONFIG QUIET)
+    if(MYNES_BUNDLED_SDL3)
+        include(cmake/BundledSDL3.cmake)
+    else()
+        find_package(SDL3 CONFIG QUIET)
+    endif()
     if(TARGET SDL3::SDL3)
         set(MYNES_SDL3_TARGET SDL3::SDL3)
     else()
@@ -357,6 +362,9 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
         target_include_directories(mynes_gpu PRIVATE
             frontends/shared)
         target_link_libraries(mynes_gpu PRIVATE nes_static ${MYNES_SDL3_TARGET} pthread)
+        if(MYNES_BUNDLED_SDL3)
+            target_compile_definitions(mynes_gpu PRIVATE MYNES_BUNDLED_SDL3=1)
+        endif()
         if(APPLE)
             enable_language(OBJC)
             target_sources(mynes_gpu PRIVATE frontends/gpu/gpu_output_macos.m)
@@ -463,6 +471,11 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
             target_link_libraries(test_audio PRIVATE ${MYNES_SDL3_TARGET} m)
             add_dependencies(test_audio gpu_shaders)
             add_test(NAME gpu_audio_tests COMMAND test_audio)
+
+            add_executable(test_gpu_fences frontends/gpu/tests/test_gpu_fences.c)
+            target_link_libraries(test_gpu_fences PRIVATE ${MYNES_SDL3_TARGET})
+            add_test(NAME gpu_fence_tests COMMAND test_gpu_fences)
+            set_tests_properties(gpu_fence_tests PROPERTIES TIMEOUT 45)
 
             add_executable(test_playback frontends/gpu/tests/test_playback.c
                 frontends/gpu/playback.c frontends/gpu/audio_chain.c

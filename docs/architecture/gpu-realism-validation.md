@@ -167,3 +167,35 @@ This is a submission measurement under the observed load, not a physical
 live-preview display reported 60 Hz. Repeat with
 `frontends/gpu/tests/test_presentation_playback.py`; presentation traces now
 include actual source phase and selected mode for on-device diagnosis.
+
+## Metal fence and presentation follow-up (2026-09-21)
+
+The reported hang sampled the main thread in SDL's swapchain fence wait while
+the playback thread continued GPU audio. SDL 3.4.16 has two upstream-confirmed
+Metal fence races relevant to that concurrent workload. macOS now statically
+links that release with fixes 10309e3 and d8451e5; the build verifies the patched
+source hash. No Homebrew installation changes are required. Swapchain capacity
+is polled with empty command buffers cancelled, so that fence wait no longer
+blocks the event loop. Drawable acquisition can still wait for platform vblank.
+The original intermittent hang was not deterministically reproduced.
+
+Real Metal drawable timestamps exposed a limitation in the earlier offscreen
+60 Hz validation. On the M5 Pro's reported 120 Hz display, visible frames could
+alternate 8.33/25 ms despite roughly 16.67 ms CPU submissions. A local SDL
+extension now submits early and schedules native Hold / 60 Hz Hold presentation
+with `presentDrawable:atTime:`. Source phase is unchanged. With two intervals of
+startup lead, the final bundled build's visible M5 Pro run recorded 1,739
+intervals after warmup: 1,735 near 16.67 ms, two at 25 ms, one at 12.5 ms and
+one at 8.33 ms. All drawables were shown. This substantially reduces the
+observed irregular exposure but does not eliminate host presentation misses.
+Fully occluded runs returned zero drawable presentation timestamps and are not
+evidence of visible cadence.
+
+The final bundled build's local 60 Hz windowed Reference Composite test recorded
+839 visible intervals at 16.67 ms, zero source skips and 899 GPU audio blocks.
+The 13 GPU CTests pass, including 20,000 concurrent fence/readback cycles and
+120 frames of a static composite colour edge: same-phase output repeats while
+the two carrier phases remain distinct. Separate 900-frame Hold / 60 Hz runs
+preserved identical carrier phase on all 900 matching source frames, with no
+source skips. These checks do not constitute a
+photodiode measurement or prove that every host scheduling stall is eliminated.
