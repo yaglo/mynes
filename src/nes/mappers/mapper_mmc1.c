@@ -3,43 +3,64 @@
  */
 
 #include "mapper_ops.h"
+#include "../nes.h"
 
-static void mapper1_write_control(Mapper *m, uint8_t val) {
-    /* Translate mirroring bits to PPU mirroring modes */
-    switch (val & 0x03) {
-    case 0: m->mirroring = 2; break; /* single-screen low */
-    case 1: m->mirroring = 3; break; /* single-screen high */
-    case 2: m->mirroring = 1; break; /* vertical */
-    case 3: m->mirroring = 0; break; /* horizontal */
-    }
-    m->mmc1_chr_mode = (val & 0x10) != 0;
-    m->prg_mode = (val >> 2) & 0x03;
+static void mapper1_update_prg(Mapper *m) {
+    uint8_t bank = m->mmc1_prg_bank & 0x0F;
 
-    /* Update PRG banks based on mode */
     switch (m->prg_mode) {
     case 0: case 1:  /* 32KB mode */
-        m->prg_bank0 = (m->prg_bank0 & 0x0E);
+        m->prg_bank0 = bank & 0x0E;
         m->prg_bank1 = m->prg_bank0 | 1;
         break;
     case 2:  /* Fix first bank at $8000 */
         m->prg_bank0 = 0;
+        m->prg_bank1 = bank;
         break;
     case 3:  /* Fix last bank at $C000 */
+        m->prg_bank0 = bank;
         m->prg_bank1 = (m->prg_banks > 0) ? (m->prg_banks - 1) : 0;
         break;
     }
 }
 
+static void mapper1_write_control(Mapper *m, uint8_t val) {
+    m->mmc1_control = val & 0x1F;
+
+    /* Translate mirroring bits to PPU mirroring modes */
+    switch (m->mmc1_control & 0x03) {
+    case 0: m->mirroring = 2; break; /* single-screen low */
+    case 1: m->mirroring = 3; break; /* single-screen high */
+    case 2: m->mirroring = 1; break; /* vertical */
+    case 3: m->mirroring = 0; break; /* horizontal */
+    }
+    m->mmc1_chr_mode = (m->mmc1_control & 0x10) != 0;
+    m->prg_mode = (m->mmc1_control >> 2) & 0x03;
+    mapper1_update_prg(m);
+}
+
 static void mapper1_shift_write(Mapper *m, uint16_t addr, uint8_t val) {
+    uint64_t cycle = m->nes ? m->nes->cpu.cycles : 0;
+
+    /* MMC1 ignores serial-data writes on consecutive CPU cycles. Reset
+     * writes (D7 set) are always honored. */
+    if (!(val & 0x80) && m->nes && m->mmc1_last_write_valid &&
+        cycle == m->mmc1_last_write_cycle + 1) {
+        m->mmc1_last_write_cycle = cycle;
+        return;
+    }
+    if (m->nes) {
+        m->mmc1_last_write_cycle = cycle;
+        m->mmc1_last_write_valid = true;
+    }
+
     /* Reset on bit 7 */
     if (val & 0x80) {
         m->mmc1_shift = 0x10;
         m->mmc1_shift_count = 0;
-        m->prg_mode = 3;
-        m->prg_bank1 = (m->prg_banks > 0) ? (m->prg_banks - 1) : 0;
-        m->mmc1_chr_mode = false;
-        m->chr_bank0 = 0;
-        m->chr_bank1 = 0;
+        /* Hardware ORs $0C into Control. CHR mode, mirroring, and both
+         * CHR bank registers must remain unchanged. */
+        mapper1_write_control(m, m->mmc1_control | 0x0C);
         return;
     }
 
@@ -63,19 +84,8 @@ static void mapper1_shift_write(Mapper *m, uint16_t addr, uint8_t val) {
             break;
         case 3:  /* PRG bank ($E000-$FFFF) */
             m->prg_ram_enabled = !(reg_val & 0x10);
-            reg_val &= 0x0F;
-            switch (m->prg_mode) {
-            case 0: case 1:  /* 32KB mode */
-                m->prg_bank0 = reg_val & 0x0E;
-                m->prg_bank1 = m->prg_bank0 | 1;
-                break;
-            case 2:  /* Fix first bank */
-                m->prg_bank1 = reg_val;
-                break;
-            case 3:  /* Fix last bank */
-                m->prg_bank0 = reg_val;
-                break;
-            }
+            m->mmc1_prg_bank = reg_val;
+            mapper1_update_prg(m);
             break;
         }
 
@@ -87,13 +97,14 @@ static void mapper1_shift_write(Mapper *m, uint16_t addr, uint8_t val) {
 static void mapper1_init(Mapper *m) {
     m->mmc1_shift = 0x10;   /* SR with bit 4 set = reset state */
     m->mmc1_shift_count = 0;
-    m->prg_mode = 3;        /* Fix last bank at $C000 */
-    m->prg_bank0 = 0;
-    m->prg_bank1 = (m->prg_banks > 0) ? (m->prg_banks - 1) : 0;
+    m->mmc1_control = 0x0C;
+    m->mmc1_prg_bank = 0;
     m->chr_bank0 = 0;
     m->chr_bank1 = 0;
     m->prg_ram_enabled = true;
-    m->mmc1_chr_mode = false; /* 8KB CHR banking by default */
+    m->mmc1_last_write_cycle = 0;
+    m->mmc1_last_write_valid = false;
+    mapper1_write_control(m, m->mmc1_control);
 }
 
 static uint8_t mapper1_cpu_read(Mapper *m, uint16_t addr) {

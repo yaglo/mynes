@@ -221,6 +221,11 @@ if(NES_BUILD_TESTS)
     target_link_libraries(test_mapper227 PRIVATE nes_static)
     add_test(NAME mapper227_tests COMMAND test_mapper227)
 
+    # MMC1 reset/register semantics
+    add_executable(test_mapper1 tests/nes/test_mapper1.c)
+    target_link_libraries(test_mapper1 PRIVATE nes_static)
+    add_test(NAME mapper1_tests COMMAND test_mapper1)
+
     # AccuracyCoin test runner
     add_executable(accuracy_coin tests/accuracy_coin/run_accuracy.c)
     target_link_libraries(accuracy_coin PRIVATE nes_static)

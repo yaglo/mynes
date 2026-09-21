@@ -45,7 +45,11 @@ typedef struct Mapper {
     /* MMC1 specific */
     uint8_t mmc1_shift;     /* Shift register */
     uint8_t mmc1_shift_count;
+    uint8_t mmc1_control;   /* Control register */
+    uint8_t mmc1_prg_bank;  /* Raw PRG bank register */
     bool mmc1_chr_mode;     /* true = 4KB CHR banks, false = 8KB */
+    uint64_t mmc1_last_write_cycle;
+    bool mmc1_last_write_valid;
 
     /* MMC3 specific */
     uint8_t mmc3_bank_select;
