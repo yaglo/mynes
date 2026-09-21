@@ -194,6 +194,7 @@ typedef struct PPU {
     /* Callbacks */
     uint8_t (*cart_read)(struct PPU *ppu, uint16_t addr);
     void (*cart_write)(struct PPU *ppu, uint16_t addr, uint8_t val);
+    void (*cart_address)(struct PPU *ppu, uint16_t addr);
     void *user_data;
 } PPU;
 
@@ -799,6 +800,24 @@ static inline void ppu_clock_bus(PPU *ppu, bool rendering, bool render_scanline)
         ppu->bus_low = read ? ppu->bus_data : (uint8_t)address;
     }
     ppu->bus_address = (address & 0x3F00) | ppu->bus_low;
+    if (ppu->cart_address) {
+        uint16_t cart_address = ppu->bus_address;
+        /* The high address pins enter the next fetch phase one dot before
+         * its data read. Expose that transition to edge-sensitive cartridge
+         * hardware such as MMC3 without changing the existing data cadence. */
+        if (rendering && render_scanline) {
+            if (((ppu->dot >= 1 && ppu->dot <= 256) ||
+                 (ppu->dot >= 321 && ppu->dot <= 336)) &&
+                (((ppu->dot - 1) & 7) == 3)) {
+                cart_address = (cart_address & ~0x1000) |
+                    ((ppu->ctrl & CTRL_BG_TABLE) ? 0x1000 : 0);
+            } else if (ppu->dot >= 257 && ppu->dot <= 320 &&
+                       (((ppu->dot - 257) & 7) == 3)) {
+                cart_address = ppu_sprite_address(ppu);
+            }
+        }
+        ppu->cart_address(ppu, cart_address);
+    }
     if (read) ppu->bus_data = ppu_read(ppu, ppu->bus_address >= 0x3F00
         ? ppu->bus_address & 0x2FFF : ppu->bus_address);
     if (cpu_read) {

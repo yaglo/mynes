@@ -319,6 +319,12 @@ static inline void nes_ppu_write(PPU *ppu, uint16_t addr, uint8_t val) {
     }
 }
 
+static inline void nes_ppu_address(PPU *ppu, uint16_t addr) {
+    NES *nes = (NES *)ppu->user_data;
+    if (nes->mapper_loaded)
+        mapper_ppu_address(&nes->mapper, addr);
+}
+
 /* ============================================================================
  * OAM DMA - Cycle-Stealing Implementation
  * ============================================================================ */
@@ -509,6 +515,13 @@ static inline void nes_step(NES *nes) {
          * is < cpu_bus_tick — the state the cpu sees at bus access. */
         ppu_advance_to_master_tick(&nes->ppu, cpu_bus_tick);
 
+        /* PPU activity before the CPU bus phase can assert a mapper IRQ
+         * (notably an MMC3 A12 edge). Refresh the level-sensitive IRQ line
+         * here so the CPU can sample it in this cycle. */
+        nes->cpu.irq_pending = nes->apu.frame_irq_pending ||
+                               nes->apu.dmc_irq_pending ||
+                               (nes->mapper_loaded && nes->mapper.irq_pending);
+
         bool dma_cycle = nes_dma_step(nes);
         nes->cpu.rdy = !dma_cycle;
         nes_cpu_step_traced(nes);
@@ -519,10 +532,9 @@ static inline void nes_step(NES *nes) {
         ppu_advance_to_master_tick(&nes->ppu, nes->master_tick);
     }
 
-    /* Mapper scanline notification (for MMC3 IRQ counter).
-     * Real MMC3 clocks on PPU A12 rising edge at dot 260 during sprite
-     * tile fetch. Fire once per scanline when dot crosses 260. */
-    if (nes->mapper_loaded &&
+    /* Legacy once-per-scanline notification for mappers whose current
+     * implementation uses it. MMC3 is driven separately by PPU A12. */
+    if (nes->mapper_loaded && nes->mapper.number != 4 &&
         nes->ppu.scanline < 240 &&
         nes->ppu.dot >= 260 &&
         nes->ppu.scanline != nes->mapper_last_scanline &&
@@ -633,6 +645,7 @@ static inline void nes_init(NES *nes) {
     ppu_init(&nes->ppu);
     nes->ppu.cart_read = nes_ppu_read;
     nes->ppu.cart_write = nes_ppu_write;
+    nes->ppu.cart_address = nes_ppu_address;
     nes->ppu.user_data = nes;
 
     /* Initialize APU */
