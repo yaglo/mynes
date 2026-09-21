@@ -299,6 +299,28 @@ static int test_fir_notch_nulls_at_notch_freq(void) {
     return 1;
 }
 
+/* A receiver lowpass already attenuates the carrier. A notch must remove
+ * a fraction of that residual, never subtract unity and invert it. */
+static int test_notch_receiver_bandwidths(void) {
+    const float fs = 42954544.0f, carrier = 1.0f / 12.0f;
+    const float bandwidths[] = {1500000, 2500000, 3200000, 4200000, 6000000};
+    for (int n = 23; n <= 63; n += 2) {
+        for (unsigned b = 0; b < sizeof(bandwidths)/sizeof(bandwidths[0]); b++) {
+            float plain[64], taps[64];
+            signal_design_fir(plain, n, bandwidths[b]/fs);
+            float initial = fir_magnitude_at(plain, n, carrier);
+            for (int d = 0; d <= 4; d++) {
+                float depth = d * 0.25f;
+                signal_design_fir_notch(taps, n, bandwidths[b]/fs, carrier, depth);
+                ASSERT_NEAR(fir_magnitude_at(taps,n,carrier), initial*(1-depth),
+                            2e-5f, "notch removes fraction of residual carrier");
+                ASSERT_NEAR(fir_magnitude_at(taps,n,0), 1, 2e-5f, "notch preserves DC");
+            }
+        }
+    }
+    return 1;
+}
+
 static int test_fir_notch_default_depth(void) {
     /* depth=0 → notch should degenerate to plain lowpass. */
     float taps_plain[37], taps_notched[37];
@@ -614,6 +636,7 @@ int main(void) {
     RUN_TEST(test_fir_lowpass_rejects_above_cutoff);
     RUN_TEST(test_fir_notch_nulls_at_notch_freq);
     RUN_TEST(test_fir_notch_default_depth);
+    RUN_TEST(test_notch_receiver_bandwidths);
     RUN_TEST(test_fir_peaking_boosts_high_freq);
     RUN_TEST(test_fir_peaking_preserves_dc);
     RUN_TEST(test_fir_notch_plus_peaking_composable);

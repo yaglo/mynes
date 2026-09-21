@@ -282,29 +282,34 @@ static inline void signal_apply_peaking(float *taps, int n, float cutoff,
  * notch_depth: rejection strength (0.5-1.0, higher = deeper null). */
 static inline void signal_design_fir_notch(float *taps, int n, float cutoff,
                                             float notch_freq, float notch_depth) {
-    /* Start with standard lowpass. */
     signal_design_fir(taps, n, cutoff);
-    /* Subtract a windowed cosine at the notch frequency.
-     * A windowed cosine at f0 has DTFT magnitude ≈ 0.5 * sum(window) at f0.
-     * To subtract `notch_depth` gain at f0, scale the cosine by
-     * notch_depth / (0.5 * sum(window)). */
+    if (notch_depth <= 0.0f) return;
+    notch_depth = fminf(notch_depth, 1.0f);
+    /* A symmetric, zero-DC correction with unit response at f0.
+     * Subtract a fraction of the LOWPASS residual at f0, not a fixed
+     * unity response: narrow receiver bandwidths may already reject it.
+     * Removing the window-weighted mean preserves DC without a final
+     * renormalization that would change the requested notch depth. */
     int half = n / 2;
-    float notch[64];
-    float w_sum = 0.0f;
-    for (int k = 0; k < n && k < 64; k++) {
-        int m = k - half;
-        float hamming = 0.54f - 0.46f * cosf(2.0f * (float)M_PI * (float)k / (float)(n - 1));
-        notch[k] = cosf(2.0f * (float)M_PI * notch_freq * (float)m) * hamming;
-        w_sum += hamming;
+    float window[64], notch[64];
+    float sum_window = 0.0f, sum_cos = 0.0f, response = 0.0f;
+    for (int k = 0; k < n; k++) {
+        float c = cosf(2.0f * (float)M_PI * notch_freq * (k - half));
+        window[k] = 0.54f - 0.46f * cosf(2.0f * (float)M_PI * k / (n - 1));
+        notch[k] = c;
+        sum_window += window[k];
+        sum_cos += window[k] * c;
+        response += taps[k] * c;
     }
-    /* Scale so the subtraction reduces gain at notch_freq by exactly notch_depth. */
-    float nscale = 2.0f * notch_depth / (w_sum + 1e-6f);
-    for (int k = 0; k < n; k++) taps[k] -= notch[k] * nscale;
-    /* Renormalize DC gain to 1.0. */
-    float sum = 0.0f;
-    for (int k = 0; k < n; k++) sum += taps[k];
-    float inv = 1.0f / (sum + 1e-6f);
-    for (int k = 0; k < n; k++) taps[k] *= inv;
+    float gain = 0.0f, mean = sum_cos / sum_window;
+    for (int k = 0; k < n; k++) {
+        float c = notch[k];
+        notch[k] = window[k] * (c - mean);
+        gain += notch[k] * c;
+    }
+    if (fabsf(gain) < 1e-8f) return;
+    float scale = notch_depth * response / gain;
+    for (int k = 0; k < n; k++) taps[k] -= scale * notch[k];
 }
 
 /* Initialize with NTSC defaults (Consumer TV). */

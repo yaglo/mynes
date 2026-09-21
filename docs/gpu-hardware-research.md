@@ -17,6 +17,24 @@ Sources: [Sony specification](https://www.sony.jp/pro-monitor/products/PVM-14L2/
 
 TVL is horizontal resolving power normalized to picture height. It is neither the number of phosphor triads nor a reason to render 600 horizontal scanlines. These are standard-definition sets; the NES's repeated non-interlaced field occupies the same raster lines. We do not turn them into 480p/HD CRTs.
 
+## Receiver filter validation
+
+The horizontal luma trap removes a fraction of the carrier left by the
+receiver lowpass. Its symmetric correction has zero DC response, so gray level
+is preserved without renormalizing the requested rejection. At 3.2 MHz bandwidth,
+37 taps and 95% notch depth, carrier response is 0.01651 (lowpass alone: 0.33016).
+An earlier coefficient calculation subtracted a fixed unity-referenced amount,
+producing -0.61892 instead: a phase-inverted carrier rather than a deep notch.
+Regression coverage sweeps 23–63 taps, 1.5–6 MHz bandwidth and 0–100% depth.
+
+This correction affects cross-luma, not false color from luminance entering the
+chroma decoder. The two artifacts must be evaluated separately in unaveraged
+frames. Full-resolution Contra comparisons show only a subtle final change in
+Bedroom RF, whose RF and beam filtering already soften the residual; the PVM
+preset, which sets horizontal notch depth to zero, is unchanged. This is a filter
+correctness fix, not a claim of hardware calibration or a complete solution to
+excessive rainbowing.
+
 ## Decoder research that changed the implementation
 
 The PVM service manual identifies **MC141627** Y/C separation, **CXA2163AQ** chroma decoding and **CXA1739S** drive/cutoff control. It also describes distinct picture/brightness ABL circuits. The previous notch-only preset omitted the comb. It now selects a generic adaptive line comb; it does not claim the IC's internal algorithm or ABL calibration. [Sony service manual, theory of operation and parts list](https://consolemods.org/wiki/images/f/fc/PVM-L2_Service_Manual.pdf).

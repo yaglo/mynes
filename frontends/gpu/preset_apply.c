@@ -357,10 +357,11 @@ static void rebuild_signal_filters(PresetCtx *ctx, float y_cutoff,
     signal_design_fir_ex(sp->fir_y, sp->fir_y_n, y_cutoff, ringing);
 
     /* Subcarrier notch in the luma FIR — removes the 3.58 MHz pattern
-     * from Y so dot crawl + cross-color don't appear. Depth is taken
+     * from Y to reduce cross-luma (dot crawl). It does not remove
+     * luma leaking into the separate chroma decoder. Depth is taken
      * from tv.luma_notch_depth so presets can DISABLE it (set to 0) for
-     * consumer-TV looks. Default 0.95 (effectively transparent ≈-26 dB
-     * rejection). Skipped entirely below 23 taps — a short FIR can't
+     * consumer-TV looks. Default 0.95 removes 95% of the residual carrier amplitude
+     * after the lowpass (26 dB additional rejection). Skipped entirely below 23 taps — a short FIR can't
      * host a sharp notch and the attempt just attenuates luma broadly. */
     float subcarrier_norm = 1.0f / 12.0f;  /* NTSC/PAL: 12 samples per cycle */
     float notch_depth = vc->tv.luma_notch_depth;
