@@ -45,7 +45,7 @@ to a specific tube or camera photograph.
 
 Eleven saved variants were backed up byte-for-byte, with SHA-256 hashes and a replacement manifest, before removal from the active personal library. Seven compact-monitor variants consolidate into **Warm Desktop Monitor**, preserving the warm white balance and rich Y/C colour. **Vivid Living Room** preserves the saved consumer composite colour preference with less halation and a firmer black response. These are personal looks, not hardware calibrations. The redundant Dying CRT pair and the coarse, desaturated Basement variant are superseded by the corresponding bundled profiles.
 
-All 18 pre-existing profiles were inspected on rendered signal charts. The two promoted profiles, Dying CRT and Large RGB Monitor were also reviewed on consecutive Contra boss frames averaged in linear light at 1280×960, including native-pixel beam/mask crops. The RGB monitor retains visible scanline and shadow-mask structure; Dying CRT is deliberately soft and weak-blue but no longer has a trapezoidal raster. The two personal looks differ principally in warm Y/C separation versus vivid composite colour and softer chroma edges.
+The current library of 21 profiles was reviewed on the same Contra boss at 3840×2880, with unaveraged native-pixel beam/mask crops. The gallery includes the two promoted personal looks, Dying CRT, Large RGB Monitor and the separate VHS playback preset. The RGB monitor retains visible scanline and shadow-mask structure; Dying CRT is deliberately soft and weak-blue but no longer has a trapezoidal raster. The two personal looks differ principally in warm Y/C separation versus vivid composite colour and softer chroma edges.
 
 ![Curated personal looks alongside worn and RGB profiles](images/preset-curation-contra.png)
 
@@ -115,3 +115,7 @@ The PVM reference is [Sony's published specification](https://www.sony.jp/pro-mo
 Consumer colour settings are explicit estimates; they are not extracted factory coefficients. The JVC owner record reports cool Standard mode and red push. Toshiba's service procedure specifies visual white-balance adjustment, without establishing our 8000 K target. PVM D65 is documented. Nominal 525-line phosphor primaries are a standards-based approximation to the unmeasured tubes. Decoder colour-difference gains preserve the gray axis; gun balance and phosphor gamut act at their respective stages.
 
 Stas uses channel-3 metadata, −25 dBm sync-tip carrier, −65 dBm injected channel noise and a 4.1 MHz equivalent video corner. RF can be selected on any display; on the tunerless PVM this represents an external receiver. Stock NES composite/RF and hypothetical modified component/RGB sources are distinct choices.
+
+## Current control audit
+
+All 116 saved TV fields have OSD controls, including conditional legacy focus settings. RF IF and VHS controls are saved and editable under Signal chain. The automated audit checks every shipped preset against the control ranges; this is a consistency check, not evidence that every parameter matches measured hardware. [Model validation and limits](architecture/gpu-realism-validation.md).

@@ -1,10 +1,10 @@
-# Contra: all 20 CRT presets
+# Contra: all 21 CRT presets
 
 For the current presentation, see the [game showcase](nes-visual-showcase.md) and [full-resolution gameplay / beam close-ups](gpu-beam-closeups.md). This page retains controlled diagnostic comparisons at their stated capture resolutions.
 
-Actual output from the GPU renderer, captured offscreen at **2560×1920**. The base captures use `e02fc71`; Bedroom RF 1990 was refreshed after its focus/color/HDR tuning, with the same capture conditions. Every preset receives the same frozen 256×240 Contra boss PPU-code frame, with its own default connection and controls. Host mask alignment is Panel-pixels at 1:1 offscreen scale. This target is larger than the MacBook panel; it is a controlled 4:3 comparison, not a claim about fullscreen panel mapping.
+Actual output from the GPU renderer, captured offscreen at **3840×2880**. All captures use the current complex-IF, beam and optical renderer, with fixed 1.6× offscreen headroom. Every preset receives the same frozen 256×240 Contra boss PPU-code frame, with its own default connection and controls. Host mask alignment is Panel-pixels at 1:1 offscreen scale. This target is larger than the MacBook panel; it is a controlled 4:3 comparison, not a claim about fullscreen panel mapping.
 
-Frames 60 and 61 are averaged in **linear light** before sRGB conversion, at a common 0.7 exposure to preserve more highlight detail in SDR. Full-resolution images are lossless WebP. Overview reductions are also made in linear light. The two-frame still average is a review exposure, not an extra emulator filter. These PNG/WebP previews do not reproduce live HDR headroom.
+Every still shows **frame 60 without phase averaging**, at a common 0.6 linear exposure before sRGB conversion. Frame 61 is captured separately for phase-difference measurements. Full-resolution images are lossless WebP. Overview reductions are also made in linear light. Native crops retain the actual single-frame beam shape. These PNG/WebP previews do not reproduce live HDR headroom.
 
 For unaveraged NTSC phases, see the [50 fps GIFs and 60.1 fps motion clips](gpu-motion-review.md).
 
@@ -12,7 +12,7 @@ For unaveraged NTSC phases, see the [50 fps GIFs and 60.1 fps motion clips](gpu-
 
 **The four main profiles are the strongest way to present the project.** Sony is the focused monitor, JVC the firmer cool consumer set, Toshiba the softer household image, and Stas's Favourite the worn RF set. Mario's bright title screen confirms that the colour and focus differences survive outside the dark Contra scene.
 
-There is still too much overlap in the wider library. Several old shadow-mask profiles are mainly variations of softness and tint; their coarse dot pattern can dominate at native size. The studio/Y/C group also contains near-neighbours. Dying CRT has stable geometry, but its severe blur sacrifices much of the artwork. Keep these as optional looks rather than presenting all twenty as equally convincing or individually measured televisions.
+There is still too much overlap in the wider library. Several old shadow-mask profiles are mainly variations of softness and tint; their coarse dot pattern can dominate at native size. The studio/Y/C group also contains near-neighbours. Dying CRT has stable geometry, but its severe blur sacrifices much of the artwork. Keep these as optional looks rather than presenting all twenty-one as equally convincing or individually measured televisions.
 
 The renders have recognizable CRT structure, but a still cannot establish phosphor motion, flicker, time-varying RF noise, geometry breathing or audio synchronization. The supplied CRT photo also contains camera exposure, white-balance, lens and sampling effects; it is a useful qualitative reference, not a direct colour-calibration target. No rendering parameters were changed to make this gallery more flattering.
 
@@ -20,7 +20,7 @@ The renders have recognizable CRT structure, but a still cannot establish phosph
 
 Each detail panel contains two separate crops: face on the left, platform on the right. Labels and a gutter separate these distant parts of the screen; they are not one contiguous image.
 
-Click a preset name for the complete **2560×1920** render. View native crops at 100%: browser resizing can change fine mask appearance.
+Click a preset name for the complete **3840×2880** render. View native crops at 100%: browser resizing can change fine mask appearance.
 
 ### Group 1
 
@@ -87,20 +87,30 @@ Click a preset name for the complete **2560×1920** render. View native crops at
 
 ![Native-pixel face and platform details](images/contra-gallery/native-crops-5.png)
 
+### Group 6
+
+![VHS playback](images/contra-gallery/overview-6.png)
+
+| Preset / connection | Visual assessment |
+|---|---|
+| [VHS SP — consumer CRT](images/contra-gallery/vhs_sp_consumer.webp) · composite recording/playback | Softer horizontal luma, narrower color bandwidth and slight color delay precede the Toshiba-style CRT. A generic recovered tape response; timing errors need motion to assess. |
+
+![VHS native face and platform details](images/contra-gallery/native-crops-6.png)
+
 ## A second scene
 
 ![Mario through the four main presets](images/readme-mario.png)
 
-The flat sky makes cool/warm decoder response easier to compare. The title and bricks show Sony's sharper separation, JVC's firmer consumer focus, Toshiba's broader beam, and Stas's pronounced recovery/texture. These are frames 180/181 from the same ROM, with the same resolution and exposure as Contra.
+The flat sky makes cool/warm decoder response easier to compare. The title and bricks show Sony's sharper separation, JVC's firmer consumer focus, Toshiba's broader beam, and Stas's pronounced recovery/texture. These are frame 180 from the same ROM, with the same resolution and exposure as Contra.
 
 ## Reproduce
 
 Use your own legally obtained game/PPU-code fixture; no commercial ROM or game-state binary is included here.
 
 ```sh
-python3 frontends/gpu/tests/capture_patterns.py build/bin/mynes_gpu /tmp/contra-review \
-  --all --frame 60 --size 2560x1920 --codes /path/to/contra-boss.bin
-python3 frontends/gpu/tests/review_captures.py /tmp/contra-review --scene contra --exposure .7
+python3 tools/review/refresh_showcase.py --sections gallery \
+  --roms /path/to/roms --mario /path/to/mario.nes \
+  --contra /path/to/contra-boss.bin --logs /tmp/mynes-gallery
 ```
 
-The review script requires NumPy and Pillow. [Frame metrics](contra-gallery-metrics.json) record the phase difference, peak and average light for each preset. These metrics describe the capture; they are not a hardware-fidelity score. See the [preset audit](gpu-preset-audit.md), [hardware references](gpu-hardware-research.md) and [model limits](gpu-pipeline-reference.md).
+The review script requires NumPy and Pillow. Full images are actual 3840×2880 renders; no lower-resolution image is enlarged. [Frame metrics](contra-gallery-metrics.json) record the phase difference, peak and average light for each preset. These metrics describe the capture; they are not a hardware-fidelity score. See the [preset audit](gpu-preset-audit.md), [hardware references](gpu-hardware-research.md) and [model limits](gpu-pipeline-reference.md).

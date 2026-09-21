@@ -11,7 +11,7 @@ turn a control, or switch televisions while the game keeps running.
 
 *Castlevania in play · Sony PVM-14L2 · click for the full 3840×2880 capture.*
 
-[Get started](#quick-start) · [All 20 CRT presets](docs/contra-preset-gallery.md) ·
+[Get started](#quick-start) · [All 21 CRT presets](docs/contra-preset-gallery.md) ·
 [Signal Studio](tools/visualiser/README.md) · [How the model works](docs/gpu-pipeline-reference.md)
 
 ## See the signal move
@@ -50,13 +50,13 @@ individual tube beam profiles remain uncalibrated.
 
 ## Choose your television
 
-**[Compare all 20 presets on the same Contra scene →](docs/contra-preset-gallery.md)**
+**[Compare all 21 presets on the same Contra scene →](docs/contra-preset-gallery.md)**
 
 [![Contra through four CRT presets](docs/images/contra-gallery/overview-4.png)](docs/contra-preset-gallery.md#group-4)
 
 [![Studio aperture grille: native face and bright-platform details](docs/images/contra-gallery/studio-pvm-beam-detail.png)](docs/contra-preset-gallery.md#group-5)
 
-*Studio aperture grille (Y/C): two separate native crops of the face and platform, with a visible divider. From the gallery’s 2560×1920, two-phase exposure; the generic Studio preset is separate from the nominal 14L2.*
+*Studio aperture grille (Y/C): two separate native crops of the face and platform, with a visible divider. From the gallery’s 3840×2880, unaveraged frame; the generic Studio preset is separate from the nominal 14L2.*
 
 | Start here | What it brings to the picture |
 |---|---|
@@ -70,8 +70,11 @@ monitors, older household sets, worn tubes, and two curated personal looks.
 Commercial names identify nominal references: individual tube condition and
 many circuit responses remain estimates. [Preset settings and evidence](docs/gpu-preset-audit.md).
 
-[Compare all 20 presets on the same Contra frame](docs/contra-preset-gallery.md),
+[Compare all 21 presets on the same Contra frame](docs/contra-preset-gallery.md),
 or inspect the [phase and scrolling review](docs/gpu-motion-review.md).
+
+**[See VHS playback on a consumer CRT →](docs/nes-visual-showcase.md#vhs-playback)**
+Contra through the separate VHS SP recording/playback preset, captured at 3840×2880.
 
 ## Follow the signal
 
@@ -209,6 +212,8 @@ The GPU frontend restores its last preset from
 `~/.config/mynes/config.json`. Press **M** in-game for the on-screen
 signal-chain menu, **P** to cycle presets, **C** to switch composite/raw
 views, **Shift+C** for split view, and **O** to reopen the ROM browser.
+The menu is translucent; Enter on a parameter opens a compact bottom adjustment
+strip. Left/Right changes its value, and Enter or Escape returns to the menu.
 Changing presets displays the selected name for three seconds. Bundled presets
 load relative to the executable (`build/presets`), independently of the launch
 directory; personal presets remain in `~/.config/mynes/presets`.

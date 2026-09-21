@@ -1,70 +1,170 @@
 {
   "sony_pvm_14l2": [
     {
-      "peak_y": 1300,
-      "fwhm_pixels": 4.435233504422122,
-      "peak_linear_luminance": 0.18025029830932615
+      "phase": 0,
+      "strokes": [
+        {
+          "peak_y": 1300,
+          "fwhm_pixels": 4.435730951944244,
+          "peak_linear_luminance": 0.18028989919026692
+        },
+        {
+          "peak_y": 1300,
+          "fwhm_pixels": 5.7403629556964475,
+          "peak_linear_luminance": 0.5430572596232096
+        },
+        {
+          "peak_y": 1300,
+          "fwhm_pixels": 9.132792278337945,
+          "peak_linear_luminance": 0.8423095504760743
+        }
+      ]
     },
     {
-      "peak_y": 1300,
-      "fwhm_pixels": 5.740382069918404,
-      "peak_linear_luminance": 0.5430465311686197
-    },
-    {
-      "peak_y": 1300,
-      "fwhm_pixels": 9.132585128028914,
-      "peak_linear_luminance": 0.8423146438598632
+      "phase": 1,
+      "strokes": [
+        {
+          "peak_y": 1300,
+          "fwhm_pixels": 4.435715054578317,
+          "peak_linear_luminance": 0.18025582885742186
+        },
+        {
+          "peak_y": 1300,
+          "fwhm_pixels": 5.740243673365306,
+          "peak_linear_luminance": 0.5430321650187174
+        },
+        {
+          "peak_y": 1300,
+          "fwhm_pixels": 9.13288778848009,
+          "peak_linear_luminance": 0.8423061167399087
+        }
+      ]
     }
   ],
   "jvc_d_series_2000": [
     {
-      "peak_y": 1305,
-      "fwhm_pixels": 5.448462902391704,
-      "peak_linear_luminance": 0.14928542807896933
+      "phase": 0,
+      "strokes": [
+        {
+          "peak_y": 1305,
+          "fwhm_pixels": 5.449005836491153,
+          "peak_linear_luminance": 0.14932069384257
+        },
+        {
+          "peak_y": 1305,
+          "fwhm_pixels": 6.931116606095053,
+          "peak_linear_luminance": 0.45779518432617183
+        },
+        {
+          "peak_y": 1305,
+          "fwhm_pixels": 10.294348972874445,
+          "peak_linear_luminance": 0.7457764439900716
+        }
+      ]
     },
     {
-      "peak_y": 1305,
-      "fwhm_pixels": 6.931041732157311,
-      "peak_linear_luminance": 0.45777804514567055
-    },
-    {
-      "peak_y": 1305,
-      "fwhm_pixels": 10.13108250944883,
-      "peak_linear_luminance": 0.7477243030548095
+      "phase": 1,
+      "strokes": [
+        {
+          "peak_y": 1305,
+          "fwhm_pixels": 5.4482041089927975,
+          "peak_linear_luminance": 0.14924967498779299
+        },
+        {
+          "peak_y": 1305,
+          "fwhm_pixels": 6.9313609043443165,
+          "peak_linear_luminance": 0.45780348002115884
+        },
+        {
+          "peak_y": 1305,
+          "fwhm_pixels": 10.294725129944524,
+          "peak_linear_luminance": 0.7457828333536783
+        }
+      ]
     }
   ],
   "toshiba_14af43": [
     {
-      "peak_y": 1311,
-      "fwhm_pixels": 6.6350960729188415,
-      "peak_linear_luminance": 0.12433090239067872
+      "phase": 0,
+      "strokes": [
+        {
+          "peak_y": 1311,
+          "fwhm_pixels": 6.638495118101702,
+          "peak_linear_luminance": 0.12431240775187809
+        },
+        {
+          "peak_y": 1311,
+          "fwhm_pixels": 8.297243592129817,
+          "peak_linear_luminance": 0.40502453242937725
+        },
+        {
+          "peak_y": 1311,
+          "fwhm_pixels": 12.934326904671515,
+          "peak_linear_luminance": 0.6275975262403488
+        }
+      ]
     },
     {
-      "peak_y": 1311,
-      "fwhm_pixels": 8.295036781062478,
-      "peak_linear_luminance": 0.40518485783139857
-    },
-    {
-      "peak_y": 1311,
-      "fwhm_pixels": 12.678547754020144,
-      "peak_linear_luminance": 0.6312873361666996
+      "phase": 1,
+      "strokes": [
+        {
+          "peak_y": 1311,
+          "fwhm_pixels": 6.638760015020239,
+          "peak_linear_luminance": 0.12427023269931474
+        },
+        {
+          "peak_y": 1311,
+          "fwhm_pixels": 8.296851794614739,
+          "peak_linear_luminance": 0.40507952180306117
+        },
+        {
+          "peak_y": 1311,
+          "fwhm_pixels": 12.935778076813364,
+          "peak_linear_luminance": 0.6275858400185902
+        }
+      ]
     }
   ],
   "stass_favourite": [
     {
-      "peak_y": 1300,
-      "fwhm_pixels": 5.833924614998111,
-      "peak_linear_luminance": 0.11413319270461797
+      "phase": 0,
+      "strokes": [
+        {
+          "peak_y": 1300,
+          "fwhm_pixels": 5.8850297430953304,
+          "peak_linear_luminance": 0.11822625464399657
+        },
+        {
+          "peak_y": 1300,
+          "fwhm_pixels": 7.595160541844088,
+          "peak_linear_luminance": 0.29900911829868954
+        },
+        {
+          "peak_y": 1300,
+          "fwhm_pixels": 10.382858965444697,
+          "peak_linear_luminance": 0.4893724764823913
+        }
+      ]
     },
     {
-      "peak_y": 1300,
-      "fwhm_pixels": 7.563970433280296,
-      "peak_linear_luminance": 0.2956413761029641
-    },
-    {
-      "peak_y": 1300,
-      "fwhm_pixels": 10.338947003365647,
-      "peak_linear_luminance": 0.48554268747568124
+      "phase": 1,
+      "strokes": [
+        {
+          "peak_y": 1300,
+          "fwhm_pixels": 5.841794176254361,
+          "peak_linear_luminance": 0.11273832758665085
+        },
+        {
+          "peak_y": 1300,
+          "fwhm_pixels": 7.596024734491799,
+          "peak_linear_luminance": 0.3000626348177592
+        },
+        {
+          "peak_y": 1300,
+          "fwhm_pixels": 10.381905323635195,
+          "peak_linear_luminance": 0.4894156268119812
+        }
+      ]
     }
   ]
 }

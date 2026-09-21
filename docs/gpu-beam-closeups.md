@@ -1,6 +1,6 @@
 # Gameplay and beam height at native 4K pixels
 
-The Castlevania and Darkwing gameplay captures are 3840×2880: the complete 4:3 game image is 3840 pixels wide, without side bars. The older comparison and controlled measurements below use 3840×2160 canvases with a 2880×2160 game viewport. Close-ups are cropped **without resizing**. Open the PNG at 100% to inspect the mask; fitting the image to a browser window can change its apparent pattern. They show one NTSC phase, not a blended exposure.
+The Castlevania and Darkwing gameplay captures are 3840×2880: the complete 4:3 game image is 3840 pixels wide, without side bars. The four-set title comparison also uses 3840×2880. Only the controlled measurement fixture below uses a 3840×2160 canvas with a 2880×2160 game viewport. Close-ups are cropped **without resizing**. Open the PNG at 100% to inspect the mask; fitting the image to a browser window can change its apparent pattern. They show one NTSC phase, not a blended exposure.
 
 ## Castlevania: full screen and close-up
 
@@ -8,13 +8,13 @@ The Castlevania and Darkwing gameplay captures are 3840×2880: the complete 4:3 
 
 [![Native close-up of the same Castlevania frame](images/showcase/4k/castlevania-pvm-detail.png)](images/showcase/4k/castlevania-pvm-detail.png)
 
-Sony PVM-14L2 preset, composite, emulated frame 2500. The crop is 1280×1120 at x=1360, y=1584, copied without resizing. The full beam and image are rendered at 3840×2880. Exposure is 0.7; this is one NTSC phase. Simon, window tracery and damaged masonry retain their game context while showing the spot and grille.
+Sony PVM-14L2 preset, composite, emulated frame 2500. The crop is 1280×1120 at x=1360, y=1584, copied without resizing. The full beam and image are rendered at 3840×2880. Exposure is 0.6; this is one NTSC phase. Simon, window tracery and damaged masonry retain their game context while showing the spot and grille.
 
 ## Studio aperture grille: face and platform
 
 [![Studio aperture grille, native face and platform details](images/contra-gallery/studio-pvm-beam-detail.png)](contra-preset-gallery.md#group-5)
 
-These details come unchanged from the [Contra preset gallery](contra-preset-gallery.md): 2560×1920, two consecutive phases averaged in linear light. The two crops are from different vertical positions and are separated and labelled. They show scanline structure, but this comparison alone does not isolate brightness-dependent spot growth. Studio aperture grille is a generic Y/C monitor preset, distinct from the nominal Sony PVM-14L2.
+These details come unchanged from the [Contra preset gallery](contra-preset-gallery.md): 3840×2880, one unaveraged frame. Combining phases with different row positions can falsely broaden the beam; the published detail now preserves a single phase. The two crops are from different vertical positions and are separated and labelled. They show scanline structure, but this comparison alone does not isolate brightness-dependent spot growth. Studio aperture grille is a generic Y/C monitor preset, distinct from the nominal Sony PVM-14L2.
 
 ## Darkwing Duck during gameplay
 
@@ -28,7 +28,7 @@ The beam buffer is 3840×2880 too. Pixel-aligned PVM mode rounds the nominal 3.5
 
 ## The same Mega Man 2 title on four sets
 
-The title combines dim green strokes, blue shading, bright lettering and fine edges. The rooftop adds intermediate grays. All four captures use emulated frame 900, after Start at frame 600, with the same 0.7 exposure and pixel-aligned mask mode.
+The title combines dim green strokes, blue shading, bright lettering and fine edges. The rooftop adds intermediate grays. Native title crops are 1024×683 at (1680, 427); rooftop crops are 768×683 at (2973, 1413). All four captures use emulated frame 900, after Start at frame 600, with the same 0.6 exposure and pixel-aligned mask mode.
 
 | Preset | Native title detail | Full 4K image | Rooftop detail |
 |---|---|---|---|
@@ -45,14 +45,16 @@ The narrow dim strokes retain visible gaps. The white lettering spreads vertical
 
 ![PVM brightness-dependent beam height](images/showcase/4k/pvm-beam-levels.png)
 
-The top row shows equal-height patches; the lower row shows isolated one-source-line strokes. Source PPU codes are $00, $10 and $20 against $0F black. The samples above are native pixels from one frame. Measurements below use the mean of consecutive **linear-light** final captures, averaging 96 horizontal pixels at the centre of each stroke to suppress mask modulation. FWHM means the vertical width at half the peak luminance above the local background; it is measured before the 0.7 exposure and sRGB encoding used for the PNGs.
+The top row shows equal-height patches; the lower row shows isolated one-source-line strokes. Source PPU codes are $00, $10 and $20 against $0F black. The samples above are native pixels from one frame. Measurements below measure each consecutive **linear-light** final capture separately, averaging 96 horizontal pixels at the centre of each stroke to suppress mask modulation. FWHM means the vertical width at half the peak luminance above the local background; it is measured before the 0.6 exposure and sRGB encoding used for the PNGs.
+
+Each cell lists **phase 0 / phase 1**, measured independently.
 
 | Preset | Dark gray FWHM | Mid gray FWHM | White FWHM |
 |---|---:|---:|---:|
-| Sony PVM-14L2 | 4.44 px | 5.74 px | 9.13 px |
-| JVC D-Series | 5.45 px | 6.93 px | 10.13 px |
-| Toshiba 14AF | 6.64 px | 8.30 px | 12.68 px |
-| Stas's Favourite | 5.83 px | 7.56 px | 10.34 px |
+| Sony PVM-14L2 | 4.44 / 4.44 px | 5.74 / 5.74 px | 9.13 / 9.13 px |
+| JVC D-Series | 5.45 / 5.45 px | 6.93 / 6.93 px | 10.29 / 10.29 px |
+| Toshiba 14AF | 6.64 / 6.64 px | 8.30 / 8.30 px | 12.93 / 12.94 px |
+| Stas's Favourite | 5.89 / 5.84 px | 7.60 / 7.60 px | 10.38 / 10.38 px |
 
 There are nominally nine output pixels per source scanline at this viewport height; geometry and overscan alter local spacing. These are final emitted-light widths, including focus, optics and output response. They are not the shader's input width parameters. RF and loading also change the drive, so a preset's maximum configured spot is not necessarily reached by this pattern. [Raw measurements](gpu-beam-measurements.json).
 

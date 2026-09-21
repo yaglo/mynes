@@ -1,182 +1,317 @@
 {
   "arcade_cabinet": {
-    "linear_frame_difference_rms": 6.282813410507515e-05,
-    "linear_peak": 1.546875,
+    "linear_frame_difference_rms": 6.039757499820553e-05,
+    "linear_peak": 1.568359375,
     "linear_mean": [
-      0.07878244668245316,
-      0.0840369388461113,
-      0.06418783962726593
-    ]
+      0.07370158284902573,
+      0.07853930443525314,
+      0.059796594083309174
+    ],
+    "size": [
+      3840,
+      2880
+    ],
+    "displayed_frame": 60,
+    "exposure": 0.6
   },
   "basement_tv": {
-    "linear_frame_difference_rms": 0.02379503659904003,
-    "linear_peak": 1.0888671875,
+    "linear_frame_difference_rms": 0.02594422549009323,
+    "linear_peak": 1.4638671875,
     "linear_mean": [
-      0.040134601294994354,
-      0.036154262721538544,
-      0.029333801940083504
-    ]
+      0.0348806157708168,
+      0.030957819893956184,
+      0.02619905024766922
+    ],
+    "size": [
+      3840,
+      2880
+    ],
+    "displayed_frame": 60,
+    "exposure": 0.6
   },
   "bedroom_rf_1990": {
-    "linear_frame_difference_rms": 0.06563700735569,
-    "linear_peak": 1.5302734375,
+    "linear_frame_difference_rms": 0.06315117329359055,
+    "linear_peak": 1.5654296875,
     "linear_mean": [
-      0.07098357379436493,
-      0.08107712119817734,
-      0.07718782871961594
-    ]
+      0.05981423705816269,
+      0.06736669689416885,
+      0.066459059715271
+    ],
+    "size": [
+      3840,
+      2880
+    ],
+    "displayed_frame": 60,
+    "exposure": 0.6
   },
   "commodore_1702": {
-    "linear_frame_difference_rms": 0.003976813517510891,
-    "linear_peak": 1.3994140625,
+    "linear_frame_difference_rms": 0.004932147450745106,
+    "linear_peak": 1.5390625,
     "linear_mean": [
-      0.06791471689939499,
-      0.07480771094560623,
-      0.058784566819667816
-    ]
+      0.0657903179526329,
+      0.07375136017799377,
+      0.05670379102230072
+    ],
+    "size": [
+      3840,
+      2880
+    ],
+    "displayed_frame": 60,
+    "exposure": 0.6
   },
   "dying_crt": {
-    "linear_frame_difference_rms": 0.028631003573536873,
-    "linear_peak": 1.39794921875,
+    "linear_frame_difference_rms": 0.030281996354460716,
+    "linear_peak": 1.5107421875,
     "linear_mean": [
-      0.05137365683913231,
-      0.04681391268968582,
-      0.0327499620616436
-    ]
+      0.048880480229854584,
+      0.044017426669597626,
+      0.03192149102687836
+    ],
+    "size": [
+      3840,
+      2880
+    ],
+    "displayed_frame": 60,
+    "exposure": 0.6
   },
   "famicom_kitchen": {
-    "linear_frame_difference_rms": 0.04325820878148079,
-    "linear_peak": 1.47216796875,
+    "linear_frame_difference_rms": 0.046125855296850204,
+    "linear_peak": 1.5439453125,
     "linear_mean": [
-      0.04324284568428993,
-      0.05303950980305672,
-      0.057565536350011826
-    ]
+      0.03660983219742775,
+      0.04618826135993004,
+      0.051502108573913574
+    ],
+    "size": [
+      3840,
+      2880
+    ],
+    "displayed_frame": 60,
+    "exposure": 0.6
   },
   "jvc_d_series_2000": {
-    "linear_frame_difference_rms": 0.04479891434311867,
-    "linear_peak": 1.5234375,
+    "linear_frame_difference_rms": 0.05051065608859062,
+    "linear_peak": 1.55859375,
     "linear_mean": [
-      0.06037120148539543,
-      0.07198851555585861,
-      0.07538390159606934
-    ]
+      0.05858206748962402,
+      0.07183810323476791,
+      0.07295696437358856
+    ],
+    "size": [
+      3840,
+      2880
+    ],
+    "displayed_frame": 60,
+    "exposure": 0.6
   },
   "late_crt_wega": {
-    "linear_frame_difference_rms": 0.062676802277565,
-    "linear_peak": 1.37255859375,
+    "linear_frame_difference_rms": 0.07343288511037827,
+    "linear_peak": 1.529296875,
     "linear_mean": [
-      0.07410498708486557,
-      0.07524258643388748,
-      0.06586038321256638
-    ]
+      0.07305218279361725,
+      0.07382151484489441,
+      0.06687682121992111
+    ],
+    "size": [
+      3840,
+      2880
+    ],
+    "displayed_frame": 60,
+    "exposure": 0.6
   },
   "living_room_1988": {
-    "linear_frame_difference_rms": 0.05260222405195236,
-    "linear_peak": 1.5009765625,
+    "linear_frame_difference_rms": 0.05364987999200821,
+    "linear_peak": 1.5615234375,
     "linear_mean": [
-      0.06821874529123306,
-      0.06807079166173935,
-      0.0555729940533638
-    ]
+      0.06466851383447647,
+      0.06450322270393372,
+      0.05311732366681099
+    ],
+    "size": [
+      3840,
+      2880
+    ],
+    "displayed_frame": 60,
+    "exposure": 0.6
   },
   "nec_xm29_arcade": {
-    "linear_frame_difference_rms": 4.6788612962700427e-05,
-    "linear_peak": 1.5185546875,
+    "linear_frame_difference_rms": 4.71295825263951e-05,
+    "linear_peak": 1.5166015625,
     "linear_mean": [
-      0.07567498832941055,
-      0.0825253576040268,
-      0.06496073305606842
-    ]
+      0.0752057433128357,
+      0.08188814669847488,
+      0.06409461051225662
+    ],
+    "size": [
+      3840,
+      2880
+    ],
+    "displayed_frame": 60,
+    "exposure": 0.6
   },
   "rca_colortrak_1986": {
-    "linear_frame_difference_rms": 0.04530983790755272,
-    "linear_peak": 1.49609375,
+    "linear_frame_difference_rms": 0.046408187597990036,
+    "linear_peak": 1.5576171875,
     "linear_mean": [
-      0.06527005881071091,
-      0.06524959951639175,
-      0.05126022547483444
-    ]
+      0.06166765093803406,
+      0.06266337633132935,
+      0.04894355311989784
+    ],
+    "size": [
+      3840,
+      2880
+    ],
+    "displayed_frame": 60,
+    "exposure": 0.6
   },
   "reference_composite": {
-    "linear_frame_difference_rms": 0.08389611542224884,
-    "linear_peak": 1.4658203125,
+    "linear_frame_difference_rms": 0.09065382182598114,
+    "linear_peak": 1.5595703125,
     "linear_mean": [
-      0.07180536538362503,
-      0.07262655347585678,
-      0.06265585124492645
-    ]
+      0.06986137479543686,
+      0.07037951797246933,
+      0.06280144304037094
+    ],
+    "size": [
+      3840,
+      2880
+    ],
+    "displayed_frame": 60,
+    "exposure": 0.6
   },
   "retro_gaming_setup": {
-    "linear_frame_difference_rms": 0.006301082205027342,
-    "linear_peak": 1.427734375,
+    "linear_frame_difference_rms": 0.0069471970200538635,
+    "linear_peak": 1.5341796875,
     "linear_mean": [
-      0.0802997425198555,
-      0.08847366273403168,
-      0.06796523183584213
-    ]
+      0.07843360304832458,
+      0.08624099940061569,
+      0.06632579863071442
+    ],
+    "size": [
+      3840,
+      2880
+    ],
+    "displayed_frame": 60,
+    "exposure": 0.6
   },
   "sony_pvm_14l2": {
-    "linear_frame_difference_rms": 0.049917079508304596,
-    "linear_peak": 1.42041015625,
+    "linear_frame_difference_rms": 0.052849575877189636,
+    "linear_peak": 1.4892578125,
     "linear_mean": [
-      0.06795119494199753,
-      0.06941019743680954,
-      0.05919794738292694
-    ]
+      0.06774953007698059,
+      0.06911957263946533,
+      0.05992865562438965
+    ],
+    "size": [
+      3840,
+      2880
+    ],
+    "displayed_frame": 60,
+    "exposure": 0.6
   },
   "sony_pvm_20m4u": {
-    "linear_frame_difference_rms": 0.007416232023388147,
-    "linear_peak": 1.5234375,
+    "linear_frame_difference_rms": 0.007733866106718779,
+    "linear_peak": 1.54296875,
     "linear_mean": [
-      0.06870193034410477,
-      0.07541513442993164,
-      0.05824054032564163
-    ]
+      0.06863784044981003,
+      0.07519263029098511,
+      0.058263830840587616
+    ],
+    "size": [
+      3840,
+      2880
+    ],
+    "displayed_frame": 60,
+    "exposure": 0.6
   },
   "stass_favourite": {
-    "linear_frame_difference_rms": 0.052544306963682175,
-    "linear_peak": 1.51416015625,
+    "linear_frame_difference_rms": 0.05400831252336502,
+    "linear_peak": 1.5439453125,
     "linear_mean": [
-      0.053278498351573944,
-      0.059441208839416504,
-      0.054748039692640305
-    ]
+      0.04678430035710335,
+      0.05005160719156265,
+      0.04963472858071327
+    ],
+    "size": [
+      3840,
+      2880
+    ],
+    "displayed_frame": 60,
+    "exposure": 0.6
   },
   "studio_pvm": {
-    "linear_frame_difference_rms": 0.0069129811599850655,
-    "linear_peak": 1.5078125,
+    "linear_frame_difference_rms": 0.007390356622636318,
+    "linear_peak": 1.52734375,
     "linear_mean": [
-      0.07037919759750366,
-      0.0771082416176796,
-      0.05983028933405876
-    ]
+      0.07081228494644165,
+      0.07747536152601242,
+      0.06025538221001625
+    ],
+    "size": [
+      3840,
+      2880
+    ],
+    "displayed_frame": 60,
+    "exposure": 0.6
   },
   "toshiba_14af43": {
-    "linear_frame_difference_rms": 0.034964993596076965,
-    "linear_peak": 1.5263671875,
+    "linear_frame_difference_rms": 0.03804703429341316,
+    "linear_peak": 1.55078125,
     "linear_mean": [
-      0.06423861533403397,
-      0.0710715502500534,
-      0.07113993167877197
-    ]
+      0.0604245625436306,
+      0.06904356181621552,
+      0.06626799702644348
+    ],
+    "size": [
+      3840,
+      2880
+    ],
+    "displayed_frame": 60,
+    "exposure": 0.6
   },
   "vivid_living_room": {
-    "linear_frame_difference_rms": 0.06564522534608841,
-    "linear_peak": 1.44091796875,
+    "linear_frame_difference_rms": 0.07804466784000397,
+    "linear_peak": 1.5556640625,
     "linear_mean": [
-      0.09775916486978531,
-      0.08552239835262299,
-      0.08798059076070786
-    ]
+      0.09447575360536575,
+      0.08404500037431717,
+      0.08611824363470078
+    ],
+    "size": [
+      3840,
+      2880
+    ],
+    "displayed_frame": 60,
+    "exposure": 0.6
   },
   "warm_desktop_monitor": {
-    "linear_frame_difference_rms": 0.00554400309920311,
-    "linear_peak": 1.4111328125,
+    "linear_frame_difference_rms": 0.007310319226235151,
+    "linear_peak": 1.560546875,
     "linear_mean": [
-      0.09411770850419998,
-      0.08710527420043945,
-      0.04814944788813591
-    ]
+      0.09308431297540665,
+      0.0858241394162178,
+      0.04705236107110977
+    ],
+    "size": [
+      3840,
+      2880
+    ],
+    "displayed_frame": 60,
+    "exposure": 0.6
+  },
+  "vhs_sp_consumer": {
+    "linear_frame_difference_rms": 0.029957737773656845,
+    "linear_peak": 1.548828125,
+    "linear_mean": [
+      0.057170476764440536,
+      0.065791055560112,
+      0.06271020323038101
+    ],
+    "size": [
+      3840,
+      2880
+    ],
+    "displayed_frame": 60,
+    "exposure": 0.6
   }
 }

@@ -2,7 +2,7 @@
 
 For the current presentation, see the [game showcase](nes-visual-showcase.md) and [full-resolution gameplay / beam close-ups](gpu-beam-closeups.md). This page retains controlled diagnostic comparisons at their stated capture resolutions.
 
-Current Contra images come from the actual SDL3 GPU pipeline at **2560×1664**, offscreen, with fixed **1.6×** output headroom. Frames 60 and 61 are averaged in **linear light**. The SDR previews use a common 0.7 exposure to retain bright phosphor detail; they do not establish actual screen luminance. Native crops are not resized.
+Current Contra images come from the actual SDL3 GPU pipeline at **3840×2880**, offscreen, with fixed **1.6×** output headroom. Stills show frame 60 without averaging; frame 61 is captured separately for phase checks. The SDR previews use a common 0.6 linear exposure to retain bright phosphor detail; they do not establish actual screen luminance. Native crops are not resized.
 
 ## Same Contra boss, four displays
 
@@ -23,7 +23,7 @@ All four have a yellow/green face and magenta-red eyes. The user's photograph ha
 
 The grille is generated at the actual drawable size. Panel mode quantizes the complete RGB period; at this resolution the nominal 1070-triad PVM becomes a coarser resolved grille. Physical-pitch mode preserves the tube density and filters unresolved structure. Neither mode proves alignment to individual LCD subpixels. Viewing a crop at a different scale can change the apparent mask.
 
-GPU regressions independently check neutral mask mean, nonnegative coverage, RGB/BGR order, resize behaviour, linear HDR handling, beam energy and gun-independent growth. A 48-frame RF test found maximum absolute decoded-gray noise correlation of 0.0054 at lags 1–12. A separate 36-frame final-render gray-field test found no repeating peak (maximum absolute correlation 0.034). It removes the fixed image/mask by subtracting the temporal mean, which introduces a small negative bias. [Final-render metrics](gpu-rf-temporal-results.json). Replaying the last saved legacy RF profile with all its controls retained also did not reproduce a several-frame cycle: adjacent-frame correlation decayed rather than returning at a periodic lag. This does not identify the exact texture reported by the user; deterministic composite crawl and mask structure must remain separate from random snow.
+GPU regressions independently check neutral mask mean, nonnegative coverage, RGB/BGR order, resize behaviour, linear HDR handling, beam energy and gun-independent growth. The complex-IF GPU regression found maximum absolute decoded-gray noise correlation of 0.00632 at lags 1–12. Before the IF update, a separate 36-frame final-render gray-field test found no repeating peak (maximum absolute correlation 0.034). It removes the fixed image/mask by subtracting the temporal mean, which introduces a small negative bias. [Final-render metrics](gpu-rf-temporal-results.json). Replaying the last saved legacy RF profile with all its controls retained also did not reproduce a several-frame cycle: adjacent-frame correlation decayed rather than returning at a periodic lag. This does not identify the exact texture reported by the user; deterministic composite crawl and mask structure must remain separate from random snow.
 
 ## Drawable size and connection checks
 
@@ -45,7 +45,13 @@ These supporting images use the current colour and inline-mask models. The isola
 
 ![OSD review](images/gpu-osd-review.png)
 
-The OSD groups the physical stages and shows preset/modified state, region, output mode and headroom. Its headroom now comes from the same calculation as the renderer: offscreen review displays 1.60× and explicitly identifies the hidden drawable rather than reporting the physical screen as its target.
+The translucent OSD groups the physical stages and shows preset/modified state, region, output mode and headroom. It is injected as RGB after color decoding, before the gun/beam stages, so its text stays free of NES decoder artifacts. Its headroom now comes from the same calculation as the renderer: offscreen review displays 1.60× and explicitly identifies the hidden drawable rather than reporting the physical screen as its target.
+
+![Bottom-of-screen parameter adjustment](images/gpu-osd-adjustment.png)
+
+Enter on a parameter opens this strip without changing the value. Left/Right
+adjusts it; Enter or Escape returns to the same menu row. Only the bottom region
+is covered during tuning. The picture keeps running.
 
 ## Limits and next comparisons
 

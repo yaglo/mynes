@@ -1,5 +1,20 @@
 # GPU signal and CRT controls
 
+**M** opens the translucent TV menu. Use Up/Down to choose a row and Enter to
+open a submenu or enter adjustment mode. On a parameter, Left/Right also starts
+adjustment immediately. The menu then collapses to a bottom strip with only the
+parameter, value and range bar; the rest of the game stays visible. Enter or
+Escape returns to the same row. M closes either view.
+
+![TV-style parameter adjustment](images/gpu-osd-adjustment.png)
+
+The menu and preset notice are mixed as RGB after the receiver, before the gun
+amplifiers and beam. They retain the tube's focus, grille, geometry and light
+response without acquiring NES composite rainbowing. Black text outlines keep
+the translucent display readable over bright game content. The overlay pass is
+skipped when closed; unchanged overlays reuse their uploaded pixels.
+
+
 [Hardware evidence](gpu-hardware-research.md) · [Preset audit](gpu-preset-audit.md)
 
 Controls describe several different things: source electronics, receiver response,
@@ -13,7 +28,7 @@ claim that every combination has been visually calibrated.
 | Source timing | Region, source phase, line phase, demodulation rotation | Gameplay frame phase comes from the PPU clock. Synthetic field advance/count are no longer offered in the OSD. Phase controls are diagnostics, not TV service adjustments. |
 | Console | Output resistance, video bandwidth, differential-phase RC, PSU hum | Nonlinear phase response applies to NTSC composite/RF. Output resistance also affects the cable pole. |
 | Cable | Length, resistance, capacitance, termination, shielding, reflection level/delay | A lumped pole and explicit delayed reflection, not a distributed transmission line. Reflection delay needs nonzero reflection level. Shield pickup is a generic noise approximation. |
-| RF | Carrier level, noise floor, detected-video bandwidth, AGC attack/release | Applies to the RF route. Carrier *frequency* is legacy channel metadata, not a simulated tunable RF oscillator. |
+| RF | Carrier level, noise floor, complex IF bandwidth/asymmetry/detuning, AGC attack/release | Applies to the RF route. Carrier *frequency* is legacy channel metadata, not a simulated tunable RF oscillator. |
 | Y/C separation | Horizontal trap, line-comb topology, comb extraction fraction | Trap reduces cross-luma; it cannot remove luma leaking into C. Comb fraction zero selects a legacy default, not bypass. NTSC line combs do not operate on PAL or separated-input routes. |
 | Decoder filters | Y/I/Q bandwidth, FIR lengths/window, sharpness | Q bandwidth zero follows I. Short luma FIRs below 23 taps disable the trap. FIR lengths are session diagnostics rather than saved tube characteristics. |
 | Color | Hue, saturation, decoder R-Y/B-Y gain, white point, RGB drive/cutoff, phosphor primaries | Decoder gain differs from white balance. Primaries are nominal colorimetric matrices, not measured spectra of each preset's tube. |
@@ -131,3 +146,18 @@ high-speed-camera validation of physical scanout.
 `black_floor` is minimum gun drive, applied before transfer and spot deposition.
 It preserves scanline structure in residual emission; use ambient light for a
 room-lit glass pedestal. Raising black floor does not illuminate blanked raster.
+
+
+## Recording, advanced controls and validation
+
+Signal chain → RF receiver exposes the complex IF response. Signal chain →
+VHS recording / playback controls the optional NTSC composite recording path.
+The `VHS SP` preset pairs it with a consumer slot-mask CRT. Slow-decay time and
+energy are in Mask / phosphor. The additional tube controls are grouped with
+beam, gun, phosphor, glass and wear settings rather than hidden in preset JSON.
+
+See [model changes and evidence](architecture/gpu-realism-validation.md) for
+what is implemented, tested, estimated and still outside the simulation.
+`python3 frontends/gpu/tests/test_preset_controls.py` audits every shipped preset
+against saved TV-field coverage and OSD ranges. Legacy focus/height values apply
+only when the corresponding explicit FWHM is zero; otherwise use FWHM.

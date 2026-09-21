@@ -16,9 +16,10 @@
     "gif_frames": 24,
     "gif_frame_ms": 20,
     "video_fps": 60.0988139,
-    "exposure": 0.7,
+    "exposure": 0.6,
     "gif_first_frame": 900,
-    "start_button_frame": null
+    "start_button_frame": null,
+    "gif_source": "Consecutive rendered frames; fixed GIF palette"
   },
   {
     "game": "Little Samson",
@@ -37,9 +38,10 @@
     "gif_frames": 24,
     "gif_frame_ms": 20,
     "video_fps": 60.0988139,
-    "exposure": 0.7,
+    "exposure": 0.6,
     "gif_first_frame": 600,
-    "start_button_frame": null
+    "start_button_frame": null,
+    "gif_source": "Consecutive rendered frames; fixed GIF palette"
   },
   {
     "game": "Darkwing Duck",
@@ -58,12 +60,12 @@
     "gif_frames": 24,
     "gif_frame_ms": 20,
     "video_fps": 60.0988139,
-    "exposure": 0.7,
+    "exposure": 0.6,
     "gif_first_frame": 8100,
     "start_button_frame": null,
     "input_script": "../tools/review/darkwing-bridge.input",
     "scene": "Bridge gameplay with movement, jumping and shooting",
-    "gif_source": "Consecutive decoded video frames 100\u2013123; H.264 source, fixed GIF palette"
+    "gif_source": "Consecutive rendered frames; fixed GIF palette"
   },
   {
     "game": "Super Mario Bros. 3",
@@ -82,9 +84,10 @@
     "gif_frames": 24,
     "gif_frame_ms": 20,
     "video_fps": 60.0988139,
-    "exposure": 0.7,
+    "exposure": 0.6,
     "gif_first_frame": 900,
-    "start_button_frame": null
+    "start_button_frame": null,
+    "gif_source": "Consecutive rendered frames; fixed GIF palette"
   },
   {
     "game": "Mega Man 2",
@@ -103,8 +106,9 @@
     "gif_frames": 24,
     "gif_frame_ms": 20,
     "video_fps": 60.0988139,
-    "exposure": 0.7,
+    "exposure": 0.6,
     "gif_first_frame": 900,
-    "start_button_frame": 600
+    "start_button_frame": 600,
+    "gif_source": "Consecutive rendered frames; fixed GIF palette"
   }
 ]
