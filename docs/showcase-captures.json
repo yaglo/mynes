@@ -1,0 +1,128 @@
+[
+  {
+    "game": "Kirby\u2019s Adventure",
+    "preset": "JVC D-Series",
+    "slug": "kirby-jvc_d_series_2000",
+    "first_frame": 900,
+    "frames": 240,
+    "source_size": [
+      960,
+      720
+    ],
+    "gif_size": [
+      640,
+      480
+    ],
+    "gif_frames": 24,
+    "gif_frame_ms": 20,
+    "video_fps": 60.0988139,
+    "exposure": 0.7,
+    "gif_first_frame": 900,
+    "start_button_frame": null
+  },
+  {
+    "game": "Little Samson",
+    "preset": "JVC D-Series",
+    "slug": "little-samson-jvc_d_series_2000",
+    "first_frame": 480,
+    "frames": 240,
+    "source_size": [
+      960,
+      720
+    ],
+    "gif_size": [
+      640,
+      480
+    ],
+    "gif_frames": 24,
+    "gif_frame_ms": 20,
+    "video_fps": 60.0988139,
+    "exposure": 0.7,
+    "gif_first_frame": 600,
+    "start_button_frame": null
+  },
+  {
+    "game": "Darkwing Duck",
+    "preset": "Stas\u2019s Favourite",
+    "slug": "darkwing-stass_favourite",
+    "first_frame": 3000,
+    "frames": 240,
+    "source_size": [
+      960,
+      720
+    ],
+    "gif_size": [
+      640,
+      480
+    ],
+    "gif_frames": 24,
+    "gif_frame_ms": 20,
+    "video_fps": 60.0988139,
+    "exposure": 0.7,
+    "gif_first_frame": 3000,
+    "start_button_frame": 600
+  },
+  {
+    "game": "Super Mario Bros. 3",
+    "preset": "Toshiba 14AF",
+    "slug": "mario-3-toshiba_14af43",
+    "first_frame": 900,
+    "frames": 240,
+    "source_size": [
+      960,
+      720
+    ],
+    "gif_size": [
+      640,
+      480
+    ],
+    "gif_frames": 24,
+    "gif_frame_ms": 20,
+    "video_fps": 60.0988139,
+    "exposure": 0.7,
+    "gif_first_frame": 900,
+    "start_button_frame": null
+  },
+  {
+    "game": "Mega Man 2",
+    "preset": "Sony PVM-14L2",
+    "slug": "mega-man-2-sony_pvm_14l2",
+    "first_frame": 900,
+    "frames": 240,
+    "source_size": [
+      960,
+      720
+    ],
+    "gif_size": [
+      640,
+      480
+    ],
+    "gif_frames": 24,
+    "gif_frame_ms": 20,
+    "video_fps": 60.0988139,
+    "exposure": 0.7,
+    "gif_first_frame": 900,
+    "start_button_frame": 600
+  },
+  {
+    "game": "Contra",
+    "preset": "Sony PVM-14L2",
+    "slug": "boss-sony_pvm_14l2",
+    "first_frame": 60,
+    "frames": 240,
+    "source_size": [
+      960,
+      720
+    ],
+    "gif_size": [
+      640,
+      480
+    ],
+    "gif_frames": 24,
+    "gif_frame_ms": 20,
+    "video_fps": 60.0988139,
+    "exposure": 0.7,
+    "gif_first_frame": 60,
+    "start_button_frame": null
+  }
+]

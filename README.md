@@ -10,12 +10,29 @@ turn a control, or switch televisions while the game keeps running.
 [Get started](#quick-start) · [All 20 CRT presets](docs/contra-preset-gallery.md) ·
 [Signal Studio](tools/visualiser/README.md) · [How the model works](docs/gpu-pipeline-reference.md)
 
-[![Unaveraged Contra frames through the Sony PVM-14L2 preset, animated at 50 fps](docs/images/motion/boss-sony_pvm_14l2.gif)](docs/images/motion/boss-sony_pvm_14l2.mp4)
+## See the signal move
 
-*The NTSC picture changes every frame. This GIF keeps the alternating phases
-instead of averaging them away. It plays 24 captured frames at 50 fps for
-GIF compatibility; click for the unaveraged **60.1 fps video**.
-[RF version and motion review](docs/gpu-motion-review.md).*
+**[▶ Watch the six-game showcase — 24 seconds at 60.1 fps](docs/images/showcase/showcase-reel.mp4)**
+
+[Watch Sony composite and Stas RF side by side](docs/images/showcase/sony-vs-rf.mp4).
+
+| Kirby’s Adventure · JVC D-Series | Little Samson · JVC D-Series |
+|---|---|
+| [![Kirby title with unaveraged NTSC phases](docs/images/showcase/kirby-jvc_d_series_2000.gif)](docs/images/showcase/kirby-jvc_d_series_2000.mp4) | [![Little Samson palace opening](docs/images/showcase/little-samson-jvc_d_series_2000.gif)](docs/images/showcase/little-samson-jvc_d_series_2000.mp4) |
+| **Darkwing Duck · Stas’s Favourite RF** | **Super Mario Bros. 3 · Toshiba 14AF** |
+| [![Darkwing Duck silhouette title](docs/images/showcase/darkwing-stass_favourite.gif)](docs/images/showcase/darkwing-stass_favourite.mp4) | [![Super Mario Bros. 3 animated stage title](docs/images/showcase/mario-3-toshiba_14af43.gif)](docs/images/showcase/mario-3-toshiba_14af43.mp4) |
+| **Mega Man 2 · Sony PVM-14L2** | **Contra · Sony PVM-14L2** |
+| [![Mega Man 2 rooftop title](docs/images/showcase/mega-man-2-sony_pvm_14l2.gif)](docs/images/showcase/mega-man-2-sony_pvm_14l2.mp4) | [![Contra Waterfall boss](docs/images/showcase/boss-sony_pvm_14l2.gif)](docs/images/motion/boss-sony_pvm_14l2.mp4) |
+
+*Actual MyNES output, with alternating NTSC phases kept separate. GIFs run at
+50 fps for compatibility; click any image for its **60.1 fps video**. No temporal
+averaging or added flicker. [Scene selection and visual references](docs/nes-visual-showcase.md).*
+
+The colour fringes and fine patterns change from one frame to the next.
+This native-pixel, lossless detail keeps the near-60 Hz cadence so you can
+see what a merged screenshot hides:
+
+![Kirby title phase detail at native pixels](docs/images/showcase/kirby-phase-detail.webp)
 
 ## Choose your television
 
@@ -31,16 +48,8 @@ monitors, older household sets, worn tubes, and two curated personal looks.
 Commercial names identify nominal references: individual tube condition and
 many circuit responses remain estimates. [Preset settings and evidence](docs/gpu-preset-audit.md).
 
-[![Contra through Sony, JVC, Toshiba and Stas's Favourite presets](docs/images/readme-contra.png)](docs/contra-preset-gallery.md)
-
-*Four views of the same Contra boss. These comparison stills average two NTSC
-phases in linear light; the animation above preserves their alternation.
-[All 20 presets, full resolution and close-ups](docs/contra-preset-gallery.md).*
-
-[![Super Mario Bros. through the same four CRT presets](docs/images/readme-mario.png)](docs/images/readme-mario.png)
-
-*Mario's flat sky, white lettering and brickwork expose differences in colour,
-focus and recovery that a dark scene can hide. Same capture exposure for every preset.*
+[Compare all 20 presets on the same Contra frame](docs/contra-preset-gallery.md),
+or inspect the [phase and scrolling review](docs/gpu-motion-review.md).
 
 ## Follow the signal
 
