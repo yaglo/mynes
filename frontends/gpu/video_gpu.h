@@ -87,6 +87,7 @@ typedef struct {
     SDL_GPUBuffer *buf_gun_current;     /* linear light before horizontal spot spread */
     SDL_GPUBuffer *buf_pal_v;           /* corrected PAL V after 1H averaging */
     SDL_GPUBuffer *buf_pal_u;           /* corrected PAL U after odd-line sign fix */
+    bool deflection_cache_valid;
     SDL_GPUBuffer *buf_deflection_x;    /* r/g/b landed X + dwell (float4/pixel) */
     SDL_GPUBuffer *buf_deflection_y;    /* r/g/b landed Y + sigma scale (float4/pixel) */
 

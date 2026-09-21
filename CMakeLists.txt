@@ -325,6 +325,7 @@ if(NES_BUILD_GPU_FRONTEND)
             frontends/gpu/gpu_benchmark.c
             frontends/gpu/playback.c
             frontends/gpu/gpu_render.c
+            frontends/gpu/frame_capture.c
             frontends/gpu/gpu_output.c
             frontends/gpu/preset_apply.c
             frontends/gpu/gpu_compute.c
@@ -380,6 +381,12 @@ if(NES_BUILD_GPU_FRONTEND)
         add_dependencies(mynes_gpu gpu_shaders)
 
         if(NES_BUILD_TESTS)
+            add_executable(test_frame_capture frontends/gpu/tests/test_frame_capture.c
+                frontends/gpu/frame_capture.c)
+            target_include_directories(test_frame_capture PRIVATE frontends/gpu)
+            target_link_libraries(test_frame_capture PRIVATE ${MYNES_SDL3_TARGET} m)
+            add_test(NAME gpu_frame_capture_tests COMMAND test_frame_capture)
+
             # GPU kernel tests (no SDL3 dependency)
             add_executable(test_gpu_kernels frontends/gpu/tests/test_kernels.c)
             target_include_directories(test_gpu_kernels PRIVATE frontends/gpu)

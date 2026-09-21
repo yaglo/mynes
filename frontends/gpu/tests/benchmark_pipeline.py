@@ -20,6 +20,7 @@ parser.add_argument("output",type=Path)
 parser.add_argument("presets",nargs="*")
 parser.add_argument("--all",action="store_true")
 parser.add_argument("--mask-alignment",choices=["pixels","physical"],default="pixels")
+parser.add_argument("--recompute-geometry",action="store_true",help="A/B check: regenerate even fixed deflection maps")
 args=parser.parse_args()
 binary,output=args.binary.resolve(),args.output.resolve()
 presets=args.presets or ["sony_pvm_14l2", "jvc_d_series_2000", "toshiba_14af43", "stass_favourite"]
@@ -36,6 +37,7 @@ def running_frontends():
 
 report = {"utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
           "platform": platform.platform(), "cpu": platform.processor(),
+          "recompute_geometry":args.recompute_geometry,
           "mask_alignment":args.mask_alignment,"panel_scale":1,"load_before": os.getloadavg(), "other_frontends_before": running_frontends(), "results": []}
 if sys.platform == "darwin":
     report["hardware"] = subprocess.check_output(
@@ -45,6 +47,8 @@ with tempfile.TemporaryDirectory(prefix="mynes-bench-") as config:
     for preset in presets:
         env = dict(os.environ, XDG_CONFIG_HOME=config)
         env.pop("MYNES_GPU_VALIDATION", None)
+        env.pop("MYNES_BENCH_RECOMPUTE_GEOMETRY", None)
+        if args.recompute_geometry: env["MYNES_BENCH_RECOMPUTE_GEOMETRY"]="1"
         result = subprocess.run([str(binary), "--benchmark", "--mask-alignment",args.mask_alignment,"--preset", "presets/"+preset+".json"],
             cwd=root, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=120)
         (output / (preset+".log")).write_text(result.stdout)

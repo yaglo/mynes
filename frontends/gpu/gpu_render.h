@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include "gpu_display.h"
 #include "gpu_output.h"
+#include "frame_capture.h"
 #include "video_chain.h"
 
 typedef struct {
@@ -41,7 +42,9 @@ typedef struct {
     float           audio_bass_rms;
     uint64_t        frame_counter;
     const char     *capture_path;
-    bool            capture_complete;
+    bool            capture_accepted; /* written, or owned by the background writer */
+    bool            capture_async, capture_failed;
+    FrameCaptureJob *capture_job;
     uint64_t        swap_wait_ns, submit_ns, capture_ns; /* diagnostics; not photon timestamps */
     SDL_GPUCommandBuffer *present_cmd;
     SDL_GPUTexture *present_texture;
@@ -77,10 +80,14 @@ void gpu_render_upload_rgba(GPURenderCtx *ctx, const uint8_t *rgba, int w, int h
  * current frame and before any stage that consumes those values. */
 void gpu_render_update_dynamic_state(GPURenderCtx *ctx);
 
+/* Shared by rendering and OSD; hidden review uses its fixed headroom. */
+float gpu_render_headroom(const GPURenderCtx *ctx);
+
 /* Wait for display capacity before taking a picture from the playback
  * mailbox. Keeping this wait after encoding used to present stale pictures. */
 bool gpu_render_prepare(GPURenderCtx *ctx);
-void gpu_render_release_pending(GPURenderCtx *ctx);
+/* Drains the writer before shutdown; reports any deferred write failure. */
+bool gpu_render_release_pending(GPURenderCtx *ctx);
 
 /* Render the display texture to the swapchain (CRT shader or passthrough blit). */
 void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain);

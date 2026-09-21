@@ -1137,9 +1137,7 @@ int main(int argc, char **argv) {
                                       : ppu_palette_2c02;
             gpu_osd_render(display_ppu.framebuffer, display_ppu.index_framebuffer, pal,
                 osd_menu_current(), preset_display_name(preset_active_index()), preset_is_modified(),
-                preset_ctx.region == SIGNAL_REGION_PAL, render_ctx.hdr_enabled,
-                render_ctx.hdr_enabled ? SDL_GetFloatProperty(SDL_GetWindowProperties(window),
-                    SDL_PROP_WINDOW_HDR_HEADROOM_FLOAT, 1.0f) : 1.0f, &render_ctx);
+                preset_ctx.region == SIGNAL_REGION_PAL, &render_ctx);
         }
 
         /* Performance overlay (V key) — drawn into NES framebuffer so it
@@ -1364,6 +1362,9 @@ int main(int argc, char **argv) {
                 snprintf(next_screenshot_path, sizeof(next_screenshot_path), "%s.frame-%03d.ppm", screenshot_path, screenshots_taken);
             render_ctx.capture_path = screenshots_taken ? next_screenshot_path : screenshot_path;
         }
+        // Batch captures finish on this frame; interactive captures write
+        // owned pixels in the background and are drained before shutdown.
+        render_ctx.capture_async = screenshot_after <= 0;
         Uint64 t_render0 = SDL_GetPerformanceCounter();
         gpu_render_frame(&render_ctx, &video_chain);
         Uint64 t_render1 = SDL_GetPerformanceCounter();
@@ -1380,12 +1381,12 @@ int main(int argc, char **argv) {
         if(live && playback_limit && picture.number>=playback_limit) running=false;
 
         if (render_ctx.capture_path) {
-            if (!render_ctx.capture_complete) fprintf(stderr, "Final display capture failed: %s\n", SDL_GetError());
+            if (!render_ctx.capture_accepted) fprintf(stderr, "Final display capture failed: %s\n", SDL_GetError());
             fprintf(stderr, "Capture frame %u, carrier phase %d\n", frame_count,
                     signal_frame_phase(&sig_state, frame_count - 1));
             if (screenshot_after > 0) {
                 ++screenshots_taken;
-                running = render_ctx.capture_complete && screenshots_taken < screenshot_count;
+                running = render_ctx.capture_accepted && screenshots_taken < screenshot_count;
             }
             screenshot_requested = false;
             render_ctx.capture_path = NULL;
@@ -1431,7 +1432,7 @@ int main(int argc, char **argv) {
 cleanup:
     if(playback_trace) fclose(playback_trace);
     playback_destroy(playback);
-    gpu_render_release_pending(&render_ctx);
+    if (!gpu_render_release_pending(&render_ctx)) exit_status=1;
     if (debug_srv) debug_server_destroy(debug_srv);
     if (tap_mgr) debug_tap_destroy(tap_mgr);
     chain_vis_destroy(chain_vis);

@@ -155,6 +155,7 @@ typedef struct {
      * registration helpers as each kernel migrates. Stages with
      * io_typed=false still flow through the legacy switch dispatcher. */
     bool            io_typed;
+    bool            reuse_output; /* rebind may reuse a valid immutable result */
 
     /* LEGACY custom-dispatch escape hatch. Remains in place while the
      * chroma + post pipelines are migrated to the typed bindings. */

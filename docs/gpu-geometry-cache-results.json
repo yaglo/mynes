@@ -1,0 +1,261 @@
+{
+  "order": "cached, recomputed, recomputed, cached; identical binary/preset",
+  "runs": [
+    {
+      "utc": "2026-09-21T04:17:19.608064+00:00",
+      "platform": "macOS-27.0-arm64-arm-64bit",
+      "cpu": "arm",
+      "recompute_geometry": false,
+      "mask_alignment": "pixels",
+      "panel_scale": 1,
+      "load_before": [
+        2.53271484375,
+        2.47412109375,
+        3.1796875
+      ],
+      "other_frontends_before": [],
+      "results": [
+        {
+          "mean_ms": 2.672,
+          "median_ms": 2.665,
+          "p95_ms": 2.728,
+          "max_ms": 2.744,
+          "equivalent_fps": 374.3,
+          "preset": "sony_pvm_14l2",
+          "width": 640,
+          "height": 480
+        },
+        {
+          "mean_ms": 3.58,
+          "median_ms": 3.571,
+          "p95_ms": 3.645,
+          "max_ms": 3.666,
+          "equivalent_fps": 279.4,
+          "preset": "sony_pvm_14l2",
+          "width": 1280,
+          "height": 960
+        },
+        {
+          "mean_ms": 5.103,
+          "median_ms": 5.098,
+          "p95_ms": 5.192,
+          "max_ms": 5.24,
+          "equivalent_fps": 195.9,
+          "preset": "sony_pvm_14l2",
+          "width": 1920,
+          "height": 1440
+        },
+        {
+          "mean_ms": 7.159,
+          "median_ms": 7.158,
+          "p95_ms": 7.275,
+          "max_ms": 7.335,
+          "equivalent_fps": 139.7,
+          "preset": "sony_pvm_14l2",
+          "width": 2560,
+          "height": 1920
+        }
+      ],
+      "hardware": "hw.model: Mac17,3\nhw.memsize: 25769803776\nmachdep.cpu.brand_string: Apple M5",
+      "load_after": [
+        2.64990234375,
+        2.4990234375,
+        3.18408203125
+      ],
+      "other_frontends_after": [],
+      "metric": "CPU submission to final GPU fence, one frame in flight; actual preset, complete DAC/receiver/CRT/mask/glass; no emulation, audio, vsync, capture, or validation"
+    },
+    {
+      "utc": "2026-09-21T04:17:21.711384+00:00",
+      "platform": "macOS-27.0-arm64-arm-64bit",
+      "cpu": "arm",
+      "recompute_geometry": true,
+      "mask_alignment": "pixels",
+      "panel_scale": 1,
+      "load_before": [
+        2.64990234375,
+        2.4990234375,
+        3.18408203125
+      ],
+      "other_frontends_before": [],
+      "results": [
+        {
+          "mean_ms": 2.759,
+          "median_ms": 2.752,
+          "p95_ms": 2.795,
+          "max_ms": 2.879,
+          "equivalent_fps": 362.4,
+          "preset": "sony_pvm_14l2",
+          "width": 640,
+          "height": 480
+        },
+        {
+          "mean_ms": 3.883,
+          "median_ms": 3.873,
+          "p95_ms": 3.953,
+          "max_ms": 3.984,
+          "equivalent_fps": 257.5,
+          "preset": "sony_pvm_14l2",
+          "width": 1280,
+          "height": 960
+        },
+        {
+          "mean_ms": 5.83,
+          "median_ms": 5.836,
+          "p95_ms": 5.96,
+          "max_ms": 6.045,
+          "equivalent_fps": 171.5,
+          "preset": "sony_pvm_14l2",
+          "width": 1920,
+          "height": 1440
+        },
+        {
+          "mean_ms": 8.465,
+          "median_ms": 8.444,
+          "p95_ms": 8.636,
+          "max_ms": 8.709,
+          "equivalent_fps": 118.1,
+          "preset": "sony_pvm_14l2",
+          "width": 2560,
+          "height": 1920
+        }
+      ],
+      "hardware": "hw.model: Mac17,3\nhw.memsize: 25769803776\nmachdep.cpu.brand_string: Apple M5",
+      "load_after": [
+        2.64990234375,
+        2.4990234375,
+        3.18408203125
+      ],
+      "other_frontends_after": [],
+      "metric": "CPU submission to final GPU fence, one frame in flight; actual preset, complete DAC/receiver/CRT/mask/glass; no emulation, audio, vsync, capture, or validation"
+    },
+    {
+      "utc": "2026-09-21T04:17:23.725344+00:00",
+      "platform": "macOS-27.0-arm64-arm-64bit",
+      "cpu": "arm",
+      "recompute_geometry": true,
+      "mask_alignment": "pixels",
+      "panel_scale": 1,
+      "load_before": [
+        2.64990234375,
+        2.4990234375,
+        3.18408203125
+      ],
+      "other_frontends_before": [],
+      "results": [
+        {
+          "mean_ms": 3.488,
+          "median_ms": 3.269,
+          "p95_ms": 4.644,
+          "max_ms": 4.963,
+          "equivalent_fps": 286.7,
+          "preset": "sony_pvm_14l2",
+          "width": 640,
+          "height": 480
+        },
+        {
+          "mean_ms": 3.92,
+          "median_ms": 3.913,
+          "p95_ms": 3.991,
+          "max_ms": 4.036,
+          "equivalent_fps": 255.1,
+          "preset": "sony_pvm_14l2",
+          "width": 1280,
+          "height": 960
+        },
+        {
+          "mean_ms": 5.857,
+          "median_ms": 5.846,
+          "p95_ms": 6.0,
+          "max_ms": 6.07,
+          "equivalent_fps": 170.7,
+          "preset": "sony_pvm_14l2",
+          "width": 1920,
+          "height": 1440
+        },
+        {
+          "mean_ms": 8.455,
+          "median_ms": 8.443,
+          "p95_ms": 8.69,
+          "max_ms": 8.766,
+          "equivalent_fps": 118.3,
+          "preset": "sony_pvm_14l2",
+          "width": 2560,
+          "height": 1920
+        }
+      ],
+      "hardware": "hw.model: Mac17,3\nhw.memsize: 25769803776\nmachdep.cpu.brand_string: Apple M5",
+      "load_after": [
+        2.64990234375,
+        2.4990234375,
+        3.18408203125
+      ],
+      "other_frontends_after": [],
+      "metric": "CPU submission to final GPU fence, one frame in flight; actual preset, complete DAC/receiver/CRT/mask/glass; no emulation, audio, vsync, capture, or validation"
+    },
+    {
+      "utc": "2026-09-21T04:17:25.852335+00:00",
+      "platform": "macOS-27.0-arm64-arm-64bit",
+      "cpu": "arm",
+      "recompute_geometry": false,
+      "mask_alignment": "pixels",
+      "panel_scale": 1,
+      "load_before": [
+        2.677734375,
+        2.50732421875,
+        3.1826171875
+      ],
+      "other_frontends_before": [],
+      "results": [
+        {
+          "mean_ms": 2.677,
+          "median_ms": 2.673,
+          "p95_ms": 2.718,
+          "max_ms": 2.741,
+          "equivalent_fps": 373.5,
+          "preset": "sony_pvm_14l2",
+          "width": 640,
+          "height": 480
+        },
+        {
+          "mean_ms": 3.564,
+          "median_ms": 3.558,
+          "p95_ms": 3.615,
+          "max_ms": 3.64,
+          "equivalent_fps": 280.6,
+          "preset": "sony_pvm_14l2",
+          "width": 1280,
+          "height": 960
+        },
+        {
+          "mean_ms": 5.089,
+          "median_ms": 5.091,
+          "p95_ms": 5.183,
+          "max_ms": 5.214,
+          "equivalent_fps": 196.5,
+          "preset": "sony_pvm_14l2",
+          "width": 1920,
+          "height": 1440
+        },
+        {
+          "mean_ms": 7.104,
+          "median_ms": 7.112,
+          "p95_ms": 7.199,
+          "max_ms": 7.236,
+          "equivalent_fps": 140.8,
+          "preset": "sony_pvm_14l2",
+          "width": 2560,
+          "height": 1920
+        }
+      ],
+      "hardware": "hw.model: Mac17,3\nhw.memsize: 25769803776\nmachdep.cpu.brand_string: Apple M5",
+      "load_after": [
+        2.677734375,
+        2.50732421875,
+        3.1826171875
+      ],
+      "other_frontends_after": [],
+      "metric": "CPU submission to final GPU fence, one frame in flight; actual preset, complete DAC/receiver/CRT/mask/glass; no emulation, audio, vsync, capture, or validation"
+    }
+  ]
+}

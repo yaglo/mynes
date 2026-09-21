@@ -364,59 +364,62 @@ static bool dispatch_typed_stage(SignalChain *chain, ChainStage *s,
         }
     }
 
-    /* Resolve readwrite bindings at pass-begin time. */
-    SDL_GPUStorageBufferReadWriteBinding rw_bindings[CHAIN_STAGE_MAX_RW] = {0};
-    for (int i = 0; i < s->rw_count; i++) {
-        rw_bindings[i].buffer = resolve_buf_ref(chain, s, s->rw[i]);
-        if (!rw_bindings[i].buffer) {
-            fprintf(stderr, "chain_run: stage '%s' rw[%d] resolves to NULL\n",
-                    s->name, i);
-            return false;
-        }
-    }
-
-    SDL_GPUComputePass *pass = SDL_BeginGPUComputePass(
-        cmd, NULL, 0, rw_bindings, (Uint32)s->rw_count);
-    if (!pass) return false;
-
-    SDL_BindGPUComputePipeline(pass, chain->pipelines[kt].pipeline);
-
-    /* RC_FILTER and AGC dispatch per-line (one thread per scanline),
-     * not per-sample. If the chain has a per-line stride, recompute
-     * dispatch_x from num_lines. Other kernels use s->dispatch_x as
-     * passed at registration. */
-    uint32_t dispatch_x = s->dispatch_x;
-    uint32_t dispatch_y = s->dispatch_y;
-    uint32_t dispatch_z = s->dispatch_z;
-    if ((kt == CHAIN_KERNEL_RC_FILTER || kt == CHAIN_KERNEL_AGC) &&
-        chain->samples_per_line > 0) {
-        int num_lines = chain->sample_count / chain->samples_per_line;
-        dispatch_x = (uint32_t)((num_lines + 255) / 256);
-        dispatch_y = 1;
-        dispatch_z = 1;
-    }
-
-    /* Resolve readonly bindings and bind. */
-    if (s->ro_count > 0) {
-        SDL_GPUBuffer *ro_bufs[CHAIN_STAGE_MAX_RO];
-        for (int i = 0; i < s->ro_count; i++) {
-            ro_bufs[i] = resolve_buf_ref(chain, s, s->ro[i]);
-            if (!ro_bufs[i]) {
-                fprintf(stderr, "chain_run: stage '%s' ro[%d] resolves to NULL\n",
+    if (!s->reuse_output) {
+        /* Resolve readwrite bindings at pass-begin time. */
+        SDL_GPUStorageBufferReadWriteBinding rw_bindings[CHAIN_STAGE_MAX_RW] = {0};
+        for (int i = 0; i < s->rw_count; i++) {
+            rw_bindings[i].buffer = resolve_buf_ref(chain, s, s->rw[i]);
+            if (!rw_bindings[i].buffer) {
+                fprintf(stderr, "chain_run: stage '%s' rw[%d] resolves to NULL\n",
                         s->name, i);
-                SDL_EndGPUComputePass(pass);
                 return false;
             }
         }
-        SDL_BindGPUComputeStorageBuffers(pass, 0, ro_bufs, (Uint32)s->ro_count);
-    }
 
-    if (s->params_size > 0) {
-        SDL_PushGPUComputeUniformData(cmd, 0, s->params, s->params_size);
-    }
+        SDL_GPUComputePass *pass = SDL_BeginGPUComputePass(
+            cmd, NULL, 0, rw_bindings, (Uint32)s->rw_count);
+        if (!pass) return false;
 
-    SDL_DispatchGPUCompute(pass, dispatch_x, dispatch_y, dispatch_z);
-    SDL_EndGPUComputePass(pass);
+        SDL_BindGPUComputePipeline(pass, chain->pipelines[kt].pipeline);
+
+        /* RC_FILTER and AGC dispatch per-line (one thread per scanline),
+         * not per-sample. If the chain has a per-line stride, recompute
+         * dispatch_x from num_lines. Other kernels use s->dispatch_x as
+         * passed at registration. */
+        uint32_t dispatch_x = s->dispatch_x;
+        uint32_t dispatch_y = s->dispatch_y;
+        uint32_t dispatch_z = s->dispatch_z;
+        if ((kt == CHAIN_KERNEL_RC_FILTER || kt == CHAIN_KERNEL_AGC) &&
+            chain->samples_per_line > 0) {
+            int num_lines = chain->sample_count / chain->samples_per_line;
+            dispatch_x = (uint32_t)((num_lines + 255) / 256);
+            dispatch_y = 1;
+            dispatch_z = 1;
+        }
+
+        /* Resolve readonly bindings and bind. */
+        if (s->ro_count > 0) {
+            SDL_GPUBuffer *ro_bufs[CHAIN_STAGE_MAX_RO];
+            for (int i = 0; i < s->ro_count; i++) {
+                ro_bufs[i] = resolve_buf_ref(chain, s, s->ro[i]);
+                if (!ro_bufs[i]) {
+                    fprintf(stderr, "chain_run: stage '%s' ro[%d] resolves to NULL\n",
+                            s->name, i);
+                    SDL_EndGPUComputePass(pass);
+                    return false;
+                }
+            }
+            SDL_BindGPUComputeStorageBuffers(pass, 0, ro_bufs, (Uint32)s->ro_count);
+        }
+
+        if (s->params_size > 0) {
+            SDL_PushGPUComputeUniformData(cmd, 0, s->params, s->params_size);
+        }
+
+        SDL_DispatchGPUCompute(pass, dispatch_x, dispatch_y, dispatch_z);
+        SDL_EndGPUComputePass(pass);
+
+    } /* Cached typed output remains available to downstream stages/debug taps. */
 
     /* Debug capture: copy the stage's declared snapshot output (or
      * rw[0] as a fallback) into the per-stage debug buffer. Size is
@@ -429,7 +432,7 @@ static bool dispatch_typed_stage(SignalChain *chain, ChainStage *s,
         if (s->snapshot_src != CBR_NONE) {
             src = resolve_buf_ref(chain, s, s->snapshot_src);
         } else if (s->rw_count > 0) {
-            src = rw_bindings[0].buffer;
+            src = resolve_buf_ref(chain,s,s->rw[0]);
         }
         uint32_t snap_bytes = s->snapshot_size ? s->snapshot_size : chain->buf_size;
         if (src && !copy_stage_snapshot(cmd, src,

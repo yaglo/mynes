@@ -1,51 +1,73 @@
-# GPU-chain measurements — earlier 21 September 2026 snapshot
+# GPU performance — 21 September 2026
 
-These figures predate the latest colour/spot-growth and RF changes. The complete-playback measurements below use the current presets.
+Apple M5, 24 GiB, Metal, Release build, validation off. All runs were sequential with no other MyNES frontend detected. Desktop/UI-test activity remained; these are observations on a shared machine, not isolated laboratory measurements.
 
-Apple M5, 24 GiB, Metal, validation off. These are CPU-submission-to-final-GPU-fence times, including code upload, waveform, receiver, CRT, mask and glass. Each resolution uses 12 warmups and 60 individually fenced frames. Emulation, audio, vsync and readback are excluded. No other MyNES frontend was running; this was not an otherwise isolated machine.
+## Complete GPU chain
+
+CPU submission through the final GPU fence, including code upload, DAC waveform, receiver, beam, phosphors, mask and glass. Twelve warmups and 60 individually fenced frames at each resolution. This measures the GPU path separately from emulation, audio, vsync and readback; the real-game tests below include those first two workloads and optional readback.
 
 | Preset | 640×480 median | 1280×960 median | 1920×1440 median | 2560×1920 median / p95 / max |
 |---|---:|---:|---:|---:|
-| Sony PVM-14L2 (nominal) | 2.718 ms | 3.831 ms | 5.724 ms | 8.147 / 10.980 / 11.234 ms |
-| JVC D-Series (nominal) | 3.569 ms | 4.556 ms | 6.418 ms | 8.972 / 11.875 / 12.163 ms |
-| Toshiba 14AF (nominal) | 3.547 ms | 4.543 ms | 6.423 ms | 9.050 / 12.005 / 12.146 ms |
-| Stas's Favourite | 3.204 ms | 4.267 ms | 6.209 ms | 8.785 / 11.791 / 11.839 ms |
+| Sony PVM-14L2 | 2.700 ms | 3.580 ms | 5.072 ms | 7.285 / 8.985 / 9.060 ms |
+| JVC D-Series | 3.653 ms | 4.712 ms | 6.496 ms | 9.363 / 11.078 / 11.492 ms |
+| Toshiba 14AF43 | 3.898 ms | 4.856 ms | 6.877 ms | 10.731 / 11.241 / 11.441 ms |
+| Stas's Favourite | 4.009 ms | 4.949 ms | 7.025 ms | 10.993 / 11.538 / 11.678 ms |
 
-Panel mask mode, offscreen scale 1:1. A 2560×1920 target is larger than this laptop’s 2560×1664 panel; it is a workload measurement, not a fullscreen screenshot. Raw measurements and load metadata are in [JSON](gpu-benchmark-results.json).
+Panel mask mode, offscreen scale 1:1. A 2560×1920 target exceeds this laptop's 2560×1664 panel; it is a workload measurement. [Raw chain measurements and load metadata](gpu-benchmark-results.json).
 
-The chain fits within the approximately 16.64 ms NTSC frame interval in this sample. This does not establish end-to-end latency or guarantee pacing under contention. The visible cadence also depends on the host refresh rate.
+### Geometry optimization, controlled comparison
 
-Optimization replaced repeated per-sample Gaussian exponentials with dispatch-prepared weights, and procedural dot/slot supersampling with cached half-float coverage mipmaps. Kernel checks verify impulse response and energy; this run also includes the new comb BPF and nonlinear PPU output stage.
+Unchanged deflection maps are reused only when every load/time/audio-dependent geometry control is zero. Parameters, output size, buffer replacement and temporal resets invalidate the cache. The consumer profiles retain their active load response. Zero-valued optional effects also bypass unnecessary shader calculations.
 
-Reproduce:
+A cached / recomputed / recomputed / cached sequence with the same binary and PVM preset measured:
+
+| Resolution | Cached medians | Recomputed medians | Reduction from average medians |
+|---|---:|---:|---:|
+| 640×480 | 2.665, 2.673 ms | 2.752, 3.269 ms | 11.3% |
+| 1280×960 | 3.571, 3.558 ms | 3.873, 3.913 ms | 8.4% |
+| 1920×1440 | 5.098, 5.091 ms | 5.836, 5.846 ms | 12.8% |
+| 2560×1920 | 7.158, 7.112 ms | 8.444, 8.443 ms | 15.5% |
+
+[Raw A/B runs](gpu-geometry-cache-results.json). At 2560×1920 the gain is about 15.5%. PVM, Toshiba and Stas linear Contra captures remained bit-identical to the pre-optimization build. JVC's arithmetic regrouping changed a few half-float values: maximum difference 0.00097656, RMS 0.0000022. Direct offscreen readback versus rerendering for capture is bit-identical for both phases of all four presets. GPU tests cover parameter invalidation and continued visualizer snapshots while geometry is cached.
+
+## Full real-game playback
+
+Contra, 720 emulated frames per run, 120 warmup frames, offscreen 2560×1664. Includes core, APU, CPU/GPU audio processing with an active muted SDL queue, and every signal/CRT/display stage. The capture mode writes PPM and linear PFM once per 60 emulated frames, with one bounded encoding/writer thread that is joined before exit. Process CPU accounting includes that worker. No window/vsync is exercised in the user-requested offscreen mode. Timestamps end at submission, not panel scanout.
+
+| Preset | Audio / capture | Render FPS | Emulated FPS | Skipped pictures | p95 cadence | p95 audio queued |
+|---|---|---:|---:|---:|---:|---:|
+| Sony PVM-14L2 | cpu | 60.10 | 60.10 | 0 | 20.38 ms | 43.6 ms |
+| Sony PVM-14L2 | gpu | 60.09 | 60.09 | 0 | 19.70 ms | 43.4 ms |
+| Sony PVM-14L2 | gpu-readback | 60.12 | 60.12 | 0 | 20.25 ms | 43.4 ms |
+| JVC D-Series | cpu | 60.10 | 60.10 | 0 | 20.43 ms | 43.8 ms |
+| JVC D-Series | gpu | 60.11 | 60.11 | 0 | 20.66 ms | 43.4 ms |
+| JVC D-Series | gpu-readback | 60.12 | 60.12 | 0 | 20.21 ms | 43.4 ms |
+| Toshiba 14AF43 | cpu | 60.09 | 60.09 | 0 | 20.86 ms | 43.5 ms |
+| Toshiba 14AF43 | gpu | 60.06 | 60.06 | 0 | 21.09 ms | 43.6 ms |
+| Toshiba 14AF43 | gpu-readback | 60.13 | 60.13 | 0 | 20.00 ms | 43.4 ms |
+| Stas's Favourite | cpu | 60.08 | 60.08 | 0 | 20.16 ms | 43.5 ms |
+| Stas's Favourite | gpu | 60.10 | 60.10 | 0 | 19.88 ms | 43.4 ms |
+| Stas's Favourite | gpu-readback | 60.15 | 60.15 | 0 | 20.46 ms | 43.7 ms |
+
+The current repeats delivered every picture at approximately 60.1 Hz. Earlier sequential runs of Toshiba and Stas dropped frames under different host load; this is not a guarantee under contention. Host-refresh pacing still requires an onscreen check. [Raw playback runs, timing distributions and contention metadata](gpu-playback-results.json).
+
+### Screenshot stalls
+
+The old capture rerendered the final display and blocked the render thread for conversion and disk writes. Offscreen capture now downloads the existing final target; encoding/writing uses one owned CPU image in a background thread. A slow writer is joined before accepting another image, keeping memory bounded. Batch `--screenshot-after` captures remain synchronous. Write errors propagate through shutdown.
+
+| Preset | Before capture FPS | Current capture FPS | Before render-thread capture median | Current readback/copy median | Background encode/write median |
+|---|---:|---:|---:|---:|---:|
+| Sony PVM-14L2 | 55.83 | 60.12 | 94.37 ms | 18.85 ms | 66.12 ms |
+| JVC D-Series | 56.74 | 60.12 | 83.87 ms | 19.82 ms | 58.62 ms |
+| Toshiba 14AF43 | 55.77 | 60.13 | 86.30 ms | 18.99 ms | 57.05 ms |
+| Stas's Favourite | 54.75 | 60.15 | 123.16 ms | 19.85 ms | 60.03 ms |
+
+All 44 requested writes succeeded. Background write cost has moved off the render thread, not disappeared. Readback itself still waits for GPU completion. Unit checks compare synchronous/asynchronous files and cover ownership, HDR, row orientation, RGB/BGR order and failure reporting.
+
+Audio playback also passed a deliberate 250 ms render-thread stall: both backends produced 440,216 samples, maximum queued audio about 50.3 ms, and maximum CPU/GPU sample difference 0.00001341. This checks bounded queueing and processing continuity, not measured acoustic latency.
 
 ```sh
 python3 frontends/gpu/tests/benchmark_pipeline.py build/bin/mynes_gpu /tmp/gpu-bench
-```
-
-## Full real-game playback, current presets
-
-Contra, 720 emulated frames per run, 120 warmup frames, offscreen 2560×1664. Includes core, APU, CPU/GPU audio processing with an active muted SDL queue, and every GPU signal/CRT/glass pass. Readback additionally captures final PPM+PFM once per 60 emulated frames. Window presentation/vsync are excluded by the user-requested offscreen mode. Another MyNES process and desktop load were present; runs were sequential, not isolated. Do not attribute differences between sequential presets solely to their shaders.
-
-| Preset | Audio / capture | Render FPS | Emulated FPS | Skipped pictures | p95 frame cadence | p95 audio queued |
-|---|---|---:|---:|---:|---:|---:|
-| sony_pvm_14l2 | cpu | 60.12 | 60.12 | 0 | 19.53 ms | 43.5 ms |
-| sony_pvm_14l2 | gpu | 60.08 | 60.08 | 0 | 20.38 ms | 43.5 ms |
-| sony_pvm_14l2 | gpu-readback | 55.47 | 60.15 | 53 | 20.22 ms | 43.5 ms |
-| jvc_d_series_2000 | cpu | 60.08 | 60.08 | 0 | 20.25 ms | 43.5 ms |
-| jvc_d_series_2000 | gpu | 60.08 | 60.08 | 0 | 19.17 ms | 43.4 ms |
-| jvc_d_series_2000 | gpu-readback | 55.98 | 60.12 | 45 | 20.30 ms | 43.7 ms |
-| toshiba_14af43 | cpu | 55.79 | 59.90 | 42 | 25.78 ms | 44.4 ms |
-| toshiba_14af43 | gpu | 57.27 | 60.08 | 28 | 21.86 ms | 43.7 ms |
-| toshiba_14af43 | gpu-readback | 52.29 | 60.08 | 82 | 21.82 ms | 43.4 ms |
-| stass_favourite | cpu | 56.42 | 60.13 | 37 | 24.29 ms | 43.4 ms |
-| stass_favourite | gpu | 53.77 | 60.10 | 64 | 26.21 ms | 43.5 ms |
-| stass_favourite | gpu-readback | 52.69 | 60.07 | 78 | 23.01 ms | 44.1 ms |
-
-[Raw playback metrics and contention metadata](gpu-playback-results.json). The later runs lost pictures despite maintaining approximately 60.1 Hz emulation/audio; further profiling is required. These results do not justify claiming that every preset holds 60 FPS under contention.
-
-Implemented optimizations include acquisition before taking the latest emulation picture, source-weighted precomputed beam kernels, cached mask coverage, and fenced capture with half-float transfer lookup and buffered row writes. Diagnostic readback still stalls the render thread; its cost is reported separately. Frame-age timestamps end at submission, not panel scanout.
-
-```sh
+python3 frontends/gpu/tests/benchmark_pipeline.py build/bin/mynes_gpu /tmp/pvm-uncached sony_pvm_14l2 --recompute-geometry
 python3 frontends/gpu/tests/benchmark_playback.py build/bin/mynes_gpu game.nes /tmp/full-playback
 ```

@@ -197,47 +197,44 @@ void main() {
 
     /* Horizontal timebase: combine slow sway, line-locked jitter,
      * PSU ripple, and top-of-frame flyback ringing. */
-    float slow_sway = sin(frame_t * 0.63) * 0.7
-                    + sin(frame_t * 0.21 + 1.7) * 0.3;
-    float pll_jitter = hashSigned(line_seed)
-                     + 0.5 * hashSigned(line_seed ^ 0x85ebca6bu);
-    float ripple = sin(float(sy_nom) * 0.19 + frame_t * 1.4);
-    float flyback_ring = exp(-float(sy_nom) / 18.0)
-                       * sin(float(sy_nom) * 0.92 + frame_t * 1.9);
-    float group_shift = sin(floor(float(sy_nom) / 4.0) * 0.83 + frame_t * 0.7);
-    float h_shift_px = h_jitter * (0.28 * slow_sway
-                                 + 0.22 * pll_jitter
-                                 + 0.18 * ripple
-                                 + 0.22 * flyback_ring
-                                 + 0.10 * group_shift);
+    float h_shift_px=0.0;
+    if(h_jitter!=0.0) {
+        float slow_sway=sin(frame_t*.63)*.7 + sin(frame_t*.21+1.7)*.3;
+        float pll_jitter=hashSigned(line_seed)+.5*hashSigned(line_seed^0x85ebca6bu);
+        float ripple=sin(float(sy_nom)*.19+frame_t*1.4);
+        float flyback_ring=exp(-float(sy_nom)/18.0)*sin(float(sy_nom)*.92+frame_t*1.9);
+        float group_shift=sin(floor(float(sy_nom)/4.0)*.83+frame_t*.7);
+        h_shift_px=h_jitter*(.28*slow_sway+.22*pll_jitter+.18*ripple+.22*flyback_ring+.10*group_shift);
+    }
     if (rf_interference > 0.001) {
         float rf_step = sin(float(sy_nom) * 0.47 + frame_t * 0.31);
         h_shift_px += floor(rf_step * rf_interference + 0.5);
     }
 
     /* Vertical settle + differential linearity. */
-    float field_jump_px = v_jitter * 0.25
-                        * hashSigned(frame_counter * 4099u + 17u);
-    float top_settle_px = v_jitter * 1.6
-                        * exp(-float(sy_nom) / 14.0)
-                        * sin(float(sy_nom) * 0.78 + frame_t * 1.25);
-    float bottom_compress = geometry_warp * 0.016
-                          * (cy * cy * cy - 0.25 * cy);
-
-    /* Static deflection-shape residuals. */
-    float s_correction = geometry_warp * 0.034
-                       * (cx * cx * cx - 0.35 * cx);
-    float ew_residual = geometry_warp * 0.024 * cx * cy * cy;
-    float left_edge_nl = geometry_warp * 0.012
-                       * exp(-max(raster.x, 0.0) / 0.060)
-                       * (0.35 - raster.x);
-    float right_edge_nl = geometry_warp * 0.010
-                        * exp(-max(1.0 - raster.x, 0.0) / 0.050)
-                        * (raster.x - 0.65);
-    float line_bow_x = scanline_wobble * 0.015
-                     * sin(x_uv * 6.283185 + float(sy_nom) * 0.63 + frame_t * 0.9);
-    float line_bow_y = scanline_wobble * 0.020
-                     * sin(x_uv * 6.283185 + float(sy_nom) * 0.39 + frame_t * 0.9);
+    float field_jump_px=0.0, top_settle_px=0.0;
+    if(v_jitter!=0.0) {
+        field_jump_px=v_jitter*.25*hashSigned(frame_counter*4099u+17u);
+        top_settle_px=v_jitter*1.6*exp(-float(sy_nom)/14.0)*sin(float(sy_nom)*.78+frame_t*1.25);
+    }
+    float bottom_compress=geometry_warp*.016*(cy*cy*cy-.25*cy);
+    float s_correction=geometry_warp*.034*(cx*cx*cx-.35*cx);
+    float ew_residual=geometry_warp*.024*cx*cy*cy;
+    float left_edge_nl=0.0,right_edge_nl=0.0,geometry_slope=0.0;
+    if(geometry_warp!=0.0) {
+        float left=exp(-max(raster.x,0.0)/.060),right=exp(-max(1.0-raster.x,0.0)/.050);
+        left_edge_nl=geometry_warp*.012*left*(.35-raster.x);
+        right_edge_nl=geometry_warp*.010*right*(raster.x-.65);
+        geometry_slope=geometry_warp*(.102*cx*cx-.0119+.024*cy*cy)
+                      +geometry_warp*(-.012*left-.010*right);
+    }
+    float line_bow_x=0.0,line_bow_y=0.0,bow_slope=0.0;
+    if(scanline_wobble!=0.0) {
+        float phase=x_uv*6.283185+float(sy_nom)*.63+frame_t*.9;
+        line_bow_x=scanline_wobble*.015*sin(phase);
+        line_bow_y=scanline_wobble*.020*sin(x_uv*6.283185+float(sy_nom)*.39+frame_t*.9);
+        bow_slope=scanline_wobble*.0471239*cos(phase);
+    }
     float band_lo = min(top_band_start, top_band_end);
     float band_hi = max(top_band_start, top_band_end);
     float band_soft = 2.5;
@@ -245,7 +242,7 @@ void main() {
                       * (1.0 - smoothstep(band_hi - band_soft, band_hi + band_soft,
                                           float(sy_nom)));
     float edge_width = max(top_edge_width, 0.01);
-    float top_edge_env = exp(-max(raster.x, 0.0) / edge_width);
+    float top_edge_env = top_edge_skew!=0.0 ? exp(-max(raster.x, 0.0) / edge_width) : 0.0;
     float top_band_px = top_band_shift * band_window;
     float top_edge_px = top_edge_skew * band_window * top_edge_env;
 
@@ -290,13 +287,8 @@ void main() {
 
     /* Dwell / velocity. Derived from the local horizontal deflection
      * slope rather than an ad-hoc edge darkening term. */
-    float dx_dcx = 1.0
-                 + geometry_warp * (0.102 * cx * cx - 0.0119 + 0.024 * cy * cy)
-                 + geometry_warp * (-0.012 * exp(-max(raster.x, 0.0) / 0.060)
-                                  - 0.010 * exp(-max(1.0 - raster.x, 0.0) / 0.050))
-                 + scanline_wobble * 0.0471239
-                 * cos(x_uv * 6.283185 + float(sy_nom) * 0.63 + frame_t * 0.9)
-                 - (2.0 / fw) * top_edge_skew * band_window * top_edge_env / edge_width;
+    float dx_dcx = 1.0+geometry_slope+bow_slope
+                 - (2.0/fw)*top_edge_skew*band_window*top_edge_env/edge_width;
     float dwell = 1.0;
     if (velocity_dim > 0.001) {
         float fastness = clamp(abs(dx_dcx) - 1.0, 0.0, 1.5);

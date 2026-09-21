@@ -1372,6 +1372,7 @@ bool video_gpu_process(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
 
     /* ---- 2. Run the chain (compute passes in shared cmd) ---- */
     if (!chain_run_cmd(&vgc->sig_chain, master_cmd)) {
+        vgc->deflection_cache_valid = false;
         SDL_SubmitGPUCommandBuffer(master_cmd);
         fprintf(stderr, "video_gpu_process: chain_run failed\n");
         return false;
@@ -1386,12 +1387,16 @@ bool video_gpu_process(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
      * read from tex_beam after the compute finishes (GPU-side dependency). */
     if (rgb_out && vgc->buf_rgb) {
         SDL_GPUFence *fence = SDL_SubmitGPUCommandBufferAndAcquireFence(master_cmd);
+        bool ready = fence && SDL_WaitForGPUFences(gpu, true, &fence, 1);
         if (fence) {
-            SDL_WaitForGPUFences(gpu, true, &fence, 1);
             SDL_ReleaseGPUFence(gpu, fence);
         }
+        if (!ready) { vgc->deflection_cache_valid = false; return false; }
     } else {
-        SDL_SubmitGPUCommandBuffer(master_cmd);
+        if (!SDL_SubmitGPUCommandBuffer(master_cmd)) {
+            vgc->deflection_cache_valid = false;
+            return false;
+        }
     }
 
     /* ---- 8. Download RGB to CPU if requested ---- */
@@ -1419,6 +1424,7 @@ bool video_gpu_set_beam_params(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
 
     Uint32 deflect_needed = (Uint32)(out_w * out_h * 4 * sizeof(float));
     if (deflect_needed != vgc->deflection_size) {
+        vgc->deflection_cache_valid=false;
         if (vgc->buf_deflection_x) {
             SDL_ReleaseGPUBuffer(gpu, vgc->buf_deflection_x);
             vgc->buf_deflection_x = NULL;
@@ -1841,6 +1847,7 @@ void video_gpu_reset_temporal_state(VideoGPUChain *vgc, SDL_GPUDevice *gpu)
 
     /* Beam dispatch counter — resets per-frame noise phase + dot-crawl
      * field index so the next preset starts from zero. */
+    vgc->deflection_cache_valid=false;
     vgc->beam_frame_counter = 0;
     vgc->signal_frame_counter = 0;
     vgc->temporal_history_valid = false;
@@ -2048,7 +2055,14 @@ bool video_gpu_process_full(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     vgc->demod_line_phase = phase_line_adv * 2.0f * (float)M_PI / 12.0f;
     update_demod_params(vgc);
     vgc->sig_chain.current_buf = 0;
-    if (!chain_run_cmd(&vgc->sig_chain, cmd)) { SDL_CancelGPUCommandBuffer(cmd); return false; }
-    if (!SDL_SubmitGPUCommandBuffer(cmd)) return false;
+    if (!chain_run_cmd(&vgc->sig_chain, cmd)) {
+        vgc->deflection_cache_valid = false;
+        SDL_CancelGPUCommandBuffer(cmd);
+        return false;
+    }
+    if (!SDL_SubmitGPUCommandBuffer(cmd)) {
+        vgc->deflection_cache_valid = false;
+        return false;
+    }
     return !rgb_out || gpu_buffer_download(gpu, vgc->buf_rgb, rgb_out, vgc->rgb_size);
 }

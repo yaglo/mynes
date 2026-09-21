@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Full real-game playback: core, audio, complete GPU path, window and vsync.
+"""Full real-game playback: core, audio and complete GPU path. Optional window/vsync.
 Reports submission cadence/age, not panel photon latency or isolated GPU time.
 Optional readback includes final render, fence, download, PPM/PFM encoding and IO.
 """
@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import platform
 import resource
+import re
 import statistics
 import subprocess
 import tempfile
@@ -35,7 +36,7 @@ def frontends():
     return [r.strip() for r in subprocess.check_output(['ps','-axo','pid=,comm='],text=True).splitlines() if r.split() and Path(r.split()[-1]).name=='mynes_gpu']
 report=dict(utc=datetime.datetime.now(datetime.timezone.utc).isoformat(),platform=platform.platform(),rom=a.rom.name,
     offscreen=not a.onscreen,frames=a.frames,warmup=a.warmup,load_before=os.getloadavg(),other_frontends=frontends(),results=[],
-    metric='Real ROM, core/APU, selected CPU/GPU audio and complete GPU signal/CRT. SDL audio queue active (muted offscreen). Offscreen mode fences the full render; no window presentation/vsync. Timestamps stop at submission, not scanout. Readback additionally captures once per 60 emulated frames.')
+    metric='Real ROM, core/APU, selected CPU/GPU audio and complete GPU signal/CRT. SDL audio queue active (muted offscreen). Offscreen mode fences the full render; no window presentation/vsync. Timestamps stop at submission, not scanout. Readback additionally captures once per 60 emulated frames; CPU encoding/writing runs in one bounded worker, drained before exit. capture_ms is render-thread readback/copy cost; capture_write_ms includes encoding and disk IO.')
 if platform.system()=='Darwin':report['hardware']=subprocess.check_output(['sysctl','hw.model','hw.memsize','machdep.cpu.brand_string'],text=True).strip()
 for preset in presets:
     for mode in a.modes:
@@ -52,7 +53,13 @@ for preset in presets:
             before=resource.getrusage(resource.RUSAGE_CHILDREN)
             with (a.output/(slug+'.log')).open('w') as log:subprocess.run(args,cwd=root,env=env,stdout=log,stderr=log,check=True,timeout=max(90,a.frames/30))
             after=resource.getrusage(resource.RUSAGE_CHILDREN)
-        rows=list(csv.DictReader(trace.open()));rows=[{k:float(v) for k,v in r.items()} for r in rows if int(r['frame'])>a.warmup]
+        writes=re.findall(r'CAPTURE_WRITE ms=([0-9.]+) saved=([01])',(a.output/(slug+'.log')).read_text())
+        if mode.endswith('readback'):
+            assert writes and all(saved=='1' for _,saved in writes), 'Capture writes missing or failed'
+        rows=[{k:float(v) for k,v in r.items()} for r in csv.DictReader(trace.open())]
+        if mode.endswith('readback'):
+            assert len(writes)==sum(r['capture_ms']>0 for r in rows), 'A requested capture was not written'
+        rows=[r for r in rows if r['frame']>a.warmup]
         if len(rows)<30:raise RuntimeError('Insufficient presented frames: '+slug)
         gaps=[(b['submit_ns']-c['submit_ns'])/1e6 for c,b in zip(rows,rows[1:])]
         duration=(rows[-1]['submit_ns']-rows[0]['submit_ns'])/1e9
@@ -65,6 +72,8 @@ for preset in presets:
             ready_age_ms=stats([(r['submit_ns']-r['ready_ns'])/1e6 for r in rows]),
             timings={k:stats([r[k] for r in rows]) for k in ['emulation_ms','audio_ms','encode_ms','present_ms','swap_wait_ms']},
             capture_ms=stats(capture) if capture else None,
+            capture_write_ms=stats([float(ms) for ms,_ in writes]) if writes else None,
+            capture_writes=len(writes),
             audio_queue_ms=stats([(int(r['queued'])+int(r['samples']))/44.1 for r in ar]),
             gpu_audio_fraction=sum(int(r['gpu']) for r in ar)/len(ar),
             process_cpu_seconds=after.ru_utime+after.ru_stime-before.ru_utime-before.ru_stime)

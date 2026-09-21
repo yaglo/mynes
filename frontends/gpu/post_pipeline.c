@@ -215,6 +215,18 @@ static bool deflection_rebind(struct SignalChainFwd *chain_fwd,
     p.top_band_end        = tv ? tv->top_band_end : 34.0f;
     p.top_edge_width      = tv ? tv->top_edge_width : 0.08f;
 
+    // Regulated geometry is independent of image content and scan time.
+    // Reuse the exact landing maps until a control, allocation or size changes.
+    // Any enabled load/time/audio response requires a fresh map every frame.
+    bool fixed=p.h_jitter==0 && p.v_jitter==0 && p.rf_interference==0 &&
+        p.psu_hum==0 && p.focus_breathing==0 && p.scanline_wobble==0 &&
+        p.hv_sag==0 && p.microphonic_amount==0;
+    if(fixed) { p.frame_counter=0; p.frame_brightness=0; p.audio_bass_rms=0; }
+    s->reuse_output=fixed && vgc->deflection_cache_valid && s->params_size==sizeof(p) &&
+        s->external[0]==vgc->buf_deflection_x && s->external[1]==vgc->buf_deflection_y &&
+        memcmp(s->params,&p,sizeof(p))==0;
+    vgc->deflection_cache_valid=fixed;
+
     s->ro_count = 1; s->ro[0] = CBR_EXT2; s->external[2] = vgc->buf_crt_load;
     s->rw[0] = CBR_EXT0;
     s->rw[1] = CBR_EXT1;

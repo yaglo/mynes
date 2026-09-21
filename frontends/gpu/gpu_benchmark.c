@@ -12,6 +12,7 @@ static int compare(const void *a, const void *b) {
 
 bool gpu_benchmark(VideoGPUChain *v, SDL_GPUDevice *gpu,
                    const SignalPrecompute *sp, const char *render_shader_dir, bool pixel_aligned) {
+    bool recompute_geometry = getenv("MYNES_BENCH_RECOMPUTE_GEOMETRY") != NULL;
     const int sizes[][2] = {{640,480}, {1280,960}, {1920,1440}, {2560,1920}};
     uint16_t codes[256*240];
     for (int y=0; y<240; y++) for (int x=0; x<256; x++) {
@@ -23,6 +24,7 @@ bool gpu_benchmark(VideoGPUChain *v, SDL_GPUDevice *gpu,
            SDL_GetGPUDeviceDriver(gpu), getenv("MYNES_GPU_VALIDATION")!=NULL,
            SAMPLES,WARMUP,sp->region ? "PAL" : "NTSC");
     printf("BENCH metric=CPU-submit-to-final-GPU-fence; includes uploads, complete CRT; excludes emulation/audio/vsync/readback\n");
+    printf("BENCH geometry_cache=%d\n", !recompute_geometry);
     for (unsigned size=0; size<sizeof(sizes)/sizeof(sizes[0]); size++) {
         int w=sizes[size][0], h=sizes[size][1];
         if (!video_gpu_set_beam_params(v,gpu,w,h,h/240,v->beam_sigma_narrow,v->beam_sigma_wide)) return false;
@@ -48,6 +50,7 @@ bool gpu_benchmark(VideoGPUChain *v, SDL_GPUDevice *gpu,
             v->elapsed_frames=1;
             video_gpu_set_demod(v,(phase+sp->demod_rotate)*6.28318530718f/12,6.28318530718f/12);
             Uint64 start=SDL_GetTicksNS();
+            if (recompute_geometry) v->deflection_cache_valid = false;
             ok=video_gpu_process_full(v,gpu,codes,phase,sp->phase_line_adv,0,NULL);
             if (!ok) break;
             SDL_GPUCommandBuffer *cmd=SDL_AcquireGPUCommandBuffer(gpu);

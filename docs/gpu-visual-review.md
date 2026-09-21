@@ -21,22 +21,32 @@ All four have a yellow/green face and magenta-red eyes. The user's photograph ha
 
 The grille is generated at the actual drawable size. Panel mode quantizes the complete RGB period; at this resolution the nominal 1070-triad PVM becomes a coarser resolved grille. Physical-pitch mode preserves the tube density and filters unresolved structure. Neither mode proves alignment to individual LCD subpixels. Viewing a crop at a different scale can change the apparent mask.
 
-GPU regressions independently check neutral mask mean, nonnegative coverage, RGB/BGR order, resize behaviour, linear HDR handling, beam energy and gun-independent growth. A 48-frame RF test found maximum absolute decoded-gray noise correlation of 0.0054 at lags 1–12; final-image investigation of the reported cyclic texture continues.
+GPU regressions independently check neutral mask mean, nonnegative coverage, RGB/BGR order, resize behaviour, linear HDR handling, beam energy and gun-independent growth. A 48-frame RF test found maximum absolute decoded-gray noise correlation of 0.0054 at lags 1–12. A separate 36-frame final-render gray-field test found no repeating peak (maximum absolute correlation 0.034). It removes the fixed image/mask by subtracting the temporal mean, which introduces a small negative bias. [Final-render metrics](gpu-rf-temporal-results.json). Replaying the last saved legacy RF profile with all its controls retained also did not reproduce a several-frame cycle: adjacent-frame correlation decayed rather than returning at a periodic lag. This does not identify the exact texture reported by the user; deterministic composite crawl and mask structure must remain separate from random snow.
 
-## Earlier supporting captures
+## Drawable size and connection checks
 
-![Earlier four-profile Mario review](images/crt-preset-review.png)
+![Native crops at a 1280×960 drawable](images/crt-contra-window-native.png)
 
-![Earlier bright/dark recovery check](images/crt-streak-review.png)
+The same four presets were also rendered at 1280×960. The mask is refitted to that actual drawable; it is not a resized full-resolution screenshot. In panel mode, fitting complete RGB periods trades exact tube density for a resolved pattern. At smaller sizes the PVM grille therefore cannot retain its physical triad count. The native crop is the useful mask check; reduced overview images can introduce their own aliasing.
 
-These supporting images predate the latest colour/inline-mask changes. The isolated recovery chart shows a darker wake after white and a brighter wake after black. Stas retains this upstream voltage response; the regulated PVM does not acquire an artificial worn-TV streak.
+![Same PVM, component, composite and external RF receiver](images/crt-contra-inputs.png)
+
+The same Contra codes retain colour through component, with cleaner edges than composite/RF. Component represents an ideal decoded/modded source; the stock NES does not output component. RF here means an external receiver feeding the PVM, which has no tuner. The four curated defaults remain composite for Sony/JVC/Toshiba and RF for Stas.
+
+## Refreshed supporting captures
+
+![Current four-profile Mario review](images/crt-preset-review.png)
+
+![Current bright/dark recovery check](images/crt-streak-review.png)
+
+These supporting images use the current colour and inline-mask models. The isolated recovery chart shows a darker wake after white and a brighter wake after black. Stas retains this upstream voltage response; the regulated PVM does not acquire an artificial worn-TV streak.
 
 ![OSD review](images/gpu-osd-review.png)
 
-The OSD groups the physical stages and shows preset/modified state, region, output mode and headroom. The screenshot predates the latest control labels.
+The OSD groups the physical stages and shows preset/modified state, region, output mode and headroom. Its headroom now comes from the same calculation as the renderer: offscreen review displays 1.60× and explicitly identifies the hidden drawable rather than reporting the physical screen as its target.
 
 ## Limits and next comparisons
 
 Full renders are inspected alongside real photographs of the named displays, with [evidence and assumptions recorded separately](gpu-hardware-research.md). Beam and decoder parameters are still nominal. Exact phosphor spectra, non-Gaussian spot tails, individual convergence maps and chip-specific ABL are not calibrated. The ordinary LCD hold interval also differs from a moving CRT beam. Paired stills verify spatial/phase behaviour, not motion equivalence.
 
-The next pass checks final-image RF temporal behaviour, component colour, multiple drawable sizes and refreshed Mario/OSD captures. [Benchmarks](gpu-benchmark-results.md) distinguish complete-chain fence measurements from full real-game playback; neither timestamp is a photon-latency measurement.
+This pass checked final-image RF temporal behaviour, component colour, two drawable sizes and fresh Mario/OSD captures. Geometry reuse and direct offscreen readback preserved the reviewed pixels; screenshot encoding now runs outside the interactive render thread. [Benchmarks](gpu-benchmark-results.md) distinguish complete-chain fence measurements from full real-game playback; neither timestamp is a photon-latency measurement.

@@ -81,6 +81,26 @@ int test_crt_load(SDL_GPUDevice *gpu) {
         CHECK(gpu_buffer_download(gpu,v.buf_deflection_y,focus,256*240*4*sizeof(float)));
         CHECK(fabsf(f-focus[(120*256+192)*4+3])<1e-6f);
     }
+    c.tv.hv_sag=0; c.tv.focus_breathing=0;
+    CHECK(chain_run(&v.sig_chain,gpu));
+    CHECK(gpu_buffer_download(gpu,v.buf_deflection_x,landing,256*240*4*sizeof(float)));
+    float original_x=landing[(120*256+192)*4];
+    v.beam_frame_counter+=10; v.frame_brightness=.9f;
+    CHECK(chain_set_stage_capture(&v.sig_chain,gpu,v.stage_deflection,true));
+    CHECK(chain_run(&v.sig_chain,gpu));
+    CHECK(v.sig_chain.stages[v.stage_deflection].reuse_output);
+    CHECK(gpu_buffer_download(gpu,v.buf_deflection_x,landing,256*240*4*sizeof(float)));
+    CHECK(landing[(120*256+192)*4]==original_x);
+    // The visualiser must still receive geometry while its compute is reused.
+    CHECK(gpu_buffer_download(gpu,chain_get_stage_capture_buffer(&v.sig_chain,v.stage_deflection),focus,256*240*4*sizeof(float)));
+    CHECK(memcmp(landing,focus,256*240*4*sizeof(float))==0);
+    // A service control must invalidate reused geometry immediately.
+    c.tv.h_pos=.1f;
+    CHECK(chain_run(&v.sig_chain,gpu));
+    CHECK(!v.sig_chain.stages[v.stage_deflection].reuse_output);
+    CHECK(gpu_buffer_download(gpu,v.buf_deflection_x,landing,256*240*4*sizeof(float)));
+    CHECK(fabsf(landing[(120*256+192)*4]-(original_x-.1f*sp.samples_per_line))<.01f);
+    c.tv.h_pos=0;
     c.tv.hv_sag=0; c.tv.focus_breathing=0; c.tv.overscan=.04f;
     CHECK(chain_run(&v.sig_chain,gpu));
     CHECK(gpu_buffer_download(gpu,v.buf_deflection_x,landing,256*240*4*sizeof(float)));
@@ -89,6 +109,7 @@ int test_crt_load(SDL_GPUDevice *gpu) {
     CHECK(landing[(120*256+192)*4]<192.5f*sp.samples_per_pixel-8);
     CHECK(landing[(120*256+254)*4+3]>.99f);
     video_gpu_reset_temporal_state(&v,gpu);
+    CHECK(!v.deflection_cache_valid);
     CHECK(gpu_buffer_download(gpu,v.buf_crt_load,load,map_count*sizeof(float)));
     for(size_t i=0;i<map_count;i++) CHECK(load[i]==0);
     free(input);free(output);free(load);free(landing);free(focus);

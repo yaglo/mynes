@@ -29,6 +29,7 @@ def display(linear):
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument("root",type=Path)
 parser.add_argument("--exposure",type=float,default=1.0,help="fixed linear exposure for every preview; 0.5 retains EDR detail on SDR")
+parser.add_argument("--scene",choices=["mario","contra","chart"],default="mario")
 args=parser.parse_args()
 root=args.root
 metrics, tiles, crops = {}, [], []
@@ -51,15 +52,19 @@ for first in sorted(root.glob("*.ppm.linear.pfm")):
     pic = display(mean)
     pic.save(root / (name+"-merged.png"))
     width, height = pic.size
+    if args.scene=="contra":
+        pic.crop((int(width*.305),int(height*.057),int(width*.695),int(height*.751))).save(root/(name+"-boss.png"))
     title=pic.crop((int(width*.32),int(height*.14),int(width*.32)+640,int(height*.14)+360))
     title.save(root/(name+"-title-crop.png"))
-    crop = pic.crop((int(width*.64), int(height*.035), int(width*.64)+384, int(height*.035)+224))
+    crop_x,crop_y=(.4,.26) if args.scene=="contra" else (.64,.035)
+    detail_x,detail_y=(.4,.57) if args.scene=="contra" else (.28,.77)
+    crop = pic.crop((int(width*crop_x), int(height*crop_y), int(width*crop_x)+384, int(height*crop_y)+224))
     crop.save(root / (name+"-beam-crop.png"))
-    detail = pic.crop((int(width*.28), int(height*.77), int(width*.28)+384, int(height*.77)+224))
+    detail = pic.crop((int(width*detail_x), int(height*detail_y), int(width*detail_x)+384, int(height*detail_y)+224))
     detail.save(root / (name+"-detail-crop.png"))
     panel = Image.new("RGB", (768, 250), "#202020")
     panel.paste(crop, (0,26)); panel.paste(detail, (384,26))
-    ImageDraw.Draw(panel).text((8,7), name+" — grayscale/beam and fine detail (native pixels)", fill="white")
+    ImageDraw.Draw(panel).text((8,7), name+(" - face and platform (native pixels)" if args.scene=="contra" else " - grayscale/beam and fine detail (native pixels)"), fill="white")
     crops.append(panel)
     # Average emitted light before encoding. Resizing an sRGB screenshot
     # biases fine masks darker and can invent differences between tubes.
@@ -68,7 +73,7 @@ for first in sorted(root.glob("*.ppm.linear.pfm")):
     reduced=np.stack([np.asarray(Image.fromarray(mean[:,:,c]).resize(size,Image.Resampling.LANCZOS)) for c in range(3)],axis=2)
     thumb=display(reduced)
     tile = Image.new("RGB",(640,510),"#202020"); tile.paste(thumb,(0,30))
-    ImageDraw.Draw(tile).text((8,9), name+" — linear average of consecutive frames", fill="white")
+    ImageDraw.Draw(tile).text((8,9), name+" - linear average of consecutive frames", fill="white")
     tiles.append(tile)
 for name, panels, width, height in [("overview",tiles,640,510),("native-crops",crops,768,250)]:
     sheet = Image.new("RGB",(width*2,height*((len(panels)+1)//2)),"#202020")

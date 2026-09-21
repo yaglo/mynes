@@ -2,7 +2,7 @@
  * gpu_render.c -- GPU texture management, rendering, and color conversion
  */
 #include "gpu_render.h"
-#include "gpu_half.h"
+#include "frame_capture.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -179,21 +179,30 @@ void gpu_render_update_dynamic_state(GPURenderCtx *ctx) {
  * permissions. PPM is an SDR preview: EDR values above reference white clip. */
 static bool capture_display(GPURenderCtx *ctx, const GPUDisplayParams *params,
                             int w, int h, const SDL_GPUViewport *viewport, const char *path) {
+    // At most one owned image/writer: a slow disk cannot grow a queue.
+    if (!frame_capture_finish(ctx->capture_job)) ctx->capture_failed=true;
+    ctx->capture_job=NULL;
     bool saved = false;
     SDL_GPUTextureCreateInfo ci = {0};
     ci.type=SDL_GPU_TEXTURETYPE_2D;
     ci.format=SDL_GetGPUSwapchainTextureFormat(ctx->gpu,ctx->window);
     ci.usage=SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
     ci.width=w; ci.height=h; ci.layer_count_or_depth=1; ci.num_levels=1;
-    SDL_GPUTexture *target=SDL_CreateGPUTexture(ctx->gpu,&ci);
+    /* Hidden playback already owns its final target. Read that exact frame
+     * instead of rendering the glass/mask a second time just for capture. */
+    bool owns_target=ctx->offscreen_target==NULL;
+    SDL_GPUTexture *target=owns_target ? SDL_CreateGPUTexture(ctx->gpu,&ci) : ctx->offscreen_target;
     int bpp=ctx->hdr_enabled ? 8 : 4;
     SDL_GPUTransferBufferCreateInfo bi={.usage=SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD,.size=(Uint32)(w*h*bpp)};
     SDL_GPUTransferBuffer *tb=SDL_CreateGPUTransferBuffer(ctx->gpu,&bi);
     if(target && tb) {
         SDL_GPUCommandBuffer *cmd=SDL_AcquireGPUCommandBuffer(ctx->gpu);
-        gpu_display_render(ctx->gpu_disp,ctx->gpu,cmd,ctx->display_tex,
-            ctx->display_tex_w,ctx->display_tex_h,target,w,h,params,viewport);
+        if (!cmd) goto done;
+        if (owns_target)
+            gpu_display_render(ctx->gpu_disp,ctx->gpu,cmd,ctx->display_tex,
+                ctx->display_tex_w,ctx->display_tex_h,target,w,h,params,viewport);
         SDL_GPUCopyPass *copy=SDL_BeginGPUCopyPass(cmd);
+        if (!copy) { SDL_CancelGPUCommandBuffer(cmd); goto done; }
         SDL_GPUTextureRegion region={.texture=target,.w=w,.h=h,.d=1};
         SDL_GPUTextureTransferInfo dst={.transfer_buffer=tb,.pixels_per_row=w,.rows_per_layer=h};
         SDL_DownloadFromGPUTexture(copy,&region,&dst); SDL_EndGPUCopyPass(copy);
@@ -201,56 +210,30 @@ static bool capture_display(GPURenderCtx *ctx, const GPUDisplayParams *params,
         bool ready=fence && SDL_WaitForGPUFences(ctx->gpu,true,&fence,1);
         if(fence) SDL_ReleaseGPUFence(ctx->gpu,fence);
         const void *data=ready ? SDL_MapGPUTransferBuffer(ctx->gpu,tb,false) : NULL;
-        uint8_t *encoded=malloc(65536), *row=malloc((size_t)w*3);
-        float *decoded=malloc(65536*sizeof(float)), *linear_row=malloc((size_t)w*3*sizeof(float));
-        char linear_path[4096];
-        snprintf(linear_path,sizeof(linear_path),"%s.linear.pfm",path);
-        FILE *f=NULL,*linear=NULL;
-        if(data && encoded && decoded && row && linear_row) {
-            // Half-float values form a finite lookup domain. Encoding once
-            // per value removes millions of pow() calls per screenshot.
-            int n=ctx->hdr_enabled ? 65536 : 256;
-            for(int i=0;i<n;i++) {
-                if(ctx->hdr_enabled) {
-                    float v=gpu_half_to_float((uint16_t)i)/fmaxf(params->sdr_white_level,.001f);
-                    decoded[i]=isfinite(v) ? v : 0;
-                    v=fminf(fmaxf(decoded[i],0),1);
-                    v=v<=.0031308f ? 12.92f*v : 1.055f*powf(v,1/2.4f)-.055f;
-                    encoded[i]=(uint8_t)lrintf(v*255);
-                } else {
-                    float v=i/255.0f; encoded[i]=(uint8_t)i;
-                    decoded[i]=v<=.04045f ? v/12.92f : powf((v+.055f)/1.055f,2.4f);
-                }
+        if (data) {
+            FrameCaptureImage image = {.pixels=data, .width=w, .height=h,
+                .hdr=ctx->hdr_enabled, .bgra=ci.format==SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM,
+                .white_level=params->sdr_white_level};
+            if (ctx->capture_async) {
+                ctx->capture_job=frame_capture_start(&image,path);
+                saved=ctx->capture_job!=NULL;
             }
-            f=fopen(path,"wb"); linear=fopen(linear_path,"wb");
-            if(f && linear) {
-                saved=fprintf(f,"P6\n%d %d\n255\n",w,h)>0
-                    && fprintf(linear,"PF\n%d %d\n-1.0\n",w,h)>0;
-                // Row-sized writes avoid a stdio call for every pixel. PFM
-                // is bottom-up, PPM top-down; both retain the same pixels.
-                bool bgra=ci.format==SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM;
-                for(int y=0;y<h && saved;y++) {
-                    for(int x=0;x<w;x++) for(int c=0;c<3;c++) {
-                        int channel=ctx->hdr_enabled || !bgra ? c : 2-c;
-                        size_t i=((size_t)y*w+x)*4+channel;
-                        size_t j=((size_t)(h-1-y)*w+x)*4+channel;
-                        unsigned top=ctx->hdr_enabled ? ((const uint16_t*)data)[i] : ((const uint8_t*)data)[i];
-                        unsigned bottom=ctx->hdr_enabled ? ((const uint16_t*)data)[j] : ((const uint8_t*)data)[j];
-                        row[x*3+c]=encoded[top];linear_row[x*3+c]=decoded[bottom];
-                    }
-                    saved=fwrite(row,3,w,f)==(size_t)w && fwrite(linear_row,3*sizeof(float),w,linear)==(size_t)w;
-                }
-            }
+            // Allocation/thread failure falls back to a synchronous write.
+            if (!saved) saved=frame_capture_write(&image,path);
         }
-        if(f && fclose(f)) saved=false;
-        if(linear && fclose(linear)) saved=false;
-        free(encoded);free(decoded);free(row);free(linear_row);
-        if(saved) fprintf(stderr,"Final CRT capture: %s\n",path);
         if(data) SDL_UnmapGPUTransferBuffer(ctx->gpu,tb);
     }
+done:
     if(tb) SDL_ReleaseGPUTransferBuffer(ctx->gpu,tb);
-    if(target) SDL_ReleaseGPUTexture(ctx->gpu,target);
+    if(target && owns_target) SDL_ReleaseGPUTexture(ctx->gpu,target);
     return saved;
+}
+
+float gpu_render_headroom(const GPURenderCtx *ctx) {
+    if (!ctx->hdr_enabled) return 1;
+    if (ctx->offscreen_w) return ctx->offscreen_headroom;
+    return fmaxf(1, SDL_GetFloatProperty(SDL_GetWindowProperties(ctx->window),
+        SDL_PROP_WINDOW_HDR_HEADROOM_FLOAT, 1));
 }
 
 bool gpu_render_prepare(GPURenderCtx *ctx) {
@@ -291,7 +274,9 @@ bool gpu_render_prepare(GPURenderCtx *ctx) {
     return true;
 }
 
-void gpu_render_release_pending(GPURenderCtx *ctx) {
+bool gpu_render_release_pending(GPURenderCtx *ctx) {
+    if (!frame_capture_finish(ctx->capture_job)) ctx->capture_failed=true;
+    ctx->capture_job=NULL;
     // SDL forbids cancelling a command buffer after acquiring a drawable.
     if(ctx->present_cmd) SDL_SubmitGPUCommandBuffer(ctx->present_cmd);
     ctx->present_cmd=NULL;ctx->present_texture=NULL;
@@ -301,10 +286,11 @@ void gpu_render_release_pending(GPURenderCtx *ctx) {
     }
     if(ctx->offscreen_target) SDL_ReleaseGPUTexture(ctx->gpu,ctx->offscreen_target);
     ctx->offscreen_target=NULL;
+    return !ctx->capture_failed;
 }
 
 void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
-    ctx->capture_complete = false;
+    ctx->capture_accepted = false;
     ctx->submit_ns=ctx->capture_ns=0;
     if(!gpu_render_prepare(ctx)) return;
     SDL_GPUCommandBuffer *cmd=ctx->present_cmd;
@@ -381,12 +367,10 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
         disp_params.input_gamma = (!ctx->owns_display_tex || ctx->hdr_enabled) ? 0.0f : chain->tv.gamma;
         disp_params.output_hdr = ctx->hdr_enabled;
         SDL_PropertiesID props = SDL_GetWindowProperties(ctx->window);
-        disp_params.hdr_headroom = ctx->hdr_enabled
-            ? fmaxf(1.0f, SDL_GetFloatProperty(props, SDL_PROP_WINDOW_HDR_HEADROOM_FLOAT, 1.0f)) : 1.0f;
+        disp_params.hdr_headroom = gpu_render_headroom(ctx);
         disp_params.sdr_white_level = ctx->hdr_enabled
             ? SDL_GetFloatProperty(props, SDL_PROP_WINDOW_SDR_WHITE_LEVEL_FLOAT, 1.0f) : 1.0f;
         if(ctx->offscreen_w) {
-            disp_params.hdr_headroom=ctx->hdr_enabled ? ctx->offscreen_headroom : 1;
             disp_params.sdr_white_level=1;
         }
         capture_params = disp_params;
@@ -457,9 +441,10 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
     if(can_capture && capture_path && (ctx->capture_path || (!captured && ctx->frame_counter >= capture_frame))) {
         SDL_GPUViewport viewport = {.x=vp_x,.y=vp_y,.w=vp_w,.h=vp_h,.min_depth=0,.max_depth=1};
         Uint64 start=SDL_GetTicksNS();
-        ctx->capture_complete = capture_display(ctx,&capture_params,sw,sh,&viewport,capture_path);
+        ctx->capture_accepted = capture_display(ctx,&capture_params,sw,sh,&viewport,capture_path);
         ctx->capture_ns=SDL_GetTicksNS()-start;
-        captured = ctx->capture_complete;
+        if (!ctx->capture_accepted) ctx->capture_failed=true;
+        captured = ctx->capture_accepted;
     }
 }
 

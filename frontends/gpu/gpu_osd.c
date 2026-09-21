@@ -2,7 +2,7 @@
 
 void gpu_osd_render(uint8_t *rgb, uint16_t *codes, const uint8_t (*palette)[3],
                     const OSDMenuLevel *level, const char *preset, bool modified,
-                    bool pal, bool hdr, float headroom, const GPURenderCtx *render) {
+                    bool pal, const GPURenderCtx *render) {
     if (!level) return;
     OSDNesFB fb = {.rgb=rgb,.idx=codes,.pal=palette};
     int rows = level->count < 10 ? level->count : 10;
@@ -18,12 +18,13 @@ void gpu_osd_render(uint8_t *rgb, uint16_t *codes, const uint8_t (*palette)[3],
     osd_nesfb_text(&fb,x+8,y+7,text,0x30,1);
     snprintf(text,sizeof(text),"%s%.34s",modified ? "* " : "",preset ? preset : "Custom");
     osd_nesfb_text(&fb,x+8,y+18,text,0x10,1);
-    snprintf(text,sizeof(text),"GPU / %s / %s %.2fX",pal ? "PAL" : "NTSC",hdr ? "HDR" : "SDR",headroom);
+    snprintf(text,sizeof(text),"GPU / %s / %s %.2fX",pal ? "PAL" : "NTSC",
+        render->hdr_enabled ? "HDR" : "SDR",gpu_render_headroom(render));
     osd_nesfb_text(&fb,x+8,y+29,text,0x00,1);
     snprintf(text,sizeof(text),"%dX%d / %s / %.0f TRIADS",render->drawable_w,render->drawable_h,
         render->mask_alignment ? "TUBE" : "PIXELS",render->effective_mask_triads);
     osd_nesfb_text(&fb,x+8,y+40,text,0x10,1);
-    snprintf(text,sizeof(text),"%s",render->output_geometry.native_known
+    snprintf(text,sizeof(text),"%s",render->offscreen_w ? "OFFSCREEN DRAWABLE PIXELS" : render->output_geometry.native_known
         ? (render->output_geometry.resampled ? "SCALED DESKTOP / F NATIVE FULLSCREEN" : "NATIVE PANEL PIXELS")
         : "DRAWABLE PIXELS / PANEL UNKNOWN");
     osd_nesfb_text(&fb,x+8,y+51,text,0x00,1);
