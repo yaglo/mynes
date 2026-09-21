@@ -57,6 +57,7 @@ typedef struct {
      * tap manager (which caches per-stage metadata tied to the old
      * chain). Cleared by the consumer. */
     bool              chain_rebuilt_flag;
+    Uint64            preset_notice_until;
 } PresetCtx;
 
 /* Set the global preset context (must be called before any callbacks fire). */
@@ -105,6 +106,7 @@ uint32_t preset_catalog_revision(void);
 int preset_active_index(void);
 bool preset_is_user(int index);
 bool preset_is_modified(void);
+const char *preset_cycle_notice(void); /* NULL after the brief selection notice */
 bool preset_manage(uint32_t operation, int index, uint32_t revision,
                    const char *name, char *error, size_t error_size);
 

@@ -181,6 +181,9 @@ The GPU frontend restores its last preset from
 `~/.config/mynes/config.json`. Press **M** in-game for the on-screen
 signal-chain menu, **P** to cycle presets, **C** to switch composite/raw
 views, **Shift+C** for split view, and **O** to reopen the ROM browser.
+Changing presets displays the selected name for three seconds. Bundled presets
+load relative to the executable (`build/presets`), independently of the launch
+directory; personal presets remain in `~/.config/mynes/presets`.
 
 ## Tests
 

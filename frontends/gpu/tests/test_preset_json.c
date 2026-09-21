@@ -670,6 +670,9 @@ static int test_compact_nested_json(void)
     ASSERT_NEAR(p.contrast,1.1,1e-6,"unknown array ignored");
     ASSERT_TRUE(p.rf.enabled,"compact bool");
     ASSERT_NEAR(p.rf.carrier_level_dbm,-20,1e-6,"negative number");
+    ASSERT_TRUE(write_text_file(path,"{\"name\":\"CRT \\u2014 Caf\\u00e9 \\ud83d\\udcfa\"}"),"write Unicode escapes");
+    ASSERT_TRUE(preset_json_load(&p,path),"Unicode JSON accepted");
+    ASSERT_EQ_STR(p.name,"CRT — Café 📺","decode BMP and surrogate pair to UTF-8");
     const char *bad[]={"{", "{} junk", "{\"gamma\":1,}", "{\"tv\":{\"gamma\":nan}}", "{\"name\":\"bad\\q\"}", "{\"contrast\":1e999}", "{\"tv\":{\"gamma\":2.}}"};
     PhysicalPreset before=p;
     for (size_t i=0;i<sizeof(bad)/sizeof(*bad);i++) {

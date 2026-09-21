@@ -1140,6 +1140,11 @@ int main(int argc, char **argv) {
                 preset_ctx.region == SIGNAL_REGION_PAL, &render_ctx);
         }
 
+        if (!browser_active && !osd_menu_is_open) {
+            const uint8_t (*pal)[3]=display_ppu.color_palette ? display_ppu.color_palette : ppu_palette_2c02;
+            gpu_osd_preset_notice(display_ppu.framebuffer,display_ppu.index_framebuffer,pal,preset_cycle_notice());
+        }
+
         /* Performance overlay (V key) — drawn into NES framebuffer so it
          * gets the NTSC composite treatment like the OSD menu. */
         if (perf_overlay && perf_text[0]) {

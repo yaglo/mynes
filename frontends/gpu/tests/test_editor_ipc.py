@@ -16,10 +16,13 @@ import time
 root = Path(__file__).resolve().parents[3]
 binary = Path(sys.argv[1]).resolve()
 with tempfile.TemporaryDirectory(prefix="mynes-editor-") as tmp:
+    # A foreign checkout in cwd must not shadow the executable's library.
+    foreign=Path(tmp)/"presets"; foreign.mkdir()
+    (foreign/"studio_pvm.json").write_text('{"name":"Wrong checkout","description":"stale"}')
     sockpath = str(Path(tmp) / "editor.sock")
     env = dict(os.environ, XDG_CONFIG_HOME=tmp, MYNES_DEBUG_SOCKET=sockpath, MYNES_REVIEW_NO_INPUT="1")
     with open(Path(tmp) / "frontend.log", "w+") as log:
-        process = subprocess.Popen([str(binary), "--debug-server", "--offscreen", "640x480", "--preset", "presets/studio_pvm.json"], cwd=root, env=env, stdout=log, stderr=log)
+        process = subprocess.Popen([str(binary), "--debug-server", "--offscreen", "640x480", "--preset", "studio_pvm"], cwd=tmp, env=env, stdout=log, stderr=log)
         try:
             for _ in range(100):
                 if Path(sockpath).exists():
@@ -82,6 +85,9 @@ with tempfile.TemporaryDirectory(prefix="mynes-editor-") as tmp:
 
             revision, active, dirty, entries = catalog()
             assert active >= 0 and not dirty, (active, dirty)
+            expected=json.loads((root/"presets/studio_pvm.json").read_text())["name"]
+            assert entries[active][2]==expected, "Loaded the launch directory's stale preset"
+            assert all(e[2]!="Wrong checkout" for e in entries)
             # A macOS menu tracking loop can temporarily stall MainActor reads.
             # Backpressure must not disconnect the editor or lose its selection.
             time.sleep(8)
@@ -120,7 +126,7 @@ with tempfile.TemporaryDirectory(prefix="mynes-editor-") as tmp:
             assert abs(hum-.012)<1e-5
             revision, active, dirty, entries = command(5, user_id, revision)
             assert active == -1 and dirty and not paths[0].exists()
-            print("Preset IPC: active preset, dirty state, stalled reader, fragmented edits, save-as, save, rename, topology switch, bundled protection, stale revision rejection, delete: PASS")
+            print("Preset IPC: executable-relative library, active preset, dirty state, stalled reader, fragmented edits, save-as, save, rename, topology switch, bundled protection, stale revision rejection, delete: PASS")
             client.close()
         except Exception:
             print(f"Frontend exit status: {process.poll()}",file=sys.stderr)

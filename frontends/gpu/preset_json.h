@@ -132,8 +132,18 @@ static inline char *preset_json__strip(char *buf)
     return buf;
 }
 
-/* Unescape a JSON string value in-place (strip surrounding quotes, handle
- * \" and \\ sequences). Returns pointer into buf. */
+static inline unsigned preset_json__hex4(const char *s)
+{
+    unsigned value=0;
+    for (int i=0;i<4;i++) {
+        unsigned c=(unsigned char)s[i];
+        value=(value<<4) | (c<='9' ? c-'0' : (c|32)-'a'+10);
+    }
+    return value;
+}
+
+/* Unescape a validated JSON string in-place, including Unicode to UTF-8.
+ * Returns a pointer past the surrounding quote. */
 static inline char *preset_json__unescape(char *buf)
 {
     /* Strip surrounding quotes. */
@@ -153,6 +163,31 @@ static inline char *preset_json__unescape(char *buf)
             case 'n':  *dst++ = '\n'; break;
             case 'r':  *dst++ = '\r'; break;
             case 't':  *dst++ = '\t'; break;
+            case 'b':  *dst++ = '\b'; break;
+            case 'f':  *dst++ = '\f'; break;
+            case 'u': {
+                /* The lexer has validated the four hex digits. UTF-8 is
+                 * never longer than the consumed JSON escape(s). */
+                unsigned cp=preset_json__hex4(src+1); src+=4;
+                if (cp>=0xd800 && cp<=0xdbff && src[1]=='\\' && src[2]=='u') {
+                    unsigned low=preset_json__hex4(src+3);
+                    if (low>=0xdc00 && low<=0xdfff) {
+                        cp=0x10000+((cp-0xd800)<<10)+(low-0xdc00); src+=6;
+                    }
+                }
+                if (cp>=0xd800 && cp<=0xdfff) cp=0xfffd;
+                if (cp<0x80) *dst++=(char)cp;
+                else if (cp<0x800) {
+                    *dst++=(char)(0xc0|(cp>>6)); *dst++=(char)(0x80|(cp&63));
+                } else if (cp<0x10000) {
+                    *dst++=(char)(0xe0|(cp>>12)); *dst++=(char)(0x80|((cp>>6)&63));
+                    *dst++=(char)(0x80|(cp&63));
+                } else {
+                    *dst++=(char)(0xf0|(cp>>18)); *dst++=(char)(0x80|((cp>>12)&63));
+                    *dst++=(char)(0x80|((cp>>6)&63)); *dst++=(char)(0x80|(cp&63));
+                }
+                break;
+            }
             default:   *dst++ = *src; break;
             }
         } else {

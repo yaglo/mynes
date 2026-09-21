@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <limits.h>
+#include <sys/stat.h>
 #include "ppu/ppu.h"
 #include "preset_json.h"
 #include "config.h"
@@ -551,7 +552,13 @@ static bool preset_load_by_index_mode(int idx, bool preserve_live_region) {
     }
     preset_baseline = preset_capture_live();
     preset_remember_active();
+    if (preserve_live_region) g_ctx->preset_notice_until=SDL_GetTicks()+3000;
     return true;
+}
+
+const char *preset_cycle_notice(void) {
+    if (!g_ctx || SDL_GetTicks()>=g_ctx->preset_notice_until) return NULL;
+    return preset_display_name(*g_ctx->current_preset);
 }
 
 /* OSD action callbacks (OSD needs void(void) function pointers). One per
@@ -969,8 +976,21 @@ void preset_ctx_init(PresetCtx *ctx) {
      * Slot 0 of menu_presets is reserved for the "Save current..."
      * action; scanned presets occupy slots 1..preset_count.
      * ================================================================ */
-    preset_count = preset_json_scan_dir("presets",
-        preset_names, preset_paths, PRESET_MAX);
+    /* Never borrow a different checkout's presets from the process cwd.
+     * CMake places resources beside bin/; app bundles may put them in base. */
+    char bundled_dir[1024] = {0};
+    const char *base = SDL_GetBasePath();
+    const char *relative[] = {"../presets", "presets", "../../presets"};
+    bool found = false;
+    for (size_t i=0; base && i<sizeof(relative)/sizeof(*relative); i++) {
+        snprintf(bundled_dir,sizeof(bundled_dir),"%s%s",base,relative[i]);
+        struct stat info;
+        if (stat(bundled_dir,&info)==0 && S_ISDIR(info.st_mode)) { found=true; break; }
+    }
+    preset_count = found ? preset_json_scan_dir(bundled_dir,
+        preset_names, preset_paths, PRESET_MAX) : 0;
+    if (found) fprintf(stderr,"GPU preset library: %s\n",bundled_dir);
+    else fprintf(stderr,"GPU preset library missing beside executable: %s\n",base ? base : "unknown");
     int shipped = preset_count;
     /* Present the four actively tuned references first; keep older/user
      * profiles addressable without renaming their persistent identifiers. */

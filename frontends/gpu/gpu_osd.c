@@ -1,5 +1,28 @@
 #include "gpu_osd.h"
 
+void gpu_osd_preset_notice(uint8_t *rgb, uint16_t *codes, const uint8_t (*palette)[3],
+                           const char *name) {
+    if (!name || !*name) return;
+    OSDNesFB fb={.rgb=rgb,.idx=codes,.pal=palette};
+    char lines[4][37]={{0}};
+    int count=0;
+    while (*name && count<4) {
+        size_t n=strlen(name); if(n>36) n=36;
+        if(name[n]) {
+            size_t split=n;
+            while(split && name[split]!=' ') split--;
+            if(split) n=split;
+        }
+        memcpy(lines[count++],name,n); name+=n;
+        while(*name==' ') name++;
+    }
+    int height=19+count*9, y=224-height;
+    osd_nesfb_fill(&fb,12,y,232,height,0x0f);
+    osd_nesfb_fill(&fb,12,y,232,1,0x2c);
+    osd_nesfb_text(&fb,20,y+5,"PRESET",0x2c,1);
+    for(int i=0;i<count;i++) osd_nesfb_text(&fb,20,y+16+i*9,lines[i],0x30,1);
+}
+
 void gpu_osd_render(uint8_t *rgb, uint16_t *codes, const uint8_t (*palette)[3],
                     const OSDMenuLevel *level, const char *preset, bool modified,
                     bool pal, const GPURenderCtx *render) {

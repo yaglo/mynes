@@ -3,7 +3,7 @@
 The curated, visually polished group is **Sony PVM-14L2, JVC D-Series, Toshiba 14AF, and Stas's Favourite**, listed first in the preset menu. The other profiles remain available and have had their settings audited, but are not equally researched commercial-model matches. See [hardware evidence](gpu-hardware-research.md) and [current captures](gpu-visual-review.md).
 
 
-The library contains 18 profiles. Sony, JVC and Toshiba have published hardware references; Stas's Favourite is a generic worn consumer set. The other profiles remain compatibility and exploratory presets. Beam widths, phosphor spectra, regulation and individual tube condition are estimates, not measurements of 18 televisions.
+The library contains 20 profiles. Sony, JVC and Toshiba have published hardware references; Stas's Favourite is a generic worn consumer set. The other profiles remain compatibility and exploratory presets. Beam widths, phosphor spectra, regulation and individual tube condition are estimates, not measurements of 20 televisions.
 
 ## Physical identities
 
@@ -27,6 +27,23 @@ The library contains 18 profiles. Sony, JVC and Toshiba have published hardware 
 | Stas's Favourite | rf | slot; 440 | 0.55 → 1.42 | 2.5 | size response 0.12; rail load 0.08 |
 | Studio aperture grille | svideo | aperture_grille; 900 | 0.32 → 0.6 | 1.5 | regulated |
 | Toshiba 14AF (nominal) | composite / three-line | slot; 480 estimated | 0.60 → 1.20 | 4.2 | modest supply response |
+
+| Warm Desktop Monitor | svideo | shadow; 520 | 0.54 → 1.10 | 5 | size response 0.035; rail load 0.035 |
+| Vivid Living Room | composite | shadow; 480 | 0.55 → 1.15 | 2.8 | regulated size; rail load 0.07 |
+
+## Personal-library curation
+
+Eleven saved variants were backed up byte-for-byte, with SHA-256 hashes and a replacement manifest, before removal from the active personal library. Seven compact-monitor variants consolidate into **Warm Desktop Monitor**, preserving the warm white balance and rich Y/C colour. **Vivid Living Room** preserves the saved consumer composite colour preference with less halation and a firmer black response. These are personal looks, not hardware calibrations. The redundant Dying CRT pair and the coarse, desaturated Basement variant are superseded by the corresponding bundled profiles.
+
+All 18 pre-existing profiles were inspected on rendered signal charts. The two promoted profiles, Dying CRT and Large RGB Monitor were also reviewed on consecutive Contra boss frames averaged in linear light at 1280×960, including native-pixel beam/mask crops. The RGB monitor retains visible scanline and shadow-mask structure; Dying CRT is deliberately soft and weak-blue but no longer has a trapezoidal raster. The two personal looks differ principally in warm Y/C separation versus vivid composite colour and softer chroma edges.
+
+![Curated personal looks alongside worn and RGB profiles](images/preset-curation-contra.png)
+
+The reported old NEC description and Dying CRT geometry came from a still-running main-checkout executable. The current GPU build now discovers bundled presets relative to its executable, rather than borrowing a library from the working directory. A hostile-working-directory IPC regression checks this. JSON Unicode escapes also decode correctly, so escaped em dashes no longer become literal `u2014`.
+
+Preset changes through cycling, OSD and Studio show a three-second name notice; startup loads do not obscure captures.
+
+![Preset selection notice captured through the CRT pipeline](images/preset-selection-notice.png)
 
 ## Changes made after inspecting renders
 
@@ -81,8 +98,8 @@ The PVM reference is [Sony's published specification](https://www.sony.jp/pro-mo
 | Profile | Connection | White point | R−Y / B−Y gain offset | Gun gamma | Spot growth at white |
 |---|---|---:|---:|---:|---:|
 | PVM-14L2 | Composite | D65 | 0 / 0 | 2.4 | 25% |
-| JVC D-Series | Composite | 9300 K | +16% / −2% | 2.35, small tracking offsets | 40% |
-| Toshiba 14AF43 | Composite | 8000 K | +6% / +2.5% | 2.3, small tracking offsets | 45% |
+| JVC D-Series | Composite | 9300 K | +16% / −2% | 2.4, small tracking offsets | 40% |
+| Toshiba 14AF43 | Composite | 8000 K | +6% / +2.5% | 2.4, small tracking offsets | 45% |
 | Stas's Favourite | RF | 7800 K | +10% / −3.5% | 2.2, worn tracking | 55% |
 
 Consumer colour settings are explicit estimates; they are not extracted factory coefficients. The JVC owner record reports cool Standard mode and red push. Toshiba's service procedure specifies visual white-balance adjustment, without establishing our 8000 K target. PVM D65 is documented. Nominal 525-line phosphor primaries are a standards-based approximation to the unmeasured tubes. Decoder colour-difference gains preserve the gray axis; gun balance and phosphor gamut act at their respective stages.

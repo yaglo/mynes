@@ -379,6 +379,12 @@ if(NES_BUILD_GPU_FRONTEND)
         )
         add_custom_target(gpu_shaders DEPENDS ${SHADER_STAMP})
         add_dependencies(mynes_gpu gpu_shaders)
+        # Keep presets with the executable, independent of the launch directory.
+        add_custom_target(gpu_presets
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                ${CMAKE_SOURCE_DIR}/presets ${CMAKE_BINARY_DIR}/presets
+            COMMENT "Copying GPU preset library")
+        add_dependencies(mynes_gpu gpu_presets)
 
         if(NES_BUILD_TESTS)
             add_executable(test_frame_capture frontends/gpu/tests/test_frame_capture.c
