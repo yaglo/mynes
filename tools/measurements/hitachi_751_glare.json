@@ -1,0 +1,27 @@
+{
+  "device": "Hitachi SuperScan Elite 751",
+  "source": {
+    "authors": "Michael J. Flynn and Aldo Badano",
+    "title": "Image quality degradation by light scattering in display devices",
+    "year": 1999,
+    "doi": "https://doi.org/10.1007/BF03168843",
+    "tables": [1, 2]
+  },
+  "bright_disk_diameter_mm": 320,
+  "glare_ratio_definition": "center luminance without dark disk / center luminance with dark disk, after full-black subtraction",
+  "conditions": "1024x1024 patterns; maximum contrast; brightness just below emission onset; collimated photopic probe less than 1 mm from faceplate",
+  "glare": [
+    {"dark_disk_diameter_mm": 10, "ratio": 25.0, "repeatability_sd": 0.1},
+    {"dark_disk_diameter_mm": 20, "ratio": 44.0, "repeatability_sd": 0.1}
+  ],
+  "glare_repeats": 20,
+  "reflection": {
+    "specular": 0.021,
+    "specular_repeatability_sd": 0.001,
+    "specular_angle_degrees": 15,
+    "diffuse_per_sr": 0.0251,
+    "diffuse_repeatability_sd_per_sr": 0.0002,
+    "repeats": 10,
+    "illumination": "40 cm white enclosure with fluorescent lamps"
+  }
+}

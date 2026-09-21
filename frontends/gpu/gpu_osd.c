@@ -84,9 +84,30 @@ void gpu_osd_preset_notice(uint32_t *rgba, const char *name) {
     for(int i=0;i<count;i++) text(rgba,20,y+16+i*9,lines[i],0x30,1);
 }
 
+void gpu_osd_performance(uint32_t *rgba,const char *stats) {
+    if(!stats || !*stats) return;
+    /* Wrap exceptional long timings rather than running beyond the tube. */
+    char lines[4][37]={{0}};
+    int count=0;
+    while(*stats && count<4) {
+        size_t n=strlen(stats); if(n>36) n=36;
+        if(stats[n]) {
+            size_t split=n;
+            while(split && stats[split]!=' ') split--;
+            if(split) n=split;
+        }
+        memcpy(lines[count++],stats,n); stats+=n;
+        while(*stats==' ') stats++;
+    }
+    int height=10+count*9,y=224-height;
+    fill(rgba,12,y,232,height,0x0f);
+    fill(rgba,12,y,232,1,0x2c);
+    for(int i=0;i<count;i++) text(rgba,20,y+5+i*9,lines[i],0x30,1);
+}
+
 void gpu_osd_render(uint32_t *rgba, const OSDMenuLevel *level, bool editing,
                     const char *preset, bool modified,
-                    bool pal, const GPURenderCtx *render) {
+                    bool pal, const GPURenderCtx *render, float headroom) {
     if (!level) return;
     if (editing && level->selected >= 0 && level->selected < level->count &&
         gpu_osd_editable(&level->items[level->selected])) {
@@ -107,7 +128,7 @@ void gpu_osd_render(uint32_t *rgba, const OSDMenuLevel *level, bool editing,
     snprintf(line,sizeof(line),"%s%.34s",modified ? "* " : "",preset ? preset : "Custom");
     text(rgba,x+8,y+18,line,0x10,1);
     snprintf(line,sizeof(line),"GPU / %s / %s %.2fX",pal ? "PAL" : "NTSC",
-        render->hdr_enabled ? "HDR" : "SDR",gpu_render_headroom(render));
+        render->hdr_enabled ? "HDR" : "SDR",headroom);
     text(rgba,x+8,y+29,line,0x00,1);
     snprintf(line,sizeof(line),"%dX%d / %s / %.0f TRIADS",render->drawable_w,render->drawable_h,
         render->mask_alignment ? "TUBE" : "PIXELS",render->effective_mask_triads);

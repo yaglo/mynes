@@ -26,7 +26,7 @@ bool gpu_benchmark(VideoGPUChain *v, SDL_GPUDevice *gpu,
     printf("BENCH metric=CPU-submit-to-final-GPU-fence; includes uploads, complete CRT; excludes emulation/audio/vsync/readback\n");
     printf("BENCH geometry_cache=%d\n", !recompute_geometry);
     for (unsigned size=0; size<sizeof(sizes)/sizeof(sizes[0]); size++) {
-        int w=sizes[size][0], h=sizes[size][1];
+        int w=sizes[size][0], h=v->chain->tv.monitor_model==1 ? w*10/16 : sizes[size][1];
         if (!video_gpu_set_beam_params(v,gpu,w,h,h/240,v->beam_sigma_narrow,v->beam_sigma_wide)) return false;
         GPUDisplay display={0};
         if (!gpu_display_init_target(&display,gpu,SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT,w,h,render_shader_dir)) return false;

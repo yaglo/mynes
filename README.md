@@ -219,6 +219,18 @@ The GPU frontend restores its last preset from
 `~/.config/mynes/config.json`. Press **M** in-game for the on-screen
 signal-chain menu, **P** to cycle presets, **C** to switch composite/raw
 views, **Shift+C** for split view, and **O** to reopen the ROM browser.
+The browser has **Files/Recent** tabs (**Tab**), type-to-filter search, arrow
+navigation, **Page Up/Down**, **Home/End**, and mouse-wheel navigation in the GPU
+frontend. **Enter** opens a ROM or folder; **Right** enters a folder;
+**Left** goes to its parent. **Backspace** erases search text, or goes up when
+search is empty. **Escape** clears a search first, then resumes the game (or
+quits at startup). The browser remembers its folder and selection when reopened,
+shows load errors in place, and includes all saved recent ROMs.
+
+In the GPU frontend, the browser and **V** performance overlay join Setup after
+composite decoding: they retain the tube's beam, mask and convergence, without
+composite colour fringing. Menus take priority over performance statistics.
+
 The menu is translucent; Enter on a parameter opens a compact bottom adjustment
 strip. Left/Right changes its value, and Enter or Escape returns to the menu.
 Changing presets displays the selected name for three seconds. Bundled presets

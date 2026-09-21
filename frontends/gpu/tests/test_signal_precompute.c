@@ -382,6 +382,40 @@ static int test_fir_notch_plus_peaking_composable(void) {
     return 1;
 }
 
+/* Sweep much more densely than the coefficient normalizer. Verify the
+ * specified peak gain, DC and symmetry at both NES sampling clocks. */
+static int test_rgb_bandwidth_3db(void) {
+    for(int region=0;region<2;region++) for(int mhz=2;mhz<=10;mhz++) {
+        float f=mhz*1e6f/signal_region_sample_rate_hz(region), taps[31];
+        int n=((int)ceilf(1.5f/f))|1;
+        if(n<9)n=9;
+        if(n>31)n=31;
+        signal_design_fir_3db(taps,n,f);
+        ASSERT_NEAR(20*log10f(fir_magnitude_at(taps,n,f)),-3,.0001f,"specified bandwidth");
+        ASSERT_NEAR(fir_tap_sum(taps,n),1,1e-6f,"amplifier DC");
+    }
+    return 1;
+}
+
+static int test_aperture_gain_range(void) {
+    for(int region=0;region<2;region++) for(int step=0;step<=4;step++) {
+        float taps[31]={0}; taps[15]=1;
+        float db=step*1.5f;
+        signal_apply_peaking(taps,31,4.5e6f/signal_region_sample_rate_hz(region),1);
+        signal_normalize_aperture_gain(taps,31,db);
+        ASSERT_NEAR(fir_tap_sum(taps,31),1,1e-6f,"aperture DC");
+        float peak=0;
+        for(int bin=0;bin<=16384;bin++)
+            peak=fmaxf(peak,fir_magnitude_at(taps,31,bin/32768.0f));
+        ASSERT_NEAR(20*log10f(peak),db,.0001f,"aperture peak dB");
+        for(int k=0;k<31;k++) {
+            ASSERT_NEAR(taps[k],taps[30-k],1e-6f,"aperture symmetry");
+            if(!step) ASSERT_NEAR(taps[k],k==15 ? 1 : 0,1e-7f,"aperture off");
+        }
+    }
+    return 1;
+}
+
 static int test_fir_symmetric(void) {
     /* Hamming-windowed sinc lowpass is linear-phase → even symmetry. */
     int ns[3] = {31, 37, 47};
@@ -623,6 +657,8 @@ int main(void) {
     RUN_TEST(test_fir_peaking_preserves_dc);
     RUN_TEST(test_fir_notch_plus_peaking_composable);
     RUN_TEST(test_fir_symmetric);
+    RUN_TEST(test_aperture_gain_range);
+    RUN_TEST(test_rgb_bandwidth_3db);
 
     printf("\n--- signal_precompute_init ---\n");
     RUN_TEST(test_clock_phase_and_decay);

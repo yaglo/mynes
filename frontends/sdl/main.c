@@ -66,6 +66,9 @@ static int sdl_to_browser_key(int scancode) {
     case SDL_SCANCODE_ESCAPE:    return BROWSER_KEY_ESCAPE;
     case SDL_SCANCODE_PAGEUP:    return BROWSER_KEY_PAGEUP;
     case SDL_SCANCODE_PAGEDOWN:  return BROWSER_KEY_PAGEDOWN;
+    case SDL_SCANCODE_HOME:      return BROWSER_KEY_HOME;
+    case SDL_SCANCODE_END:       return BROWSER_KEY_END;
+    case SDL_SCANCODE_TAB:       return BROWSER_KEY_TAB;
     default:                     return -1;
     }
 }
@@ -1990,6 +1993,10 @@ void handle_input(void) {
                 }
                 break;
 
+            case SDL_TEXTINPUT:
+                if (browser_active) browser_handle_text(&browser,event.text.text);
+                break;
+
             case SDL_KEYDOWN:
                 /* --- Browser mode: owns input until closed. --- */
                 if (browser_active) {
@@ -2015,19 +2022,24 @@ void handle_input(void) {
                         } else {
                             fprintf(stderr, "Failed to load %s: %s\n",
                                 browser.chosen_path, nes_rom_error_str(re));
+                            browser_set_error(&browser,nes_rom_error_str(re));
+                            r=BROWSER_BROWSING;
                         }
                     }
                     if (r == BROWSER_CANCELLED && !rom_loaded) {
                         running = false;
                     }
-                    if (r != BROWSER_BROWSING) browser_active = false;
+                    if (r != BROWSER_BROWSING) { browser_active = false; SDL_StopTextInput(); }
                     break;
                 }
 
                 /* O: reopen the ROM browser mid-session. */
                 if (event.key.keysym.sym == SDLK_o) {
-                    browser_init(&browser, NULL, &mynes_config);
+                    if (!browser.current_dir[0]) browser_init(&browser, NULL, &mynes_config);
+                    else browser_refresh(&browser);
+                    browser.can_resume=rom_loaded;
                     browser_active = true;
+                    SDL_StartTextInput();
                     break;
                 }
 
@@ -2872,6 +2884,7 @@ int main(int argc, char *argv[]) {
     } else {
         browser_init(&browser, NULL, &mynes_config);
         browser_active = true;
+        SDL_StartTextInput();
     }
 
     printf("\nRunning... Press ESC to quit\n");

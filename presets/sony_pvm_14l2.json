@@ -1,6 +1,6 @@
 {
     "name": "Sony PVM-14L2 (nominal)",
-    "description": "14L2 grille, D65 and adaptive composite separation. Nominal 525 phosphor gamut and current-dependent spot; published geometry/bandwidth, not an individually measured tube.",
+    "description": "14L2 grille, D65, 1 ms AFC and 10 MHz (-3 dB) RGB. Aperture spans 0-6 dB with approximate shape; generic adaptive comb and nominal phosphor/spot, not an individually measured tube.",
     "connection": "composite",
     "comb_type": "2line",
     "console_variant": 1,
@@ -30,6 +30,8 @@
     },
     "tv": {
         "chroma_bandwidth": 750000,
+        "h_afc_tau_ms": 1.0,
+        "aperture_max_db": 6.0,
         "luma_bandwidth": 4500000.0,
         "hue_offset": 0.0,
         "saturation": 1.0,
@@ -43,6 +45,7 @@
         "r_cutoff": 0.0,
         "g_cutoff": 0.0,
         "b_cutoff": 0.0,
+        "rgb_bandwidth_3db": 1,
         "r_bandwidth": 10000000,
         "g_bandwidth": 10000000,
         "b_bandwidth": 10000000,

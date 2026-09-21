@@ -48,9 +48,11 @@ struct BlurParams
 {
     float2 direction;
     float input_gamma;
+    float extended_kernel;
 };
 
-constant spvUnsafeArray<float, 17> _107 = spvUnsafeArray<float, 17>({ 0.062955386936664581298828125, 0.0621915571391582489013671875, 0.059955231845378875732421875, 0.05640529096126556396484375, 0.051785685122013092041015625, 0.0463977269828319549560546875, 0.04056774079799652099609375, 0.0346148125827312469482421875, 0.02882307581603527069091796875, 0.0234215557575225830078125, 0.01857326366007328033447265625, 0.01437334530055522918701171875, 0.010854869149625301361083984375, 0.00799997150897979736328125, 0.0057537290267646312713623046875, 0.0040383823215961456298828125, 0.00276606646366417407989501953125 });
+constant spvUnsafeArray<float, 17> _54 = spvUnsafeArray<float, 17>({ 0.099739097058773040771484375, 0.096670448780059814453125, 0.08801944553852081298828125, 0.075287021696567535400390625, 0.0604948215186595916748046875, 0.045663885772228240966796875, 0.032380543649196624755859375, 0.021570093929767608642578125, 0.013498219661414623260498046875, 0.007935193367302417755126953125, 0.004382230341434478759765625, 0.002273471094667911529541015625, 0.001108001335524022579193115234375, 0.00050727999769151210784912109375, 0.00021817839297000318765640258789062, 8.8152002717833966016769409179688e-05, 3.3458698453614488244056701660156e-05 });
+constant spvUnsafeArray<float, 17> _78 = spvUnsafeArray<float, 17>({ 0.062955386936664581298828125, 0.0621915571391582489013671875, 0.059955231845378875732421875, 0.05640529096126556396484375, 0.051785685122013092041015625, 0.0463977269828319549560546875, 0.04056774079799652099609375, 0.0346148125827312469482421875, 0.02882307581603527069091796875, 0.0234215557575225830078125, 0.01857326366007328033447265625, 0.01437334530055522918701171875, 0.010854869149625301361083984375, 0.00799997150897979736328125, 0.0057537290267646312713623046875, 0.0040383823215961456298828125, 0.00276606646366417407989501953125 });
 
 struct main0_out
 {
@@ -63,32 +65,49 @@ struct main0_in
 };
 
 static inline __attribute__((always_inline))
-float3 light(thread const float2& p, texture2d<float> tex_input, sampler tex_inputSmplr, constant BlurParams& _30)
+float3 light(thread const float2& p, constant BlurParams& _22, texture2d<float> tex_input, sampler tex_inputSmplr)
 {
     float3 v = fast::max(tex_input.sample(tex_inputSmplr, p).xyz, float3(0.0));
-    float3 _38;
-    if (_30.input_gamma > 0.0)
+    float3 _103;
+    if (_22.input_gamma > 0.0)
     {
-        _38 = powr(v, float3(_30.input_gamma));
+        _103 = powr(v, float3(_22.input_gamma));
     }
     else
     {
-        _38 = v;
+        _103 = v;
     }
-    return _38;
+    return _103;
 }
 
-fragment main0_out main0(main0_in in [[stage_in]], constant BlurParams& _30 [[buffer(0)]], texture2d<float> tex_input [[texture(0)]], sampler tex_inputSmplr [[sampler(0)]])
+static inline __attribute__((always_inline))
+float weight(thread const int& i, constant BlurParams& _22)
+{
+    float _31;
+    if (_22.extended_kernel > 0.0)
+    {
+        _31 = _54[i];
+    }
+    else
+    {
+        _31 = _78[i];
+    }
+    return _31;
+}
+
+fragment main0_out main0(main0_in in [[stage_in]], constant BlurParams& _22 [[buffer(0)]], texture2d<float> tex_input [[texture(0)]], sampler tex_inputSmplr [[sampler(0)]])
 {
     main0_out out = {};
     float2 param = in.uv;
-    float3 accum = light(param, tex_input, tex_inputSmplr, _30) * 0.062955386936664581298828125;
+    int param_1 = 0;
+    float3 accum = light(param, _22, tex_input, tex_inputSmplr) * weight(param_1, _22);
     for (int i = 1; i <= 16; i++)
     {
-        float2 offset = _30.direction * float(i);
-        float2 param_1 = in.uv + offset;
-        float2 param_2 = in.uv - offset;
-        accum += ((light(param_1, tex_input, tex_inputSmplr, _30) + light(param_2, tex_input, tex_inputSmplr, _30)) * _107[i]);
+        float2 offset = _22.direction * float(i);
+        float2 param_2 = in.uv + offset;
+        float2 param_3 = in.uv - offset;
+        int param_4 = i;
+        accum += ((light(param_2, _22, tex_input, tex_inputSmplr) + light(param_3, _22, tex_input, tex_inputSmplr)) * weight(param_4, _22));
     }
     out.frag_color = float4(accum, 1.0);
     return out;

@@ -1,5 +1,6 @@
 /* Navigation semantics and real GPU alpha mixing for the TV-generated OSD. */
 #include "gpu_osd.h"
+#include "browser.h"
 #include "video_gpu.h"
 #include "signal_precompute.h"
 #include <stdlib.h>
@@ -39,6 +40,7 @@ int test_osd(SDL_GPUDevice *gpu) {
     signal_precompute_init(&sp,0);
     video_chain_init_preset(&c,VIDEO_CONN_COMPOSITE,VIDEO_COMB_NONE,0);
     CHECK(video_gpu_init(&v,gpu,&c,"shaders/compute",sp.fir_y,sp.fir_y_n,sp.fir_c,sp.fir_c_n,sp.fir_q,sp.fir_q_n));
+    CHECK(v.stage_osd>v.stage_matrix && v.stage_osd<v.stage_post_pipeline);
     for(int i=0;i<v.sig_chain.num_stages;i++) chain_set_stage_enabled(&v.sig_chain,i,false);
     uint32_t *ui=calloc(GPU_OSD_PIXELS,sizeof(uint32_t));
     float *input=malloc(v.rgb_size),*output=malloc(v.rgb_size);
@@ -46,16 +48,29 @@ int test_osd(SDL_GPUDevice *gpu) {
     ui[37*256+20]=0xff0000ffu; // opaque red
     ui[37*256+21]=0x8000ff00u; // translucent green
     ui[37*256+22]=0x00ffffffu; // transparent white must not alter the picture
-    CHECK(video_gpu_set_osd(&v,gpu,ui));
-    CHECK(gpu_buffer_upload(gpu,v.buf_rgb,input,v.rgb_size));
-    CHECK(chain_run(&v.sig_chain,gpu));
-    CHECK(gpu_buffer_download(gpu,v.buf_rgb,output,v.rgb_size));
-    for(int i=0;i<sp.samples_per_line*240;i++) {
-        int x=(i%sp.samples_per_line)*256/sp.samples_per_line,y=i/sp.samples_per_line;
-        uint32_t rgba=ui[y*256+x]; float a=(rgba>>24)/255.0f;
-        for(int ch=0;ch<3;ch++) {
-            float color=((rgba>>(ch*8))&255)/255.0f;
-            CHECK(fabsf(output[i*3+ch]-(.25f*(1-a)+color*a))<1e-6f);
+    for(int panel=0;panel<3;panel++) {
+        if(panel==1) {
+            memset(ui,0,GPU_OSD_PIXELS*sizeof(*ui));
+            gpu_osd_performance(ui,"EMU 2.1 ENC 1.2 PRESENT 0.3");
+        } else if(panel==2) {
+            Browser *b=calloc(1,sizeof(*b));
+            snprintf(b->current_dir,sizeof(b->current_dir),"/Games");
+            strcpy(b->entries[0],"Contra.nes");
+            b->entry_count=b->visible_count=1;
+            browser_render_rgba(b,ui);
+            free(b);
+        }
+        CHECK(video_gpu_set_osd(&v,gpu,ui));
+        CHECK(gpu_buffer_upload(gpu,v.buf_rgb,input,v.rgb_size));
+        CHECK(chain_run(&v.sig_chain,gpu));
+        CHECK(gpu_buffer_download(gpu,v.buf_rgb,output,v.rgb_size));
+        for(int i=0;i<sp.samples_per_line*240;i++) {
+            int x=(i%sp.samples_per_line)*256/sp.samples_per_line,y=i/sp.samples_per_line;
+            uint32_t rgba=ui[y*256+x]; float a=(rgba>>24)/255.0f;
+            for(int ch=0;ch<3;ch++) {
+                float color=((rgba>>(ch*8))&255)/255.0f;
+                CHECK(fabsf(output[i*3+ch]-(.25f*(1-a)+color*a))<1e-6f);
+            }
         }
     }
     CHECK(video_gpu_set_osd(&v,gpu,NULL));

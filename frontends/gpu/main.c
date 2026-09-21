@@ -118,10 +118,7 @@ static uint8_t          controller_state = 0;
 static GPURenderCtx     render_ctx;
 static PresetCtx        preset_ctx;
 
-/* Browser + persistent config. The browser writes into the PPU
- * framebuffer (just like an emulated game frame) so the composite +
- * CRT shader pipeline applies to it the same way. No flag-stashing
- * needed when it opens or closes. */
+/* Browser + persistent config. Host UI is composited after the receiver. */
 static MynesConfig      mynes_config;
 static Browser          browser;
 static bool             browser_active = false;
@@ -139,6 +136,9 @@ static int sdl_to_browser_key(int scancode) {
     case SDL_SCANCODE_ESCAPE:    return BROWSER_KEY_ESCAPE;
     case SDL_SCANCODE_PAGEUP:    return BROWSER_KEY_PAGEUP;
     case SDL_SCANCODE_PAGEDOWN:  return BROWSER_KEY_PAGEDOWN;
+    case SDL_SCANCODE_HOME:      return BROWSER_KEY_HOME;
+    case SDL_SCANCODE_END:       return BROWSER_KEY_END;
+    case SDL_SCANCODE_TAB:       return BROWSER_KEY_TAB;
     default:                     return -1;
     }
 }
@@ -482,8 +482,7 @@ int main(int argc, char **argv) {
 
     /* If no ROM was given on argv, the browser opens immediately in the
      * main loop below. The rest of init (signal chain, GPU pipeline,
-     * preset, display) runs with NTSC defaults so the browser frames go
-     * through exactly the same composite + CRT path as a real game. */
+     * preset, display) runs with NTSC defaults for the post-decoder browser. */
     if (rom_path) {
         int err = nes_rom_load(&rom, rom_path);
         if (err != ROM_OK) {
@@ -510,8 +509,7 @@ int main(int argc, char **argv) {
 
     /* If we have a ROM, honour its region and reset the bus.
      * If we don't, the GPU pipeline below initialises with NTSC defaults
-     * — the browser draws into the PPU framebuffer and rides the same
-     * composite + CRT pipeline a real game would. */
+     * — the browser is a separate RGB overlay before the tube. */
     if (rom_path) {
         if (rom.tv_system == NES_TV_PAL) {
             region = 1;
@@ -656,15 +654,15 @@ int main(int argc, char **argv) {
                  dp, fsc/1e6, fsample/1e6);
         }
 
-        /* Render beam deposition at the final 4:3 viewport resolution.
+        /* Render beam deposition at the final tube viewport resolution.
          * Offscreen captures use their requested pixel dimensions too. */
         {
             /* Pixel-perfect: match beam to window's physical pixel size.
-             * 4:3 viewport within the window — no stretching needed. */
+             * Tube viewport within the window — no stretching needed. */
             int win_pw, win_ph;
             SDL_GetWindowSizeInPixels(window, &win_pw, &win_ph);
             if(offscreen_w) { win_pw=offscreen_w;win_ph=offscreen_h; }
-            float aspect = 4.0f / 3.0f;
+            float aspect = video_chain.tv.monitor_model==1 ? 16.0f/10.0f : 4.0f/3.0f;
             int beam_w, beam_h, beam_rps;
             if ((float)win_pw / (float)win_ph > aspect) {
                 /* Window wider than 4:3 — height-limited. */
@@ -835,6 +833,7 @@ int main(int argc, char **argv) {
             gpu_osd_handle_key(SDL_SCANCODE_RETURN,&osd_parameter_editing);
         }
     }
+    if (browser_active) SDL_StartTextInput(window);
     unsigned previous_picture = 0;
     Uint64 frame_deadline = 0;
     while (running) {
@@ -858,17 +857,28 @@ int main(int argc, char **argv) {
             /* Offline captures use explicit frame-script input only. Live
              * keyboard events must not change the test ROM or its preset. */
             if ((screenshot_after > 0 || review_no_input) &&
-                (ev.type == SDL_EVENT_KEY_DOWN || ev.type == SDL_EVENT_KEY_UP)) continue;
+                (ev.type == SDL_EVENT_KEY_DOWN || ev.type == SDL_EVENT_KEY_UP ||
+                 ev.type == SDL_EVENT_TEXT_INPUT || ev.type == SDL_EVENT_MOUSE_WHEEL)) continue;
             switch (ev.type) {
                 case SDL_EVENT_QUIT:
                     running = false;
                     break;
 
+                case SDL_EVENT_TEXT_INPUT:
+                    if (browser_active) browser_handle_text(&browser,ev.text.text);
+                    break;
+                case SDL_EVENT_MOUSE_WHEEL:
+                    if (browser_active) {
+                        float dy=ev.wheel.y;
+                        if(ev.wheel.direction==SDL_MOUSEWHEEL_FLIPPED) dy=-dy;
+                        int steps=(int)ceilf(fabsf(dy));
+                        if(steps>BROWSER_VISIBLE_ROWS) steps=BROWSER_VISIBLE_ROWS;
+                        for(int i=0;i<steps;i++) browser_handle_key(&browser,
+                            dy>0 ? BROWSER_KEY_UP : BROWSER_KEY_DOWN);
+                    }
+                    break;
                 case SDL_EVENT_KEY_DOWN:
-                    /* ROM browser owns input when active. The browser
-                     * writes into the PPU framebuffer and rides the same
-                     * composite + CRT pipeline as the game, so there's
-                     * nothing to disable when it opens. */
+                    /* Browser input must not reach emulator hotkeys. */
                     if (browser_active) {
                         int bk = sdl_to_browser_key(ev.key.scancode);
                         /* Quietly ignore unmapped keys when browsing. */
@@ -924,21 +934,32 @@ int main(int argc, char **argv) {
                             } else {
                                 fprintf(stderr, "Failed to load %s: %s\n",
                                     browser.chosen_path, nes_rom_error_str(re));
+                                browser_set_error(&browser,nes_rom_error_str(re));
+                                r=BROWSER_BROWSING;
                             }
                         }
                         if (r == BROWSER_CANCELLED && !rom_loaded) {
                             /* Started without a ROM and the user cancelled — quit. */
                             running = false;
                         }
-                        if (r != BROWSER_BROWSING) browser_active = false;
+                        if (r != BROWSER_BROWSING) {
+                            browser_active = false;
+                            SDL_StopTextInput(window);
+                        }
                         break;
                     }
                     /* O: reopen the browser mid-session. */
                     if (ev.key.scancode == SDL_SCANCODE_O) {
-                        browser_init(&browser, NULL, &mynes_config);
+                        if (!browser.current_dir[0]) browser_init(&browser, NULL, &mynes_config);
+                        else browser_refresh(&browser);
+                        browser.can_resume=rom_loaded;
+                        osd_menu_close();
+                        osd_parameter_editing=false;
+                        controller_state=0;
                         playback_pause(playback);
                         playback_active = false;
                         browser_active = true;
+                        SDL_StartTextInput(window);
                         break;
                     }
                     /* L: toggle chain visualiser. */
@@ -1092,19 +1113,6 @@ int main(int argc, char **argv) {
 
                 case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
                     if(offscreen_w) break;
-                    if (gpu_video_enabled && video_gpu_chain.beam_out_w > 0) {
-                        int w = ev.window.data1, h = ev.window.data2;
-                        if (w * 3 > h * 4) w = h * 4 / 3;
-                        else h = w * 3 / 4;
-                        if (w > 0 && h > 0 && (w != video_gpu_chain.beam_out_w || h != video_gpu_chain.beam_out_h)) {
-                            // No stale texture pointer may survive the beam allocation change.
-                            if (!render_ctx.owns_display_tex) render_ctx.display_tex = NULL;
-                            if (!video_gpu_set_beam_params(&video_gpu_chain, gpu, w, h,
-                                    h / 240 > 0 ? h / 240 : 1,
-                                    video_gpu_chain.beam_sigma_narrow, video_gpu_chain.beam_sigma_wide))
-                                fprintf(stderr, "Could not resize CRT beam: %s\n", SDL_GetError());
-                        }
-                    }
                     if (gpu_display_enabled) {
                         gpu_display_resize(&gpu_disp, gpu,
                                            ev.window.data1, ev.window.data2);
@@ -1114,6 +1122,21 @@ int main(int argc, char **argv) {
         }
 
         if (!rom_loaded && !browser_active) { SDL_Delay(10); continue; }
+        // Check viewport after events and preset changes, including offscreen mode.
+        if (gpu_video_enabled && video_gpu_chain.beam_out_w>0) {
+            int w,h;
+            SDL_GetWindowSizeInPixels(window,&w,&h);
+            if(offscreen_w) { w=offscreen_w;h=offscreen_h; }
+            int aw=video_chain.tv.monitor_model==1 ? 16 : 4;
+            int ah=video_chain.tv.monitor_model==1 ? 10 : 3;
+            if(w*ah>h*aw) w=h*aw/ah; else h=w*ah/aw;
+            if(w>0 && h>0 && (w!=video_gpu_chain.beam_out_w || h!=video_gpu_chain.beam_out_h)) {
+                if(!render_ctx.owns_display_tex) render_ctx.display_tex=NULL;
+                if(!video_gpu_set_beam_params(&video_gpu_chain,gpu,w,h,h/240>0 ? h/240 : 1,
+                       video_gpu_chain.beam_sigma_narrow,video_gpu_chain.beam_sigma_wide))
+                    fprintf(stderr,"Could not resize CRT beam: %s\n",SDL_GetError());
+            }
+        }
         bool live = rom_loaded && !browser_active && !static_frame_buf;
         PlaybackControls controls = { .audio = audio_chain, .analog = analog_controls,
             .region = preset_ctx.region, .gpu_audio = use_gpu_audio != 0,
@@ -1180,57 +1203,32 @@ int main(int argc, char **argv) {
         /* --- Overlays (before signal processing) --- */
         preset_composite_overlays(&preset_ctx);
 
-        /* ROM browser overlay — fullscreen, supersedes everything else. */
+        /* All host UI uses one RGB plane after the receiver, before the tube.
+         * Browser/menu take priority over the performance panel. */
+        bool osd_visible=false;
+        memset(osd_pixels,0,sizeof(osd_pixels));
         if (browser_active) {
-            const uint8_t (*pal)[3] = display_ppu.color_palette
-                                      ? display_ppu.color_palette
-                                      : ppu_palette_2c02;
-            browser_render(&browser, display_ppu.framebuffer,
-                           display_ppu.index_framebuffer, pal);
-        }
-
-        /* A TV-generated RGB OSD bypasses NES encoding and receiver artifacts. */
-        bool osd_visible=!browser_active && osd_menu_is_open;
-        const char *notice=!browser_active && !osd_menu_is_open ? preset_cycle_notice() : NULL;
-        if (osd_visible || (notice && *notice)) memset(osd_pixels,0,sizeof(osd_pixels));
-        if (osd_visible)
+            browser_render_rgba(&browser,osd_pixels);
+            osd_visible=true;
+        } else if (osd_menu_is_open) {
             gpu_osd_render(osd_pixels,osd_menu_current(),osd_parameter_editing,
                 preset_display_name(preset_active_index()),preset_is_modified(),
-                preset_ctx.region==SIGNAL_REGION_PAL,&render_ctx);
-        else if (notice && *notice) {
-            gpu_osd_preset_notice(osd_pixels,notice);
+                preset_ctx.region==SIGNAL_REGION_PAL,&render_ctx,gpu_render_headroom(&render_ctx));
             osd_visible=true;
+        } else {
+            const char *notice=preset_cycle_notice();
+            if (notice && *notice) {
+                gpu_osd_preset_notice(osd_pixels,notice);
+                osd_visible=true;
+            } else if (perf_overlay && perf_text[0]) {
+                gpu_osd_performance(osd_pixels,perf_text);
+                osd_visible=true;
+            }
         }
-        if (gpu_video_enabled && !video_gpu_set_osd(&video_gpu_chain,gpu,osd_visible ? osd_pixels : NULL)) {
+        if (gpu_video_enabled && !video_gpu_set_osd(&video_gpu_chain,gpu,osd_visible ? osd_pixels : NULL))
             fprintf(stderr,"OSD upload failed: %s\n",SDL_GetError());
-        }
         if (osd_visible && (!composite_enabled || !gpu_video_enabled))
             gpu_osd_blend_rgb(display_ppu.framebuffer,osd_pixels);
-
-        /* Performance overlay (V key) — drawn into NES framebuffer so it
-         * gets the NTSC composite treatment like the OSD menu. */
-        if (perf_overlay && perf_text[0]) {
-            const uint8_t (*pal)[3] = display_ppu.color_palette
-                                      ? display_ppu.color_palette
-                                      : ppu_palette_2c02;
-            OSDNesFB t;
-            t.rgb = display_ppu.framebuffer;
-            t.idx = display_ppu.index_framebuffer;
-            t.pal = pal;
-
-            int tw = osd_nesfb_text_width(perf_text, 1);
-            int pw = tw + 8, ph = 11;
-            int px = (256 - pw) / 2;
-            int py = 240 - ph - 6;
-
-            osd_nesfb_dim_rect(&t, px, py, pw, ph, 2);
-            const uint8_t COL_BORDER = 0x2C;  /* cyan */
-            osd_nesfb_fill(&t, px,          py,          pw, 1, COL_BORDER);
-            osd_nesfb_fill(&t, px,          py + ph - 1, pw, 1, COL_BORDER);
-            osd_nesfb_fill(&t, px,          py,          1,  ph, COL_BORDER);
-            osd_nesfb_fill(&t, px + pw - 1, py,          1,  ph, COL_BORDER);
-            osd_nesfb_text(&t, px + 4, py + 2, perf_text, 0x30, 1);
-        }
 
         /* --- Video output --- */
         Uint64 t_gpu0 = SDL_GetPerformanceCounter(), t_gpu1 = t_gpu0;
@@ -1299,6 +1297,7 @@ int main(int argc, char **argv) {
 
             /* Pre-process waveform snapshot. */
             if (dump_this_frame) {
+                if(gpu_dac) waveform_generate(waveform_buf,display_ppu.index_framebuffer,&sig_state,frame_count-1);
                 int _spl = sig_state.samples_per_line;
                 int _sl = 120 * _spl;
                 printf("[dump frame %u] waveform scanline 120:\n", frame_count);
@@ -1367,7 +1366,7 @@ int main(int argc, char **argv) {
                     snprintf(ppm_rgb, sizeof(ppm_rgb), "/tmp/gpu_rgb_f%u.ppm", frame_count);
                     snprintf(ppm_wf,  sizeof(ppm_wf),  "/tmp/gpu_waveform_f%u.ppm", frame_count);
                     dump_frame_ppm(ppm_rgb, gpu_rgb_out, spl, 240);
-                    dump_frame_ppm(ppm_wf,  waveform_buf, spl, 240);
+                    dump_waveform_ppm(ppm_wf, waveform_buf, spl, 240);
                     printf("[dump frame %u] wrote %s, %s\n", frame_count, ppm_rgb, ppm_wf);
                 }
                 /* Use beam profile (RGBA8 with intensity-dependent scanline
@@ -1389,7 +1388,8 @@ int main(int argc, char **argv) {
                     gpu_render_upload_rgba(&render_ctx, rgba, out_w, out_h);
                 }
             } else {
-                /* GPU dispatch failed: fall back to raw RGB. */
+                /* GPU dispatch failed: keep host UI usable on the raw fallback. */
+                if(osd_visible) gpu_osd_blend_rgb(display_ppu.framebuffer,osd_pixels);
                 gpu_render_ensure_texture(&render_ctx, 256, 240);
                 gpu_render_upload_rgba(&render_ctx,
                     gpu_render_ppu_to_rgba8(display_ppu.framebuffer), 256, 240);

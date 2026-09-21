@@ -78,3 +78,18 @@ maximum error 1.86e-7 and RMS 7.95e-8 normalized volts in the 2026-09-21 run.
 The test deliberately removes rail feedback to isolate the RC equation. It
 validates the assumed filter, not the capacitance, regulation, EHT behavior or
 recovery time of any Sony, JVC or Toshiba set.
+
+## PVM-14L2 aperture input branch
+
+```sh
+python3 tools/circuits/sweep_pvm_aperture.py /tmp/pvm-aperture
+```
+
+`pvm14l2_aperture_input.cir` transcribes the passive TP106-to-IC231-pin-8
+branch of Sony's B(2/5) schematic, with reference designators and values.
+Five assumed port resistances produce CSV frequency responses and a JSON
+summary. An independent complex-impedance divider checks every SPICE point.
+The CXA1739S active transfer and output injection branch are absent. Neither
+the ideal LC resonance nor a peak in these partial curves is the television's
+aperture peak. Nothing in this sweep changes renderer coefficients. See the
+[source and uncertainty record](../../docs/pvm-14l2-model.md).

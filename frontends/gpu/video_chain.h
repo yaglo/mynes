@@ -179,6 +179,7 @@ static inline float video_rf_noise_rms(const RFModulatorParams *rf) {
 
 typedef struct {
     /* Chroma demodulator. */
+    int monitor_model;         /* 0=240-line TV, 1=FW900 empirical 1920x1200 + external scaler */
     float chroma_bandwidth;     /* I-channel BW, Hz (0.5-1.5 MHz — "wide" chroma) */
     /* Q-channel bandwidth.  NTSC specs I = 1.3 MHz, Q = 0.5 MHz; most
      * consumer TVs used equiband I/Q (Q = chroma_bandwidth).  0 here
@@ -192,6 +193,9 @@ typedef struct {
     float decoder_blue_gain;    /* B-Y gain offset; independent of white balance */
     float fir_ringing;          /* FIR window blend: 0=Hamming, 1=rect (Gibbs ringing) */
     float luma_peaking;         /* TV sharpness: 0=off, 0.3=moderate, 0.8=aggressive edge boost */
+    float aperture_max_db;      /* >0: sharpness knob spans 0..this peak gain in dB;
+                                * 0: legacy generic amount. Frequency shape is approximate. */
+    float h_afc_tau_ms;         /* horizontal phase response, ms; 0=legacy generic loop */
     /* Fraction of residual carrier rejected in the Y FIR. 0.95 adds
      * 26 dB rejection at the carrier; 0 disables the horizontal trap.
      * Controls cross-luma, not cross-color in the separate chroma path.
@@ -207,6 +211,7 @@ typedef struct {
 
     /* Video amplifier. */
     float r_bandwidth, g_bandwidth, b_bandwidth; /* per-gun BW (5-8 MHz) */
+    int rgb_bandwidth_3db;      /* 1: match -3 dB at BW; 0: legacy FIR cutoff */
     float gamma;                /* CRT phosphor gamma (2.2-2.5) */
 
     /* Beam. */
@@ -228,7 +233,7 @@ typedef struct {
 
     /* Phosphor. */
     VideoMaskType mask_type;
-    int phosphor_gamut;         /* 0=709 compatibility, 1=nominal 525, 2=nominal 625 */
+    int phosphor_gamut;         /* 0=709, 1=nominal 525, 2=nominal 625, 3=FW900 NIDL */
     float mask_triads;          /* RGB triads across the tube; 0 uses legacy pixel pitch */
     float mask_pitch_px;        /* phosphor cell spacing in drawable pixels */
     float mask_strength;        /* phosphor mask blend (0=off, 0.6=visible, 1.0=full) */
@@ -239,6 +244,7 @@ typedef struct {
 
     /* Glass. */
     float halation;             /* light scattering in glass (0-0.3) */
+    float halation_sigma;       /* scatter sigma / picture height; 0 = legacy 0.006 kernel */
     float glass_tint;           /* multiplier (0.6-0.9) */
     float barrel;               /* curvature (0=flat, 0.05=classic) */
 

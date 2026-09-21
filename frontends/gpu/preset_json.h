@@ -267,7 +267,9 @@ static inline bool preset_json_save(const PhysicalPreset *p, const char *path)
     fprintf(f, "        \"geometry_warp\": %.6f,\n",        p->tv.geometry_warp);
     /* Matrix decode. */
     fprintf(f, "        \"color_temperature\": %.1f,\n",    p->tv.color_temperature);
+    fprintf(f, "        \"monitor_model\": %d,\n", p->tv.monitor_model);
     fprintf(f, "        \"phosphor_gamut\": %d,\n", p->tv.phosphor_gamut);
+    fprintf(f, "        \"rgb_bandwidth_3db\": %d,\n", p->tv.rgb_bandwidth_3db);
     fprintf(f, "        \"beam_spot_growth\": %.6f,\n", p->tv.beam_spot_growth);
     fprintf(f, "        \"decoder_blue_gain\": %.6f,\n", p->tv.decoder_blue_gain);
     fprintf(f, "        \"decoder_red_gain\": %.6f,\n", p->tv.decoder_red_gain);
@@ -306,6 +308,7 @@ static inline bool preset_json_save(const PhysicalPreset *p, const char *path)
     fprintf(f, "        \"persistence_ms\": %.6f,\n",       p->tv.persistence_ms);
     /* Glass. */
     fprintf(f, "        \"halation\": %.6f,\n",             p->tv.halation);
+    fprintf(f, "        \"halation_sigma\": %.6f,\n",       p->tv.halation_sigma);
     fprintf(f, "        \"glass_tint\": %.6f,\n",           p->tv.glass_tint);
     fprintf(f, "        \"barrel\": %.6f,\n",               p->tv.barrel);
     /* Environment. */
@@ -348,6 +351,8 @@ static inline bool preset_json_save(const PhysicalPreset *p, const char *path)
     fprintf(f, "        \"hdr_gain\": %.6f,\n",             p->tv.hdr_gain);
     /* Luma peaking (TV sharpness). */
     fprintf(f, "        \"luma_peaking\": %.6f,\n",         p->tv.luma_peaking);
+    fprintf(f, "        \"h_afc_tau_ms\": %.6f,\n",         p->tv.h_afc_tau_ms);
+    fprintf(f, "        \"aperture_max_db\": %.6f,\n",         p->tv.aperture_max_db);
     fprintf(f, "        \"luma_notch_depth\": %.6f,\n",     p->tv.luma_notch_depth);
     /* Overscan / bezel crop. */
     fprintf(f, "        \"overscan\": %.6f,\n",             p->tv.overscan);
@@ -563,7 +568,9 @@ static inline void preset_json__assign(PhysicalPreset *p, PresetJsonSection sect
         else MATCH_FLOAT(PJSON_SEC_TV, "geometry_warp",        p->tv.geometry_warp)
         /* Matrix decode. */
         else MATCH_FLOAT(PJSON_SEC_TV, "color_temperature",    p->tv.color_temperature)
+        else MATCH_INT(PJSON_SEC_TV, "monitor_model", p->tv.monitor_model)
         else MATCH_INT(PJSON_SEC_TV, "phosphor_gamut", p->tv.phosphor_gamut)
+        else MATCH_INT(PJSON_SEC_TV, "rgb_bandwidth_3db", p->tv.rgb_bandwidth_3db)
         else MATCH_FLOAT(PJSON_SEC_TV, "beam_spot_growth", p->tv.beam_spot_growth)
         else MATCH_FLOAT(PJSON_SEC_TV, "decoder_blue_gain", p->tv.decoder_blue_gain)
         else MATCH_FLOAT(PJSON_SEC_TV, "decoder_red_gain", p->tv.decoder_red_gain)
@@ -606,6 +613,7 @@ static inline void preset_json__assign(PhysicalPreset *p, PresetJsonSection sect
         else MATCH_FLOAT(PJSON_SEC_TV, "persistence_ms",       p->tv.persistence_ms)
         /* Glass. */
         else MATCH_FLOAT(PJSON_SEC_TV, "halation",             p->tv.halation)
+        else MATCH_FLOAT(PJSON_SEC_TV, "halation_sigma",       p->tv.halation_sigma)
         else MATCH_FLOAT(PJSON_SEC_TV, "glass_tint",           p->tv.glass_tint)
         else MATCH_FLOAT(PJSON_SEC_TV, "barrel",               p->tv.barrel)
         /* Environment. */
@@ -648,6 +656,8 @@ static inline void preset_json__assign(PhysicalPreset *p, PresetJsonSection sect
         else MATCH_FLOAT(PJSON_SEC_TV, "hdr_gain",             p->tv.hdr_gain)
         /* Luma peaking / sharpness. */
         else MATCH_FLOAT(PJSON_SEC_TV, "luma_peaking",         p->tv.luma_peaking)
+        else MATCH_FLOAT(PJSON_SEC_TV, "h_afc_tau_ms",         p->tv.h_afc_tau_ms)
+        else MATCH_FLOAT(PJSON_SEC_TV, "aperture_max_db",         p->tv.aperture_max_db)
         else MATCH_FLOAT(PJSON_SEC_TV, "luma_notch_depth",     p->tv.luma_notch_depth)
         /* Overscan / bezel crop. */
         else MATCH_FLOAT(PJSON_SEC_TV, "overscan",             p->tv.overscan)

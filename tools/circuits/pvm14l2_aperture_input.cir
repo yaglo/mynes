@@ -1,0 +1,26 @@
+PVM-14L2 B(2/5): passive Y-to-SHP-IN branch only
+* Sony service manual, 2nd edition, printed 9-6 (PDF page 118).
+* Source: https://archive.org/download/trinitron_pvm14l2/trinitron_pvm14l2.pdf
+* TP106/JL142 -> R247 || C234 -> R249 shunt -> L230 -> C239 -> pin 8.
+* R255 is a zero-ohm link, represented as a wire.
+* TP106 is an ideal small-signal source. Rport is an UNKNOWN IC input
+* impedance, swept as an assumption, not a CXA1739S device model.
+* This excludes the active IC, SHP OUT feedback/injection into Y, and all
+* preceding/following stages. Its response is NOT the monitor response.
+.param RPORT=10000
+Vtp106 tp106 0 AC 1
+R247 tp106 branch 1.8k
+C234 tp106 branch 39p
+R249 branch 0 3.9k
+L230 branch series 15u
+C239 series shp_in 20p
+Rport shp_in 0 {RPORT}
+.control
+set numdgt=15
+set wr_singlescale
+set wr_vecnames
+ac dec 200 10000 30000000
+wrdata response.txt v(shp_in)
+quit
+.endc
+.end

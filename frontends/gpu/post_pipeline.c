@@ -257,6 +257,10 @@ bool beam_output_dispatch(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd) {
     if (!vgc->buf_beam_rgba || !vgc->buf_deflection_x || !vgc->buf_deflection_y) {
         return true;
     }
+    /* PC monitor path consumes receiver voltage and owns its sampled input,
+     * empirical transfer and beam. Do not apply the 240-line tube twice. */
+    if(vgc->chain && vgc->chain->tv.monitor_model==1)
+        return dispatch_beam_profile_public(vgc,cmd) && dispatch_temporal_blit_public(vgc,cmd);
     return dispatch_gun_current_public(vgc, cmd)
         && dispatch_h_blur_rgb_public(vgc, cmd)
         && dispatch_beam_profile_public(vgc, cmd)

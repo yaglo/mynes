@@ -121,12 +121,14 @@ static void make_distinctive_preset(PhysicalPreset *p)
     p->tv.saturation        = 1.15f;
     p->tv.fir_ringing       = 0.25f;
     p->tv.luma_peaking      = 0.45f;
+    p->tv.aperture_max_db = 6.0f;
+    p->tv.h_afc_tau_ms = 1.0f;
     p->tv.rf_interference   = 0.08f;
     p->tv.geometry_warp     = 2.5f;
 
     p->tv.color_temperature = 7500.0f;
     p->tv.decoder_red_gain=.17f; p->tv.decoder_blue_gain=-.03f;
-    p->tv.phosphor_gamut=2; p->tv.beam_spot_growth=.4f;
+    p->tv.monitor_model=1; p->tv.phosphor_gamut=3; p->tv.beam_spot_growth=.4f;
     p->tv.r_drive = 1.05f;
     p->tv.g_drive = 0.98f;
     p->tv.b_drive = 1.03f;
@@ -134,6 +136,7 @@ static void make_distinctive_preset(PhysicalPreset *p)
     p->tv.g_cutoff = -0.005f;
     p->tv.b_cutoff = 0.02f;
 
+    p->tv.rgb_bandwidth_3db=1;
     p->tv.r_bandwidth = 5600000.0f;
     p->tv.g_bandwidth = 5900000.0f;
     p->tv.b_bandwidth = 5300000.0f;
@@ -172,6 +175,7 @@ static void make_distinctive_preset(PhysicalPreset *p)
     p->tv.persistence_ms  = 1.7f;
 
     p->tv.halation   = 0.09f;
+    p->tv.halation_sigma = 0.025451f;
     p->tv.glass_tint = 0.78f;
     p->tv.barrel     = 0.045f;
 
@@ -250,7 +254,9 @@ static int compare_presets(const PhysicalPreset *a, const PhysicalPreset *b,
     ASSERT_NEAR(b->tv.decoder_red_gain,a->tv.decoder_red_gain,FLOAT_TOL,"decoder red gain");
     ASSERT_NEAR(b->tv.decoder_blue_gain,a->tv.decoder_blue_gain,FLOAT_TOL,"decoder blue gain");
     ASSERT_NEAR(b->tv.beam_spot_growth,a->tv.beam_spot_growth,FLOAT_TOL,"beam spot growth");
+    ASSERT_EQ_INT(b->tv.monitor_model,a->tv.monitor_model,"monitor model");
     ASSERT_EQ_INT(b->tv.phosphor_gamut,a->tv.phosphor_gamut,"phosphor gamut");
+    ASSERT_EQ_INT(b->tv.rgb_bandwidth_3db,a->tv.rgb_bandwidth_3db,"RGB bandwidth definition");
     /* Identity. */
     ASSERT_EQ_STR(b->name, a->name, "name");
     ASSERT_EQ_STR(b->description, a->description, "description");
@@ -340,6 +346,7 @@ static int compare_presets(const PhysicalPreset *a, const PhysicalPreset *b,
     ASSERT_NEAR(b->tv.persistence_ms,     a->tv.persistence_ms,     FLOAT_TOL, "tv.persistence_ms");
 
     ASSERT_NEAR(b->tv.halation,           a->tv.halation,           FLOAT_TOL, "tv.halation");
+    ASSERT_NEAR(b->tv.halation_sigma,     a->tv.halation_sigma,     FLOAT_TOL, "tv.halation_sigma");
     ASSERT_NEAR(b->tv.glass_tint,         a->tv.glass_tint,         FLOAT_TOL, "tv.glass_tint");
     ASSERT_NEAR(b->tv.barrel,             a->tv.barrel,             FLOAT_TOL, "tv.barrel");
 
@@ -360,6 +367,8 @@ static int compare_presets(const PhysicalPreset *a, const PhysicalPreset *b,
     ASSERT_NEAR(b->tv.color_killer,       a->tv.color_killer,       FLOAT_TOL, "tv.color_killer");
     ASSERT_NEAR(b->tv.hdr_gain,           a->tv.hdr_gain,           FLOAT_TOL, "tv.hdr_gain");
     ASSERT_NEAR(b->tv.luma_peaking,       a->tv.luma_peaking,       FLOAT_TOL, "tv.luma_peaking");
+    ASSERT_NEAR(b->tv.aperture_max_db,       a->tv.aperture_max_db,       FLOAT_TOL, "tv.aperture_max_db");
+    ASSERT_NEAR(b->tv.h_afc_tau_ms,       a->tv.h_afc_tau_ms,       FLOAT_TOL, "tv.h_afc_tau_ms");
     ASSERT_NEAR(b->tv.overscan,           a->tv.overscan,           FLOAT_TOL, "tv.overscan");
     ASSERT_NEAR(b->tv.keystone,           a->tv.keystone,           FLOAT_TOL, "tv.keystone");
     ASSERT_NEAR(b->tv.rotation,           a->tv.rotation,           FLOAT_TOL, "tv.rotation");
@@ -671,6 +680,8 @@ static int test_missing_fields_use_defaults(void)
     ASSERT_NEAR(p.tv.gamma,       0.0f, 1e-9f, "tv.gamma default 0");
     ASSERT_NEAR(p.tv.mask_pitch_px, 0.0f, 1e-9f, "tv.mask_pitch_px default 0");
     ASSERT_NEAR(p.tv.hdr_gain,    0.0f, 1e-9f, "tv.hdr_gain default 0");
+    ASSERT_EQ_INT(p.tv.monitor_model,0,"legacy TV raster default");
+    ASSERT_NEAR(p.tv.halation_sigma, 0.0f, 1e-9f, "legacy scatter kernel default");
     ASSERT_EQ_INT(p.rf.enabled ? 1 : 0, 0, "rf.enabled default false");
     ASSERT_NEAR(p.console_coupling_R, 0.0f, 1e-9f, "console_coupling_R default 0");
     ASSERT_NEAR(p.audio_psu_hum_amplitude, 0.0f, 1e-9f, "audio_psu_hum_amplitude default 0");

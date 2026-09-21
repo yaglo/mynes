@@ -12,9 +12,9 @@ calibration claim.
 |---|---|---|
 | Y/C separation | Horizontal notch, two-line/1H, adaptive three-line, three-line/2H, bypass | Shared equivalent responses; no proprietary chip decision logic or motion-adaptive 3D comb. PAL uses horizontal separation and its delay line. |
 | Luma bandwidth | Cutoff, FIR length/window, trap depth | Windowed FIR approximation; not measured amplitude/group delay per receiver. |
-| Sharpness | Generic horizontal highpass shelf applied to recovered Y; 0 bypasses | No independent peaking frequency/Q, coring, limiter, asymmetric preshoot/overshoot, vertical detail or chip-specific control law. |
+| Sharpness | Generic horizontal highpass shelf applied to recovered Y; 0 bypasses; optional peak-gain ceiling in dB | No independent peaking frequency/Q, coring, limiter, asymmetric preshoot/overshoot, vertical detail or chip-specific control law. |
 | Chroma | I/Q bandwidth, hue, gain, delay-line correction | No model-specific chroma transient improvement or measured decoder nonlinearity. |
-| RGB amplifiers | Per-channel bandwidth, rise/fall approximation, smear | No full transistor/circuit model. The legacy `velocity_mod` adds a luminance derivative to voltage; it does not change beam velocity/dwell. The OSD now calls it Edge derivative. |
+| RGB amplifiers | Per-channel bandwidth, optional -3 dB definition, rise/fall approximation, smear | No full transistor/circuit model. The legacy `velocity_mod` adds a luminance derivative to voltage; it does not change beam velocity/dwell. The OSD now calls it Edge derivative. |
 | Tube and supply | Spot width/growth, mask, convergence, recovery, regulation, decay, optics | Shared behavioral equations with estimated unit-dependent parameters. |
 
 Sharpness now runs after the Y bandwidth/trap and after the chroma branch has
@@ -25,16 +25,19 @@ preserves the receiver's rejection. It remains generic, and its normalized
 
 RGB/direct bypass receiver sharpening. The source is currently an ideal
 voltage-derived separated-output modification, not a simulated NESRGB board.
-S-Video/component retain a luma path; a particular model's input restrictions
-still need to be checked independently.
+S-Video retains a luma path. Component currently takes the ideal separated-output
+shortcut and also bypasses receiver sharpening. That is a fidelity gap for the
+14L2, whose component Y reaches the aperture circuit.
 
 ## Hardware evidence
 
-* **Sony PVM-14L2:** APERTURE is the user sharpness adjustment. Its MC141627
-  separator includes adaptive enhancement functions beyond our shared comb.
-  We have not reproduced its vertical enhancement/coring or exact aperture
-  transfer. [Operation manual](https://consolemods.org/wiki/images/2/2a/Sony_PVM-20L2_PVM-14L2_PVM-9L3_PVM-9L2_Operation_Manual.pdf),
-  [service manual](https://consolemods.org/wiki/images/f/fc/PVM-L2_Service_Manual.pdf).
+* **Sony PVM-14L2:** the [detailed circuit audit](pvm-14l2-model.md) traces
+  the external CXA1739S aperture network and the MC141627 enable wiring.
+  The comb-chip vertical enhancer is tied off in both NTSC and PAL on the
+  traced revision. Our shared separator still lacks the IC's comb algorithm.
+  The profile now constrains aperture peak gain to 0–6 dB and
+  RGB bandwidth to -3 dB at 10 MHz, with a first-order 1 ms horizontal AFC.
+  These constraints do not reproduce the complete proprietary IC responses.
 * **Sony PVM-20M4U:** Sony specifies 0 to +6 dB aperture correction and says
   APERTURE has no effect on RGB. The exact frequency response and knob law
   are still needed; the published gain range alone does not specify them.

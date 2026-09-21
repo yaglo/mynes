@@ -39,6 +39,7 @@ typedef struct {
 /* CRT display uniforms (matches crt_display.frag.glsl UBO layout). */
 typedef struct {
     float src_w, src_h;             /* composite texture dimensions */
+    int monitor_model;             /* 1: physical FW900 variable-pitch grille */
     float out_w, out_h;             /* display dimensions */
     float barrel;                   /* horizontal barrel distortion */
     float barrel_v;                 /* vertical barrel distortion (0=same as barrel) */
@@ -50,6 +51,7 @@ typedef struct {
     float mask_row_pitch;           /* 0 = physical aspect; otherwise fitted row spacing */
     float mask_scale_x, mask_scale_y, mask_origin_x, mask_origin_y;
     float halation_strength;        /* halation blend intensity */
+    float halation_sigma;           /* scatter sigma / picture height; 0 = legacy kernel */
     float halation_tint_r;          /* halation bloom per-channel tint */
     float halation_tint_g;
     float halation_tint_b;

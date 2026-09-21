@@ -90,6 +90,18 @@ static GpuVHSParams vhs_params(const VideoGPUChain *v) {
         t->timebase_ns*fs*1e-9f,t->chroma_phase_deg*(float)M_PI/180,t->noise};
     return p;
 }
+static GpuReceiverPLLParams receiver_pll_params(const VideoGPUChain *v) {
+    GpuReceiverPLLParams p = {0};
+    p.count = (uint32_t)v->raster_fmt.lines;
+    p.full_width = (uint32_t)v->raster_fmt.samples_per_line;
+    p.samples_per_dot = (uint32_t)v->raster_fmt.samples_per_pixel;
+    p.region = (uint32_t)v->raster_fmt.region;
+    if (v->chain->tv.h_afc_tau_ms > 0) {
+        float line_ms = 1000.0f * p.full_width / signal_format_sample_rate_hz(&v->signal_fmt);
+        p.h_response = -expm1f(-line_ms / v->chain->tv.h_afc_tau_ms);
+    }
+    return p;
+}
 static bool vhs_active(const VideoChain *c) {
     return c->vhs.enabled && c->signal_fmt.region==SIGNAL_REGION_NTSC &&
         (c->connection==VIDEO_CONN_COMPOSITE || c->connection==VIDEO_CONN_RF);
@@ -105,6 +117,9 @@ static void luma_peaking_taps(const VideoChain *c, float *taps) {
     float cutoff = c->tv.luma_bandwidth / signal_format_sample_rate_hz(&c->signal_fmt);
     cutoff = fminf(0.2f, fmaxf(0.005f, cutoff));
     signal_apply_peaking(taps, LUMA_PEAKING_TAPS, cutoff, c->tv.luma_peaking);
+    if (c->tv.aperture_max_db > 0)
+        signal_normalize_aperture_gain(taps, LUMA_PEAKING_TAPS,
+            fminf(1.0f, fmaxf(0.0f, c->tv.luma_peaking)) * c->tv.aperture_max_db);
 }
 static bool luma_peaking_active(const VideoChain *c) {
     return video_chain_stage_active(c, 8) && c->tv.luma_peaking >= 0.001f;
@@ -163,7 +178,11 @@ static void update_video_amp(VideoGPUChain *vgc) {
     vgc->vamp_tap_count = count;
     for (int c = 0; c < 3; c++) {
         float taps[32] = {0};
-        signal_design_fir(taps, count, fminf(fmaxf(bandwidth[c] / rate, 0.01f), 0.49f));
+        float frequency = fminf(fmaxf(bandwidth[c] / rate, 0.01f), 0.49f);
+        if (tv->rgb_bandwidth_3db)
+            signal_design_fir_3db(taps, count, frequency);
+        else
+            signal_design_fir(taps, count, frequency);
         for (int i = 0; i < count; i++) vgc->vamp_taps[i][c] = taps[i];
     }
     vgc->vamp_enabled = vgc->buf_rgb2 != NULL;
@@ -480,8 +499,9 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     receiver->ro_count=1; receiver->ro[0]=CBR_BUF_SRC;
     receiver->rw_count=1; receiver->rw[0]=CBR_EXT0;
     receiver->external[0]=vgc->buf_receiver_measurements;
+    GpuReceiverPLLParams pll_params = receiver_pll_params(vgc);
     vgc->stage_receiver_pll = chain_add_stage(&vgc->sig_chain, "Receiver PLL / clamp",
-        CHAIN_KERNEL_RECEIVER_PLL, receiver_params, sizeof(receiver_params), 1, 1);
+        CHAIN_KERNEL_RECEIVER_PLL, &pll_params, sizeof(pll_params), 1, 1);
     if (vgc->stage_receiver_pll < 0) goto fail;
     ChainStage *pll = &vgc->sig_chain.stages[vgc->stage_receiver_pll];
     pll->io_typed = true;
@@ -898,6 +918,9 @@ fail:
 void video_gpu_update_rc_params(VideoGPUChain *vgc)
 {
     const VideoChain *chain = vgc->chain;
+    GpuReceiverPLLParams pll_params = receiver_pll_params(vgc);
+    if (vgc->stage_receiver_pll >= 0)
+        chain_update_params(&vgc->sig_chain, vgc->stage_receiver_pll, &pll_params, sizeof(pll_params));
     int total_samples = vgc->raster_fmt.total_samples;
     float fsample = signal_format_sample_rate_hz(&vgc->signal_fmt);
 
@@ -1868,9 +1891,12 @@ static bool dispatch_beam_profile(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd)
         float    hum_bar_amplitude;
         float    bloom_gamma;
         float gamma, gamma_r, gamma_g, gamma_b;
+        uint32_t monitor_model, source_h;
     } beam_params;
 
     const TVDisplayParams *tv = vgc->chain ? &vgc->chain->tv : NULL;
+    beam_params.monitor_model = tv && tv->monitor_model==1;
+    beam_params.source_h = (uint32_t)vgc->signal_fmt.lines;
     beam_params.gamma = tv && tv->gamma > 0 ? tv->gamma : 2.2f;
     beam_params.gamma_r = tv ? tv->phosphor_gamma_offset_r : 0;
     beam_params.gamma_g = tv ? tv->phosphor_gamma_offset_g : 0;
@@ -1918,7 +1944,7 @@ static bool dispatch_beam_profile(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd)
         vgc->sig_chain.pipelines[CHAIN_KERNEL_BEAM].pipeline);
 
     SDL_GPUBuffer *ro[] = {
-        vgc->buf_rgb2,
+        beam_params.monitor_model ? vgc->buf_rgb : vgc->buf_rgb2,
         vgc->buf_deflection_x,
         vgc->buf_deflection_y
     };

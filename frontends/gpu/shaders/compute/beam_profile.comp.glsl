@@ -15,6 +15,7 @@
  */
 
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
 layout(local_size_x = 16, local_size_y = 16) in;
 
@@ -48,6 +49,7 @@ layout(set = 2, binding = 0) uniform Params {
     float hum_bar_amplitude;
     float bloom_gamma;
     float gamma, gamma_r, gamma_g, gamma_b;
+    uint monitor_model, source_h;
 };
 
 float sample_rgb_channel_linear(float sx, int sy, uint channel) {
@@ -86,12 +88,20 @@ float beam_coverage(float distance, float sigma, float width) {
                          - erf_approx((distance - 0.5*width)*scale)) / width);
 }
 
+#include "fw900_profile.glsl"
+
 void main() {
     uint ox = gl_GlobalInvocationID.x;
     uint oy = gl_GlobalInvocationID.y;
     if (ox >= out_w || oy >= out_h) return;
 
     uint pix = oy * out_w + ox;
+    if (monitor_model == 1u) {
+        vec3 light = fw900_render(pix);
+        rgba_out[pix*2u] = packHalf2x16(light.rg);
+        rgba_out[pix*2u+1u] = packHalf2x16(vec2(light.b,1.0));
+        return;
+    }
     uint didx = pix * 4u;
 
     float r_center = deflection_x[didx + 0u];

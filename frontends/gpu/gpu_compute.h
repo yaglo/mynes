@@ -289,6 +289,13 @@ typedef struct {
     float delay_samples, timebase_samples, phase_radians, noise;
 } GpuVHSParams;
 
+/* Horizontal AFC is independent of the colour-burst PLL. Zero response
+ * selects the legacy loop, including its frame acquisition behaviour. */
+typedef struct {
+    uint32_t count, full_width, samples_per_dot, region;
+    float h_response, reserved[3];
+} GpuReceiverPLLParams;
+
 /* Comb filter Y/C separator parameters (matches comb_filter.comp.glsl). */
 typedef struct {
     uint32_t count;             /* total samples */

@@ -6,8 +6,9 @@
 /* RGB OSD inserted after the receiver, before the tube. Packed R,G,B,A bytes. */
 #define GPU_OSD_PIXELS (256 * 240)
 void gpu_osd_render(uint32_t *rgba, const OSDMenuLevel *level, bool editing,
-                    const char *preset, bool modified, bool pal, const GPURenderCtx *render);
+                    const char *preset, bool modified, bool pal, const GPURenderCtx *render, float headroom);
 void gpu_osd_preset_notice(uint32_t *rgba, const char *name);
+void gpu_osd_performance(uint32_t *rgba, const char *stats);
 void gpu_osd_blend_rgb(uint8_t *rgb, const uint32_t *rgba);
 
 static inline bool gpu_osd_editable(const OSDMenuItem *item) {

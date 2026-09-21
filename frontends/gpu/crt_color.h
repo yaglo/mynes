@@ -5,17 +5,22 @@
 #define CRT_COLOR_H
 #include <math.h>
 #include "video_chain.h"
+#include "fw900_tone.h"
 
 static inline void crt_phosphor_matrix(int gamut, float m[3][3]) {
-    static const float matrices[3][3][3] = {
+    static const float matrices[4][3][3] = {
         {{1,0,0},{0,1,0},{0,0,1}},
         {{.939542f,.050181f,.010277f},
          {.017772f,.965793f,.016435f},
          {-.001622f,-.004370f,1.005992f}},
         {{1.044043f,-.044043f,0},
-         {0,1,0}, {0,.011793f,.988207f}}
+         {0,1,0}, {0,.011793f,.988207f}},
+        // NIDL Table II.22.1 effective primaries, normalized to D65.
+        {{1.08663571f,-.07951036f,-.00712535f},
+         {.04991459f,.92427307f,.02581233f},
+         {.01588561f,.02294961f,.96116478f}}
     };
-    int g = gamut >= 0 && gamut <= 2 ? gamut : 0;
+    int g = gamut >= 0 && gamut <= 3 ? gamut : 0;
     for (int i=0;i<3;i++) for (int j=0;j<3;j++) m[i][j]=matrices[g][i][j];
 }
 
@@ -52,7 +57,16 @@ static inline void crt_white_drive(const TVDisplayParams *tv, float drive[3]) {
     }
     float gamma[3]={tv->gamma+tv->phosphor_gamma_offset_r,
         tv->gamma+tv->phosphor_gamma_offset_g,tv->gamma+tv->phosphor_gamma_offset_b};
-    for(int i=0;i<3;i++) drive[i]=powf(fmaxf(a[i][3],0),1/fmaxf(gamma[i],1));
+    float peak_light=tv->monitor_model==1 ? fmaxf(1,fmaxf(a[0][3],fmaxf(a[1][3],a[2][3]))) : 1;
+    for(int i=0;i<3;i++) {
+        float light=fmaxf(a[i][3],0)/peak_light;
+        drive[i]=powf(light,1/fmaxf(gamma[i],1));
+        if(tv->monitor_model==1) {
+            int k=0;
+            while(k<254 && fw900_tone[k+1]<light) k++;
+            drive[i]=fminf(1,(k+(light-fw900_tone[k])/(fw900_tone[k+1]-fw900_tone[k]))/255);
+        }
+    }
 }
 
 static inline void crt_decoder_matrix(const TVDisplayParams *tv, bool pal,

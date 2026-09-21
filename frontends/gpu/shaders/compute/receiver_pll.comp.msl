@@ -23,6 +23,10 @@ struct Params
     uint full_width;
     uint samples_per_dot;
     uint region;
+    float h_response;
+    float reserved0;
+    float reserved1;
+    float reserved2;
 };
 
 struct Measurement
@@ -57,16 +61,17 @@ kernel void main0(device Reference& _26 [[buffer(2)]], constant Params& _32 [[bu
         }
         if (sync)
         {
-            bool _120;
+            float horizontal = mix(state.w, m.w, _32.h_response);
+            bool _130;
             if (acquire)
             {
-                _120 = m.z > 0.00999999977648258209228515625;
+                _130 = m.z > 0.00999999977648258209228515625;
             }
             else
             {
-                _120 = acquire;
+                _130 = acquire;
             }
-            if (_120)
+            if (_130)
             {
                 state = m;
                 acquire = false;
@@ -86,6 +91,10 @@ kernel void main0(device Reference& _26 [[buffer(2)]], constant Params& _32 [[bu
                 {
                     state.z *= 0.64999997615814208984375;
                 }
+            }
+            if (_32.h_response > 0.0)
+            {
+                state.w = horizontal;
             }
         }
         else

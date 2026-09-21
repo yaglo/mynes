@@ -74,6 +74,80 @@ static void upload_pattern(SDL_GPUDevice *gpu, SDL_GPUTexture *input, int axis, 
     CHECK(SDL_SubmitGPUCommandBuffer(cmd));SDL_ReleaseGPUTransferBuffer(gpu,buffer);
 }
 
+/* Published target: Flynn & Badano (1999), Table 1, Hitachi Elite 751.
+ * A 320 mm bright disk contains a 10 or 20 mm dark disk. The 400 mm
+ * square below is a coordinate domain, NOT a claim about tube dimensions.
+ * Isolate effective veiling glare: no beam, mask, room light or tone mapping.
+ * The 5% tolerance bounds GPU quadrature/raster error, not source uncertainty. */
+static void test_measured_glare(SDL_GPUDevice *gpu, int size) {
+    GPUDisplay d;
+    if(!gpu_display_init_target(&d,gpu,SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT,
+                               size,size,"shaders/render")) { CHECK(false); return; }
+    SDL_GPUTextureCreateInfo ci={.type=SDL_GPU_TEXTURETYPE_2D,.format=SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT,
+        .usage=SDL_GPU_TEXTUREUSAGE_SAMPLER|SDL_GPU_TEXTUREUSAGE_COLOR_TARGET,
+        .width=size,.height=size,.layer_count_or_depth=1,.num_levels=1};
+    SDL_GPUTexture *input=SDL_CreateGPUTexture(gpu,&ci), *target=SDL_CreateGPUTexture(gpu,&ci);
+    SDL_GPUTransferBufferCreateInfo bi={.usage=SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,.size=size*size*8};
+    SDL_GPUTransferBuffer *upload=SDL_CreateGPUTransferBuffer(gpu,&bi);
+    bi.usage=SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD; bi.size=4*4*8;
+    SDL_GPUTransferBuffer *download=SDL_CreateGPUTransferBuffer(gpu,&bi);
+    CHECK(input && target && upload && download);
+    if(!input || !target || !upload || !download) goto cleanup;
+    GPUDisplayParams p={.glass_tint=1,.hdr_gain=1,.output_hdr=1,.hdr_headroom=8,.sdr_white_level=1,
+        .halation_strength=.048294485894f,.halation_sigma=8.144620194f/400,
+        .cathode_gain_r=1,.cathode_gain_g=1,.cathode_gain_b=1};
+    float reference=0;
+    const float radii[]={0,5,10};
+    const float ratios[]={1,25,44};
+    /* Exact half encodings for area coverage n/16. */
+    const uint16_t coverage[]={0,0x2c00,0x3000,0x3200,0x3400,0x3500,0x3600,0x3700,
+        0x3800,0x3880,0x3900,0x3980,0x3a00,0x3a80,0x3b00,0x3b80,0x3c00};
+    for(int test=0;test<3;test++) {
+        uint16_t *pixels=SDL_MapGPUTransferBuffer(gpu,upload,false);
+        CHECK(pixels!=NULL); if(!pixels) break;
+        for(int y=0;y<size;y++) for(int x=0;x<size;x++) {
+            int covered=0;
+            for(int sy=0;sy<4;sy++) for(int sx=0;sx<4;sx++) {
+                float dx=(x+(sx+.5f)/4-size*.5f)*400/size;
+                float dy=(y+(sy+.5f)/4-size*.5f)*400/size;
+                float r2=dx*dx+dy*dy;
+                covered+=r2>=radii[test]*radii[test] && r2<=160*160;
+            }
+            for(int c=0;c<3;c++) pixels[(y*size+x)*4+c]=coverage[covered];
+            pixels[(y*size+x)*4+3]=0x3c00;
+        }
+        SDL_UnmapGPUTransferBuffer(gpu,upload);
+        SDL_GPUCommandBuffer *cmd=SDL_AcquireGPUCommandBuffer(gpu);
+        SDL_GPUCopyPass *copy=SDL_BeginGPUCopyPass(cmd);
+        SDL_GPUTextureTransferInfo src={.transfer_buffer=upload,.pixels_per_row=size,.rows_per_layer=size};
+        SDL_GPUTextureRegion region={.texture=input,.w=size,.h=size,.d=1};
+        SDL_UploadToGPUTexture(copy,&src,&region,false); SDL_EndGPUCopyPass(copy);
+        gpu_display_render(&d,gpu,cmd,input,size,size,target,size,size,&p,NULL);
+        copy=SDL_BeginGPUCopyPass(cmd);
+        region=(SDL_GPUTextureRegion){.texture=target,.x=size/2-2,.y=size/2-2,.w=4,.h=4,.d=1};
+        SDL_GPUTextureTransferInfo dst={.transfer_buffer=download,.pixels_per_row=4,.rows_per_layer=4};
+        SDL_DownloadFromGPUTexture(copy,&region,&dst); SDL_EndGPUCopyPass(copy);
+        CHECK(SDL_SubmitGPUCommandBuffer(cmd)); CHECK(SDL_WaitForGPUIdle(gpu));
+        const uint16_t *result=SDL_MapGPUTransferBuffer(gpu,download,false);
+        CHECK(result!=NULL); if(!result) break;
+        float center=0;
+        for(int i=0;i<16;i++) center+=gpu_half_to_float(result[4*i])/16;
+        SDL_UnmapGPUTransferBuffer(gpu,download);
+        if(test==0) { reference=center; CHECK(fabsf(reference-1)<.001f); }
+        else {
+            float ratio=reference/center;
+            printf("Measured glare %dpx, %.0fmm disk: GPU %.4f, published %.1f\n",size,2*radii[test],ratio,ratios[test]);
+            CHECK(isfinite(ratio) && fabsf(ratio/ratios[test]-1)<.05f);
+        }
+    }
+cleanup:
+    if(upload) SDL_ReleaseGPUTransferBuffer(gpu,upload);
+    if(download) SDL_ReleaseGPUTransferBuffer(gpu,download);
+    if(input) SDL_ReleaseGPUTexture(gpu,input);
+    if(target) SDL_ReleaseGPUTexture(gpu,target);
+    gpu_display_destroy(&d,gpu);
+}
+
 int test_display_fidelity(SDL_GPUDevice *gpu) {
     failures=0;
     GPUDisplay d;
@@ -105,6 +179,16 @@ int test_display_fidelity(SDL_GPUDevice *gpu) {
         for(int c=0;c<3;c++) CHECK(fabsf(avg[c]-0.25f)<0.015f);
         CHECK(peak>0.4f); CHECK(fabsf(avg[0]-avg[2])<0.005f);
     }
+    // FW900's physical grille is far below Nyquist at this window size.
+    // It must average to neutral light, including with panel-pixel fitting on.
+    p.monitor_model=1;
+    GPUDisplayParams fwfit={.monitor_model=1,.mask_pitch_px=.08f};
+    gpu_display_fit_mask(&fwfit,true,1,1,0,0);
+    CHECK(fwfit.mask_pitch_px==.08f);
+    render(gpu,&d,input,target,&p,avg,&peak);
+    for(int c=0;c<3;c++) CHECK(fabsf(avg[c]-.25f)<.001f);
+    CHECK(fabsf(peak-.25f)<.001f);
+    p.monitor_model=0;
     p.hdr_gain=8; p.hdr_headroom=1.5f;
     render(gpu,&d,input,target,&p,avg,&peak); CHECK(peak<=1.501f);
     p.mask_strength=0; p.hdr_gain=1; p.sdr_white_level=2;
@@ -327,6 +411,9 @@ int test_display_fidelity(SDL_GPUDevice *gpu) {
     CHECK(SDL_SubmitGPUCommandBuffer(cmd));
     render(gpu,&d,input,target,&p,avg,&peak);
     for(int ch=0;ch<3;ch++) CHECK(fabsf(avg[ch]-.25f)<.001f);
+    p.halation_sigma=.03f;
+    render(gpu,&d,input,target,&p,avg,&peak);
+    for(int ch=0;ch<3;ch++) CHECK(fabsf(avg[ch]-.25f)<.001f);
     TVDisplayParams tv={.mask_triads=500,.mask_pitch_px=3};
     GPUDisplayParams scaled;
     gpu_display_params_from_tv(&scaled,&tv,W,H,1500,1125);
@@ -334,5 +421,7 @@ int test_display_fidelity(SDL_GPUDevice *gpu) {
     gpu_display_params_from_tv(&scaled,&tv,W,H,750,563);
     CHECK(fabsf(scaled.mask_pitch_px-0.5f)<0.0001f);
     SDL_ReleaseGPUTexture(gpu,input); SDL_ReleaseGPUTexture(gpu,target); gpu_display_destroy(&d,gpu);
+    test_measured_glare(gpu,512);
+    test_measured_glare(gpu,1024);
     return failures;
 }

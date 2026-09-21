@@ -321,9 +321,18 @@ static void luma_sharpness(SDL_GPUDevice *gpu) {
     signal_precompute_init(&sp, SIGNAL_REGION_NTSC);
     video_chain_init_preset(&c, VIDEO_CONN_COMPOSITE, VIDEO_COMB_NONE, SIGNAL_REGION_NTSC);
     c.tv.luma_bandwidth = 4.2e6f;
+    c.tv.aperture_max_db = 6.0f;
+    c.tv.h_afc_tau_ms = 1.0f;
     signal_design_fir_notch(sp.fir_y, sp.fir_y_n, 4.2e6f/42954540, 1.0f/12, 1);
     CHECK(video_gpu_init(&v, gpu, &c, "shaders/compute", sp.fir_y, sp.fir_y_n,
                         sp.fir_c, sp.fir_c_n, sp.fir_q, sp.fir_q_n));
+    GpuReceiverPLLParams *afc=(GpuReceiverPLLParams *)v.sig_chain.stages[v.stage_receiver_pll].params;
+    CHECK(fabsf(afc->h_response-(-expm1f(-1000.0f*v.raster_fmt.samples_per_line /
+        signal_region_sample_rate_hz(SIGNAL_REGION_NTSC))))<1e-6f);
+    c.tv.h_afc_tau_ms=2.0f;
+    video_gpu_update_rc_params(&v);
+    CHECK(fabsf(afc->h_response-(-expm1f(-500.0f*v.raster_fmt.samples_per_line /
+        signal_region_sample_rate_hz(SIGNAL_REGION_NTSC))))<1e-6f);
     for (int s=0; s<v.sig_chain.num_stages; s++) chain_set_stage_enabled(&v.sig_chain,s,false);
     chain_set_stage_enabled(&v.sig_chain,v.stage_luma_fir,true);
     int w=v.raster_fmt.samples_per_line, count=v.raster_fmt.total_samples;
@@ -581,8 +590,8 @@ static void receiver(SDL_GPUDevice *gpu) {
             measurements[line*4+3]=3*spp;
         }
         measurements[20*4+2]=-1; // vertical retrace mutes chroma
-        uint32_t pp[]={32,width,spp,(uint32_t)region};
-        int loop=chain_add_stage(&sc,"PLL test",CHAIN_KERNEL_RECEIVER_PLL,pp,sizeof(pp),1,1);
+        GpuReceiverPLLParams pp={32,width,spp,(uint32_t)region,0,{0}};
+        int loop=chain_add_stage(&sc,"PLL test",CHAIN_KERNEL_RECEIVER_PLL,&pp,sizeof(pp),1,1);
         ChainStage *pll=&sc.stages[loop]; pll->io_typed=true;
         pll->ro_count=1;pll->ro[0]=CBR_AUX0;pll->rw_count=1;pll->rw[0]=CBR_AUX1;
         CHECK(gpu_buffer_upload(gpu,sc.aux[0],measurements,sizeof(measurements)));
@@ -595,8 +604,123 @@ static void receiver(SDL_GPUDevice *gpu) {
             CHECK(fabsf(remainderf(locked[line*4]-line*advance,6.28318530718f))<.09f);
             CHECK(fabsf(locked[line*4+3]-3*spp)<.01f);
         }
+        /* Spec-constrained horizontal AFC: 63.2% of a phase step in 1 ms,
+         * continuous across dispatches, and held during missing sync/retrace.
+         * Colour acquisition must not override the horizontal state. */
+        double line_ms=1000.0*width/signal_region_sample_rate_hz(region);
+        pp.h_response=(float)-expm1(-line_ms);
+        chain_update_params(&sc,loop,&pp,sizeof(pp));
+        memset(locked,0,sizeof(locked));
+        CHECK(gpu_buffer_upload(gpu,sc.aux[1],locked,sizeof(locked)));
+        for(int line=0;line<32;line++) {
+            measurements[line*4]=line*advance;
+            measurements[line*4+2]=.3f;
+            measurements[line*4+3]=3*spp;
+        }
+        CHECK(gpu_buffer_upload(gpu,sc.aux[0],measurements,sizeof(measurements)));
+        for(int frame=0;frame<2;frame++) {
+            CHECK(chain_run(&sc,gpu));
+            CHECK(gpu_buffer_download(gpu,sc.aux[1],locked,sizeof(locked)));
+            for(int line=0;line<32;line++) {
+                double expected=3*spp*(1-exp(-(frame*32+line+1)*line_ms));
+                CHECK(fabs(locked[line*4+3]-expected)<.00005);
+            }
+        }
+        printf("AFC %s: 1 ms step response and frame continuity verified\n",region ? "PAL" : "NTSC");
+        float held=locked[32*4+3];
+        for(int line=0;line<32;line++) {
+            measurements[line*4+2]=line<16 ? -1 : .3f;
+            measurements[line*4+3]=99*spp; // invalid sync must not drag the oscillator
+        }
+        CHECK(gpu_buffer_upload(gpu,sc.aux[0],measurements,sizeof(measurements)));
+        CHECK(chain_run(&sc,gpu));
+        CHECK(gpu_buffer_download(gpu,sc.aux[1],locked,sizeof(locked)));
+        for(int line=0;line<33;line++) CHECK(fabsf(locked[line*4+3]-held)<.00001f);
+        for(int line=0;line<32;line++) {
+            measurements[line*4+2]=line<4 ? -1 : .3f;
+            measurements[line*4+3]=-2.0f*spp;
+        }
+        CHECK(gpu_buffer_upload(gpu,sc.aux[0],measurements,sizeof(measurements)));
+        CHECK(chain_run(&sc,gpu));
+        CHECK(gpu_buffer_download(gpu,sc.aux[1],locked,sizeof(locked)));
+        for(int line=0;line<32;line++) {
+            double expected=line<4 ? held : -2.0f*spp+(held+2*spp)*exp(-(line-3)*line_ms);
+            CHECK(fabs(locked[line*4+3]-expected)<.00005);
+        }
         free(input);free(raster);chain_destroy(&sc,gpu);
     }
+}
+
+/* Read back the real Metal/SPIR-V shader against NIDL grille measurements.
+ * A sparse 16x16 dispatch samples the nine measurement sites with a 1/8
+ * monitor-pixel footprint, without allocating a supersampled full screen. */
+static void fw900_measurements(SDL_GPUDevice *gpu, VideoGPUChain *v) {
+    enum { W=15360,H=9600,N=W*16,SW=1920,SH=1200 };
+    float *rgb=malloc(SW*SH*3*sizeof(float));
+    float *dx=calloc(N*4,sizeof(float)),*dy=calloc(N*4,sizeof(float));
+    uint16_t *out=calloc(N*4,sizeof(uint16_t));
+    SDL_GPUBuffer *input=gpu_buffer_create(gpu,SW*SH*3*sizeof(float),GPU_BUF_READWRITE);
+    SDL_GPUBuffer *bx=gpu_buffer_create(gpu,N*16,GPU_BUF_READWRITE);
+    SDL_GPUBuffer *by=gpu_buffer_create(gpu,N*16,GPU_BUF_READWRITE);
+    SDL_GPUBuffer *result=gpu_buffer_create(gpu,N*8,GPU_BUF_READWRITE);
+    const float cm[2][9]={{.56f,.63f,.51f,.52f,.50f,.47f,.58f,.60f,.55f},
+                         {.39f,.46f,.54f,.71f,.67f,.68f,.57f,.38f,.48f}};
+    const float uniformity[9]={28.7f,30.5f,29.1f,28.2f,31.1f,28.5f,28.3f,30.1f,29.3f};
+    // Binary grilles, uniform white, middle grey, black and scaler bars.
+    for(int test=0;test<6;test++) {
+        bool scaler=test==5;
+        int source_h=scaler ? 240 : SH;
+        for(int y=0;y<source_h;y++) for(int x=0;x<SW;x++) {
+            float value=test==0 ? ((x&1)==0) : test==1 ? ((y&1)==0) :
+                        test==3 ? 128.0f/255 : test==4 ? 0 : 1;
+            for(int ch=0;ch<3;ch++) rgb[(y*SW+x)*3+ch]=value;
+        }
+        for(int y=0;y<16;y++) for(int x=0;x<16;x++) {
+            int site=y%9,ix=site%3,iy=site/3,i=(y*W+x)*4;
+            float px=192+768*ix,py=120+480*iy;
+            if(test==0) px+=(x&1);
+            if(test==1) py+=(x&1);
+            if(scaler) px=x<8 ? 80 : 960;
+            // Uniform fields average exactly one full vertical raster period.
+            dx[i]=dx[i+1]=dx[i+2]=(px+.5f)/SW*SW;dx[i+3]=1;
+            dy[i]=dy[i+1]=dy[i+2]=(py+.5f)/SH*(test>=2 ? SH : H);dy[i+3]=1;
+        }
+        CHECK(gpu_buffer_upload(gpu,input,rgb,SW*source_h*3*sizeof(float)));
+        CHECK(gpu_buffer_upload(gpu,bx,dx,N*16));CHECK(gpu_buffer_upload(gpu,by,dy,N*16));
+        struct {
+            uint32_t signal_w,out_w,out_h,rows;
+            float narrow,wide;uint32_t frame;float hum,bloom,gamma,r,g,b;
+            uint32_t monitor,source_h;
+        } p={SW,W,test>=2 ? SH : H,1,.2f,.7f,0,0,1.8f,2.4f,0,0,0,1,source_h};
+        SDL_GPUCommandBuffer *cmd=SDL_AcquireGPUCommandBuffer(gpu);
+        SDL_GPUStorageBufferReadWriteBinding rw={.buffer=result};
+        SDL_GPUComputePass *pass=SDL_BeginGPUComputePass(cmd,NULL,0,&rw,1);
+        CHECK(pass!=NULL);
+        SDL_BindGPUComputePipeline(pass,v->sig_chain.pipelines[CHAIN_KERNEL_BEAM].pipeline);
+        SDL_GPUBuffer *ro[]={input,bx,by};SDL_BindGPUComputeStorageBuffers(pass,0,ro,3);
+        SDL_PushGPUComputeUniformData(cmd,0,&p,sizeof(p));
+        SDL_DispatchGPUCompute(pass,1,1,1);SDL_EndGPUComputePass(pass);
+        CHECK(SDL_SubmitGPUCommandBuffer(cmd));CHECK(gpu_buffer_download(gpu,result,out,N*8));
+        for(int site=0;site<9;site++) {
+            float a=gpu_half_to_float(out[(site*W)*4]);
+            float b=gpu_half_to_float(out[(site*W+1)*4]);
+            if(test<2) {
+                float measured=(a-b)/(a+b);
+                printf("FW900 %c grille site %d: Cm %.4f (report %.2f)\n",test ? 'H' : 'V',site,measured,cm[test][site]);
+                CHECK(fabsf(measured-cm[test][site])<.012f);
+            } else if(test<5) {
+                // NIDL Table II.6-1: code 128 = 7.397 fL, black .102, white 31.12.
+                float tone=test==2 ? 1 : test==3 ? (7.397f-.102f)/(31.12f-.102f) : 0;
+                CHECK(fabsf(a-tone*uniformity[site]/31.1f)<.003f);
+            } else {
+                CHECK(a==0); // black pillarbox, no repeated edge texels
+                CHECK(gpu_half_to_float(out[(site*W+8)*4])>.89f);
+            }
+        }
+    }
+    SDL_ReleaseGPUBuffer(gpu,input);SDL_ReleaseGPUBuffer(gpu,bx);
+    SDL_ReleaseGPUBuffer(gpu,by);SDL_ReleaseGPUBuffer(gpu,result);
+    free(rgb);free(dx);free(dy);free(out);
 }
 
 /* Test energy over pixel area, including fractional scanline scaling. */
@@ -783,6 +907,27 @@ static void gun_bandwidth(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoChain *c) {
         double energy=0; for(int i=0;i<v->signal_fmt.samples_per_line;i++) energy+=out[i*3+channel];
         CHECK(fabs(energy-1)<0.0001);
     }
+    /* Recover the actual GPU amplifier frequency response from an impulse. */
+    c->tv.rgb_bandwidth_3db=1;
+    c->tv.r_bandwidth=c->tv.g_bandwidth=c->tv.b_bandwidth=10e6f;
+    c->tv.velocity_mod=c->tv.asym_rise_fall=c->tv.vertical_smear=0;
+    video_gpu_reinit_stages(v,c);
+    CHECK(gpu_buffer_upload(gpu,v->buf_rgb,rgb,v->rgb_size));
+    cmd=SDL_AcquireGPUCommandBuffer(gpu);
+    CHECK(dispatch_video_amp_public(v,cmd));CHECK(SDL_SubmitGPUCommandBuffer(cmd));
+    CHECK(gpu_buffer_download(gpu,v->buf_rgb,out,v->rgb_size));
+    for(int channel=0;channel<3;channel++) {
+        double re=0,im=0,dc=0;
+        for(int i=0;i<v->signal_fmt.samples_per_line;i++) {
+            double phase=2*M_PI*10e6/signal_format_sample_rate_hz(&v->signal_fmt)*(i-x);
+            double voltage=out[i*3+channel];
+            re+=voltage*cos(phase);im+=voltage*sin(phase);dc+=voltage;
+        }
+        double db=20*log10(hypot(re,im)/dc);
+        CHECK(fabs(db+3)<.001);
+        printf("PVM RGB amplifier channel %d: %.6f dB at 10 MHz\n",channel,db);
+    }
+    c->tv.rgb_bandwidth_3db=0;
     free(rgb);free(out);
 }
 
@@ -1065,6 +1210,7 @@ int main(void) {
     horizontal_beam_boundaries(gpu,&v,&c);
     horizontal_beam_energy(gpu,&v,&c);
     beam_energy(gpu,&v,&c);
+    fw900_measurements(gpu,&v);
     independent_guns(gpu,&v,&c);
     beam_height_response(gpu,&v,&c);
     black_floor_deposition(gpu,&v,&c);

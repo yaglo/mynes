@@ -91,6 +91,7 @@ layout(set = 3, binding = 0) uniform DisplayParams {
     vec2 mask_scale, mask_origin;
     vec4 phosphor_to_display[3];
     vec4 presentation; // x: host-refresh emission multiplier
+    vec4 monitor; // x: 1 = FW900 physical variable-pitch grille
 };
 
 /* Mask coordinates are local to the CRT viewport. Each stripe is one
@@ -126,7 +127,15 @@ vec3 aperture_mask(float x, float pitch) {
     }
     return subpixel_layout==2 ? coverage.bgr : coverage;
 }
-vec3 phosphor_mask(vec2 pos) {
+vec3 phosphor_mask(vec2 pos, vec2 face_uv) {
+    if (monitor.x == 1.0) {
+        // Published centre/edge pitch; quadratic variation is an assumption.
+        float t=face_uv.x-0.5;
+        float pitch_mm=0.23+0.16*t*t;
+        float phase=479.298/(2.0*sqrt(0.23*0.04))*atan(2.0*t*sqrt(0.04/0.23));
+        float pitch=out_size.x*mask_scale.x*pitch_mm/(479.298*3.0);
+        return aperture_mask(phase*3.0*pitch,pitch);
+    }
     if(mask_type==1) return aperture_mask(pos.x,mask_pitch_pixels);
     float pitch=max(mask_pitch_pixels,0.05);
     float row_pitch=mask_row_pitch>0.0 ? mask_row_pitch : pitch*(mask_type==2 ? 2.4 : 0.8660254);
@@ -199,7 +208,7 @@ vec3 phosphor_light(vec2 p, vec2 face_pos) {
 
     vec3 drive=color;
     if (mask_strength > 0.01)
-        color *= mix(vec3(1.0), phosphor_mask(face_pos), mask_strength);
+        color *= mix(vec3(1.0), phosphor_mask(face_pos,p), mask_strength);
     // Generic legacy material-response control, not a measured phosphor fit.
     // Use unmasked excitation: changing host pitch must not change the
     // response curve. Shifted emission remains at its originating stripe.

@@ -355,18 +355,18 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
             upload_raw_ppu_to_tex(ctx, cmd, ctx->raw_tex, ctx->raw_ppu_rgb);
     }
 
-    /* Compute 4:3 letterboxed/pillarboxed viewport within the window. */
-    const float target_aspect = 4.0f / 3.0f;
+    /* Fit the tube face: 4:3 TV or 16:10 FW900 with internal 4:3 scaling. */
+    const float target_aspect = ctx->crt_shader_enabled && chain->tv.monitor_model==1 ? 16.0f/10.0f : 4.0f/3.0f;
     float win_aspect = (float)sw / (float)sh;
     float vp_x, vp_y, vp_w, vp_h;
     if (win_aspect > target_aspect) {
-        /* Window wider than 4:3 — pillarbox (black bars on sides). */
+        /* Window wider than the tube — pillarbox (black bars on sides). */
         vp_h = (float)sh;
         vp_w = vp_h * target_aspect;
         vp_x = ((float)sw - vp_w) * 0.5f;
         vp_y = 0.0f;
     } else {
-        /* Window taller than 4:3 — letterbox (black bars top/bottom). */
+        /* Window taller than the tube — letterbox (black bars top/bottom). */
         vp_w = (float)sw;
         vp_h = vp_w / target_aspect;
         vp_x = 0.0f;

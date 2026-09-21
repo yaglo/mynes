@@ -225,3 +225,22 @@ Unaveraged Contra phase pairs were inspected at 1280×960 and 3840×2880 for all
 four curated profiles. Their native-pixel crops retain the existing beam and
 mask structure; the correction is subtle in this scene and is not a preset
 brightness retuning. Pixel pitch and preset gain were unchanged.
+
+## PVM-14L2 circuit follow-up
+
+The [revision-specific 14L2 audit](pvm-14l2-model.md) records the actual aperture
+input/output networks, disabled comb-chip vertical enhancer, separate PIC/BRT ABL controls
+and the distinction between 14L2 focus and the 20L2-only dynamic-focus output.
+The nominal 14L2 profile now uses a 1 ms horizontal AFC, bounded 0–6 dB aperture
+gain, and an RGB amplifier fitted to -3 dB at 10 MHz. The rest of those transfer
+functions remains approximate. The accompanying passive-network SPICE sweep
+demonstrates sensitivity to an unknown IC port; it is not calibration data.
+
+## Published optical measurements
+
+The [measurement record](crt-measurements.md) adds a sourced Hitachi 751 glare
+dataset, reproducible two-parameter fit and actual GPU dark-disk checks. The
+selectable Measured glare experiment uses that effective scatter with an
+explicit physical-size assumption. It is a generic receiver/CRT experiment,
+not a full Hitachi emulation. The same record audits the more extensive NIDL
+FW900 report and identifies ambiguities that prevent blindly fitting its tables.

@@ -452,13 +452,17 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
     (void)gpu;  /* device not needed for render recording */
 
     struct {
-        float dir_x, dir_y, input_gamma, reserved;
+        float dir_x, dir_y, input_gamma, extended_kernel;
     } blur_params;
     /* Generic faceplate scatter sigma: 0.6% of picture height. Both axes
      * use the same screen-space width; window margins do not stretch it. */
     float picture_w=viewport ? viewport->w : (float)sw;
     float picture_h=viewport ? viewport->h : (float)sh;
-    float scatter_step=0.006f/6.4f;
+    bool extended_kernel=isfinite(params->halation_sigma) && params->halation_sigma>0;
+    /* Explicit widths use four-sigma support. The old 2.5-sigma kernel
+     * truncates the tails needed for dark-spot glare measurements. */
+    float scatter_step=extended_kernel ?
+        fminf(fmaxf(params->halation_sigma,0.0005f),0.05f)/4.0f : 0.006f/6.4f;
     bool scatter_enabled=params->halation_strength>0.001f || params->glass_reflection>0.001f;
 
     /* Integrate the source footprint before lowering resolution. Reuse B
@@ -486,6 +490,7 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
         blur_params.dir_x = scatter_step * picture_h / fmaxf(picture_w,1);
         blur_params.dir_y = 0.0f;
         blur_params.input_gamma = 0;
+        blur_params.extended_kernel = extended_kernel;
 
         SDL_GPUColorTargetInfo ct;
         memset(&ct, 0, sizeof(ct));
@@ -517,6 +522,7 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
         blur_params.dir_x = 0.0f;
         blur_params.dir_y = scatter_step;
         blur_params.input_gamma = 0;
+        blur_params.extended_kernel = extended_kernel;
 
         SDL_GPUColorTargetInfo ct;
         memset(&ct, 0, sizeof(ct));
@@ -638,8 +644,10 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
             float _color_pad[2];
             float phosphor_to_display[3][4];
             float pulse_gain, _pulse_pad[3];
+            float monitor_model, _monitor_pad[3];
         } crt_ubo = {0};
 
+        crt_ubo.monitor_model = params->monitor_model;
         crt_ubo.pulse_gain = params->pulse_enabled ? params->pulse_gain : 1;
         float phosphor_matrix[3][3];
         crt_phosphor_matrix(params->phosphor_gamut,phosphor_matrix);
@@ -769,6 +777,7 @@ void gpu_display_params_from_tv(GPUDisplayParams *out, const TVDisplayParams *tv
 {
     if (!out || !tv) return;
 
+    out->monitor_model = tv->monitor_model;
     out->src_w = (float)comp_w;
     out->src_h = (float)comp_h;
     out->out_w = (float)win_w;
@@ -790,8 +799,10 @@ void gpu_display_params_from_tv(GPUDisplayParams *out, const TVDisplayParams *tv
     if (tv->mask_triads > 0.0f)
         out->mask_pitch_px = (float)win_w / (3.0f * tv->mask_triads);
     out->mask_pitch_px = fmaxf(out->mask_pitch_px, 0.05f);
+    if(tv->monitor_model==1) out->mask_pitch_px=(float)win_w*0.23f/(3*479.298f);
 
     out->halation_strength = tv->halation;
+    out->halation_sigma = tv->halation_sigma;
     out->halation_tint_r   = tv->halation_tint_r;
     out->halation_tint_g   = tv->halation_tint_g;
     out->halation_tint_b   = tv->halation_tint_b;
@@ -858,6 +869,7 @@ void gpu_display_fit_mask(GPUDisplayParams *p, bool pixel_aligned,
     p->mask_scale_x=fmaxf(scale_x,0.01f);p->mask_scale_y=fmaxf(scale_y,0.01f);
     p->mask_origin_x=origin_x;p->mask_origin_y=origin_y;
     p->mask_pitch_px*=p->mask_scale_x;
+    if(p->monitor_model==1) return; // physical variable pitch; never quantize
     if(pixel_aligned) {
         // Quantize the RGB repeat, not each colour cell. A nominal 4.6-pixel
         // triad should become five pixels, not six. Filtered cell edges can

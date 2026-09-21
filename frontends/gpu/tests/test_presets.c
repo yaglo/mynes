@@ -175,6 +175,8 @@ static int test_tv_params_physical(void) {
         CHECK_RANGE(p, t->g_drive,           0.5,    1.5,    "tv.g_drive");
         CHECK_RANGE(p, t->b_drive,           0.5,    1.5,    "tv.b_drive");
 
+        CHECK_RANGE(p, t->monitor_model, 0, 1, "tv.monitor_model");
+        CHECK_RANGE(p, t->phosphor_gamut, 0, 3, "tv.phosphor_gamut");
         /* mask_pitch_px is in pixel units per recent refactor; typical 0.5-20 */
         if (!(t->mask_pitch_px > 0.0f)) {
             printf("\n  FAIL: [%s] tv.mask_pitch_px = %g must be > 0",
@@ -183,12 +185,13 @@ static int test_tv_params_physical(void) {
         }
         CHECK_RANGE(p, t->mask_pitch_px,   0.5,   20.0,   "tv.mask_pitch_px");
         CHECK_RANGE(p, t->mask_strength,   0.0,   1.0,    "tv.mask_strength");
-        CHECK_RANGE(p, t->persistence_ms,  0.1,   50.0,   "tv.persistence_ms");
+        CHECK_RANGE(p, t->persistence_ms,  0.0,   50.0,   "tv.persistence_ms");
         CHECK_RANGE(p, t->beam_sharpness,  0.0,   2.0,    "tv.beam_sharpness");
         CHECK_RANGE(p, video_beam_sigma(t, true)*2.354820045f, 0.12f, 2.36f, "tv.white_beam_fwhm");
         CHECK_RANGE(p, t->barrel,          0.0,   0.2,    "tv.barrel");
         CHECK_RANGE(p, t->barrel_v,        0.0,   0.2,    "tv.barrel_v");
         CHECK_RANGE(p, t->halation,        0.0,   0.5,    "tv.halation");
+        CHECK_RANGE(p, t->halation_sigma,  0.0,   0.05,   "tv.halation_sigma");
         CHECK_RANGE(p, t->glass_tint,      0.3,   1.0,    "tv.glass_tint");
         CHECK_RANGE(p, t->vignette,        0.0,   0.5,    "tv.vignette");
         CHECK_RANGE(p, t->ambient_light,   0.0,   0.3,    "tv.ambient_light");
@@ -211,6 +214,9 @@ static int test_tv_params_physical(void) {
         CHECK_RANGE(p, t->top_edge_width,   0.01, 0.5,    "tv.top_edge_width");
         CHECK_RANGE(p, t->overscan,        0.0,   0.1,    "tv.overscan");
         CHECK_RANGE(p, t->luma_peaking,    0.0,   1.0,    "tv.luma_peaking");
+        CHECK_RANGE(p, t->rgb_bandwidth_3db, 0, 1, "tv.rgb_bandwidth_3db");
+        CHECK_RANGE(p, t->aperture_max_db, 0.0, 12.0, "tv.aperture_max_db");
+        CHECK_RANGE(p, t->h_afc_tau_ms, 0.0, 10.0, "tv.h_afc_tau_ms");
         CHECK_RANGE(p, t->h_pos,          -0.5,   0.5,    "tv.h_pos");
         CHECK_RANGE(p, t->v_pos,          -0.5,   0.5,    "tv.v_pos");
         CHECK_RANGE(p, t->h_size,          0.3,   2.0,    "tv.h_size");
@@ -361,6 +367,24 @@ static int test_pvm_is_svideo_or_composite(void) {
     return 1;
 }
 
+static int test_pvm_documented_response_settings(void) {
+    const PhysicalPreset *p=find_preset_by_slug("sony_pvm_14l2.json");
+    if(!p) return 0;
+    CHECK_RANGE(p,p->tv.h_afc_tau_ms,1,1,"Sony AFC specification");
+    CHECK_RANGE(p,p->tv.aperture_max_db,6,6,"Sony aperture range");
+    CHECK_RANGE(p,p->tv.rgb_bandwidth_3db,1,1,"Sony bandwidth definition");
+    CHECK_RANGE(p,p->tv.r_bandwidth,10e6,10e6,"Sony R bandwidth");
+    CHECK_RANGE(p,p->tv.g_bandwidth,10e6,10e6,"Sony G bandwidth");
+    CHECK_RANGE(p,p->tv.b_bandwidth,10e6,10e6,"Sony B bandwidth");
+    /* Generic presets which omit these fields retain their existing laws. */
+    p=find_preset_by_slug("studio_pvm.json");
+    if(!p) return 0;
+    CHECK_RANGE(p,p->tv.h_afc_tau_ms,0,0,"legacy AFC");
+    CHECK_RANGE(p,p->tv.aperture_max_db,0,0,"legacy aperture");
+    CHECK_RANGE(p,p->tv.rgb_bandwidth_3db,0,0,"legacy bandwidth");
+    return 1;
+}
+
 /* ============================================================================
  * Main
  * ============================================================================ */
@@ -409,6 +433,7 @@ int main(int argc, char **argv) {
     RUN_TEST(test_rf_presets_have_rf_config);
     RUN_TEST(test_arcade_is_rgb);
     RUN_TEST(test_pvm_is_svideo_or_composite);
+    RUN_TEST(test_pvm_documented_response_settings);
 
     printf("\n=== Results: %d/%d tests passed ===\n", tests_passed, tests_run);
     return (tests_passed == tests_run) ? 0 : 1;

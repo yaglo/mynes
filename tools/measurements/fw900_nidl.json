@@ -1,0 +1,1386 @@
+{
+  "source": {
+    "url": "https://archive.org/download/DTIC_ADA415156/DTIC_ADA415156.pdf",
+    "report": "NIDL 751810601-120, 2001-09-06",
+    "device": "Sony GDM-FW900",
+    "tables": [
+      "II.3-1",
+      "II.6-1",
+      "II.6-2",
+      "II.11-1",
+      "II.12-1 (first grid)",
+      "II.22.1"
+    ]
+  },
+  "raster": [
+    1920,
+    1200
+  ],
+  "refresh_hz": 85,
+  "image_inches": [
+    18.87,
+    11.818
+  ],
+  "pitch_mm": [
+    0.23,
+    0.27
+  ],
+  "grayscale": [
+    {
+      "input": 0,
+      "background": 38,
+      "luminance_fl": 0.102
+    },
+    {
+      "input": 1,
+      "background": 39,
+      "luminance_fl": 0.111
+    },
+    {
+      "input": 2,
+      "background": 39,
+      "luminance_fl": 0.121
+    },
+    {
+      "input": 3,
+      "background": 39,
+      "luminance_fl": 0.131
+    },
+    {
+      "input": 4,
+      "background": 40,
+      "luminance_fl": 0.141
+    },
+    {
+      "input": 5,
+      "background": 40,
+      "luminance_fl": 0.151
+    },
+    {
+      "input": 6,
+      "background": 41,
+      "luminance_fl": 0.162
+    },
+    {
+      "input": 7,
+      "background": 41,
+      "luminance_fl": 0.174
+    },
+    {
+      "input": 8,
+      "background": 41,
+      "luminance_fl": 0.187
+    },
+    {
+      "input": 9,
+      "background": 42,
+      "luminance_fl": 0.2
+    },
+    {
+      "input": 10,
+      "background": 42,
+      "luminance_fl": 0.214
+    },
+    {
+      "input": 11,
+      "background": 42,
+      "luminance_fl": 0.228
+    },
+    {
+      "input": 12,
+      "background": 43,
+      "luminance_fl": 0.242
+    },
+    {
+      "input": 13,
+      "background": 43,
+      "luminance_fl": 0.257
+    },
+    {
+      "input": 14,
+      "background": 43,
+      "luminance_fl": 0.274
+    },
+    {
+      "input": 15,
+      "background": 44,
+      "luminance_fl": 0.291
+    },
+    {
+      "input": 16,
+      "background": 44,
+      "luminance_fl": 0.311
+    },
+    {
+      "input": 17,
+      "background": 44,
+      "luminance_fl": 0.331
+    },
+    {
+      "input": 18,
+      "background": 45,
+      "luminance_fl": 0.347
+    },
+    {
+      "input": 19,
+      "background": 45,
+      "luminance_fl": 0.369
+    },
+    {
+      "input": 20,
+      "background": 45,
+      "luminance_fl": 0.387
+    },
+    {
+      "input": 21,
+      "background": 46,
+      "luminance_fl": 0.412
+    },
+    {
+      "input": 22,
+      "background": 46,
+      "luminance_fl": 0.431
+    },
+    {
+      "input": 23,
+      "background": 46,
+      "luminance_fl": 0.453
+    },
+    {
+      "input": 24,
+      "background": 47,
+      "luminance_fl": 0.475
+    },
+    {
+      "input": 25,
+      "background": 47,
+      "luminance_fl": 0.497
+    },
+    {
+      "input": 26,
+      "background": 48,
+      "luminance_fl": 0.521
+    },
+    {
+      "input": 27,
+      "background": 48,
+      "luminance_fl": 0.545
+    },
+    {
+      "input": 28,
+      "background": 48,
+      "luminance_fl": 0.567
+    },
+    {
+      "input": 29,
+      "background": 49,
+      "luminance_fl": 0.599
+    },
+    {
+      "input": 30,
+      "background": 49,
+      "luminance_fl": 0.625
+    },
+    {
+      "input": 31,
+      "background": 49,
+      "luminance_fl": 0.655
+    },
+    {
+      "input": 32,
+      "background": 50,
+      "luminance_fl": 0.679
+    },
+    {
+      "input": 33,
+      "background": 50,
+      "luminance_fl": 0.709
+    },
+    {
+      "input": 34,
+      "background": 50,
+      "luminance_fl": 0.738
+    },
+    {
+      "input": 35,
+      "background": 51,
+      "luminance_fl": 0.768
+    },
+    {
+      "input": 36,
+      "background": 51,
+      "luminance_fl": 0.799
+    },
+    {
+      "input": 37,
+      "background": 51,
+      "luminance_fl": 0.831
+    },
+    {
+      "input": 38,
+      "background": 52,
+      "luminance_fl": 0.866
+    },
+    {
+      "input": 39,
+      "background": 52,
+      "luminance_fl": 0.901
+    },
+    {
+      "input": 40,
+      "background": 52,
+      "luminance_fl": 0.929
+    },
+    {
+      "input": 41,
+      "background": 53,
+      "luminance_fl": 0.967
+    },
+    {
+      "input": 42,
+      "background": 53,
+      "luminance_fl": 1.001
+    },
+    {
+      "input": 43,
+      "background": 53,
+      "luminance_fl": 1.038
+    },
+    {
+      "input": 44,
+      "background": 54,
+      "luminance_fl": 1.073
+    },
+    {
+      "input": 45,
+      "background": 54,
+      "luminance_fl": 1.105
+    },
+    {
+      "input": 46,
+      "background": 55,
+      "luminance_fl": 1.155
+    },
+    {
+      "input": 47,
+      "background": 55,
+      "luminance_fl": 1.193
+    },
+    {
+      "input": 48,
+      "background": 55,
+      "luminance_fl": 1.231
+    },
+    {
+      "input": 49,
+      "background": 56,
+      "luminance_fl": 1.279
+    },
+    {
+      "input": 50,
+      "background": 56,
+      "luminance_fl": 1.317
+    },
+    {
+      "input": 51,
+      "background": 56,
+      "luminance_fl": 1.368
+    },
+    {
+      "input": 52,
+      "background": 57,
+      "luminance_fl": 1.399
+    },
+    {
+      "input": 53,
+      "background": 57,
+      "luminance_fl": 1.461
+    },
+    {
+      "input": 54,
+      "background": 57,
+      "luminance_fl": 1.504
+    },
+    {
+      "input": 55,
+      "background": 58,
+      "luminance_fl": 1.556
+    },
+    {
+      "input": 56,
+      "background": 58,
+      "luminance_fl": 1.587
+    },
+    {
+      "input": 57,
+      "background": 58,
+      "luminance_fl": 1.648
+    },
+    {
+      "input": 58,
+      "background": 59,
+      "luminance_fl": 1.697
+    },
+    {
+      "input": 59,
+      "background": 59,
+      "luminance_fl": 1.743
+    },
+    {
+      "input": 60,
+      "background": 59,
+      "luminance_fl": 1.786
+    },
+    {
+      "input": 61,
+      "background": 60,
+      "luminance_fl": 1.846
+    },
+    {
+      "input": 62,
+      "background": 60,
+      "luminance_fl": 1.889
+    },
+    {
+      "input": 63,
+      "background": 60,
+      "luminance_fl": 1.946
+    },
+    {
+      "input": 64,
+      "background": 61,
+      "luminance_fl": 2.002
+    },
+    {
+      "input": 65,
+      "background": 61,
+      "luminance_fl": 2.054
+    },
+    {
+      "input": 66,
+      "background": 62,
+      "luminance_fl": 2.108
+    },
+    {
+      "input": 67,
+      "background": 62,
+      "luminance_fl": 2.157
+    },
+    {
+      "input": 68,
+      "background": 62,
+      "luminance_fl": 2.207
+    },
+    {
+      "input": 69,
+      "background": 63,
+      "luminance_fl": 2.289
+    },
+    {
+      "input": 70,
+      "background": 63,
+      "luminance_fl": 2.343
+    },
+    {
+      "input": 71,
+      "background": 63,
+      "luminance_fl": 2.412
+    },
+    {
+      "input": 72,
+      "background": 64,
+      "luminance_fl": 2.467
+    },
+    {
+      "input": 73,
+      "background": 64,
+      "luminance_fl": 2.526
+    },
+    {
+      "input": 74,
+      "background": 64,
+      "luminance_fl": 2.572
+    },
+    {
+      "input": 75,
+      "background": 65,
+      "luminance_fl": 2.648
+    },
+    {
+      "input": 76,
+      "background": 65,
+      "luminance_fl": 2.709
+    },
+    {
+      "input": 77,
+      "background": 65,
+      "luminance_fl": 2.781
+    },
+    {
+      "input": 78,
+      "background": 66,
+      "luminance_fl": 2.855
+    },
+    {
+      "input": 79,
+      "background": 66,
+      "luminance_fl": 2.921
+    },
+    {
+      "input": 80,
+      "background": 66,
+      "luminance_fl": 2.965
+    },
+    {
+      "input": 81,
+      "background": 67,
+      "luminance_fl": 3.057
+    },
+    {
+      "input": 82,
+      "background": 67,
+      "luminance_fl": 3.143
+    },
+    {
+      "input": 83,
+      "background": 67,
+      "luminance_fl": 3.186
+    },
+    {
+      "input": 84,
+      "background": 68,
+      "luminance_fl": 3.278
+    },
+    {
+      "input": 85,
+      "background": 68,
+      "luminance_fl": 3.351
+    },
+    {
+      "input": 86,
+      "background": 69,
+      "luminance_fl": 3.399
+    },
+    {
+      "input": 87,
+      "background": 69,
+      "luminance_fl": 3.494
+    },
+    {
+      "input": 88,
+      "background": 69,
+      "luminance_fl": 3.566
+    },
+    {
+      "input": 89,
+      "background": 70,
+      "luminance_fl": 3.648
+    },
+    {
+      "input": 90,
+      "background": 70,
+      "luminance_fl": 3.733
+    },
+    {
+      "input": 91,
+      "background": 70,
+      "luminance_fl": 3.818
+    },
+    {
+      "input": 92,
+      "background": 71,
+      "luminance_fl": 3.879
+    },
+    {
+      "input": 93,
+      "background": 71,
+      "luminance_fl": 3.952
+    },
+    {
+      "input": 94,
+      "background": 71,
+      "luminance_fl": 4.042
+    },
+    {
+      "input": 95,
+      "background": 72,
+      "luminance_fl": 4.136
+    },
+    {
+      "input": 96,
+      "background": 72,
+      "luminance_fl": 4.194
+    },
+    {
+      "input": 97,
+      "background": 72,
+      "luminance_fl": 4.29
+    },
+    {
+      "input": 98,
+      "background": 73,
+      "luminance_fl": 4.381
+    },
+    {
+      "input": 99,
+      "background": 73,
+      "luminance_fl": 4.471
+    },
+    {
+      "input": 100,
+      "background": 73,
+      "luminance_fl": 4.562
+    },
+    {
+      "input": 101,
+      "background": 74,
+      "luminance_fl": 4.646
+    },
+    {
+      "input": 102,
+      "background": 74,
+      "luminance_fl": 4.734
+    },
+    {
+      "input": 103,
+      "background": 74,
+      "luminance_fl": 4.819
+    },
+    {
+      "input": 104,
+      "background": 75,
+      "luminance_fl": 4.93
+    },
+    {
+      "input": 105,
+      "background": 75,
+      "luminance_fl": 5.017
+    },
+    {
+      "input": 106,
+      "background": 76,
+      "luminance_fl": 5.108
+    },
+    {
+      "input": 107,
+      "background": 76,
+      "luminance_fl": 5.179
+    },
+    {
+      "input": 108,
+      "background": 76,
+      "luminance_fl": 5.285
+    },
+    {
+      "input": 109,
+      "background": 77,
+      "luminance_fl": 5.382
+    },
+    {
+      "input": 110,
+      "background": 77,
+      "luminance_fl": 5.487
+    },
+    {
+      "input": 111,
+      "background": 77,
+      "luminance_fl": 5.584
+    },
+    {
+      "input": 112,
+      "background": 78,
+      "luminance_fl": 5.676
+    },
+    {
+      "input": 113,
+      "background": 78,
+      "luminance_fl": 5.787
+    },
+    {
+      "input": 114,
+      "background": 78,
+      "luminance_fl": 5.887
+    },
+    {
+      "input": 115,
+      "background": 79,
+      "luminance_fl": 5.998
+    },
+    {
+      "input": 116,
+      "background": 79,
+      "luminance_fl": 6.1
+    },
+    {
+      "input": 117,
+      "background": 79,
+      "luminance_fl": 6.201
+    },
+    {
+      "input": 118,
+      "background": 80,
+      "luminance_fl": 6.315
+    },
+    {
+      "input": 119,
+      "background": 80,
+      "luminance_fl": 6.402
+    },
+    {
+      "input": 120,
+      "background": 80,
+      "luminance_fl": 6.494
+    },
+    {
+      "input": 121,
+      "background": 81,
+      "luminance_fl": 6.541
+    },
+    {
+      "input": 122,
+      "background": 81,
+      "luminance_fl": 6.657
+    },
+    {
+      "input": 123,
+      "background": 81,
+      "luminance_fl": 6.824
+    },
+    {
+      "input": 124,
+      "background": 82,
+      "luminance_fl": 6.931
+    },
+    {
+      "input": 125,
+      "background": 82,
+      "luminance_fl": 7.054
+    },
+    {
+      "input": 126,
+      "background": 83,
+      "luminance_fl": 7.168
+    },
+    {
+      "input": 127,
+      "background": 83,
+      "luminance_fl": 7.285
+    },
+    {
+      "input": 128,
+      "background": 83,
+      "luminance_fl": 7.397
+    },
+    {
+      "input": 129,
+      "background": 84,
+      "luminance_fl": 7.514
+    },
+    {
+      "input": 130,
+      "background": 84,
+      "luminance_fl": 7.623
+    },
+    {
+      "input": 131,
+      "background": 84,
+      "luminance_fl": 7.737
+    },
+    {
+      "input": 132,
+      "background": 85,
+      "luminance_fl": 7.868
+    },
+    {
+      "input": 133,
+      "background": 85,
+      "luminance_fl": 7.921
+    },
+    {
+      "input": 134,
+      "background": 85,
+      "luminance_fl": 8.122
+    },
+    {
+      "input": 135,
+      "background": 86,
+      "luminance_fl": 8.204
+    },
+    {
+      "input": 136,
+      "background": 86,
+      "luminance_fl": 8.339
+    },
+    {
+      "input": 137,
+      "background": 86,
+      "luminance_fl": 8.464
+    },
+    {
+      "input": 138,
+      "background": 87,
+      "luminance_fl": 8.628
+    },
+    {
+      "input": 139,
+      "background": 87,
+      "luminance_fl": 8.706
+    },
+    {
+      "input": 140,
+      "background": 87,
+      "luminance_fl": 8.826
+    },
+    {
+      "input": 141,
+      "background": 88,
+      "luminance_fl": 8.963
+    },
+    {
+      "input": 142,
+      "background": 88,
+      "luminance_fl": 9.092
+    },
+    {
+      "input": 143,
+      "background": 88,
+      "luminance_fl": 9.226
+    },
+    {
+      "input": 144,
+      "background": 89,
+      "luminance_fl": 9.386
+    },
+    {
+      "input": 145,
+      "background": 89,
+      "luminance_fl": 9.526
+    },
+    {
+      "input": 146,
+      "background": 90,
+      "luminance_fl": 9.662
+    },
+    {
+      "input": 147,
+      "background": 90,
+      "luminance_fl": 9.804
+    },
+    {
+      "input": 148,
+      "background": 90,
+      "luminance_fl": 9.942
+    },
+    {
+      "input": 149,
+      "background": 91,
+      "luminance_fl": 10.08
+    },
+    {
+      "input": 150,
+      "background": 91,
+      "luminance_fl": 10.22
+    },
+    {
+      "input": 151,
+      "background": 91,
+      "luminance_fl": 10.36
+    },
+    {
+      "input": 152,
+      "background": 92,
+      "luminance_fl": 10.49
+    },
+    {
+      "input": 153,
+      "background": 92,
+      "luminance_fl": 10.64
+    },
+    {
+      "input": 154,
+      "background": 92,
+      "luminance_fl": 10.78
+    },
+    {
+      "input": 155,
+      "background": 93,
+      "luminance_fl": 10.93
+    },
+    {
+      "input": 156,
+      "background": 93,
+      "luminance_fl": 11.06
+    },
+    {
+      "input": 157,
+      "background": 93,
+      "luminance_fl": 11.22
+    },
+    {
+      "input": 158,
+      "background": 94,
+      "luminance_fl": 11.37
+    },
+    {
+      "input": 159,
+      "background": 94,
+      "luminance_fl": 11.52
+    },
+    {
+      "input": 160,
+      "background": 94,
+      "luminance_fl": 11.67
+    },
+    {
+      "input": 161,
+      "background": 95,
+      "luminance_fl": 11.82
+    },
+    {
+      "input": 162,
+      "background": 95,
+      "luminance_fl": 11.98
+    },
+    {
+      "input": 163,
+      "background": 95,
+      "luminance_fl": 12.14
+    },
+    {
+      "input": 164,
+      "background": 96,
+      "luminance_fl": 12.28
+    },
+    {
+      "input": 165,
+      "background": 96,
+      "luminance_fl": 12.44
+    },
+    {
+      "input": 166,
+      "background": 97,
+      "luminance_fl": 12.6
+    },
+    {
+      "input": 167,
+      "background": 97,
+      "luminance_fl": 12.77
+    },
+    {
+      "input": 168,
+      "background": 97,
+      "luminance_fl": 12.91
+    },
+    {
+      "input": 169,
+      "background": 98,
+      "luminance_fl": 13.08
+    },
+    {
+      "input": 170,
+      "background": 98,
+      "luminance_fl": 13.24
+    },
+    {
+      "input": 171,
+      "background": 98,
+      "luminance_fl": 13.41
+    },
+    {
+      "input": 172,
+      "background": 99,
+      "luminance_fl": 13.56
+    },
+    {
+      "input": 173,
+      "background": 99,
+      "luminance_fl": 13.74
+    },
+    {
+      "input": 174,
+      "background": 99,
+      "luminance_fl": 13.9
+    },
+    {
+      "input": 175,
+      "background": 100,
+      "luminance_fl": 14.07
+    },
+    {
+      "input": 176,
+      "background": 100,
+      "luminance_fl": 14.26
+    },
+    {
+      "input": 177,
+      "background": 100,
+      "luminance_fl": 14.43
+    },
+    {
+      "input": 178,
+      "background": 101,
+      "luminance_fl": 14.6
+    },
+    {
+      "input": 179,
+      "background": 101,
+      "luminance_fl": 14.78
+    },
+    {
+      "input": 180,
+      "background": 101,
+      "luminance_fl": 14.94
+    },
+    {
+      "input": 181,
+      "background": 102,
+      "luminance_fl": 15.12
+    },
+    {
+      "input": 182,
+      "background": 102,
+      "luminance_fl": 15.3
+    },
+    {
+      "input": 183,
+      "background": 102,
+      "luminance_fl": 15.48
+    },
+    {
+      "input": 184,
+      "background": 103,
+      "luminance_fl": 15.65
+    },
+    {
+      "input": 185,
+      "background": 103,
+      "luminance_fl": 15.83
+    },
+    {
+      "input": 186,
+      "background": 104,
+      "luminance_fl": 16.01
+    },
+    {
+      "input": 187,
+      "background": 104,
+      "luminance_fl": 16.2
+    },
+    {
+      "input": 188,
+      "background": 104,
+      "luminance_fl": 16.36
+    },
+    {
+      "input": 189,
+      "background": 105,
+      "luminance_fl": 16.55
+    },
+    {
+      "input": 190,
+      "background": 105,
+      "luminance_fl": 16.73
+    },
+    {
+      "input": 191,
+      "background": 105,
+      "luminance_fl": 16.92
+    },
+    {
+      "input": 192,
+      "background": 106,
+      "luminance_fl": 17.1
+    },
+    {
+      "input": 193,
+      "background": 106,
+      "luminance_fl": 17.29
+    },
+    {
+      "input": 194,
+      "background": 106,
+      "luminance_fl": 17.48
+    },
+    {
+      "input": 195,
+      "background": 107,
+      "luminance_fl": 17.68
+    },
+    {
+      "input": 196,
+      "background": 107,
+      "luminance_fl": 17.86
+    },
+    {
+      "input": 197,
+      "background": 107,
+      "luminance_fl": 18.05
+    },
+    {
+      "input": 198,
+      "background": 108,
+      "luminance_fl": 18.24
+    },
+    {
+      "input": 199,
+      "background": 108,
+      "luminance_fl": 18.45
+    },
+    {
+      "input": 200,
+      "background": 108,
+      "luminance_fl": 18.63
+    },
+    {
+      "input": 201,
+      "background": 109,
+      "luminance_fl": 18.83
+    },
+    {
+      "input": 202,
+      "background": 109,
+      "luminance_fl": 19.02
+    },
+    {
+      "input": 203,
+      "background": 109,
+      "luminance_fl": 19.23
+    },
+    {
+      "input": 204,
+      "background": 110,
+      "luminance_fl": 19.42
+    },
+    {
+      "input": 205,
+      "background": 110,
+      "luminance_fl": 19.62
+    },
+    {
+      "input": 206,
+      "background": 111,
+      "luminance_fl": 19.82
+    },
+    {
+      "input": 207,
+      "background": 111,
+      "luminance_fl": 20.03
+    },
+    {
+      "input": 208,
+      "background": 111,
+      "luminance_fl": 20.25
+    },
+    {
+      "input": 209,
+      "background": 112,
+      "luminance_fl": 20.47
+    },
+    {
+      "input": 210,
+      "background": 112,
+      "luminance_fl": 20.68
+    },
+    {
+      "input": 211,
+      "background": 112,
+      "luminance_fl": 20.9
+    },
+    {
+      "input": 212,
+      "background": 113,
+      "luminance_fl": 21.09
+    },
+    {
+      "input": 213,
+      "background": 113,
+      "luminance_fl": 21.31
+    },
+    {
+      "input": 214,
+      "background": 113,
+      "luminance_fl": 21.52
+    },
+    {
+      "input": 215,
+      "background": 114,
+      "luminance_fl": 21.74
+    },
+    {
+      "input": 216,
+      "background": 114,
+      "luminance_fl": 21.93
+    },
+    {
+      "input": 217,
+      "background": 114,
+      "luminance_fl": 22.16
+    },
+    {
+      "input": 218,
+      "background": 115,
+      "luminance_fl": 22.37
+    },
+    {
+      "input": 219,
+      "background": 115,
+      "luminance_fl": 22.6
+    },
+    {
+      "input": 220,
+      "background": 115,
+      "luminance_fl": 22.8
+    },
+    {
+      "input": 221,
+      "background": 116,
+      "luminance_fl": 23.03
+    },
+    {
+      "input": 222,
+      "background": 116,
+      "luminance_fl": 23.25
+    },
+    {
+      "input": 223,
+      "background": 116,
+      "luminance_fl": 23.48
+    },
+    {
+      "input": 224,
+      "background": 117,
+      "luminance_fl": 23.7
+    },
+    {
+      "input": 225,
+      "background": 117,
+      "luminance_fl": 23.93
+    },
+    {
+      "input": 226,
+      "background": 118,
+      "luminance_fl": 24.16
+    },
+    {
+      "input": 227,
+      "background": 118,
+      "luminance_fl": 24.39
+    },
+    {
+      "input": 228,
+      "background": 118,
+      "luminance_fl": 24.61
+    },
+    {
+      "input": 229,
+      "background": 119,
+      "luminance_fl": 24.84
+    },
+    {
+      "input": 230,
+      "background": 119,
+      "luminance_fl": 25.07
+    },
+    {
+      "input": 231,
+      "background": 119,
+      "luminance_fl": 25.31
+    },
+    {
+      "input": 232,
+      "background": 120,
+      "luminance_fl": 25.53
+    },
+    {
+      "input": 233,
+      "background": 120,
+      "luminance_fl": 25.76
+    },
+    {
+      "input": 234,
+      "background": 120,
+      "luminance_fl": 25.99
+    },
+    {
+      "input": 235,
+      "background": 121,
+      "luminance_fl": 26.23
+    },
+    {
+      "input": 236,
+      "background": 121,
+      "luminance_fl": 26.45
+    },
+    {
+      "input": 237,
+      "background": 121,
+      "luminance_fl": 26.68
+    },
+    {
+      "input": 238,
+      "background": 122,
+      "luminance_fl": 26.92
+    },
+    {
+      "input": 239,
+      "background": 122,
+      "luminance_fl": 27.17
+    },
+    {
+      "input": 240,
+      "background": 122,
+      "luminance_fl": 27.41
+    },
+    {
+      "input": 241,
+      "background": 123,
+      "luminance_fl": 27.66
+    },
+    {
+      "input": 242,
+      "background": 123,
+      "luminance_fl": 27.84
+    },
+    {
+      "input": 243,
+      "background": 123,
+      "luminance_fl": 28.06
+    },
+    {
+      "input": 244,
+      "background": 124,
+      "luminance_fl": 28.29
+    },
+    {
+      "input": 245,
+      "background": 124,
+      "luminance_fl": 28.55
+    },
+    {
+      "input": 246,
+      "background": 125,
+      "luminance_fl": 28.79
+    },
+    {
+      "input": 247,
+      "background": 125,
+      "luminance_fl": 29.05
+    },
+    {
+      "input": 248,
+      "background": 125,
+      "luminance_fl": 29.27
+    },
+    {
+      "input": 249,
+      "background": 126,
+      "luminance_fl": 29.54
+    },
+    {
+      "input": 250,
+      "background": 126,
+      "luminance_fl": 29.8
+    },
+    {
+      "input": 251,
+      "background": 126,
+      "luminance_fl": 30.06
+    },
+    {
+      "input": 252,
+      "background": 127,
+      "luminance_fl": 30.31
+    },
+    {
+      "input": 253,
+      "background": 127,
+      "luminance_fl": 30.59
+    },
+    {
+      "input": 254,
+      "background": 127,
+      "luminance_fl": 30.85
+    },
+    {
+      "input": 255,
+      "background": 128,
+      "luminance_fl": 31.12
+    }
+  ],
+  "grid_coordinates": [
+    0.1,
+    0.5,
+    0.9
+  ],
+  "horizontal_grille_cm": [
+    [
+      0.39,
+      0.46,
+      0.54
+    ],
+    [
+      0.71,
+      0.67,
+      0.68
+    ],
+    [
+      0.57,
+      0.38,
+      0.48
+    ]
+  ],
+  "vertical_grille_cm": [
+    [
+      0.56,
+      0.63,
+      0.51
+    ],
+    [
+      0.52,
+      0.5,
+      0.47
+    ],
+    [
+      0.58,
+      0.6,
+      0.55
+    ]
+  ],
+  "white_luminance_fl": [
+    [
+      28.7,
+      30.5,
+      29.1
+    ],
+    [
+      28.2,
+      31.1,
+      28.5
+    ],
+    [
+      28.3,
+      30.1,
+      29.3
+    ]
+  ],
+  "primary_xy": [
+    [
+      0.602,
+      0.344
+    ],
+    [
+      0.28,
+      0.599
+    ],
+    [
+      0.152,
+      0.073
+    ]
+  ],
+  "qualifications": [
+    "Peripheral positions use 10% inset as specified by the test procedure.",
+    "II.12-1 second grid disagrees at middle-right; first grid retained.",
+    "Grayscale is system response under varying surrounds; black-subtracted for relative transfer.",
+    "Primary coordinates are effective measured values, normalized to D65 for user white-balance adjustment."
+  ]
+}

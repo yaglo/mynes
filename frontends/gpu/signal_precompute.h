@@ -238,6 +238,24 @@ static inline void signal_design_fir(float *taps, int n, float cutoff) {
     signal_design_fir_ex(taps, n, cutoff, 0.0f);
 }
 
+/* Place -3 dB at the requested frequency instead of the windowed-sinc
+ * cutoff (approximately -6 dB). This fits one published bandwidth point;
+ * the rest of the response remains a linear-phase FIR approximation.
+ * Intended for the RGB stage's 2..10 MHz range at NES sampling rates. */
+static inline void signal_design_fir_3db(float *taps, int n, float frequency) {
+    float lo = 0.0001f, hi = 0.499f;
+    for (int iteration = 0; iteration < 24; iteration++) {
+        float cutoff = (lo + hi) * 0.5f;
+        signal_design_fir(taps, n, cutoff);
+        double response = 0;
+        for (int k = 0; k < n; k++)
+            response += taps[k] * cos(2 * M_PI * frequency * (k - n/2));
+        if (response < 0.7079457843841379) lo = cutoff; // 10^(-3/20)
+        else hi = cutoff;
+    }
+    signal_design_fir(taps, n, (lo + hi) * 0.5f);
+}
+
 /* Generic receiver IF for a local AM console modulator. The combined
  * sidebands have unit small-signal video gain; their difference produces
  * quadrature envelope distortion. A nominal 0.75 MHz Nyquist transition
@@ -329,6 +347,29 @@ static inline void signal_apply_peaking(float *taps, int n, float cutoff,
     for (int k = 0; k < n; k++) sum += taps[k];
     float inv = 1.0f / (sum + 1e-6f);
     for (int k = 0; k < n; k++) taps[k] *= inv;
+}
+
+/* Set the peak gain of a symmetric aperture FIR, retaining unity DC.
+ * This constrains gain only: it does NOT recover a Sony IC's frequency
+ * response, phase, coring or menu law. The dB-linear knob is an assumption.
+ * Used at coefficient update time, never in the per-frame signal loop. */
+static inline void signal_normalize_aperture_gain(float *taps, int n, float db) {
+    int half = n / 2;
+    double sum = 0;
+    for (int k = 0; k < n; k++) sum += taps[k];
+    taps[half] += (float)(1.0 - sum);
+    double peak = 1.0;
+    for (int bin = 1; bin <= 2048; bin++) {
+        double response = 0;
+        for (int k = 0; k < n; k++)
+            response += taps[k] * cos(M_PI * bin * (k-half) / 2048.0);
+        if (response > peak) peak = response;
+    }
+    double scale = peak > 1.000001 ? (pow(10.0, db / 20.0) - 1.0) / (peak - 1.0) : 0;
+    for (int k = 0; k < n; k++) {
+        float delta = k == half ? 1.0f : 0.0f;
+        taps[k] = delta + (float)((taps[k] - delta) * scale);
+    }
 }
 
 /* Design a lowpass FIR with a notch (null) at a specific frequency.

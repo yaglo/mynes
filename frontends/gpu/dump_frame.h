@@ -27,4 +27,19 @@ static inline void dump_frame_ppm(const char *path, const float *rgb,
     printf("Dumped %dx%d frame to %s\n", width, height, path);
 }
 
+/* A composite waveform has one float per sample, not interleaved RGB. */
+static inline void dump_waveform_ppm(const char *path, const float *waveform,
+                                     int width, int height) {
+    FILE *f=fopen(path,"wb");
+    if(!f) { fprintf(stderr,"dump_waveform_ppm: can't open %s\n",path);return; }
+    fprintf(f,"P6\n%d %d\n255\n",width,height);
+    for(int i=0;i<width*height;i++) {
+        float v=waveform[i];
+        if(!(v>0)) v=0; if(v>1) v=1;
+        uint8_t px[3]={(uint8_t)(v*255),(uint8_t)(v*255),(uint8_t)(v*255)};
+        fwrite(px,1,3,f);
+    }
+    fclose(f);
+}
+
 #endif /* DUMP_FRAME_H */

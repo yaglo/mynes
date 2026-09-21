@@ -255,6 +255,13 @@ if(NES_BUILD_FRONTENDS)
         frontends/shared/browser.c
     )
 
+    if(NES_BUILD_TESTS)
+        add_executable(test_browser frontends/shared/tests/test_browser.c frontends/shared/browser.c)
+        target_include_directories(test_browser PRIVATE frontends/shared)
+        target_link_libraries(test_browser PRIVATE nes_static)
+        add_test(NAME browser_tests COMMAND test_browser)
+    endif()
+
     # SDL2 Frontend
     find_package(SDL2 QUIET)
 
@@ -384,6 +391,7 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
         file(GLOB GLSL_VERT_SOURCES CONFIGURE_DEPENDS ${SHADER_SRC_DIR}/render/*.vert.glsl)
         file(GLOB GLSL_FRAG_SOURCES CONFIGURE_DEPENDS ${SHADER_SRC_DIR}/render/*.frag.glsl)
         set(ALL_GLSL_SOURCES ${GLSL_COMPUTE_SOURCES} ${GLSL_VERT_SOURCES} ${GLSL_FRAG_SOURCES})
+        list(APPEND ALL_GLSL_SOURCES ${SHADER_SRC_DIR}/compute/fw900_data.glsl ${SHADER_SRC_DIR}/compute/fw900_profile.glsl)
 
         # Stamp file tracks when shaders were last compiled.
         set(SHADER_STAMP ${CMAKE_BINARY_DIR}/shaders/.compile_stamp)
@@ -449,6 +457,8 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
 
             find_program(MYNES_PYTHON3 NAMES python3)
             if(MYNES_PYTHON3)
+                add_test(NAME gpu_fw900_measurements
+                    COMMAND ${MYNES_PYTHON3} ${CMAKE_SOURCE_DIR}/tools/measurements/build_fw900_model.py --check)
                 add_test(NAME gpu_preset_control_audit
                     COMMAND ${MYNES_PYTHON3} ${CMAKE_SOURCE_DIR}/frontends/gpu/tests/test_preset_controls.py)
             endif()
@@ -503,8 +513,8 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
             add_test(NAME gpu_pipeline_test COMMAND test_pipeline)
             get_target_property(PIPELINE_TEST_SOURCES test_pipeline SOURCES)
             list(REMOVE_ITEM PIPELINE_TEST_SOURCES frontends/gpu/tests/test_pipeline.c)
-            add_executable(test_fidelity frontends/gpu/tests/test_fidelity.c frontends/gpu/tests/test_display_fidelity.c frontends/gpu/tests/test_crt_load.c frontends/gpu/tests/test_osd.c frontends/gpu/gpu_display.c ${PIPELINE_TEST_SOURCES})
-            target_include_directories(test_fidelity PRIVATE frontends/gpu)
+            add_executable(test_fidelity frontends/gpu/tests/test_fidelity.c frontends/gpu/tests/test_display_fidelity.c frontends/gpu/tests/test_crt_load.c frontends/gpu/tests/test_osd.c frontends/gpu/gpu_osd.c frontends/shared/browser.c frontends/gpu/gpu_display.c ${PIPELINE_TEST_SOURCES})
+            target_include_directories(test_fidelity PRIVATE frontends/gpu frontends/shared)
             target_link_libraries(test_fidelity PRIVATE nes_static ${MYNES_SDL3_TARGET} m)
             add_dependencies(test_fidelity gpu_shaders)
             add_test(NAME gpu_fidelity_tests COMMAND test_fidelity)

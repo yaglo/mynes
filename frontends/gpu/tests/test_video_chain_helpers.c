@@ -228,6 +228,21 @@ static void test_colour_response(void) {
     CHECK(fabsf(Y-1)<.00001f,"whitepoint preserves luminance");
     CHECK(fabsf(X/(X+Y+Z)-.28307f)<.0001f && fabsf(Y/(X+Y+Z)-.29693f)<.0001f,"D93 emitted chromaticity");
     CHECK(rgb[2]>1.3f && rgb[0]<.9f,"D93 has a substantial cool white response");
+    // FW900 white balance inverts the measured transfer, with a common
+    // scale to keep the requested chromaticity inside its measured domain.
+    t.monitor_model=1;t.phosphor_gamut=3;
+    crt_white_drive(&t,d);crt_phosphor_matrix(t.phosphor_gamut,p);
+    memset(rgb,0,sizeof(rgb));
+    for(int j=0;j<3;j++) {
+        float q=d[j]*255;int k=(int)q;if(k>254) k=254;
+        float light=fw900_tone[k]+(fw900_tone[k+1]-fw900_tone[k])*(q-k);
+        for(int i=0;i<3;i++) rgb[i]+=p[i][j]*light;
+    }
+    X=.4123908f*rgb[0]+.3575843f*rgb[1]+.1804808f*rgb[2];
+    Y=.2126390f*rgb[0]+.7151687f*rgb[1]+.0721923f*rgb[2];
+    Z=.0193308f*rgb[0]+.1191948f*rgb[1]+.9505322f*rgb[2];
+    CHECK(fabsf(X/(X+Y+Z)-.28307f)<.0001f && fabsf(Y/(X+Y+Z)-.29693f)<.0001f,"FW900 inverse transfer preserves D93 chromaticity");
+    t.monitor_model=0;t.phosphor_gamut=1;
     t.color_temperature=6500;crt_decoder_matrix(&t,false,1,0,1,m,bias);
     float reference[3][3];memcpy(reference,m,sizeof(m));
     t.decoder_red_gain=.2f; t.decoder_blue_gain=-.05f;
