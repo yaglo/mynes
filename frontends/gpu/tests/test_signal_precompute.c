@@ -363,40 +363,22 @@ static int test_fir_peaking_preserves_dc(void) {
 }
 
 static int test_fir_notch_plus_peaking_composable(void) {
-    /* Chain notch THEN peaking. The null must still be deep and
-     * the HF boost must still be visible. */
-    float taps[47];
-    float cutoff = 0.1f;
-    float notch_freq = 0.0833f;
-    signal_design_fir_notch(taps, 47, cutoff, notch_freq, 0.8f);
-
-    /* Snapshot magnitudes before peaking. */
-    float mag_notch_before = fir_magnitude_at(taps, 47, notch_freq);
-    float mag_hf_before = fir_magnitude_at(taps, 47, 0.07f);
-
-    signal_apply_peaking(taps, 47, cutoff, 0.5f);
-
-    float mag_notch_after = fir_magnitude_at(taps, 47, notch_freq);
-    float mag_hf_after = fir_magnitude_at(taps, 47, 0.07f);
-
-    /* Null is partially filled by peaking (peaking boosts HF including
-     * the notch frequency if it's near the peaking band). Just verify
-     * it's still below the pre-peak HF level. */
-    if (mag_notch_after >= 1.0f) {
-        printf("  FAIL: after peaking notch lost: |H|=%.4f\n", mag_notch_after);
+    /* A cascade multiplies transfer functions. It must not add an
+     * unfiltered signal path around the notch. */
+    float receiver[47], sharpness[31] = {0};
+    float cutoff = 0.1f, notch_freq = 1.0f / 12.0f;
+    signal_design_fir_notch(receiver, 47, cutoff, notch_freq, 1.0f);
+    sharpness[15] = 1.0f;
+    signal_apply_peaking(sharpness, 31, cutoff, 1.0f);
+    float rejected = fir_magnitude_at(receiver, 47, notch_freq)
+                   * fir_magnitude_at(sharpness, 31, notch_freq);
+    ASSERT_NEAR(rejected, 0.0f, 1e-5f, "cascaded sharpness preserves null");
+    float dc = fir_tap_sum(receiver, 47) * fir_tap_sum(sharpness, 31);
+    ASSERT_NEAR(dc, 1.0f, 1e-4f, "cascaded sharpness preserves DC");
+    if (fir_magnitude_at(sharpness, 31, .07f) <= 1.05f) {
+        printf("  FAIL: no retained-detail boost\n");
         return 0;
     }
-    /* HF boost must be present: peaked > unpeaked. */
-    if (!(mag_hf_after > mag_hf_before)) {
-        printf("  FAIL: peaking boost absent: before=%.4f after=%.4f\n",
-               mag_hf_before, mag_hf_after);
-        return 0;
-    }
-    /* DC still preserved. */
-    float dc = fir_magnitude_at(taps, 47, 0.0f);
-    ASSERT_NEAR(dc, 1.0f, 1e-4f, "notch+peak DC gain");
-
-    (void)mag_notch_before;
     return 1;
 }
 

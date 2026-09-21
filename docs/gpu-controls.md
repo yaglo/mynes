@@ -6,6 +6,27 @@ adjustment immediately. The menu then collapses to a bottom strip with only the
 parameter, value and range bar; the rest of the game stays visible. Enter or
 Escape returns to the same row. M closes either view.
 
+**M → Picture** puts the everyday TV controls first:
+
+| Control | What it adjusts |
+|---|---|
+| Brightness | The picture's black-level offset. |
+| Contrast | Signal gain, changing the difference between dark and bright areas. |
+| Color (saturation) | Color intensity. |
+| Tint (hue) | The decoder's color phase. |
+| Sharpness | Edge peaking after luma separation; bypassed for RGB/direct. |
+| Color temperature | The white balance, from warmer to cooler. |
+
+Gamma, Emission gain and Room light follow these controls. The quick controls
+share their values with the detailed signal/CRT menus and are included when
+you use **Presets → Save current...**.
+
+Sharpness cannot restore detail lost in the source/cable or narrow the tube's
+beam spot. Its visible effect is deliberately limited by the rest of the chain;
+Basement TV remains soft even at high settings. This is currently a generic
+aperture-correction approximation, not each manufacturer's control curve.
+See the [sharpening audit and hardware worklist](gpu-sharpening-audit.md).
+
 Audio starts in **GPU + fallback** mode. Use **M → Audio → Processing** or **A**
 to switch to CPU processing for the session. `MYNES_GPU_AUDIO=0` selects CPU
 at startup. A late GPU block falls back to CPU without delaying playback;
@@ -37,7 +58,7 @@ claim that every combination has been visually calibrated.
 | Y/C separation | Horizontal trap, line-comb topology, comb extraction fraction | Trap reduces cross-luma; it cannot remove luma leaking into C. Comb fraction zero selects a legacy default, not bypass. NTSC line combs do not operate on PAL or separated-input routes. |
 | Decoder filters | Y/I/Q bandwidth, FIR lengths/window, sharpness | Q bandwidth zero follows I. Short luma FIRs below 23 taps disable the trap. FIR lengths are session diagnostics rather than saved tube characteristics. |
 | Color | Hue, saturation, decoder R-Y/B-Y gain, white point, RGB drive/cutoff, phosphor primaries | Decoder gain differs from white balance. Primaries are nominal colorimetric matrices, not measured spectra of each preset's tube. |
-| Video amplifier | RGB bandwidth, rise/fall asymmetry, vertical smear, velocity modulation | Equivalent filtering and behavioral effects; not circuit models of the named monitors. |
+| Video amplifier | RGB bandwidth, rise/fall asymmetry, vertical smear, edge derivative | Equivalent filtering and behavioral effects; not circuit models of the named monitors. Edge derivative retains the legacy JSON key `velocity_mod`, but is a voltage offset, not physical scan-velocity modulation. |
 | Gun and spot | Gamma and per-gun offsets, dark/white FWHM, bloom exponent, horizontal spot size/growth, edge focus, convergence | Positive FWHM settings override the old sharpness/height fields. RGB landing offsets precede the mask. |
 | Loading | Video rail sag, black-level recovery, recovery time, size sag, focus change | Strength zero disables the corresponding effect. Recovery time matters only with recovery enabled. Supply models are generic. |
 | Geometry | Position, size, curvature, skew, rotation, keystone, jitter, interference jitter, wobble, top-band faults | Top-band bounds need shift/skew enabled. “Interference jitter” is a geometry disturbance, not an RF carrier simulation. |

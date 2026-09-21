@@ -227,6 +227,90 @@ static void dac_equivalence(SDL_GPUDevice *gpu, int region) {
     video_gpu_destroy(&v,gpu);
 }
 
+/* Sharpness must act on recovered Y. Probe the actual two GPU passes:
+ * a rejected colour carrier must remain rejected, DC must be unchanged,
+ * and retained detail must increase. Exercise live tap/enable updates. */
+static void luma_sharpness(SDL_GPUDevice *gpu) {
+    SignalPrecompute sp; VideoChain c; VideoGPUChain v;
+    signal_precompute_init(&sp, SIGNAL_REGION_NTSC);
+    video_chain_init_preset(&c, VIDEO_CONN_COMPOSITE, VIDEO_COMB_NONE, SIGNAL_REGION_NTSC);
+    c.tv.luma_bandwidth = 4.2e6f;
+    signal_design_fir_notch(sp.fir_y, sp.fir_y_n, 4.2e6f/42954540, 1.0f/12, 1);
+    CHECK(video_gpu_init(&v, gpu, &c, "shaders/compute", sp.fir_y, sp.fir_y_n,
+                        sp.fir_c, sp.fir_c_n, sp.fir_q, sp.fir_q_n));
+    for (int s=0; s<v.sig_chain.num_stages; s++) chain_set_stage_enabled(&v.sig_chain,s,false);
+    chain_set_stage_enabled(&v.sig_chain,v.stage_luma_fir,true);
+    int w=v.raster_fmt.samples_per_line, count=v.raster_fmt.total_samples;
+    float *input=malloc(count*sizeof(float)), *output=malloc(count*sizeof(float));
+    float amplitude[2][3], dc[2][3];
+    const float frequency[]={.04f,1.0f/12,.35f};
+    for (int setting=0; setting<2; setting++) {
+        c.tv.luma_peaking=(float)setting;
+        CHECK(video_gpu_update_fir_taps(&v,gpu,sp.fir_y,sp.fir_y_n,
+                                      sp.fir_c,sp.fir_c_n,sp.fir_q,sp.fir_q_n));
+        for (int f=0; f<3; f++) {
+            for (int i=0; i<count; i++) input[i]=.4f+.1f*cosf(2*M_PI*frequency[f]*(i%w));
+            CHECK(chain_upload_input(&v.sig_chain,gpu,input,count*sizeof(float)));
+            CHECK(chain_run(&v.sig_chain,gpu));
+            CHECK(chain_download_output(&v.sig_chain,gpu,output,count*sizeof(float)));
+            /* 1200 samples contain integer cycles of every probe tone. */
+            double re=0,im=0,sum=0;
+            for (int x=600; x<1800; x++) {
+                double p=2*M_PI*frequency[f]*x, y=output[100*w+x];
+                re+=y*cos(p); im+=y*sin(p); sum+=y;
+            }
+            amplitude[setting][f]=(float)(2*hypot(re,im)/1200);
+            dc[setting][f]=(float)(sum/1200);
+            CHECK(fabsf(dc[setting][f]-.4f)<.00001f);
+        }
+    }
+    printf("Luma sharpness: detail %.6f -> %.6f, rejected carrier %.8f -> %.8f\n",
+        amplitude[0][0],amplitude[1][0],amplitude[0][1],amplitude[1][1]);
+    CHECK(amplitude[1][0]>amplitude[0][0]*1.05f);
+    CHECK(amplitude[0][1]<.00001f && amplitude[1][1]<.00001f);
+    CHECK(amplitude[1][2]<.001f);
+    c.connection=VIDEO_CONN_RGB;
+    CHECK(video_gpu_update_fir_taps(&v,gpu,sp.fir_y,sp.fir_y_n,
+                                  sp.fir_c,sp.fir_c_n,sp.fir_q,sp.fir_q_n));
+    CHECK(!v.sig_chain.stages[v.stage_luma_peaking].enabled);
+    free(input); free(output); video_gpu_destroy(&v,gpu);
+}
+
+/* The second Y pass must not replace the pre-separation input used by
+ * chroma demod. Compare the actual filtered I output across hot sharpness changes
+ * for horizontal separation, line comb, separated Y/C and PAL. */
+static void sharpness_chroma_routing(SDL_GPUDevice *gpu) {
+    for (int route=0; route<4; route++) {
+        int region=route==3 ? SIGNAL_REGION_PAL : SIGNAL_REGION_NTSC;
+        SignalPrecompute sp; VideoChain c; VideoGPUChain v;
+        signal_precompute_init(&sp,region);
+        video_chain_init_preset(&c,route==2 ? VIDEO_CONN_SVIDEO : VIDEO_CONN_COMPOSITE,
+            route==1 ? VIDEO_COMB_1LINE : VIDEO_COMB_NONE,region);
+        c.cable.shield_effectiveness=1; c.tv.noise_level=0;
+        CHECK(video_gpu_init(&v,gpu,&c,"shaders/compute",sp.fir_y,sp.fir_y_n,
+                            sp.fir_c,sp.fir_c_n,sp.fir_q,sp.fir_q_n));
+        CHECK(video_gpu_upload_signal_table(&v,gpu,(float *)sp.table,
+            region==SIGNAL_REGION_PAL ? (float *)sp.table_alt : NULL,SIG_TABLE_ENTRIES,SIG_TABLE_STRIDE));
+        uint16_t codes[256*240];
+        for(int i=0;i<256*240;i++) codes[i]=(i%256<128) ? 0x16 : 0x21;
+        size_t bytes=v.raster_fmt.total_samples*sizeof(float);
+        float *before=malloc(bytes),*after=malloc(bytes);
+        video_gpu_set_demod(&v,sp.demod_rotate*2*(float)M_PI/12,2*(float)M_PI/12);
+        CHECK(video_gpu_process_full(&v,gpu,codes,0,sp.phase_line_adv,0,NULL));
+        ChromaAuxLayout aux=video_chain_chroma_aux_layout(route==1 || route==2);
+        CHECK(gpu_buffer_download(gpu,v.sig_chain.aux[aux.i_filt],before,(Uint32)bytes));
+        c.tv.luma_peaking=1;
+        CHECK(video_gpu_update_fir_taps(&v,gpu,sp.fir_y,sp.fir_y_n,
+                                      sp.fir_c,sp.fir_c_n,sp.fir_q,sp.fir_q_n));
+        CHECK(video_gpu_process_full(&v,gpu,codes,0,sp.phase_line_adv,0,NULL));
+        CHECK(gpu_buffer_download(gpu,v.sig_chain.aux[aux.i_filt],after,(Uint32)bytes));
+        float error=0;
+        for(size_t i=0;i<bytes/sizeof(float);i++) error=fmaxf(error,fabsf(after[i]-before[i]));
+        CHECK(error<.00001f);
+        free(before);free(after);video_gpu_destroy(&v,gpu);
+    }
+}
+
 /* A stationary composite colour edge may alternate with the carrier phase,
  * but must not develop a slower beat in the decoder itself. Keep both phases
  * distinct: freezing/averaging them would hide a presentation regression. */
@@ -847,6 +931,8 @@ int main(void) {
     dac_equivalence(gpu, SIGNAL_REGION_NTSC);
     dac_equivalence(gpu, SIGNAL_REGION_PAL);
     composite_edge_phase(gpu);
+    luma_sharpness(gpu);
+    sharpness_chroma_routing(gpu);
     SignalPrecompute sp;
     VideoChain c;
     VideoGPUChain v;

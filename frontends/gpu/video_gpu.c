@@ -95,6 +95,21 @@ static bool vhs_active(const VideoChain *c) {
         (c->connection==VIDEO_CONN_COMPOSITE || c->connection==VIDEO_CONN_RF);
 }
 
+/* Generic aperture correction, not a calibrated TV/chip response. Keep
+ * this separate from Y extraction: its input is already band-limited Y.
+ * A zero setting bypasses the pass entirely. */
+#define LUMA_PEAKING_TAPS 31
+static void luma_peaking_taps(const VideoChain *c, float *taps) {
+    memset(taps, 0, LUMA_PEAKING_TAPS * sizeof(*taps));
+    taps[LUMA_PEAKING_TAPS / 2] = 1.0f;
+    float cutoff = c->tv.luma_bandwidth / signal_format_sample_rate_hz(&c->signal_fmt);
+    cutoff = fminf(0.2f, fmaxf(0.005f, cutoff));
+    signal_apply_peaking(taps, LUMA_PEAKING_TAPS, cutoff, c->tv.luma_peaking);
+}
+static bool luma_peaking_active(const VideoChain *c) {
+    return video_chain_stage_active(c, 8) && c->tv.luma_peaking >= 0.001f;
+}
+
 static bool dispatch_temporal_blit(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd);
 
 /* ============================================================================
@@ -185,6 +200,7 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     vgc->stage_agc         = -1;
     vgc->stage_ghosting    = -1;
     vgc->stage_luma_fir    = -1;
+    vgc->stage_luma_peaking = -1;
     vgc->stage_chroma_demod = -1;
     vgc->stage_chroma_i_fir = -1;
     vgc->stage_chroma_q_fir = -1;
@@ -671,6 +687,22 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
      * directly — no custom-dispatch hook, no manual trampoline. */
     chroma_pipeline_install_typed(vgc);
 
+    /* Chroma demod must consume the pre-Y ping-pong buffer first. Once
+     * I/Q are in aux buffers we can safely advance the Y ping-pong again. */
+    {
+        float taps[LUMA_PEAKING_TAPS];
+        luma_peaking_taps(chain, taps);
+        int ti = chain_upload_taps(&vgc->sig_chain, gpu, taps, LUMA_PEAKING_TAPS);
+        GpuFIRParams p = {(uint32_t)total_samples, (uint32_t)total_samples,
+            LUMA_PEAKING_TAPS, 1, (uint32_t)fmt->samples_per_line};
+        vgc->stage_luma_peaking = chain_add_stage(&vgc->sig_chain,
+            "Luma sharpness", CHAIN_KERNEL_FIR, &p, sizeof(p), dispatch_x_256, 1);
+        if (ti < 0 || vgc->stage_luma_peaking < 0) goto fail;
+        vgc->sig_chain.stages[vgc->stage_luma_peaking].taps_index = ti;
+        chain_set_stage_enabled(&vgc->sig_chain, vgc->stage_luma_peaking,
+            luma_peaking_active(chain));
+    }
+
     /* Matrix decode — fully typed chain stage. Reads Y from the main
      * ping-pong, I/Q from the aux slots set by the chroma rebind,
      * writes to vgc->buf_rgb via external[]. */
@@ -982,8 +1014,13 @@ bool video_gpu_update_fir_taps(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     chain_set_stage_enabled(sc,vgc->stage_vhs,vhs_active(vgc->chain));
     int tape_idx=sc->stages[vgc->stage_vhs].taps_index;
 
+    float peaking_taps[LUMA_PEAKING_TAPS];
+    luma_peaking_taps(vgc->chain, peaking_taps);
+    int peaking_idx = sc->stages[vgc->stage_luma_peaking].taps_index;
+
     struct { int idx; int n; const float *taps; const char *label; } uploads[] = {
         { tape_idx, 4*SIGNAL_VHS_TAPS, tape_taps, "VHS" },
+        { peaking_idx, LUMA_PEAKING_TAPS, peaking_taps, "Luma sharpness" },
         { y_tap_idx, fir_y_n, fir_y_taps, "Y" },
         { c_tap_idx, fir_c_n, fir_c_taps, "I" },
         { q_tap_idx, fir_q_n, fir_q_taps, "Q" },
@@ -1008,6 +1045,7 @@ bool video_gpu_update_fir_taps(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     }
 
     /* Update the FIR uniform params (tap count may have changed). */
+    chain_set_stage_enabled(sc, vgc->stage_luma_peaking, luma_peaking_active(vgc->chain));
     {
         GpuFIRParams fir_y;
         fir_y.input_count     = (uint32_t)vgc->raster_fmt.total_samples;
@@ -1196,6 +1234,9 @@ void video_gpu_reinit_stages(VideoGPUChain *vgc, const VideoChain *chain)
     if (vgc->stage_luma_fir >= 0) {
         /* params already updated via video_gpu_update_fir_taps() */
     }
+    if (vgc->stage_luma_peaking >= 0)
+        chain_set_stage_enabled(&vgc->sig_chain, vgc->stage_luma_peaking,
+            luma_peaking_active(chain));
 
     if (vgc->stage_chroma_demod >= 0) {
         bool chroma_on = video_chain_stage_active(chain, 7);

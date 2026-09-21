@@ -388,8 +388,9 @@ static void rebuild_signal_filters(PresetCtx *ctx, float y_cutoff,
                                 subcarrier_norm, notch_depth);
     }
 
-    /* Luma peaking: TV "sharpness" control — boosts edges in the luma path. */
-    signal_apply_peaking(sp->fir_y, sp->fir_y_n, y_cutoff, vc->tv.luma_peaking);
+    /* Sharpness runs on the recovered Y in its own GPU stage. Adding a
+     * highpass here would bypass the receiver bandwidth/trap and feed
+     * rejected chroma back into luminance. */
     signal_design_fir_ex(sp->fir_c, sp->fir_c_n, c_cutoff, ringing);
     signal_design_fir_ex(sp->fir_q, sp->fir_q_n, q_cutoff, ringing);
 }
@@ -936,7 +937,7 @@ static OSDMenuItem menu_rf[7],menu_vhs[7];
 /* Mid-level submenus. menu_video[] + preset_menu_root[] are forward-
  * declared near the top of this file so the save action can reach them. */
 static OSDMenuItem menu_audio_top[3];
-static OSDMenuItem menu_picture[8], menu_tube[5];
+static OSDMenuItem menu_picture[9], menu_tube[5];
 static OSDMenuItem menu_diagnostics[1],menu_display[4];
 int         preset_menu_root_count = 7;
 
@@ -1162,7 +1163,7 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_video_amp[n++] = MI_FLOAT("G bandwidth",  &vc->tv.g_bandwidth,  100000.0f, 2000000.0f, 10000000.0f, gpu_cb_reinit_stages, "%.0f");
     menu_video_amp[n++] = MI_FLOAT("B bandwidth",  &vc->tv.b_bandwidth,  100000.0f, 2000000.0f, 10000000.0f, gpu_cb_reinit_stages, "%.0f");
     menu_video_amp[n++] = MI_FLOAT("Gamma",        &vc->tv.gamma,        0.02f, 1.5f, 2.8f, gpu_cb_update_color_matrix, "%.2f");
-    menu_video_amp[n++] = MI_FLOAT("Velocity modulation", &vc->tv.velocity_mod, 0.01f, 0.0f, 1.0f, gpu_cb_update_beam_params, "%.3f");
+    menu_video_amp[n++] = MI_FLOAT("Edge derivative", &vc->tv.velocity_mod, 0.01f, 0.0f, 1.0f, gpu_cb_update_beam_params, "%.3f");
     menu_video_amp[n++] = MI_FLOAT("Rise/fall asymmetry", &vc->tv.asym_rise_fall, 0.01f, 0.0f, 1.0f, gpu_cb_update_beam_params, "%.3f");
     menu_video_amp[n++] = MI_FLOAT("Vertical smear", &vc->tv.vertical_smear, 0.01f, 0.0f, 1.0f, gpu_cb_update_beam_params, "%.3f");
     const int menu_video_amp_count=n;
@@ -1340,11 +1341,15 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_picture[0] = menu_luma[4];
     menu_picture[1] = menu_luma[5];
     menu_picture[2] = menu_color_decode[1];
+    menu_picture[2].label = "Color (saturation)";
     menu_picture[3] = menu_color_decode[0];
-    menu_picture[4] = menu_color_decode[2];
-    menu_picture[5] = menu_video_amp[3];
-    menu_picture[6] = MI_FLOAT("Emission gain", &vc->tv.hdr_gain, 0.05f, 0.1f, 4.0f, NULL, "%.2fx");
-    menu_picture[7] = MI_FLOAT("Room light", &vc->tv.ambient_light, 0.005f, 0, 0.3f, NULL, "%.3f");
+    menu_picture[3].label = "Tint (hue)";
+    menu_picture[4] = menu_luma[2];
+    menu_picture[5] = menu_color_decode[2];
+    menu_picture[5].label = "Color temperature";
+    menu_picture[6] = menu_video_amp[3];
+    menu_picture[7] = MI_FLOAT("Emission gain", &vc->tv.hdr_gain, 0.05f, 0.1f, 4.0f, NULL, "%.2fx");
+    menu_picture[8] = MI_FLOAT("Room light", &vc->tv.ambient_light, 0.005f, 0, 0.3f, NULL, "%.3f");
     n = 0;
     menu_presets_video_idx = -1;
     menu_video[n++] = MI_SUB("PPU / connection", menu_dac, menu_dac_count);
@@ -1366,7 +1371,7 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_audio_top[1] = MI_FLOAT("Volume", &ctx->analog_controls->output_gain, 0.05f, 0, 3, NULL, "%.2fx");
     menu_audio_top[2] = MI_SUB("Analog character", menu_audio_chain, menu_audio_chain_count);
     menu_diagnostics[0] = MI_TOGGLE("Mask/glass bypass", &ctx->display_bypass, gpu_cb_display_bypass);
-    preset_menu_root[0] = MI_SUB("Picture", menu_picture, 8);
+    preset_menu_root[0] = MI_SUB("Picture", menu_picture, sizeof(menu_picture)/sizeof(menu_picture[0]));
     preset_menu_root[1] = MI_SUB("Audio", menu_audio_top, 3);
     preset_menu_root[2] = MI_SUB("Presets", menu_presets, 1 + preset_count);
     preset_menu_root[3] = MI_SUB("Signal chain", menu_video, video_count);

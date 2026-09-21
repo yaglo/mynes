@@ -39,3 +39,12 @@ insertion occurs after the receiver and before the tube.
 Physical calibration remains open: unit-specific beam profiles, phosphor
 spectra/decay, RF IF measurements and VCR response need measured reference data.
 Published specifications and generic circuits do not establish those values.
+
+## Receiver-specific follow-up
+
+The [sharpening and interference worklist](../gpu-sharpening-audit.md) tracks
+the 21 September request for correct per-monitor circuitry and the linked NES
+squiggly-lines fault. Completion of the five earlier steps does not complete
+that newer work: chip-specific sharpening/decoder responses and console
+power-board faults remain open. The first correction separates luma extraction
+from sharpening so the latter cannot bypass the former's rejection.

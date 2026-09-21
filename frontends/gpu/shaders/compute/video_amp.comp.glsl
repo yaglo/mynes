@@ -95,9 +95,9 @@ void main() {
                  + rgb_in[in_ * 3 + 1] * 0.587
                  + rgb_in[in_ * 3 + 2] * 0.114;
         float dL = (ln - lp) * 0.5;
-        /* Velocity modulation: bright→dark (dL<0) ⇒ beam accelerates,
-         * narrows the transition; visually equivalent to adding a
-         * derivative-proportional lift. */
+        /* Legacy "velocity modulation" approximation: this offsets
+         * voltage with a derivative. It does not model scan velocity,
+         * beam displacement or dwell, and is not equivalent to SVM. */
         vec3 vm = vec3(dL) * velocity_mod;
         sum_r += vm.r; sum_g += vm.g; sum_b += vm.b;
         /* Asymmetric amp: rising slopes lag (slower τ), falling

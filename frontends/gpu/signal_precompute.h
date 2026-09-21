@@ -293,11 +293,12 @@ static inline void signal_design_vhs(float *taps, float fs, float luma_bw,
     }
 }
 
-/* Apply luma peaking (TV "sharpness" control) to an existing FIR.
- * Boosts high frequencies near the cutoff by adding a scaled
- * derivative (highpass) component. Creates edge enhancement.
+/* Add a generic highpass shelf to a FIR. For receiver sharpness, start
+ * with an identity FIR and apply the result AFTER luma extraction.
+ * Adding this directly to a separation FIR bypasses its stopband/trap.
  * amount: 0.0 = no peaking, 0.5 = moderate, 1.0 = strong edge enhancement.
- * The boost frequency is centered at cutoff * 0.7 (below the cutoff). */
+ * The highpass transition is at cutoff * 0.7. This is not a measured
+ * aperture-correction circuit or a bandpass with adjustable centre/Q. */
 static inline void signal_apply_peaking(float *taps, int n, float cutoff,
                                          float amount) {
     if (amount < 0.001f) return;

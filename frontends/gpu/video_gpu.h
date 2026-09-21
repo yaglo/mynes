@@ -58,6 +58,7 @@ typedef struct {
     int stage_ghosting;         /* Ghosting (cable impedance reflection) */
     int stage_comb_bandpass, stage_comb; /* Chroma band and line Y/C separator */
     int stage_luma_fir;         /* Luma FIR */
+    int stage_luma_peaking;     /* Sharpness after Y separation */
     int stage_chroma_demod;     /* Chroma Demod (modulator, dual-output) */
     int stage_chroma_i_fir;     /* Chroma I FIR */
     int stage_chroma_q_fir;     /* Chroma Q FIR */

@@ -4,6 +4,11 @@
 
 Reviewed 21 September 2026. The curated targets are Sony PVM-14L2, JVC AV-27D201, Toshiba 14AF43, and the generic worn set **Stas's Favourite**. These are nominal behavioural profiles. A manufacturer's bandwidth specification, an owner's photograph and a measurement of a particular tube are different kinds of evidence.
 
+The [receiver/sharpening audit](gpu-sharpening-audit.md) records the remaining
+model-specific circuit work, covers all 21 looks and tracks the console
+power-related squiggly-lines investigation. It also distinguishes fixed
+peaking, user aperture controls and true scan-velocity modulation.
+
 ## Monitor identity
 
 | Target | Documented characteristics | Model consequence | Values still estimated |
@@ -65,7 +70,7 @@ The named consumer profiles describe their NTSC versions. Loading a PAL game ret
 | Horizontal/vertical raster | Sync, porch, burst, borders and blanking precede reception; native NES timing is retained | Core does not export every border write or exact pulse-length detail |
 | Output amplifier | Independent nominal 6 MHz console pole | No evidence that every NES board has exactly this corner |
 | Cable | Short terminated-lead R/C equivalent and explicit optional echo | No frequency-dependent transmission-line solver; cable delay and dBm are not calibrated measurements |
-| RF | Equivalent negative-AM envelope detector, complex noise from carrier/noise power ratio, bandwidth and sync-based gain | No sampled VHF carrier, VSB/IF asymmetry, tuning or intercarrier sound |
+| RF | Negative-AM complex envelope, noise, asymmetric complex IF, detuning and sync-based gain | No sampled VHF carrier or intercarrier sound; generic IF, not a measured NES module/tuner |
 | AGC/clamp/sync | Sync-based amplitude control, detected porch black and sync timing | Generic loop constants; no free-running vertical oscillator or rolling under loss of sync |
 | Burst/PLL | Measured phase/amplitude, holdover, colour kill and reacquisition | No chip-specific PLL loop filter or oscillator phase-noise spectrum |
 | Y/C separation | Chroma band followed by notch, two-line, adaptive or three-line separation | Generic transfer functions; commercial decoder decisions remain approximations |
@@ -75,7 +80,7 @@ The named consumer profiles describe their NTSC versions. Loading a PAL game ret
 | DC recovery/video rail | Causal horizontal bias/gain recovery after the amplifiers | Generic fault model, not a diagnosis of the user's old TV |
 | EHT/deflection/focus | Shared line-current state, local load, signed size response and focus growth | No circuit-level EHT/deflection regulation or calibrated ABL knee |
 | Beam/landing | Pixel-integrated spots, separate gun-current width, convergence and edge focus | No measured asymmetric/non-Gaussian tube spot or complete electron optics |
-| Phosphors | Per-channel recursive decay in linear light; actual elapsed frames | Frame-sampled exponential approximation; no measured multi-component afterglow |
+| Phosphors | Per-channel recursive fast/optional slow decay in linear light; actual elapsed frames | Frame-sampled two-exponential approximation; no measured per-tube afterglow or continuous rolling emission |
 | Face/mask | Distinct aperture/slot/dot structures; coverage normalized for neutral mean light | Exact dimensions are only documented for selected targets; no inferred LCD subpixel layout |
 | Glass/room | Energy redistribution, screen-relative optical radius, modest tint/reflection | Generic scatter PSF and ambient term, not a measured glass stack/room |
 | Host display | Native drawable geometry, integer panel periods or filtered physical pitch; linear HDR and final output shoulder | Host gamut, luminance, persistence and compositor limit reproduction; no absolute-nit calibration |
