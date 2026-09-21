@@ -232,7 +232,7 @@ typedef struct {
     float ambient_light;        /* reflected room light (0=dark, 0.15=lit room) */
 
     /* Black level. */
-    float black_floor;          /* minimum output level (PVM: 0.005, consumer: 0.02-0.03) */
+    float black_floor;          /* minimum gun drive before transfer and spatial beam deposition */
 
     /* Noise. */
     float noise_level;          /* receiver output voltage noise, before gun transfer and spot spread */

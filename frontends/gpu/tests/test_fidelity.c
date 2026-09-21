@@ -379,6 +379,50 @@ static void beam_height_response(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoChai
     free(dx);free(dy);free(rgb);free(out);
 }
 
+/* A raised gun cutoff follows the raster spot; it is not room illumination. */
+static void black_floor_deposition(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoChain *c) {
+    enum { W=8,H=1920 };
+    c->tv.black_floor=.1f; c->tv.gamma=2.4f; c->tv.noise_level=0;
+    c->tv.phosphor_gamma_offset_r=0; c->tv.phosphor_gamma_offset_g=-.2f;
+    c->tv.phosphor_gamma_offset_b=.2f; c->tv.hum_bar_amplitude=0;
+    c->console_psu_hum=0; c->cable.shield_effectiveness=1;
+    CHECK(video_gpu_set_beam_params(v,gpu,W,H,8,.16f,.16f));
+    float *rgb=malloc(v->rgb_size), *current=malloc(v->rgb_size);
+    for(unsigned i=0;i<v->rgb_size/sizeof(float);i++) rgb[i]=-.05f;
+    CHECK(gpu_buffer_upload(gpu,v->buf_rgb,rgb,v->rgb_size));
+    SDL_GPUCommandBuffer *cmd=SDL_AcquireGPUCommandBuffer(gpu);
+    CHECK(dispatch_gun_current_public(v,cmd));
+    CHECK(dispatch_h_blur_rgb_public(v,cmd));
+    CHECK(SDL_SubmitGPUCommandBuffer(cmd));
+    CHECK(gpu_buffer_download(gpu,v->buf_gun_current,current,v->rgb_size));
+    float expected[]={powf(.1f,2.4f),powf(.1f,2.2f),powf(.1f,2.6f)};
+    for(int ch=0;ch<3;ch++) CHECK(fabsf(current[300*3+ch]-expected[ch])<1e-6f);
+    float *dx=calloc(W*H*4,sizeof(float)), *dy=calloc(W*H*4,sizeof(float));
+    uint16_t *out=malloc(W*H*8);
+    for(int y=0;y<H;y++) for(int x=0;x<W;x++) {
+        int i=(y*W+x)*4; dx[i]=dx[i+1]=dx[i+2]=500; dx[i+3]=x>0 ? 1 : 0;
+        dy[i]=dy[i+1]=dy[i+2]=y+.5f; dy[i+3]=1;
+    }
+    CHECK(gpu_buffer_upload(gpu,v->buf_deflection_x,dx,W*H*16));
+    CHECK(gpu_buffer_upload(gpu,v->buf_deflection_y,dy,W*H*16));
+    cmd=SDL_AcquireGPUCommandBuffer(gpu);
+    CHECK(dispatch_beam_profile_public(v,cmd)); CHECK(SDL_SubmitGPUCommandBuffer(cmd));
+    CHECK(gpu_buffer_download(gpu,v->buf_beam_rgba,out,W*H*8));
+    for(int ch=0;ch<3;ch++) {
+        double sum=0; float lo=1,hi=0;
+        for(int y=H/4;y<3*H/4;y++) {
+            float light=gpu_half_to_float(out[(y*W+1)*4+ch]);
+            sum+=light; lo=fminf(lo,light); hi=fmaxf(hi,light);
+            CHECK(out[y*W*4+ch]==0); // Blanked raster stays unlit.
+        }
+        CHECK(fabs(sum/(H/2)/expected[ch]-1)<.002);
+        CHECK(lo<expected[ch]*.1f && hi>expected[ch]*2);
+    }
+    c->tv.black_floor=0;
+    c->tv.phosphor_gamma_offset_g=c->tv.phosphor_gamma_offset_b=0;
+    free(rgb);free(current);free(dx);free(dy);free(out);
+}
+
 static void separated_yc(SDL_GPUDevice *gpu) {
     for(int region=0;region<2;region++) {
         SignalPrecompute sp; VideoChain c; VideoGPUChain v;
@@ -428,7 +472,7 @@ static void gun_bandwidth(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoChain *c) {
 }
 
 static void horizontal_beam_energy(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoChain *c) {
-    c->tv.noise_level=0; c->cable.shield_effectiveness=1;
+    c->tv.noise_level=0; c->tv.black_floor=0; c->cable.shield_effectiveness=1;
     float *voltage=calloc(1,v->rgb_size), *light=malloc(v->rgb_size);
     int width=v->signal_fmt.samples_per_line, center=width/2;
     voltage[center*3]=voltage[center*3+1]=voltage[center*3+2]=.5f;
@@ -634,6 +678,7 @@ int main(void) {
     beam_energy(gpu,&v,&c);
     independent_guns(gpu,&v,&c);
     beam_height_response(gpu,&v,&c);
+    black_floor_deposition(gpu,&v,&c);
     CHECK(video_gpu_set_beam_params(&v,gpu,16,16,1,0.2f,0.7f));
     v.blend_r = v.blend_g = v.blend_b = 0.5f;
     temporal(gpu, &v, 0x3c003c00, 1.0f); /* first frame must ignore uninitialised history */

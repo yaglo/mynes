@@ -120,3 +120,24 @@ The existing DAC table is already based on terminated-output measurements;
 adding another output buffer without defining that measurement boundary risks
 double-counting the console path. The experiment records this limitation and
 provides reproducible curves for extending the model with the missing module.
+
+## Gun cutoff and dark-raster deposition
+
+The CRT driver sets cathode bias/cutoff before the beam reaches the phosphor;
+room reflections are a separate optical contribution. National's
+[AN-861 CRT video design guide](https://www.ti.com/lit/an/snoa268/snoa268.pdf)
+sections 2.1 and 3 describe cathode DC restoration and grid blanking. This is
+support for the ordering of our model, not evidence that the named television
+presets contain the guide's monitor driver.
+
+Previously `black_floor` clamped the already deposited beam image, filling dark
+scanline gaps with uniform light. It now sets the minimum gun drive before the
+per-channel transfer and horizontal/vertical spot integration. A blanked raster
+stays unlit; ambient glass reflection remains in the display stage. Actual GPU
+tests check per-channel transfer, integrated energy, dark scanline gaps and zero
+emission outside the landed raster.
+
+Unaveraged 3840×2880 Contra comparisons show a subtle shadow correction in Stas's
+Favourite and Dying CRT, with unchanged highlight peaks. PVM-14L2's zero-floor
+render is pixel-identical. This is a correction to where light is generated,
+not a newly measured cutoff value or a dramatic preset retuning.

@@ -13,8 +13,6 @@ struct Params
     uint rows_per_scanline;
     float sigma_narrow;
     float sigma_wide;
-    float black_floor;
-    float noise_level;
     uint frame_counter;
     float hum_bar_amplitude;
     float bloom_gamma;
@@ -203,9 +201,6 @@ kernel void main0(constant Params& _43 [[buffer(0)]], device RGBIn& _98 [[buffer
         G *= hum;
         B *= hum;
     }
-    R = fast::max(R, powr(fast::max(_43.black_floor, 0.0), _43.gamma));
-    G = fast::max(G, powr(fast::max(_43.black_floor, 0.0), _43.gamma));
-    B = fast::max(B, powr(fast::max(_43.black_floor, 0.0), _43.gamma));
     uint idx = pix * 2u;
     _295.rgba_out[idx + 0u] = as_type<uint>(half2(float2(R, G)));
     _295.rgba_out[idx + 1u] = as_type<uint>(half2(float2(B, 1.0)));

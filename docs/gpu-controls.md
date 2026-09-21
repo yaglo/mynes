@@ -95,5 +95,13 @@ capture remains comparable across machines.
 
 Validation: CPU tests cover rate eligibility and pulse-energy integration;
 actual HDR render-target tests verify emitted-light integration and unchanged
-ambient margins. The available desktop reported 60 Hz and correctly remained
-in Hold (~60.10 submissions/s); 120 Hz optical motion benefit is not yet verified.
+ambient margins. The local 60 Hz desktop correctly remained in Hold (~60.10 submissions/s).
+A user test on a 120 Hz MacBook reported improved motion. Its captured trace
+contains a continuous 126.77-second BFI segment at 119.78 submissions/s; the last
+1,000 submissions average 120.02/s. Bright/dim slots share the same source frame.
+These are submission measurements and subjective viewing, not photodiode or
+high-speed-camera validation of physical scanout.
+
+`black_floor` is minimum gun drive, applied before transfer and spot deposition.
+It preserves scanline structure in residual emission; use ambient light for a
+room-lit glass pedestal. Raising black floor does not illuminate blanked raster.

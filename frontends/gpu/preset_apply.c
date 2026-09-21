@@ -1252,7 +1252,7 @@ void preset_ctx_init(PresetCtx *ctx) {
     n = 0;
     menu_env[n++] = MI_FLOAT("Vignette",      &vc->tv.vignette,       0.02f, 0.0f, 0.4f, gpu_cb_update_beam_params, "%.2f");
     menu_env[n++] = MI_FLOAT("Ambient",        &vc->tv.ambient_light,  0.01f, 0.0f, 0.25f, gpu_cb_update_beam_params, "%.2f");
-    menu_env[n++] = MI_FLOAT("Black floor",    &vc->tv.black_floor,    0.005f, 0.0f, 0.10f, gpu_cb_update_beam_params, "%.3f");
+    menu_env[n++] = MI_FLOAT("Gun black level",    &vc->tv.black_floor,    0.005f, 0.0f, 0.10f, gpu_cb_update_beam_params, "%.3f");
     menu_env[n++] = MI_FLOAT("Receiver noise",    &vc->tv.noise_level,    0.005f, 0.0f, 0.10f, gpu_cb_update_beam_params, "%.3f");
     menu_env[n++] = MI_FLOAT("Emission gain",       &vc->tv.hdr_gain,       0.1f, 0.5f, 3.0f, gpu_cb_update_beam_params, "%.1f");
     const int menu_env_count=n;

@@ -44,8 +44,6 @@ layout(set = 2, binding = 0) uniform Params {
     uint  rows_per_scanline;
     float sigma_narrow;
     float sigma_wide;
-    float black_floor;
-    float noise_level;
     uint  frame_counter;
     float hum_bar_amplitude;
     float bloom_gamma;
@@ -183,10 +181,6 @@ void main() {
         G *= hum;
         B *= hum;
     }
-
-    R = max(R, pow(max(black_floor,0.0),gamma));
-    G = max(G, pow(max(black_floor,0.0),gamma));
-    B = max(B, pow(max(black_floor,0.0),gamma));
 
     uint idx = pix * 2u;
     rgba_out[idx + 0u] = packHalf2x16(vec2(R, G));

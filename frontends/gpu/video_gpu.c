@@ -1257,11 +1257,11 @@ bool dispatch_gun_current_public(VideoGPUChain *v, SDL_GPUCommandBuffer *cmd) {
     const TVDisplayParams *tv=&v->chain->tv;
     float gamma=tv->gamma>0 ? tv->gamma : 2.4f;
     float pickup=(1.0f-v->chain->cable.shield_effectiveness)*v->chain->cable.length_meters*0.005f;
-    struct { uint32_t count; float r,g,b; uint32_t width,seed; float noise,spp; }
+    struct { uint32_t count; float r,g,b; uint32_t width,seed; float noise,spp,black_floor; }
         p={v->rgb_size/(3*sizeof(float)), gamma+tv->phosphor_gamma_offset_r,
            gamma+tv->phosphor_gamma_offset_g,gamma+tv->phosphor_gamma_offset_b,
            (uint32_t)v->signal_fmt.samples_per_line,v->beam_frame_counter,
-           tv->noise_level+pickup,(float)v->signal_fmt.samples_per_line/256.0f};
+           tv->noise_level+pickup,(float)v->signal_fmt.samples_per_line/256.0f,tv->black_floor};
     GpuDispatchDesc d={.pipeline=&v->sig_chain.pipelines[CHAIN_KERNEL_GUN_CURRENT],
         .readonly_buffers={v->buf_rgb},.num_readonly_buffers=1,
         .readwrite_buffers={v->buf_gun_current},.num_readwrite_buffers=1,
@@ -1729,8 +1729,6 @@ static bool dispatch_beam_profile(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd)
         uint32_t rows_per_scanline;
         float    sigma_narrow;
         float    sigma_wide;
-        float    black_floor;
-        float    noise_level;
         uint32_t frame_counter;
         float    hum_bar_amplitude;
         float    bloom_gamma;
@@ -1748,7 +1746,6 @@ static bool dispatch_beam_profile(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd)
     beam_params.rows_per_scanline = (uint32_t)vgc->beam_rows_per_scanline;
     beam_params.sigma_narrow      = vgc->beam_sigma_narrow;
     beam_params.sigma_wide        = vgc->beam_sigma_wide;
-    beam_params.black_floor       = tv ? tv->black_floor : 0.0f;
     /* Cable shield damage → three EMI phenomena scale with (1-shield)×length:
      *   1. Broadband noise (grain in dark areas)
      *   2. 60 Hz mains hum pickup → adds to hum bar (rolling brightness band)
@@ -1760,7 +1757,6 @@ static bool dispatch_beam_profile(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd)
         float len = vgc->chain->cable.length_meters;
         shield_hum   = poor * len * 0.013f;
     }
-    beam_params.noise_level       = 0; /* Noise now enters before gun transfer. */
     beam_params.frame_counter     = vgc->beam_frame_counter++;
     /* PSU hum from the NES + cable shield EMI pickup both drive the hum bar. */
     float psu_contribution = vgc->chain ? vgc->chain->console_psu_hum * 5.0f : 0.0f;
@@ -1770,8 +1766,7 @@ static bool dispatch_beam_profile(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd)
 
     /* Diagnostic: print beam params every 300 frames. */
     if (vgc->beam_frame_counter % 300 == 1) {
-        LOGV("BEAM: floor=%.3f noise=%.3f sigma=[%.2f %.2f] hum=%.3f\n",
-             beam_params.black_floor, beam_params.noise_level,
+        LOGV("BEAM: sigma=[%.2f %.2f] hum=%.3f\n",
              beam_params.sigma_narrow, beam_params.sigma_wide,
              beam_params.hum_bar_amplitude);
     }
