@@ -159,6 +159,7 @@ add_library(nes_static STATIC
     src/nes/mappers/mapper_fme7.c
     src/nes/mappers/mapper_axrom.c
     src/nes/mappers/mapper_mmc4.c
+    src/nes/mappers/mapper_227.c
     # Vendored LMP88959/PAL-CRT (permissive custom license) — provides
     # the authentic 2C07 PAL encoder/decoder used by the composite
     # pipeline when region = PAL. See src/nes/palcrt/README.md.
@@ -214,6 +215,11 @@ if(NES_BUILD_TESTS)
     add_executable(test_rom tests/nes/test_rom.c)
     target_link_libraries(test_rom PRIVATE nes_static)
     add_test(NAME rom_tests COMMAND test_rom)
+
+    # Mapper 227 (1200-in-1 multicart) tests
+    add_executable(test_mapper227 tests/nes/test_mapper227.c)
+    target_link_libraries(test_mapper227 PRIVATE nes_static)
+    add_test(NAME mapper227_tests COMMAND test_mapper227)
 
     # AccuracyCoin test runner
     add_executable(accuracy_coin tests/accuracy_coin/run_accuracy.c)

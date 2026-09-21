@@ -17,6 +17,7 @@ static const MapperOps *mapper_ops_for(uint8_t number) {
     case 7: return &mapper7_ops;
     case 10: return &mapper10_ops;
     case 69: return &mapper69_ops;
+    case 227: return &mapper227_ops;
     default: return &mapper0_ops;
     }
 }
@@ -93,5 +94,5 @@ uint8_t mapper_get_mirroring(Mapper *m) {
 bool mapper_supported(uint8_t number) {
     return number == 0 || number == 1 || number == 2 ||
            number == 3 || number == 4 || number == 5 ||
-           number == 7 || number == 10 || number == 69;
+           number == 7 || number == 10 || number == 69 || number == 227;
 }

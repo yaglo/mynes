@@ -25,5 +25,6 @@ extern const MapperOps mapper7_ops;
 extern const MapperOps mapper5_ops;
 extern const MapperOps mapper10_ops;
 extern const MapperOps mapper69_ops;
+extern const MapperOps mapper227_ops;
 
 #endif /* NES_MAPPER_OPS_H */

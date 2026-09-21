@@ -2,7 +2,7 @@
  * NES ROM Loader (iNES Format)
  *
  * Parses iNES format ROM files (.nes) and loads PRG/CHR data.
- * Supports mappers: 0 (NROM), 1 (MMC1), 2 (UxROM), 3 (CNROM), 4 (MMC3), 7 (AxROM)
+ * Supports mappers: 0, 1, 2, 3, 4, 5, 7, 10, 69, and 227.
  */
 
 #ifndef NES_ROM_H
@@ -138,8 +138,9 @@ static inline int nes_rom_load(ROM *rom, const char *path) {
         rom->tv_system = NES_TV_NTSC;
     }
 
-    /* Check for supported mappers: 0, 1, 2, 3, 4, 5, 7, 10 */
-    if (rom->mapper > 5 && rom->mapper != 7 && rom->mapper != 10 && rom->mapper != 69) {
+    /* Check for supported mappers. */
+    if (rom->mapper > 5 && rom->mapper != 7 && rom->mapper != 10 &&
+        rom->mapper != 69 && rom->mapper != 227) {
         fclose(fp);
         return ROM_ERR_MAPPER;
     }
@@ -225,7 +226,8 @@ static inline int nes_rom_load_data(ROM *rom, const uint8_t *data, size_t size) 
         rom->tv_system = NES_TV_NTSC;
     }
 
-    if (rom->mapper > 5 && rom->mapper != 7 && rom->mapper != 10 && rom->mapper != 69)
+    if (rom->mapper > 5 && rom->mapper != 7 && rom->mapper != 10 &&
+        rom->mapper != 69 && rom->mapper != 227)
         return ROM_ERR_MAPPER;
 
     size_t offset = INES_HEADER_SIZE;
