@@ -1,0 +1,391 @@
+{
+  "utc": "2026-09-21T14:20:55.271323+00:00",
+  "platform": "macOS-27.0-arm64-arm-64bit",
+  "rom": "Super Mario Bros. (World).nes",
+  "offscreen": true,
+  "frames": 300,
+  "warmup": 60,
+  "load_before": [
+    2.1103515625,
+    2.0244140625,
+    2.09033203125
+  ],
+  "other_frontends": [],
+  "results": [
+    {
+      "preset": "sony_pvm_14l2",
+      "mode": "gpu-readback",
+      "width": 3840,
+      "height": 2160,
+      "rendered": 240,
+      "fps": 60.11187536821274,
+      "emulated_fps": 60.11187536821274,
+      "skipped": 0.0,
+      "cadence_ms": {
+        "mean": 16.635648012552302,
+        "median": 16.378667,
+        "p95": 21.110708,
+        "p99": 23.481125,
+        "maximum": 27.267667
+      },
+      "frame_age_ms": {
+        "mean": 9.160062816666667,
+        "median": 9.422395999999999,
+        "p95": 12.272458,
+        "p99": 16.192083,
+        "maximum": 19.973541
+      },
+      "ready_age_ms": {
+        "mean": 1.3702457875,
+        "median": 1.148375,
+        "p95": 1.916292,
+        "p99": 10.811416,
+        "maximum": 11.583292
+      },
+      "timings": {
+        "emulation_ms": {
+          "mean": 5.970279375,
+          "median": 6.27979,
+          "p95": 8.44262,
+          "p99": 8.96513,
+          "maximum": 9.91233
+        },
+        "audio_ms": {
+          "mean": 1.8189278333333334,
+          "median": 1.63104,
+          "p95": 3.14246,
+          "p99": 3.195,
+          "maximum": 4.50554
+        },
+        "encode_ms": {
+          "mean": 0.1403905,
+          "median": 0.15195999999999998,
+          "p95": 0.204,
+          "p99": 0.23504,
+          "maximum": 0.28962
+        },
+        "present_ms": {
+          "mean": 12.308618916666667,
+          "median": 11.915915,
+          "p95": 14.03708,
+          "p99": 37.84271,
+          "maximum": 41.73617
+        },
+        "swap_wait_ms": {
+          "mean": 11.7575455,
+          "median": 11.77279,
+          "p95": 13.67996,
+          "p99": 14.22504,
+          "maximum": 14.30658
+        }
+      },
+      "capture_ms": {
+        "mean": 26.283135,
+        "median": 26.038665,
+        "p95": 26.5525,
+        "p99": 26.5525,
+        "maximum": 27.91317
+      },
+      "capture_write_ms": {
+        "mean": 69.4445,
+        "median": 70.5785,
+        "p95": 70.876,
+        "p99": 70.876,
+        "maximum": 74.496
+      },
+      "capture_writes": 4,
+      "audio_queue_ms": {
+        "mean": 31.0338246409675,
+        "median": 30.80498866213152,
+        "p95": 43.65079365079365,
+        "p99": 44.739229024943306,
+        "maximum": 51.13378684807256
+      },
+      "gpu_audio_fraction": 0.95,
+      "process_cpu_seconds": 2.608542
+    },
+    {
+      "preset": "jvc_d_series_2000",
+      "mode": "gpu-readback",
+      "width": 3840,
+      "height": 2160,
+      "rendered": 240,
+      "fps": 60.11659600715827,
+      "emulated_fps": 60.11659600715827,
+      "skipped": 0.0,
+      "cadence_ms": {
+        "mean": 16.63434170292887,
+        "median": 16.48275,
+        "p95": 20.636208,
+        "p99": 23.189833,
+        "maximum": 25.31825
+      },
+      "frame_age_ms": {
+        "mean": 8.7374219125,
+        "median": 9.072729500000001,
+        "p95": 11.658959,
+        "p99": 13.018125,
+        "maximum": 19.457416
+      },
+      "ready_age_ms": {
+        "mean": 1.238212175,
+        "median": 1.081,
+        "p95": 1.878417,
+        "p99": 6.341542,
+        "maximum": 11.49575
+      },
+      "timings": {
+        "emulation_ms": {
+          "mean": 5.742852916666667,
+          "median": 6.244705,
+          "p95": 8.43,
+          "p99": 8.74338,
+          "maximum": 9.83596
+        },
+        "audio_ms": {
+          "mean": 1.75576925,
+          "median": 1.63194,
+          "p95": 3.12896,
+          "p99": 3.16258,
+          "maximum": 4.56617
+        },
+        "encode_ms": {
+          "mean": 0.14480816666666665,
+          "median": 0.15054,
+          "p95": 0.22704,
+          "p99": 0.25704,
+          "maximum": 0.31438
+        },
+        "present_ms": {
+          "mean": 12.244428625,
+          "median": 11.8166,
+          "p95": 13.44587,
+          "p99": 35.71225,
+          "maximum": 39.814
+        },
+        "swap_wait_ms": {
+          "mean": 11.720024375,
+          "median": 11.712685,
+          "p95": 13.13825,
+          "p99": 13.53271,
+          "maximum": 13.81
+        }
+      },
+      "capture_ms": {
+        "mean": 24.767585,
+        "median": 24.394064999999998,
+        "p95": 24.58288,
+        "p99": 24.58288,
+        "maximum": 27.24179
+      },
+      "capture_write_ms": {
+        "mean": 85.90375,
+        "median": 74.71799999999999,
+        "p95": 82.101,
+        "p99": 82.101,
+        "maximum": 133.903
+      },
+      "capture_writes": 4,
+      "audio_queue_ms": {
+        "mean": 32.30281557067271,
+        "median": 31.950113378684804,
+        "p95": 44.08163265306122,
+        "p99": 47.16553287981859,
+        "maximum": 50.06802721088435
+      },
+      "gpu_audio_fraction": 0.9666666666666667,
+      "process_cpu_seconds": 2.61246
+    },
+    {
+      "preset": "toshiba_14af43",
+      "mode": "gpu-readback",
+      "width": 3840,
+      "height": 2160,
+      "rendered": 240,
+      "fps": 60.09504886887257,
+      "emulated_fps": 60.09504886887257,
+      "skipped": 0.0,
+      "cadence_ms": {
+        "mean": 16.640305962343096,
+        "median": 16.47975,
+        "p95": 20.542791,
+        "p99": 22.869541,
+        "maximum": 26.65325
+      },
+      "frame_age_ms": {
+        "mean": 8.741101570833333,
+        "median": 9.039646,
+        "p95": 11.996,
+        "p99": 14.298583,
+        "maximum": 18.415459
+      },
+      "ready_age_ms": {
+        "mean": 1.2946060708333333,
+        "median": 1.1120830000000002,
+        "p95": 2.000541,
+        "p99": 7.4,
+        "maximum": 10.4865
+      },
+      "timings": {
+        "emulation_ms": {
+          "mean": 5.62793875,
+          "median": 6.2098949999999995,
+          "p95": 8.41408,
+          "p99": 8.66771,
+          "maximum": 10.40204
+        },
+        "audio_ms": {
+          "mean": 1.8181746666666667,
+          "median": 1.635335,
+          "p95": 3.16067,
+          "p99": 3.2065,
+          "maximum": 4.25788
+        },
+        "encode_ms": {
+          "mean": 0.1472595,
+          "median": 0.15694,
+          "p95": 0.23287,
+          "p99": 0.25921,
+          "maximum": 0.30888
+        },
+        "present_ms": {
+          "mean": 12.621640916666667,
+          "median": 12.62931,
+          "p95": 13.80725,
+          "p99": 35.72546,
+          "maximum": 43.75833
+        },
+        "swap_wait_ms": {
+          "mean": 12.064791291666667,
+          "median": 12.523309999999999,
+          "p95": 13.62217,
+          "p99": 13.73837,
+          "maximum": 14.18788
+        }
+      },
+      "capture_ms": {
+        "mean": 26.501604999999998,
+        "median": 25.602935000000002,
+        "p95": 25.82158,
+        "p99": 25.82158,
+        "maximum": 29.91267
+      },
+      "capture_write_ms": {
+        "mean": 82.19675000000001,
+        "median": 84.0615,
+        "p95": 86.994,
+        "p99": 86.994,
+        "maximum": 93.059
+      },
+      "capture_writes": 4,
+      "audio_queue_ms": {
+        "mean": 33.19879062736206,
+        "median": 33.68480725623583,
+        "p95": 45.17006802721088,
+        "p99": 48.140589569160994,
+        "maximum": 50.476190476190474
+      },
+      "gpu_audio_fraction": 0.95,
+      "process_cpu_seconds": 2.563498000000001
+    },
+    {
+      "preset": "stass_favourite",
+      "mode": "gpu-readback",
+      "width": 3840,
+      "height": 2160,
+      "rendered": 240,
+      "fps": 60.08490070884933,
+      "emulated_fps": 60.08490070884933,
+      "skipped": 0.0,
+      "cadence_ms": {
+        "mean": 16.643116460251047,
+        "median": 16.365042,
+        "p95": 20.708958,
+        "p99": 23.991042,
+        "maximum": 28.2015
+      },
+      "frame_age_ms": {
+        "mean": 8.887150758333334,
+        "median": 9.0635625,
+        "p95": 11.865417,
+        "p99": 18.549083,
+        "maximum": 22.500416
+      },
+      "ready_age_ms": {
+        "mean": 1.4828640875,
+        "median": 1.1498545,
+        "p95": 2.657666,
+        "p99": 11.104792,
+        "maximum": 13.563541
+      },
+      "timings": {
+        "emulation_ms": {
+          "mean": 5.6066827083333335,
+          "median": 6.215895,
+          "p95": 8.03637,
+          "p99": 8.558,
+          "maximum": 10.07908
+        },
+        "audio_ms": {
+          "mean": 1.7971282916666667,
+          "median": 1.647875,
+          "p95": 3.14062,
+          "p99": 3.19683,
+          "maximum": 3.32742
+        },
+        "encode_ms": {
+          "mean": 0.14907304166666666,
+          "median": 0.15448,
+          "p95": 0.235,
+          "p99": 0.27867,
+          "maximum": 0.31262
+        },
+        "present_ms": {
+          "mean": 12.193631958333333,
+          "median": 11.541395,
+          "p95": 14.09396,
+          "p99": 37.02967,
+          "maximum": 41.44033
+        },
+        "swap_wait_ms": {
+          "mean": 11.640124916666666,
+          "median": 11.41402,
+          "p95": 13.76754,
+          "p99": 14.36562,
+          "maximum": 14.84342
+        }
+      },
+      "capture_ms": {
+        "mean": 26.42423,
+        "median": 26.48171,
+        "p95": 27.2835,
+        "p99": 27.2835,
+        "maximum": 27.447
+      },
+      "capture_write_ms": {
+        "mean": 68.45975,
+        "median": 70.0635,
+        "p95": 71.362,
+        "p99": 71.362,
+        "maximum": 73.311
+      },
+      "capture_writes": 4,
+      "audio_queue_ms": {
+        "mean": 31.800359032501888,
+        "median": 31.281179138321995,
+        "p95": 43.85487528344671,
+        "p99": 47.48299319727891,
+        "maximum": 50.06802721088435
+      },
+      "gpu_audio_fraction": 0.925,
+      "process_cpu_seconds": 2.5816139999999987
+    }
+  ],
+  "metric": "Real ROM, core/APU, selected CPU/GPU audio and complete GPU signal/CRT. SDL audio queue active (muted offscreen). Offscreen mode fences the full render; no window presentation/vsync. Timestamps stop at submission, not scanout. Readback additionally captures once per 60 emulated frames; CPU encoding/writing runs in one bounded worker, drained before exit. capture_ms is render-thread readback/copy cost; capture_write_ms includes encoding and disk IO.",
+  "hardware": "hw.model: Mac17,3\nhw.memsize: 25769803776\nmachdep.cpu.brand_string: Apple M5",
+  "load_after": [
+    2.43017578125,
+    2.1025390625,
+    2.11572265625
+  ]
+}
