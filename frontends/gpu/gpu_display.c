@@ -9,7 +9,7 @@
  *     set 2: Sampled textures (bound via SDL_BindGPUFragmentSamplers)
  *     set 3: Uniform buffers  (pushed via SDL_PushGPUFragmentUniformData)
  *
- * The shaders are compiled from GLSL 450 using glslangValidator with
+ * The shaders are compiled from GLSL 450 using glslc with
  * the correct set numbers for SDL3's expected layout.
  */
 
@@ -264,10 +264,11 @@ bool gpu_display_init_target(GPUDisplay *d, SDL_GPUDevice *gpu,
     memset(d, 0, sizeof(*d));
 
     /* Build shader paths. */
-    char vert_path[1024], crt_frag_path[1024], blur_frag_path[1024];
+    char vert_path[1024], crt_frag_path[1024], blur_frag_path[1024], reduce_frag_path[1024];
     snprintf(vert_path, sizeof(vert_path), "%s/fullscreen.vert.spv", shader_dir);
     snprintf(crt_frag_path, sizeof(crt_frag_path), "%s/crt_display.frag.spv", shader_dir);
     snprintf(blur_frag_path, sizeof(blur_frag_path), "%s/halation_blur.frag.spv", shader_dir);
+    snprintf(reduce_frag_path, sizeof(reduce_frag_path), "%s/halation_reduce.frag.spv", shader_dir);
 
     /* Get swapchain format for the CRT pipeline's output. */
 
@@ -290,6 +291,20 @@ bool gpu_display_init_target(GPUDisplay *d, SDL_GPUDevice *gpu,
             gpu, vert, frag,
             SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT, false);
         if (!d->pipe_halation) return false;
+    }
+
+    {
+        SDL_GPUShader *vert=load_shader(gpu,vert_path,SDL_GPU_SHADERSTAGE_VERTEX,0,0);
+        SDL_GPUShader *frag=load_shader(gpu,reduce_frag_path,SDL_GPU_SHADERSTAGE_FRAGMENT,1,1);
+        if(!vert || !frag) {
+            if(vert) SDL_ReleaseGPUShader(gpu,vert);
+            if(frag) SDL_ReleaseGPUShader(gpu,frag);
+            gpu_display_destroy(d,gpu);
+            return false;
+        }
+        d->pipe_halation_reduce=create_fullscreen_pipeline(gpu,vert,frag,
+            SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT,false);
+        if(!d->pipe_halation_reduce) { gpu_display_destroy(d,gpu);return false; }
     }
 
     /* --- CRT display pipeline ---
@@ -368,6 +383,11 @@ void gpu_display_destroy(GPUDisplay *d, SDL_GPUDevice *gpu)
 {
     if (!d) return;
 
+    if (d->pipe_halation_reduce) {
+        SDL_ReleaseGPUGraphicsPipeline(gpu, d->pipe_halation_reduce);
+        d->pipe_halation_reduce = NULL;
+    }
+
     if (d->pipe_halation) {
         SDL_ReleaseGPUGraphicsPipeline(gpu, d->pipe_halation);
         d->pipe_halation = NULL;
@@ -439,14 +459,33 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
     float picture_w=viewport ? viewport->w : (float)sw;
     float picture_h=viewport ? viewport->h : (float)sh;
     float scatter_step=0.006f/6.4f;
+    bool scatter_enabled=params->halation_strength>0.001f || params->glass_reflection>0.001f;
 
-    /* Skip halation blur passes when strength is 0. */
-    if (params->halation_strength > 0.001f && !params->reuse_halation)
+    /* Integrate the source footprint before lowering resolution. Reuse B
+     * for the final vertical result; no third scratch texture is needed. */
+    if (scatter_enabled && !params->reuse_halation) {
+        struct { float w,h,input_gamma,pad; } reduce_params={
+            (float)d->halation_w,(float)d->halation_h,params->input_gamma,0};
+        SDL_GPUColorTargetInfo ct={.texture=d->tex_halation_b,
+            .load_op=SDL_GPU_LOADOP_DONT_CARE,.store_op=SDL_GPU_STOREOP_STORE,.cycle=true};
+        SDL_GPURenderPass *pass=SDL_BeginGPURenderPass(cmd,&ct,1,NULL);
+        if(pass) {
+            SDL_BindGPUGraphicsPipeline(pass,d->pipe_halation_reduce);
+            SDL_GPUTextureSamplerBinding sampler={.texture=composite_tex,.sampler=d->sampler_linear};
+            SDL_BindGPUFragmentSamplers(pass,0,&sampler,1);
+            SDL_PushGPUFragmentUniformData(cmd,0,&reduce_params,sizeof(reduce_params));
+            SDL_DrawGPUPrimitives(pass,3,1,0,0);
+            SDL_EndGPURenderPass(pass);
+        }
+    }
+
+    /* Horizontal scatter on the integrated low-resolution light. */
+    if (scatter_enabled && !params->reuse_halation)
     {
         memset(&blur_params, 0, sizeof(blur_params));
         blur_params.dir_x = scatter_step * picture_h / fmaxf(picture_w,1);
         blur_params.dir_y = 0.0f;
-        blur_params.input_gamma = params->input_gamma;
+        blur_params.input_gamma = 0;
 
         SDL_GPUColorTargetInfo ct;
         memset(&ct, 0, sizeof(ct));
@@ -460,7 +499,7 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
             SDL_BindGPUGraphicsPipeline(pass, d->pipe_halation);
 
             SDL_GPUTextureSamplerBinding sampler_bind;
-            sampler_bind.texture = composite_tex;
+            sampler_bind.texture = d->tex_halation_b;
             sampler_bind.sampler = d->sampler_linear;
             SDL_BindGPUFragmentSamplers(pass, 0, &sampler_bind, 1);
 
@@ -472,8 +511,8 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
         }
     }
 
-    /* Pass 2: Vertical blur (halation_a → halation_b). */
-    if (params->halation_strength > 0.001f && !params->reuse_halation) {
+    /* Vertical scatter (halation_a → halation_b). */
+    if (scatter_enabled && !params->reuse_halation) {
         memset(&blur_params, 0, sizeof(blur_params));
         blur_params.dir_x = 0.0f;
         blur_params.dir_y = scatter_step;
@@ -484,7 +523,7 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
         ct.texture = d->tex_halation_b;
         ct.load_op = SDL_GPU_LOADOP_DONT_CARE;
         ct.store_op = SDL_GPU_STOREOP_STORE;
-        ct.cycle = true;
+        ct.cycle = false; /* B was already cycled by the reduction pass. */
 
         SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, &ct, 1, NULL);
         if (pass) {
@@ -501,12 +540,11 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
             SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
             SDL_EndGPURenderPass(pass);
         }
-    } /* end halation strength > 0 */
+    }
 
     /* -----------------------------------------------------------------------
-     * Pass 3: CRT display composite (composite + halation_b → swapchain)
-     *   - Barrel distortion, convergence, phosphor mask, halation blend,
-     *     vignette, gamma, black floor
+     * Final display: landed beam + glass scatter → mask/optics → host colour.
+     * Raster geometry, gun transfer and black level are already in the beam.
      * -----------------------------------------------------------------------
      *
      * DisplayParams UBO layout (std140, matching crt_display.frag.glsl):

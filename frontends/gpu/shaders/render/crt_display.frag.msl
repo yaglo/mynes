@@ -256,7 +256,17 @@ fragment main0_out main0(main0_in in [[stage_in]], constant DisplayParams& _75 [
         float2 param_5 = local_frag_pos;
         color *= mix(float3(1.0), phosphor_mask(param_5, _75, tex_mask, tex_maskSmplr), float3(_75.mask_strength));
     }
-    if (_75.halation_strength > 0.001000000047497451305389404296875)
+    bool _591 = _75.halation_strength > 0.001000000047497451305389404296875;
+    bool _599;
+    if (!_591)
+    {
+        _599 = _75.glass_reflection > 0.001000000047497451305389404296875;
+    }
+    else
+    {
+        _599 = _591;
+    }
+    if (_599)
     {
         float3 halo = tex_halation.sample(tex_halationSmplr, sample_uv).xyz;
         float3 tint = float3(_75.halation_tint_r, _75.halation_tint_g, _75.halation_tint_b);
@@ -264,7 +274,9 @@ fragment main0_out main0(main0_in in [[stage_in]], constant DisplayParams& _75 [
         {
             tint = float3(1.0);
         }
-        color = (color * (1.0 - _75.halation_strength)) + ((halo * tint) * _75.halation_strength);
+        float3 h = fast::clamp(tint * _75.halation_strength, float3(0.0), float3(1.0));
+        float r = fast::clamp(_75.glass_reflection * 0.07999999821186065673828125, 0.0, 1.0);
+        color = mix(color, halo, float3(1.0) - ((float3(1.0) - h) * (1.0 - r)));
     }
     if (_75.chromaticity_drive_shift > 0.001000000047497451305389404296875)
     {
@@ -275,40 +287,35 @@ fragment main0_out main0(main0_in in [[stage_in]], constant DisplayParams& _75 [
         color.x += ((r2 * _75.chromaticity_drive_shift) * 0.0199999995529651641845703125);
         color.z -= ((b2 * _75.chromaticity_drive_shift) * 0.02999999932944774627685546875);
     }
-    if (_75.glass_reflection > 0.001000000047497451305389404296875)
+    bool _710 = _75.cathode_center_dim > 0.001000000047497451305389404296875;
+    bool _720;
+    if (!_710)
     {
-        float lum = dot(color, float3(0.2125999927520751953125, 0.715200006961822509765625, 0.072200000286102294921875));
-        color += float3((lum * _75.glass_reflection) * 0.07999999821186065673828125);
-    }
-    bool _713 = _75.cathode_center_dim > 0.001000000047497451305389404296875;
-    bool _723;
-    if (!_713)
-    {
-        _723 = abs(_75.cathode_gain_r - 1.0) > 0.001000000047497451305389404296875;
+        _720 = abs(_75.cathode_gain_r - 1.0) > 0.001000000047497451305389404296875;
     }
     else
     {
-        _723 = _713;
+        _720 = _710;
     }
-    bool _733;
-    if (!_723)
+    bool _730;
+    if (!_720)
     {
-        _733 = abs(_75.cathode_gain_g - 1.0) > 0.001000000047497451305389404296875;
+        _730 = abs(_75.cathode_gain_g - 1.0) > 0.001000000047497451305389404296875;
     }
     else
     {
-        _733 = _723;
+        _730 = _720;
     }
-    bool _743;
-    if (!_733)
+    bool _740;
+    if (!_730)
     {
-        _743 = abs(_75.cathode_gain_b - 1.0) > 0.001000000047497451305389404296875;
+        _740 = abs(_75.cathode_gain_b - 1.0) > 0.001000000047497451305389404296875;
     }
     else
     {
-        _743 = _733;
+        _740 = _730;
     }
-    if (_743)
+    if (_740)
     {
         float2 cd = in.uv - float2(0.5);
         float r2_1 = dot(cd, cd) * 4.0;
@@ -323,8 +330,8 @@ fragment main0_out main0(main0_in in [[stage_in]], constant DisplayParams& _75 [
     if (_75.phosphor_grain > 0.001000000047497451305389404296875)
     {
         float2 param_6 = in.uv * float2(1800.0, 1400.0);
-        float _808 = tube_hash(param_6);
-        float g = _808;
+        float _805 = tube_hash(param_6);
+        float g = _805;
         color *= (1.0 + ((_75.phosphor_grain * (g - 0.5)) * 2.0));
     }
     if (_75.thermal_dome_amount > 0.001000000047497451305389404296875)
@@ -339,16 +346,16 @@ fragment main0_out main0(main0_in in [[stage_in]], constant DisplayParams& _75 [
     float2 param_7 = in.uv;
     float param_8 = _75.vignette_strength;
     color *= vignette_factor(param_7, param_8);
-    float _899;
+    float _896;
     if (_75.hdr_gain > 0.0)
     {
-        _899 = _75.hdr_gain;
+        _896 = _75.hdr_gain;
     }
     else
     {
-        _899 = 1.0;
+        _896 = 1.0;
     }
-    color *= (_899 * _75.presentation.x);
+    color *= (_896 * _75.presentation.x);
     color += float3(_75.ambient_light * 0.1500000059604644775390625);
     if (_75.glass_glare > 0.001000000047497451305389404296875)
     {
@@ -361,16 +368,16 @@ fragment main0_out main0(main0_in in [[stage_in]], constant DisplayParams& _75 [
             {
                 warm.x = 1.0;
                 warm.y = fast::clamp((0.38999998569488525390625 * log(t)) - 0.630999982357025146484375, 0.0, 1.0);
-                float _959;
+                float _956;
                 if (_75.glass_glare_temp_k < 1900.0)
                 {
-                    _959 = 0.0;
+                    _956 = 0.0;
                 }
                 else
                 {
-                    _959 = fast::clamp((0.5429999828338623046875 * log(t - 10.0)) - 1.19599997997283935546875, 0.0, 1.0);
+                    _956 = fast::clamp((0.5429999828338623046875 * log(t - 10.0)) - 1.19599997997283935546875, 0.0, 1.0);
                 }
-                warm.z = _959;
+                warm.z = _956;
             }
             else
             {
@@ -379,12 +386,12 @@ fragment main0_out main0(main0_in in [[stage_in]], constant DisplayParams& _75 [
                 warm.z = 1.0;
             }
         }
-        float h = env_uv.y;
+        float h_1 = env_uv.y;
         float3 floor_c = warm * 0.02999999932944774627685546875;
         float3 wall_c = warm * 0.100000001490116119384765625;
         float3 ceiling_c = warm * 0.449999988079071044921875;
-        float3 env = mix(floor_c, wall_c, float3(smoothstep(0.0, 0.550000011920928955078125, h)));
-        env = mix(env, ceiling_c, float3(smoothstep(0.550000011920928955078125, 1.0, h)));
+        float3 env = mix(floor_c, wall_c, float3(smoothstep(0.0, 0.550000011920928955078125, h_1)));
+        env = mix(env, ceiling_c, float3(smoothstep(0.550000011920928955078125, 1.0, h_1)));
         float2 light_xy = float2(_75.glass_glare_light_x, 1.0 - _75.glass_glare_light_y);
         float2 d_light = env_uv - light_xy;
         float sz = fast::max(_75.glass_glare_size, 0.0199999995529651641845703125);
@@ -420,17 +427,17 @@ fragment main0_out main0(main0_in in [[stage_in]], constant DisplayParams& _75 [
         float mapped = knee + (((limit - knee) * (peak - knee)) / (((peak - knee) + limit) - knee));
         color *= (mapped / peak);
     }
-    float3 _1220;
+    float3 _1221;
     if (_75.output_hdr != 0)
     {
-        _1220 = color * _75.sdr_white_level;
+        _1221 = color * _75.sdr_white_level;
     }
     else
     {
         float3 param_9 = color;
-        _1220 = srgb_encode(param_9);
+        _1221 = srgb_encode(param_9);
     }
-    color = _1220;
+    color = _1221;
     out.frag_color = float4(color, 1.0);
     return out;
 }

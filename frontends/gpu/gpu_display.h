@@ -3,7 +3,7 @@
  * ==========================================================
  *
  * Consumes linear beam/phosphor history from the GPU signal chain.
- * Optional separable glass-scatter blur precedes the mask/glass pass.
+ * Optional area reduction and separable glass scatter precede the mask/glass pass.
  * The last pass writes SDR sRGB or extended linear sRGB to the swapchain.
  * It also supports offscreen targets for numerical and visual validation.
  */
@@ -18,12 +18,13 @@
 /* Display pipeline state (opaque to callers). */
 typedef struct {
     /* Shader pipelines. */
+    SDL_GPUGraphicsPipeline *pipe_halation_reduce; /* area integration before reduction */
     SDL_GPUGraphicsPipeline *pipe_halation;   /* shared H+V blur pipeline */
     SDL_GPUGraphicsPipeline *pipe_crt;        /* CRT display composite */
 
     /* Halation FBOs (quarter resolution). */
     SDL_GPUTexture *tex_halation_a;    /* H blur output */
-    SDL_GPUTexture *tex_halation_b;    /* V blur output (final halation) */
+    SDL_GPUTexture *tex_halation_b;    /* reduced input, then V blur output */
     int halation_w, halation_h;
 
     /* Sampler for linear filtering. */
@@ -83,7 +84,7 @@ typedef struct {
     float phosphor_gamma_offset_g;
     float phosphor_gamma_offset_b;
     float secondary_scatter;       /* cross-phosphor desat (§4.8) */
-    float glass_reflection;        /* local-brightness-dependent black lift (§5.6) */
+    float glass_reflection;        /* additional spatial glass-scatter fraction / .08 */
     float antiglare_blur;          /* matte screen sub-pixel scatter (§5.6) */
     float emi_gradient;            /* horizontal deflection brightness (§5.9) */
     float degauss_tint;            /* residual corner color offset (§6.1) */
@@ -130,8 +131,8 @@ void gpu_display_destroy(GPUDisplay *d, SDL_GPUDevice *gpu);
 /* Resize halation FBOs when window size changes. */
 void gpu_display_resize(GPUDisplay *d, SDL_GPUDevice *gpu, int win_w, int win_h);
 
-/* Render a frame: runs the 3-pass shader chain and presents to swapchain.
- * composite_tex: the CPU composite output texture (RGBA8, uploaded each frame).
+/* Render a frame: optional area reduction + H/V scatter, then CRT display.
+ * composite_tex: beam/history light, or an explicitly gamma-encoded fallback.
  * params: CRT display uniforms for the current preset.
  * swapchain_tex: acquired from SDL_AcquireGPUSwapchainTexture.
  * cmd: the command buffer to record into.

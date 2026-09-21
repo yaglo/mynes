@@ -372,7 +372,7 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
         ctx->mask_alignment ? "physical CRT pitch" : "integer panel periods");
 
     if (ctx->display_tex && ctx->gpu_display_enabled && (ctx->crt_shader_enabled || !ctx->owns_display_tex)) {
-        /* CRT shader: 3-pass render pipeline. */
+        /* Beam light, glass scattering and final host-display adaptation. */
         GPUDisplayParams disp_params;
         gpu_display_params_from_tv(&disp_params, &chain->tv,
                                    ctx->display_tex_w, ctx->display_tex_h,

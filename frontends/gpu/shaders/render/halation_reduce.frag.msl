@@ -1,0 +1,72 @@
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct ReduceParams
+{
+    float2 output_size;
+    float input_gamma;
+};
+
+struct main0_out
+{
+    float4 frag_color [[color(0)]];
+};
+
+struct main0_in
+{
+    float2 uv [[user(locn0)]];
+};
+
+fragment main0_out main0(main0_in in [[stage_in]], constant ReduceParams& _25 [[buffer(0)]], texture2d<float> tex_input [[texture(0)]], sampler tex_inputSmplr [[sampler(0)]])
+{
+    main0_out out = {};
+    float2 source_size = float2(int2(tex_input.get_width(), tex_input.get_height()));
+    float2 footprint = source_size / _25.output_size;
+    float2 lo = floor(in.uv * _25.output_size) * footprint;
+    float2 hi = lo + footprint;
+    bool _50 = _25.input_gamma <= 0.0;
+    bool _59;
+    if (_50)
+    {
+        _59 = all(footprint == floor(footprint));
+    }
+    else
+    {
+        _59 = _50;
+    }
+    if (_59)
+    {
+        float3 light = float3(0.0);
+        for (int y = 0; y < int(footprint.y); y += 2)
+        {
+            for (int x = 0; x < int(footprint.x); x += 2)
+            {
+                float2 size = fast::min(float2(2.0), footprint - float2(float(x), float(y)));
+                float2 center = ((lo + float2(float(x), float(y))) + (size * 0.5)) / source_size;
+                light += (fast::max(tex_input.sample(tex_inputSmplr, center).xyz, float3(0.0)) * (size.x * size.y));
+            }
+        }
+        out.frag_color = float4(light / float3(footprint.x * footprint.y), 1.0);
+        return out;
+    }
+    int2 first = max(int2(floor(lo)), int2(0));
+    int2 end = min(int2(ceil(hi)), int2(source_size));
+    float3 light_1 = float3(0.0);
+    for (int y_1 = first.y; y_1 < end.y; y_1++)
+    {
+        for (int x_1 = first.x; x_1 < end.x; x_1++)
+        {
+            float2 overlap = fast::max(fast::min(hi, float2(float(x_1 + 1), float(y_1 + 1))) - fast::max(lo, float2(float(x_1), float(y_1))), float2(0.0));
+            float3 v = fast::max(tex_input.read(uint2(int2(x_1, y_1)), 0).xyz, float3(0.0));
+            if (_25.input_gamma > 0.0)
+            {
+                v = powr(v, float3(_25.input_gamma));
+            }
+            light_1 += (v * (overlap.x * overlap.y));
+        }
+    }
+    out.frag_color = float4(light_1 / float3(footprint.x * footprint.y), 1.0);
+    return out;
+}

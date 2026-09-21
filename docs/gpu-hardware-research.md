@@ -177,3 +177,46 @@ error and secondary scattering at zero; they have not been retuned to disguise
 these corrections. The scene tracker still estimates brightness from the CPU
 framebuffer, not measured cathode current. Tests verify signed bias, gun cutoff,
 dark scanline gaps, blanked areas and conservation of nominal excitation.
+
+## Glass scattering and raster sampling
+
+The quarter-resolution halo used to point-sample the full-resolution beam before
+blurring. This aliases fine scanlines: with one lit row in every four, a field
+whose mean is 0.25 generated halo means of either 0 or 0.4995 depending on row
+position. The test isolates the halo at strength one; these are not errors of
+that magnitude in the normal presets' final picture.
+
+The reduction now integrates each destination pixel's source footprint in
+linear light. Fractional sizes use area overlap; integer reductions group 2×2
+blocks into exact bilinear averages. Horizontal and vertical scattering then
+operate on that reduced light. The existing two scratch textures are reused,
+and dark BFI refreshes reuse the completed halo. Tests cover both stripe axes,
+all four phases, fractional scaling and gamma-encoded fallback input.
+
+Offscreen halo allocation now follows the requested render size, rather than
+the hidden window. A real-frontend regression changes the hidden window from
+400×300 to 1151×863 and requires identical 640×480 captures in default and SDR
+output modes. The old build fails this check. Run it with:
+
+```sh
+python3 frontends/gpu/tests/test_offscreen_render.py build/bin/mynes_gpu
+```
+
+The internal-reflection control formerly added local gray light without
+transporting it into neighbouring dark areas. It now adds a bounded scatter
+fraction through the existing faceplate kernel. Halo tint similarly adjusts
+per-primary scatter fractions instead of changing a uniform field's colour or
+creating energy. Uniform-field, coloured-edge and neighbouring-black tests
+exercise the actual fragment shader.
+
+[AAPM TG18, section 4.7](https://www.aapm.org/pubs/reports/OR_03.pdf) describes
+CRT veiling glare as spatial redistribution, with both faceplate scattering and
+electron backscatter contributing. This supports a spatial light model, not
+our particular coefficients. The single Gaussian kernel remains an estimate:
+it does not establish the glass thickness, long scatter tails or electron
+backscatter distribution of the Sony, JVC or Toshiba tubes.
+
+Unaveraged Contra phase pairs were inspected at 1280×960 and 3840×2880 for all
+four curated profiles. Their native-pixel crops retain the existing beam and
+mask structure; the correction is subtle in this scene and is not a preset
+brightness retuning. Pixel pitch and preset gain were unchanged.

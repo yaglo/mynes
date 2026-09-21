@@ -373,10 +373,9 @@ typedef struct {
      * a measured scattering coefficient for the named tubes. */
     float secondary_scatter;
 
-    /* Glass internal reflection pedestal (§5.6). Light bouncing
-     * between the inner glass surface and the aluminum backing raises
-     * the effective black level proportional to local brightness.
-     * Different from ambient_light (constant pedestal). */
+    /* Additional spatial internal scatter through the generic faceplate
+     * PSF. Fraction = value * .08, bounded to 0..1; no added local pedestal.
+     * Not an independently measured glass reflectance. */
     float glass_reflection;
 
     /* Anti-glare sub-pixel blur (§5.6). Matte-screen treatment

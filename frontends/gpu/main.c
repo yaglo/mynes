@@ -712,7 +712,11 @@ int main(int argc, char **argv) {
             snprintf(render_shader_dir, sizeof(render_shader_dir),
                      "frontends/gpu/shaders/render");
         }
-        if (gpu_display_init(&gpu_disp, gpu, window, render_shader_dir)) {
+        bool display_ready=offscreen_w
+            ? gpu_display_init_target(&gpu_disp,gpu,SDL_GetGPUSwapchainTextureFormat(gpu,window),
+                                      offscreen_w,offscreen_h,render_shader_dir)
+            : gpu_display_init(&gpu_disp,gpu,window,render_shader_dir);
+        if (display_ready) {
             gpu_display_enabled = true;
             LOGV("GPU display pipeline: initialized (CRT shader active)\n");
         } else {

@@ -74,7 +74,7 @@ python3 frontends/gpu/tests/benchmark_playback.py build/bin/mynes_gpu game.nes /
 
 ## UHD playback and high-refresh presentation
 
-After the voltage-range, HDR colour and gun-bias corrections, Super Mario Bros. playback
+After the area-integrated halo and offscreen optical-size corrections, Super Mario Bros. playback
 was measured at a 3840×2160 output target (2880×2160 active 4:3 picture). Each
 run used 300 emulated frames, 60 warmups, GPU audio and one full image readback
 per 60 frames. All source, signal, CRT and display stages remained enabled.
@@ -83,17 +83,26 @@ active and muted, and physical presentation/vsync is not measured.
 
 | Preset | Render / emulated FPS | Skipped | p95 cadence | p95 audio queue |
 |---|---:|---:|---:|---:|
-| Sony PVM-14L2 | 59.80 / 60.05 | 1 | 19.09 ms | 44.4 ms |
-| JVC D-Series | 60.09 / 60.09 | 0 | 19.50 ms | 43.6 ms |
-| Toshiba 14AF43 | 60.10 / 60.10 | 0 | 19.04 ms | 43.5 ms |
-| Stas's Favourite | 60.10 / 60.10 | 0 | 20.23 ms | 43.7 ms |
+| Sony PVM-14L2 | 60.06 / 60.06 | 0 | 20.36 ms | 43.6 ms |
+| JVC D-Series | 60.09 / 60.09 | 0 | 20.83 ms | 42.4 ms |
+| Toshiba 14AF43 | 60.12 / 60.12 | 0 | 20.20 ms | 43.6 ms |
+| Stas's Favourite | 60.12 / 60.12 | 0 | 20.15 ms | 43.6 ms |
 
 [Raw UHD measurements](gpu-uhd-playback-results.json). A separate larger
 3840×2880 target dropped presented frames with Stas's Favourite; that workload
 is 11.1 million active pixels versus UHD's 6.2 million active picture pixels.
-The current PVM run dropped one picture; the previous run dropped none. These
-short runs on a shared machine do not establish a speedup or a regression from
-the physics corrections. No additional MyNES frontend ran during this batch.
+The current runs dropped no pictures; the preceding PVM run dropped one. These
+short runs on a shared machine do not establish a speedup from the physics
+corrections. No additional MyNES frontend ran during this batch. Halo buffers
+now use the requested output size rather than the hidden window size.
+
+The area reduction adds one low-resolution pass, reusing the existing scratch
+textures. Integer ratios use exact bilinear block averages; the blur then reads
+only reduced textures. Sequential pipeline-only runs at 2560×1920 measured
+7.50 → 7.13 ms median for PVM and 9.60 → 9.51 ms for Stas. At 640×480, PVM
+measured 2.81 → 3.12 ms. These small, mixed changes are not a demonstrated
+speedup. The pipeline-only measurement excludes core/audio/presentation; the
+UHD playback table above includes core, audio and capture.
 
 On the user's 120 Hz MacBook, a BFI trace contains a continuous 126.77-second
 segment at 119.78 submissions/s, with 120.02/s over the last 1,000 submissions.

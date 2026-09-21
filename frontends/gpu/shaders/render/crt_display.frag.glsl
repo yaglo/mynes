@@ -58,7 +58,7 @@ layout(set = 3, binding = 0) uniform DisplayParams {
     float phosphor_gamma_offset_g;
     float phosphor_gamma_offset_b;
     float secondary_scatter;      /* §4.8: cross-phosphor desat */
-    float glass_reflection;       /* §5.6: internal-reflection pedestal */
+    float glass_reflection;       /* generic internal-scatter fraction / .08 */
     float antiglare_blur;         /* §5.6: sub-pixel matte scatter */
     float emi_gradient;           /* §5.9: deflection-EMI brightness bar */
     float degauss_tint;           /* §6.1: residual corner color tint */
@@ -233,17 +233,17 @@ void main() {
         color *= mix(vec3(1.0), phosphor_mask(local_frag_pos), mask_strength);
     }
 
-    /* (e) Halation: the glass carries light past the raster edge via
-     * internal reflections, so it bleeds a little beyond the lit area. */
-    if (halation_strength > 0.001) {
+    // Glass transports emitted light into neighbouring areas. Both controls
+    // use the generic faceplate PSF; neither creates light from a local luma
+    // pedestal. Tint sets wavelength-dependent scatter fractions, so changing
+    // it redistributes each primary without changing a uniform field's colour.
+    if (halation_strength > 0.001 || glass_reflection > 0.001) {
         vec3 halo = texture(tex_halation, sample_uv).rgb;
-        /* Phosphor-coloured halo: per-channel tint biases the bloom so
-         * highlights pick up a characteristic glow colour (e.g. green-
-         * warm on P22 consumer sets, neutral on aperture-grille pro
-         * monitors). Zero tint falls back to uniform white bloom. */
         vec3 tint = vec3(halation_tint_r, halation_tint_g, halation_tint_b);
         if (tint.r + tint.g + tint.b < 1e-4) tint = vec3(1.0);
-        color = color * (1.0-halation_strength) + halo * tint * halation_strength;
+        vec3 h=clamp(halation_strength*tint,vec3(0.0),vec3(1.0));
+        float r=clamp(glass_reflection*0.08,0.0,1.0);
+        color=mix(color,halo,1.0-(1.0-h)*(1.0-r));
     }
 
     /* §5.4 Phosphor chromaticity shift with drive level — each gun's
@@ -263,17 +263,6 @@ void main() {
         color.b += g2 * chromaticity_drive_shift * 0.04;
         color.r += r2 * chromaticity_drive_shift * 0.02;
         color.b -= b2 * chromaticity_drive_shift * 0.03;
-    }
-
-    /* §5.6 glass internal reflection pedestal — light that bounces
-     * between the inner glass face and the aluminum backing raises
-     * the effective black level by an amount proportional to local
-     * brightness. Distinct from ambient_light (constant) and halation
-     * (spatially blurred); this one is purely a DC lift tied to each
-     * pixel's own brightness. */
-    if (glass_reflection > 0.001) {
-        float lum = dot(color, vec3(0.2126, 0.7152, 0.0722));
-        color += vec3(lum * glass_reflection * 0.08);
     }
 
     /* §5.3 cathode aging / non-uniformity — center dims faster than
@@ -365,8 +354,7 @@ void main() {
      *
      * Distinct from:
      *   glass_tint        — absorption THROUGH the glass
-     *   glass_reflection  — internal glass-to-phosphor bouncing
-     *   halation          — phosphor-driven optical bloom */
+     *   glass_reflection / halation — spatially scattered phosphor light */
     if (glass_glare > 0.001) {
         /* Reflection UV: the whole tube face, not a disc. */
         vec2 env_uv = uv;

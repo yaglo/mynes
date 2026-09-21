@@ -54,6 +54,26 @@ static float row_amplitude(int cycles, int channel) {
     return (float)(2*hypot(re,im)/W);
 }
 
+static void upload_pattern(SDL_GPUDevice *gpu, SDL_GPUTexture *input, int axis, int phase, uint16_t white) {
+    SDL_GPUTransferBufferCreateInfo info={.usage=SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,.size=W*H*8};
+    SDL_GPUTransferBuffer *buffer=SDL_CreateGPUTransferBuffer(gpu,&info);
+    uint16_t *pixels=SDL_MapGPUTransferBuffer(gpu,buffer,false);
+    CHECK(pixels!=NULL);
+    if(!pixels) { SDL_ReleaseGPUTransferBuffer(gpu,buffer);return; }
+    for(int y=0;y<H;y++) for(int x=0;x<W;x++) {
+        bool bright=axis==2 ? x<W/2 : ((axis ? x : y)+phase)%4==0;
+        for(int c=0;c<3;c++) pixels[(y*W+x)*4+c]=bright && (axis!=2 || c==0) ? white : 0;
+        pixels[(y*W+x)*4+3]=0x3c00;
+    }
+    SDL_UnmapGPUTransferBuffer(gpu,buffer);
+    SDL_GPUCommandBuffer *cmd=SDL_AcquireGPUCommandBuffer(gpu);
+    SDL_GPUCopyPass *pass=SDL_BeginGPUCopyPass(cmd);
+    SDL_GPUTextureTransferInfo source={.transfer_buffer=buffer,.pixels_per_row=W,.rows_per_layer=H};
+    SDL_GPUTextureRegion region={.texture=input,.w=W,.h=H,.d=1};
+    SDL_UploadToGPUTexture(pass,&source,&region,false);SDL_EndGPUCopyPass(pass);
+    CHECK(SDL_SubmitGPUCommandBuffer(cmd));SDL_ReleaseGPUTransferBuffer(gpu,buffer);
+}
+
 int test_display_fidelity(SDL_GPUDevice *gpu) {
     failures=0;
     GPUDisplay d;
@@ -253,6 +273,41 @@ int test_display_fidelity(SDL_GPUDevice *gpu) {
     render(gpu,&d,input,target,&p,avg,&peak);
     for(int ch=0;ch<3;ch++) CHECK(fabsf(avg[ch]-1.0f/3)<.002f);
     CHECK(row_amplitude(16,0)>.3f);
+    // A broad glass halo sees the integrated scanline energy, not whichever
+    // fine row happens to coincide with its quarter-resolution sample grid.
+    p=(GPUDisplayParams){.glass_tint=1,.hdr_gain=1,.output_hdr=1,.hdr_headroom=8,.sdr_white_level=1,
+        .halation_strength=1,.cathode_gain_r=1,.cathode_gain_g=1,.cathode_gain_b=1};
+    for(int fractional=0;fractional<2;fractional++) {
+        if(fractional) gpu_display_resize(&d,gpu,W-3,H-3);
+        for(int axis=0;axis<2;axis++) for(int phase=0;phase<4;phase++) {
+            upload_pattern(gpu,input,axis,phase,0x3c00);
+            render(gpu,&d,input,target,&p,avg,&peak);
+            printf("Halo stripe fractional %d axis %d phase %d: mean %.6f\n",fractional,axis,phase,avg[0]);
+            CHECK(fabsf(avg[0]-.25f)<.001f);
+        }
+    }
+    // Legacy encoded input must become light before footprint averaging.
+    gpu_display_resize(&d,gpu,W,H);
+    p.input_gamma=2;
+    upload_pattern(gpu,input,0,0,0x3800);
+    render(gpu,&d,input,target,&p,avg,&peak);
+    CHECK(fabsf(avg[0]-.0625f)<.0001f);
+    // Reflection alone must illuminate a neighbouring dark region, retain
+    // the source colour, and redistribute rather than create field energy.
+    p.input_gamma=0;p.halation_strength=0;p.glass_reflection=1;
+    upload_pattern(gpu,input,2,0,0x3c00);
+    render(gpu,&d,input,target,&p,avg,&peak);
+    CHECK(fabsf(avg[0]-.5f)<.001f && avg[1]==0 && avg[2]==0);
+    CHECK(center_row[W/2][0]>.005f && center_row[W-1][0]==0);
+    // Wavelength-dependent scatter fractions must leave a uniform field
+    // neutral, even for extreme user tint values and high HDR headroom.
+    p.glass_reflection=0;p.halation_strength=.3f;
+    p.halation_tint_r=.1f;p.halation_tint_g=2;p.halation_tint_b=4;
+    cmd=SDL_AcquireGPUCommandBuffer(gpu);ct.clear_color=(SDL_FColor){.25f,.25f,.25f,1};
+    pass=SDL_BeginGPURenderPass(cmd,&ct,1,NULL);SDL_EndGPURenderPass(pass);
+    CHECK(SDL_SubmitGPUCommandBuffer(cmd));
+    render(gpu,&d,input,target,&p,avg,&peak);
+    for(int ch=0;ch<3;ch++) CHECK(fabsf(avg[ch]-.25f)<.001f);
     TVDisplayParams tv={.mask_triads=500,.mask_pitch_px=3};
     GPUDisplayParams scaled;
     gpu_display_params_from_tv(&scaled,&tv,W,H,1500,1125);
