@@ -107,3 +107,51 @@ segment at 119.78 submissions/s, with 120.02/s over the last 1,000 submissions.
 Each dark slot reuses its bright slot's source frame. The user reported a visible
 motion improvement. Submission timestamps and subjective viewing do not measure
 physical scanout or panel response. See [BFI controls and limitations](gpu-controls.md#high-refresh-presentation).
+
+## Lossless filter optimization (2026-09-21)
+
+The scalar FIR and horizontal beam-spread shaders now load overlapping input
+windows once into workgroup memory. The FIR also skips per-tap edge checks for
+interior samples. Tap counts, coefficients, accumulation order, edge rules,
+signal resolution, beam broadening and frame phase are unchanged. Longer FIRs
+and decimating FIRs retain a direct-buffer path.
+
+Measured against `2df9cbf` on Apple M5, 24 GiB, Metal, Release, validation off.
+Each run uses 12 warmup frames and 60 measured frames per resolution. The table
+shows the average of two independently measured medians before and after;
+the final repeat ran optimized then baseline to check run-order effects.
+All runs were sequential with no other MyNES process. The metric includes the
+complete video chain through the final display pass and GPU fence, excluding
+emulation, audio, presentation waits and captures.
+
+| Look | 1280×960 before → after | 2560×1920 before → after |
+|---|---:|---:|
+| Reference composite | 3.177 → 3.013 ms (5.2%) | 6.785 → 6.651 ms (2.0%) |
+| Basement TV | 5.352 → 5.157 ms (3.7%) | 10.587 → 10.387 ms (1.9%) |
+| Sony PVM-14L2 | 3.896 → 3.639 ms (6.6%) | 7.313 → 7.085 ms (3.1%) |
+| VHS SP consumer | 7.061 → 6.735 ms (4.6%) | 12.335 → 12.014 ms (2.6%) |
+
+Savings at 1280×960 through 2560×1920 were 0.13–0.35 ms per frame. At 640×480,
+the measured reductions were 5.6–10.6%, but those runs had more startup/desktop
+variability. These are local full-chain measurements, not a guarantee of the
+same gain on other GPUs or a measurement of visible presentation cadence.
+
+Fidelity checks:
+
+- All 21 looks: byte-identical PPM and linear PFM captures for two consecutive
+  frames at 960×720, using the mixed-color/detail chart (84 files).
+- Reference composite, Basement TV, PVM-14L2 and VHS SP: byte-identical PPM and
+  linear PFM pairs at 2560×1920 with chroma transitions and fine neutral detail
+  after 32 frames (16 files).
+- GPU FIR regression fixtures cover scanline/frame reflection, NTSC/PAL line
+  widths, asymmetric/even taps, short inputs, partial workgroups, decimation
+  and the long-filter fallback, with exact binary-fraction results.
+- Beam tests cover energy conservation, current-dependent spot growth and
+  flat fields across short/partial scanlines at the maximum 32-sample radius.
+- `gpu_fidelity_tests`, `gpu_pipeline_test`, `gpu_kernel_tests` and
+  `gpu_signal_precompute_tests` pass.
+
+The generated MSL and SPIR-V are updated alongside GLSL. Runtime validation and
+image comparisons used Metal; Vulkan performance has not been measured.
+[Raw runs, shader hashes and capture hashes](gpu-filter-optimization-results.json)
+include the intermediate FIR-only run as well as both final repeats.

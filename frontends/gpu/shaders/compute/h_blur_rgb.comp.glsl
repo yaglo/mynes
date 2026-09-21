@@ -10,6 +10,7 @@ layout(set=1,binding=0) uniform Params {
     float growth;
     vec4 weights[9], wide_weights[9], over_weights[9];
 };
+shared vec3 tile[320]; // 256 outputs + maximum 32-sample halo on each side
 vec3 read_rgb(uint base,int x) {
     uint i=(base+uint(clamp(x,0,int(signal_w)-1)))*3u;
     return vec3(rgb_in[i],rgb_in[i+1u],rgb_in[i+2u]);
@@ -26,12 +27,17 @@ vec3 deposit(vec3 current, uint dx) {
 }
 void main() {
     uint sx=gl_GlobalInvocationID.x, sy=gl_GlobalInvocationID.y;
-    if(sx>=signal_w || sy>=num_lines) return;
+    if(sy>=num_lines) return; // uniform across the workgroup
     uint base=sy*signal_w;
-    vec3 current=deposit(read_rgb(base,int(sx)),0u);
+    int first=int(gl_WorkGroupID.x*256u)-int(radius);
+    for(uint k=gl_LocalInvocationID.x;k<256u+2u*radius;k+=256u)
+        tile[k]=read_rgb(base,first+int(k));
+    barrier();
+    if(sx>=signal_w) return;
+    uint local=gl_LocalInvocationID.x+radius;
+    vec3 current=deposit(tile[local],0u);
     for(uint dx=1u;dx<=radius;dx++) {
-        current+=deposit(read_rgb(base,int(sx)-int(dx)),dx)
-                +deposit(read_rgb(base,int(sx)+int(dx)),dx);
+        current+=deposit(tile[local-dx],dx)+deposit(tile[local+dx],dx);
     }
     uint out_idx=(base+sx)*3u;
     rgb_out[out_idx]=current.r;

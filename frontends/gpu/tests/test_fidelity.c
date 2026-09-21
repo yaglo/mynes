@@ -19,6 +19,49 @@ extern int test_osd(SDL_GPUDevice *gpu);
 static int failures;
 #define CHECK(x) do { if (!(x)) { fprintf(stderr, "FAIL %d: %s\n", __LINE__, #x); failures++; } } while (0)
 
+/* Exercise the FIR workgroup halo, both mirror rules, partial groups, even
+ * and asymmetric taps, and the direct path for long/decimating filters. */
+static void fir_boundaries(SDL_GPUDevice *gpu) {
+    const struct { int count, line, taps, decimation; } cases[] = {
+        {1,0,65,1}, {17,0,31,1}, {85,17,65,1}, {765,255,64,1},
+        {771,257,65,1}, {1021,0,32,1}, {5456,2728,49,1},
+        {6820,3410,63,1}, {1021,0,97,1}, {771,257,31,3},
+        {1021,0,65,4}, {513,0,1,1}, {513,0,0,1}
+    };
+    for (unsigned c=0;c<sizeof(cases)/sizeof(cases[0]);c++) {
+        int n=cases[c].count, spl=cases[c].line, nt=cases[c].taps;
+        int dec=cases[c].decimation, out_n=(n+dec-1)/dec;
+        float *in=malloc(n*sizeof(float)), *out=malloc(out_n*sizeof(float));
+        float taps[97];
+        for(int i=0;i<n;i++) in[i]=(float)((i*37+11)%251-125)/128;
+        for(int k=0;k<97;k++) taps[k]=(float)((k*13+7)%31-15)/128;
+        SignalChain sc; CHECK(chain_init(&sc,gpu,n,"shaders/compute"));
+        int ti=chain_upload_taps(&sc,gpu,taps,nt ? nt : 1);
+        GpuFIRParams p={n,out_n,nt,dec,spl};
+        int st=chain_add_stage(&sc,"FIR boundaries",CHAIN_KERNEL_FIR,&p,sizeof(p),(out_n+255)/256,1);
+        sc.stages[st].taps_index=ti;
+        CHECK(chain_upload_input(&sc,gpu,in,n*sizeof(float)));
+        CHECK(chain_run(&sc,gpu));
+        CHECK(chain_download_output(&sc,gpu,out,out_n*sizeof(float)));
+        for(int i=0;i<out_n;i++) {
+            int base=i*dec, start=spl ? base/spl*spl : 0, end=spl ? start+spl : n;
+            float expected=0;
+            for(int k=0;k<nt;k++) {
+                int idx=base-nt/2+k;
+                if(idx<start) idx=2*start-idx;
+                if(idx>=end) idx=2*end-idx-1;
+                if(idx<start) idx=start;
+                if(idx>=end) idx=end-1;
+                expected+=taps[k]*in[idx];
+            }
+            /* Binary-fraction fixtures make the dot products exact, so even
+             * a one-bit difference exposes indexing or accumulation errors. */
+            CHECK(out[i]==expected);
+        }
+        chain_destroy(&sc,gpu);free(in);free(out);
+    }
+}
+
 static void temporal(SDL_GPUDevice *gpu, VideoGPUChain *v, uint32_t drive, float expected) {
     uint32_t pixels[16 * 16 * 2];
     for (int i = 0; i < 16 * 16 * 2; i++) pixels[i] = drive;
@@ -693,6 +736,31 @@ static void gun_bandwidth(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoChain *c) {
     free(rgb);free(out);
 }
 
+static void horizontal_beam_boundaries(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoChain *c) {
+    /* Different flat fields on adjacent lines must remain flat, even when
+     * the halo exceeds a line or the last workgroup is mostly inactive. */
+    SignalFormat saved=v->signal_fmt;
+    float saved_sigma=v->beam_h_blur_sigma, saved_growth=c->tv.beam_spot_growth;
+    const int widths[]={1,17,255,257};
+    float in[2*257*3], out[2*257*3];
+    v->signal_fmt.lines=2;
+    for(int w=0;w<4;w++) for(int wide=0;wide<2;wide++) {
+        int width=widths[w], count=width*2*3;
+        v->signal_fmt.samples_per_line=width;
+        v->beam_h_blur_sigma=wide ? 8 : .5f;
+        c->tv.beam_spot_growth=wide ? .6f : 0;
+        for(int y=0;y<2;y++) for(int x=0;x<width;x++) for(int gun=0;gun<3;gun++)
+            in[(y*width+x)*3+gun]=.125f*(1+y*3+gun*7);
+        CHECK(gpu_buffer_upload(gpu,v->buf_gun_current,in,count*sizeof(float)));
+        SDL_GPUCommandBuffer *cmd=SDL_AcquireGPUCommandBuffer(gpu);
+        CHECK(dispatch_h_blur_rgb_public(v,cmd));
+        CHECK(SDL_SubmitGPUCommandBuffer(cmd));
+        CHECK(gpu_buffer_download(gpu,v->buf_rgb2,out,count*sizeof(float)));
+        for(int i=0;i<count;i++) CHECK(fabsf(out[i]-in[i])<2e-6f);
+    }
+    v->signal_fmt=saved;v->beam_h_blur_sigma=saved_sigma;c->tv.beam_spot_growth=saved_growth;
+}
+
 static void horizontal_beam_energy(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoChain *c) {
     c->tv.noise_level=0; c->tv.black_floor=0; c->cable.shield_effectiveness=1;
     float *voltage=calloc(1,v->rgb_size), *light=malloc(v->rgb_size);
@@ -904,6 +972,7 @@ int main(void) {
     CHECK(SDL_Init(SDL_INIT_VIDEO));
     SDL_GPUDevice *gpu = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_MSL, true, NULL);
     if (!gpu) { fprintf(stderr, "%s\n", SDL_GetError()); return 1; }
+    fir_boundaries(gpu);
     failures += test_display_fidelity(gpu);
     failures += test_crt_load(gpu);
     failures += test_osd(gpu);
@@ -942,6 +1011,7 @@ int main(void) {
     CHECK(video_gpu_set_beam_params(&v, gpu, 16, 16, 1, 0.2f, 0.7f));
     c.tv.gamma = 2.2f;
     gun_bandwidth(gpu,&v,&c);
+    horizontal_beam_boundaries(gpu,&v,&c);
     horizontal_beam_energy(gpu,&v,&c);
     beam_energy(gpu,&v,&c);
     independent_guns(gpu,&v,&c);

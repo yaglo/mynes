@@ -1,9 +1,48 @@
 #pragma clang diagnostic ignored "-Wmissing-prototypes"
+#pragma clang diagnostic ignored "-Wmissing-braces"
 
 #include <metal_stdlib>
 #include <simd/simd.h>
 
 using namespace metal;
+
+template<typename T, size_t Num>
+struct spvUnsafeArray
+{
+    T elements[Num ? Num : 1];
+
+    thread T& operator [] (size_t pos) thread
+    {
+        return elements[pos];
+    }
+    constexpr const thread T& operator [] (size_t pos) const thread
+    {
+        return elements[pos];
+    }
+
+    device T& operator [] (size_t pos) device
+    {
+        return elements[pos];
+    }
+    constexpr const device T& operator [] (size_t pos) const device
+    {
+        return elements[pos];
+    }
+
+    constexpr const constant T& operator [] (size_t pos) const constant
+    {
+        return elements[pos];
+    }
+
+    threadgroup T& operator [] (size_t pos) threadgroup
+    {
+        return elements[pos];
+    }
+    constexpr const threadgroup T& operator [] (size_t pos) const threadgroup
+    {
+        return elements[pos];
+    }
+};
 
 struct Params
 {
@@ -49,44 +88,42 @@ float3 deposit(thread const float3& current, thread const uint& dx, constant Par
     return current * mix(nominal, float3(over), fast::clamp((current - float3(1.0)) / float3(3.0), float3(0.0), float3(1.0)));
 }
 
-kernel void main0(constant Params& _34 [[buffer(0)]], device RGBIn& _49 [[buffer(1)]], device RGBOut& _224 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+kernel void main0(constant Params& _34 [[buffer(0)]], device RGBIn& _49 [[buffer(1)]], device RGBOut& _262 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]], uint3 gl_WorkGroupID [[threadgroup_position_in_grid]], uint3 gl_LocalInvocationID [[thread_position_in_threadgroup]])
 {
+    threadgroup spvUnsafeArray<float3, 320> tile;
     uint sx = gl_GlobalInvocationID.x;
     uint sy = gl_GlobalInvocationID.y;
-    bool _147 = sx >= _34.signal_w;
-    bool _155;
-    if (!_147)
-    {
-        _155 = sy >= _34.num_lines;
-    }
-    else
-    {
-        _155 = _147;
-    }
-    if (_155)
+    if (sy >= _34.num_lines)
     {
         return;
     }
     uint base = sy * _34.signal_w;
-    uint param = base;
-    int param_1 = int(sx);
-    float3 param_2 = read_rgb(param, param_1, _34, _49);
+    int first = int(gl_WorkGroupID.x * 256u) - int(_34.radius);
+    for (uint k = gl_LocalInvocationID.x; k < (256u + (2u * _34.radius)); k += 256u)
+    {
+        uint param = base;
+        int param_1 = first + int(k);
+        tile[k] = read_rgb(param, param_1, _34, _49);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (sx >= _34.signal_w)
+    {
+        return;
+    }
+    uint local = gl_LocalInvocationID.x + _34.radius;
+    float3 param_2 = tile[local];
     uint param_3 = 0u;
     float3 current = deposit(param_2, param_3, _34);
     for (uint dx = 1u; dx <= _34.radius; dx++)
     {
-        uint param_4 = base;
-        int param_5 = int(sx) - int(dx);
-        float3 param_6 = read_rgb(param_4, param_5, _34, _49);
+        float3 param_4 = tile[local - dx];
+        uint param_5 = dx;
+        float3 param_6 = tile[local + dx];
         uint param_7 = dx;
-        uint param_8 = base;
-        int param_9 = int(sx) + int(dx);
-        float3 param_10 = read_rgb(param_8, param_9, _34, _49);
-        uint param_11 = dx;
-        current += (deposit(param_6, param_7, _34) + deposit(param_10, param_11, _34));
+        current += (deposit(param_4, param_5, _34) + deposit(param_6, param_7, _34));
     }
     uint out_idx = (base + sx) * 3u;
-    _224.rgb_out[out_idx] = current.x;
-    _224.rgb_out[out_idx + 1u] = current.y;
-    _224.rgb_out[out_idx + 2u] = current.z;
+    _262.rgb_out[out_idx] = current.x;
+    _262.rgb_out[out_idx + 1u] = current.y;
+    _262.rgb_out[out_idx + 2u] = current.z;
 }

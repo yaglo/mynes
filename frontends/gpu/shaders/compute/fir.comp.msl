@@ -1,7 +1,48 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+#pragma clang diagnostic ignored "-Wmissing-braces"
+
 #include <metal_stdlib>
 #include <simd/simd.h>
 
 using namespace metal;
+
+template<typename T, size_t Num>
+struct spvUnsafeArray
+{
+    T elements[Num ? Num : 1];
+
+    thread T& operator [] (size_t pos) thread
+    {
+        return elements[pos];
+    }
+    constexpr const thread T& operator [] (size_t pos) const thread
+    {
+        return elements[pos];
+    }
+
+    device T& operator [] (size_t pos) device
+    {
+        return elements[pos];
+    }
+    constexpr const device T& operator [] (size_t pos) const device
+    {
+        return elements[pos];
+    }
+
+    constexpr const constant T& operator [] (size_t pos) const constant
+    {
+        return elements[pos];
+    }
+
+    threadgroup T& operator [] (size_t pos) threadgroup
+    {
+        return elements[pos];
+    }
+    constexpr const threadgroup T& operator [] (size_t pos) const threadgroup
+    {
+        return elements[pos];
+    }
+};
 
 struct Params
 {
@@ -12,14 +53,14 @@ struct Params
     uint samples_per_line;
 };
 
-struct TapsBuf
-{
-    float taps[1];
-};
-
 struct InputBuf
 {
     float data_in[1];
+};
+
+struct TapsBuf
+{
+    float taps[1];
 };
 
 struct OutputBuf
@@ -29,24 +70,101 @@ struct OutputBuf
 
 constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
 
-kernel void main0(constant Params& _19 [[buffer(0)]], device TapsBuf& _112 [[buffer(2)]], device InputBuf& _121 [[buffer(1)]], device OutputBuf& _188 [[buffer(3)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+kernel void main0(constant Params& _21 [[buffer(0)]], device InputBuf& _86 [[buffer(1)]], device TapsBuf& _193 [[buffer(2)]], device OutputBuf& _242 [[buffer(3)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]], uint3 gl_WorkGroupID [[threadgroup_position_in_grid]], uint3 gl_LocalInvocationID [[thread_position_in_threadgroup]])
 {
+    threadgroup spvUnsafeArray<float, 320> tile;
     uint tid = gl_GlobalInvocationID.x;
-    if (tid >= _19.output_count)
+    int halfN = int(_21.tap_count) / 2;
+    int first = int(gl_WorkGroupID.x * 256u) - halfN;
+    bool _44 = _21.decimation_ratio == 1u;
+    bool _50;
+    if (_44)
+    {
+        _50 = _21.tap_count > 0u;
+    }
+    else
+    {
+        _50 = _44;
+    }
+    bool _57;
+    if (_50)
+    {
+        _57 = _21.tap_count <= 65u;
+    }
+    else
+    {
+        _57 = _50;
+    }
+    bool tiled = _57;
+    if (tiled)
+    {
+        for (uint k = gl_LocalInvocationID.x; k < (256u + (2u * uint(halfN))); k += 256u)
+        {
+            tile[k] = _86.data_in[clamp(first + int(k), 0, int(_21.input_count) - 1)];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (tid >= _21.output_count)
     {
         return;
     }
-    int halfN = int(_19.tap_count) / 2;
-    int base = int(tid * _19.decimation_ratio);
+    int base = int(tid * _21.decimation_ratio);
     float sum = 0.0;
-    if (_19.samples_per_line > 0u)
+    int _127;
+    if (_21.samples_per_line > 0u)
     {
-        int spl = int(_19.samples_per_line);
-        int line_start = (base / spl) * spl;
-        int line_end = line_start + spl;
-        for (uint k = 0u; k < _19.tap_count; k++)
+        _127 = (base / int(_21.samples_per_line)) * int(_21.samples_per_line);
+    }
+    else
+    {
+        _127 = 0;
+    }
+    int line_start = _127;
+    int _145;
+    if (_21.samples_per_line > 0u)
+    {
+        _145 = line_start + int(_21.samples_per_line);
+    }
+    else
+    {
+        _145 = int(_21.input_count);
+    }
+    int line_end = _145;
+    bool _162 = (base - halfN) >= line_start;
+    bool _174;
+    if (_162)
+    {
+        _174 = ((base - halfN) + int(_21.tap_count)) <= line_end;
+    }
+    else
+    {
+        _174 = _162;
+    }
+    if (_174)
+    {
+        if (tiled)
         {
-            int idx = (base - halfN) + int(k);
+            for (uint k_1 = 0u; k_1 < _21.tap_count; k_1++)
+            {
+                sum += (_193.taps[k_1] * tile[((base - halfN) + int(k_1)) - first]);
+            }
+        }
+        else
+        {
+            for (uint k_2 = 0u; k_2 < _21.tap_count; k_2++)
+            {
+                sum += (_193.taps[k_2] * _86.data_in[(base - halfN) + int(k_2)]);
+            }
+        }
+        _242.data_out[tid] = sum;
+        return;
+    }
+    if (_21.samples_per_line > 0u)
+    {
+        float _297;
+        for (uint k_3 = 0u; k_3 < _21.tap_count; k_3++)
+        {
+            int idx = (base - halfN) + int(k_3);
             if (idx < line_start)
             {
                 idx = (2 * line_start) - idx;
@@ -56,25 +174,42 @@ kernel void main0(constant Params& _19 [[buffer(0)]], device TapsBuf& _112 [[buf
                 idx = ((2 * line_end) - idx) - 1;
             }
             idx = clamp(idx, line_start, line_end - 1);
-            sum += (_112.taps[k] * _121.data_in[idx]);
+            if (tiled)
+            {
+                _297 = tile[idx - first];
+            }
+            else
+            {
+                _297 = _86.data_in[idx];
+            }
+            sum += (_193.taps[k_3] * _297);
         }
     }
     else
     {
-        for (uint k_1 = 0u; k_1 < _19.tap_count; k_1++)
+        float _363;
+        for (uint k_4 = 0u; k_4 < _21.tap_count; k_4++)
         {
-            int idx_1 = (base - halfN) + int(k_1);
+            int idx_1 = (base - halfN) + int(k_4);
             if (idx_1 < 0)
             {
                 idx_1 = -idx_1;
             }
-            if (idx_1 >= int(_19.input_count))
+            if (idx_1 >= int(_21.input_count))
             {
-                idx_1 = ((2 * int(_19.input_count)) - idx_1) - 1;
+                idx_1 = ((2 * int(_21.input_count)) - idx_1) - 1;
             }
-            idx_1 = clamp(idx_1, 0, int(_19.input_count) - 1);
-            sum += (_112.taps[k_1] * _121.data_in[idx_1]);
+            idx_1 = clamp(idx_1, 0, int(_21.input_count) - 1);
+            if (tiled)
+            {
+                _363 = tile[idx_1 - first];
+            }
+            else
+            {
+                _363 = _86.data_in[idx_1];
+            }
+            sum += (_193.taps[k_4] * _363);
         }
     }
-    _188.data_out[tid] = sum;
+    _242.data_out[tid] = sum;
 }
