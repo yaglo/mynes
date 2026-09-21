@@ -27,11 +27,13 @@ static void render_region(SDL_GPUDevice *gpu, GPUDisplay *d, SDL_GPUTexture *inp
     const uint16_t *v=SDL_MapGPUTransferBuffer(gpu,download,false);
     CHECK(v!=NULL); avg[0]=avg[1]=avg[2]=0; *peak=0;
     if(v) {
+        double sum[3]={0};
         for(int i=0;i<W*H;i++) for(int c=0;c<3;c++) {
             float x=gpu_half_to_float(v[4*i+c]);
-            CHECK(isfinite(x)); avg[c]+=x/(W*H); *peak=fmaxf(*peak,x);
+            CHECK(isfinite(x)); sum[c]+=x; *peak=fmaxf(*peak,x);
             if(i/W==H/2) center_row[i%W][c]=x;
         }
+        for(int c=0;c<3;c++) avg[c]=(float)(sum[c]/(W*H));
         SDL_UnmapGPUTransferBuffer(gpu,download);
     }
     SDL_ReleaseGPUTransferBuffer(gpu,download);
@@ -203,6 +205,54 @@ int test_display_fidelity(SDL_GPUDevice *gpu) {
     float first_peak=peak;p.hdr_gain=8;
     render(gpu,&d,input,target,&p,avg,&peak);
     CHECK(peak>first_peak+.005f && peak<1.25f);
+
+    // Extended-linear sRGB must carry signed components of real phosphor
+    // colours to the host colour manager. This green is inside Display P3
+    // but needs a negative red coordinate when expressed in sRGB.
+    p=(GPUDisplayParams){.glass_tint=1,.hdr_gain=1,.output_hdr=1,.hdr_headroom=8,.sdr_white_level=1,
+        .phosphor_gamut=2,.cathode_gain_r=1,.cathode_gain_g=1,.cathode_gain_b=1};
+    cmd=SDL_AcquireGPUCommandBuffer(gpu);ct.clear_color=(SDL_FColor){0,1,0,1};
+    pass=SDL_BeginGPURenderPass(cmd,&ct,1,NULL);SDL_EndGPURenderPass(pass);
+    CHECK(SDL_SubmitGPUCommandBuffer(cmd));
+    render(gpu,&d,input,target,&p,avg,&peak);
+    printf("Extended phosphor green: %.7f %.7f %.7f\n",avg[0],avg[1],avg[2]);
+    CHECK(fabsf(avg[0]+.044043f)<.0001f && fabsf(avg[1]-1)<.0001f && fabsf(avg[2]-.011793f)<.0001f);
+    float reference_color[3];memcpy(reference_color,avg,sizeof(avg));
+    p.hdr_gain=8;p.hdr_headroom=1.5f;
+    render(gpu,&d,input,target,&p,avg,&peak);
+    for(int ch=0;ch<3;ch++) CHECK(fabsf(avg[ch]/avg[1]-reference_color[ch])<.0003f);
+    // SDR gamut fitting must preserve luminance and the chroma direction.
+    p.hdr_gain=.5f;p.output_hdr=0;p.hdr_headroom=1;
+    render(gpu,&d,input,target,&p,avg,&peak);
+    float linear[3];
+    for(int ch=0;ch<3;ch++) {
+        CHECK(avg[ch]>=0 && avg[ch]<=1);
+        linear[ch]=avg[ch]<=.04045f ? avg[ch]/12.92f : powf((avg[ch]+.055f)/1.055f,2.4f);
+    }
+    float expected_y=.5f*(-.044043f*.2126f+.7152f+.011793f*.0722f);
+    CHECK(fabsf(linear[0]*.2126f+linear[1]*.7152f+linear[2]*.0722f-expected_y)<.001f);
+    CHECK(fabsf(linear[0])<.0001f);
+
+    // Purity faults and cross-excitation cannot generate light without a
+    // beam. Redistribution conserves nominal excitation before the mask.
+    p.output_hdr=1;p.hdr_gain=1;p.hdr_headroom=8;p.phosphor_gamut=0;
+    p.degauss_tint=1;p.secondary_scatter=.3f;
+    cmd=SDL_AcquireGPUCommandBuffer(gpu);ct.clear_color=(SDL_FColor){0,0,0,1};
+    pass=SDL_BeginGPURenderPass(cmd,&ct,1,NULL);SDL_EndGPURenderPass(pass);
+    CHECK(SDL_SubmitGPUCommandBuffer(cmd));
+    render(gpu,&d,input,target,&p,avg,&peak);CHECK(peak==0);
+    cmd=SDL_AcquireGPUCommandBuffer(gpu);ct.clear_color=(SDL_FColor){1,0,0,1};
+    pass=SDL_BeginGPURenderPass(cmd,&ct,1,NULL);SDL_EndGPURenderPass(pass);
+    CHECK(SDL_SubmitGPUCommandBuffer(cmd));
+    render(gpu,&d,input,target,&p,avg,&peak);
+    CHECK(fabsf(avg[0]+avg[1]+avg[2]-1)<.001f);
+    for(int x=0;x<W;x++) for(int ch=0;ch<3;ch++) CHECK(center_row[x][ch]>=0);
+    // At full cross-excitation a red beam excites all three sites equally.
+    // The receiving site's mask must still modulate each channel.
+    p.degauss_tint=0;p.secondary_scatter=1;p.mask_strength=1;p.mask_type=1;p.mask_pitch_px=4;
+    render(gpu,&d,input,target,&p,avg,&peak);
+    for(int ch=0;ch<3;ch++) CHECK(fabsf(avg[ch]-1.0f/3)<.002f);
+    CHECK(row_amplitude(16,0)>.3f);
     TVDisplayParams tv={.mask_triads=500,.mask_pitch_px=3};
     GPUDisplayParams scaled;
     gpu_display_params_from_tv(&scaled,&tv,W,H,1500,1125);

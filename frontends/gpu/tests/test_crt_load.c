@@ -65,6 +65,18 @@ int test_crt_load(SDL_GPUDevice *gpu) {
     CHECK(trails[1]<trails[0]-.02f); // Dark wake after white.
     CHECK(trails[2]>trails[0]+.02f); // Bright wake after black.
     c.tv.video_black_droop=0;
+    // Superwhite must produce more load, even though display tone mapping
+    // later fits the emitted peaks to the host's available headroom.
+    float nominal_load=0;
+    for(int white=1;white<=2;white++) {
+        for(size_t i=0;i<floats;i++) input[i]=(float)white;
+        CHECK(gpu_buffer_upload(gpu,v.buf_rgb,input,v.rgb_size));
+        CHECK(chain_run(&v.sig_chain,gpu));
+        CHECK(gpu_buffer_download(gpu,v.buf_crt_load,load,map_count*sizeof(float)));
+        float measured=load[120*256+255];
+        if(white==1) nominal_load=measured;
+        else CHECK(fabsf(measured/nominal_load-2)<.001f);
+    }
     for(int sign=-1;sign<=1;sign+=2) {
         c.tv.hv_sag=sign*.3f; c.tv.focus_breathing=.2f;
         // Freeze the measured load while checking the inverse landing map.

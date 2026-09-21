@@ -67,9 +67,7 @@ layout(set = 3, binding = 0) uniform DisplayParams {
     float cathode_gain_r;         /* §5.3: per-gun aging gain (1=no aging) */
     float cathode_gain_g;
     float cathode_gain_b;
-    /* §4.9 APL DC-restoration black-level drift. */
-    float apl_black_lift;
-    float apl_smoothed;
+    vec2 reserved_apl; // DC restoration now belongs to gun drive.
     /* §5.2 thermal-mask doming approximation. */
     float thermal_dome_amount;
     float thermal_r;
@@ -185,10 +183,26 @@ void main() {
      * pass only samples the already-landed beam texture and applies
      * fixed screen/glass optics at the physical tube face. */
     vec2 sample_uv = clamp(uv, vec2(0.0), vec2(1.0));
-    bool outside_raster = false;
-
     vec3 color = vec3(0.0);
     color = beam_light(sample_uv);
+
+    // Generic purity error: redistribute excitation between phosphors,
+    // before their spatial coverage is applied. Magnetic mislanding cannot
+    // emit light from a black input. Smooth Cartesian lobes avoid an atan
+    // seam; this is not a measured magnetic field or electron-optics model.
+    if (degauss_tint > 0.001) {
+        vec2 p = (uv - 0.5) * 2.0;
+        vec3 lobes = 0.5 + 0.25 * vec3(p.x, -0.5*p.x + 0.8660254*p.y,
+                                      -0.5*p.x - 0.8660254*p.y);
+        vec3 lost = color * clamp(degauss_tint * dot(p,p) * 0.12 * lobes, 0.0, 0.5);
+        color += 0.5 * (lost.yzx + lost.zxy) - lost;
+    }
+    // Approximate cross-phosphor excitation before the mask, so the light
+    // appears at the receiving phosphor's sites rather than in its gaps.
+    if (secondary_scatter > 0.001) {
+        float mean_excitation = (color.r + color.g + color.b) / 3.0;
+        color = mix(color, vec3(mean_excitation), clamp(secondary_scatter, 0.0, 1.0));
+    }
 
     /* §5.6 anti-glare blur — matte tube treatments scatter emitted
      * phosphor light through a fine-grain surface, blurring the
@@ -212,7 +226,7 @@ void main() {
      * the mask is physically fixed on the tube face regardless of where
      * the beam misses, so it stays rectilinear on-screen while only the
      * image warps. */
-    if (mask_strength > 0.01 && !outside_raster) {
+    if (mask_strength > 0.01) {
         // gl_FragCoord is in drawable pixels, not source texels or UI points.
         // Include desktop scaling and the window origin; geometry never warps the mask.
         vec2 local_frag_pos = gl_FragCoord.xy * mask_scale + mask_origin;
@@ -221,7 +235,7 @@ void main() {
 
     /* (e) Halation: the glass carries light past the raster edge via
      * internal reflections, so it bleeds a little beyond the lit area. */
-    if (halation_strength > 0.001 && !outside_raster) {
+    if (halation_strength > 0.001) {
         vec3 halo = texture(tex_halation, sample_uv).rgb;
         /* Phosphor-coloured halo: per-channel tint biases the bloom so
          * highlights pick up a characteristic glow colour (e.g. green-
@@ -249,15 +263,6 @@ void main() {
         color.b += g2 * chromaticity_drive_shift * 0.04;
         color.r += r2 * chromaticity_drive_shift * 0.02;
         color.b -= b2 * chromaticity_drive_shift * 0.03;
-    }
-
-    /* §4.8 secondary electron scattering — electrons that bounce off
-     * the shadow mask land on adjacent-color phosphors, softly
-     * desaturating everything. Blend each channel toward the pixel
-     * luma by secondary_scatter. */
-    if (secondary_scatter > 0.001) {
-        float lum = dot(color, vec3(0.2126, 0.7152, 0.0722));
-        color = mix(color, vec3(lum), secondary_scatter);
     }
 
     /* §5.6 glass internal reflection pedestal — light that bounces
@@ -314,19 +319,9 @@ void main() {
         color *= (vec3(1.0) + drift * thermal_dome_amount * 1.5);
     }
 
-    /* §6.1 degauss residual tint — smoothly spatially varying color
-     * offset with max at the corners. Three sine lobes at orthogonal
-     * phases give a subtle multi-corner colour wash, mimicking mag-
-     * induced purity errors. */
-    if (degauss_tint > 0.001) {
-        vec2 cd = uv - 0.5;
-        float r = length(cd) * 2.0;
-        float theta = atan(cd.y, cd.x);
-        vec3 tilt = vec3(sin(theta * 1.8),
-                         sin(theta * 1.8 + 2.094),
-                         sin(theta * 1.8 + 4.189));
-        color += tilt * (r * r) * degauss_tint * 0.04;
-    }
+    // Excited phosphors cannot emit negative light. Signed components are
+    // valid only after converting this light to the host colour space.
+    color=max(color,vec3(0.0));
 
     // Express phosphor emission in the host's linear-sRGB colour space,
     // after the mask: a red phosphor is not an LCD's ideal red primary.
@@ -347,15 +342,6 @@ void main() {
     /* (h) Black floor already applied in beam shader — don't double it.
      *     Only add ambient light reflection on the glass surface. */
     color += vec3(ambient_light * 0.15);
-
-    /* §4.9 APL-dependent black level — real sets shift the DC
-     * restoration point with the running average. Bright scenes
-     * lift shadows (washed-out blacks), dark scenes push them
-     * lower. Sign is: (apl_smoothed - 0.5) > 0 → lift. */
-    if (apl_black_lift > 0.001) {
-        color += vec3(apl_black_lift * (apl_smoothed - 0.5) * 0.15)
-               * (hdr_gain > 0.0 ? hdr_gain : 1.0) * presentation.x;
-    }
 
     /* §6.3 Glass-face glare — external reflection of the viewer's
      * room on the outer glass surface.
@@ -463,7 +449,19 @@ void main() {
         color += env * edge_boost * corner_fade * glass_glare * 1.6;
     }
 
-    color = max(color,vec3(0.0));
+    // Negative components after the phosphor-primary transform can describe
+    // real colours outside sRGB. Extended-linear HDR carries them to the
+    // host colour manager; clipping them here changes their chromaticity.
+    // SDR has no signed representation. Reduce chroma towards an equal-Y
+    // neutral only as much as needed, instead of clipping channels separately.
+    if (output_hdr == 0) {
+        float low = min(min(color.r,color.g),color.b);
+        if (low < 0.0) {
+            float y = max(dot(color,vec3(0.2126,0.7152,0.0722)),0.0);
+            color = mix(vec3(y),color,y / max(y-low,0.000001));
+        }
+        color = max(color,vec3(0.0));
+    }
     // Output adaptation, not tube physics. A continuous shoulder preserves
     // highlight gradients and RGB ratios when the host lacks phosphor peak
     // headroom. Independent channel clipping used to wash out the grille.

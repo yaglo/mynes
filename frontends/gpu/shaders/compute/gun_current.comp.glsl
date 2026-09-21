@@ -9,6 +9,7 @@ layout(set=2,binding=0) uniform Params {
     uint samples_per_line, frame_seed;
     float noise_level, samples_per_pixel;
     float black_floor;
+    float apl_bias;
 };
 float noise(uint seed) {
     seed ^= seed >> 16u; seed *= 0x7feb352du;
@@ -31,6 +32,7 @@ void main() {
     }
     // Residual gun drive must deposit light through the same spot as the
     // picture. Adding a luminous floor after deposition fills scanline gaps.
-    vec3 light=pow(max(v,vec3(max(black_floor,0.0))),vec3(gamma_r,gamma_g,gamma_b));
+    vec3 drive=max(max(v,vec3(max(black_floor,0.0)))+apl_bias,vec3(0.0));
+    vec3 light=pow(drive,vec3(gamma_r,gamma_g,gamma_b));
     current[i*3u]=light.r; current[i*3u+1u]=light.g; current[i*3u+2u]=light.b;
 }

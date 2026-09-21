@@ -1297,6 +1297,7 @@ int main(int argc, char **argv) {
 
             video_gpu_set_dynamic_state(&video_gpu_chain,
                                         render_ctx.hv_sag_state,
+                                        render_ctx.apl_slow_state,
                                         render_ctx.audio_bass_rms);
             t_gpu0 = SDL_GetPerformanceCounter();
             float *readback = (dump_this_frame ||

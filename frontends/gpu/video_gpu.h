@@ -114,6 +114,7 @@ typedef struct {
     float edge_focus;               /* beam focus degradation at edges */
     float velocity_dim;             /* beam velocity dimming at edges */
     float frame_brightness;         /* smoothed scene brightness for HV breathing */
+    float apl_smoothed;             /* scene estimate for generic DC-restoration drift */
     float audio_bass_rms;           /* per-frame audio RMS for microphonics */
 
     /* --- Buffer sizes (bytes) --- */
@@ -256,10 +257,11 @@ void video_gpu_set_demod(VideoGPUChain *vgc, float phase, float dp);
 
 /* Update per-frame dynamic state that belongs to the beam/raster field
  * rather than the display optics. Call before video_gpu_process so the
- * deflection stage sees the current frame's HV-breathing and
+ * deflection and gun stages see the current scene, DC-restoration and
  * microphonic inputs. */
 void video_gpu_set_dynamic_state(VideoGPUChain *vgc,
                                  float frame_brightness,
+                                 float apl_smoothed,
                                  float audio_bass_rms);
 
 /* Process one frame of video through the GPU signal chain.

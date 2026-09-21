@@ -391,7 +391,6 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
             ctx->presentation_slot, ctx->dark_frame_level);
         disp_params.reuse_halation = ctx->presentation_slot > 0;
         disp_params.frame_brightness = ctx->hv_sag_state;
-        disp_params.apl_smoothed = ctx->apl_slow_state;
         disp_params.thermal_r = ctx->thermal_r_state;
         disp_params.thermal_g = ctx->thermal_g_state;
         disp_params.thermal_b = ctx->thermal_b_state;

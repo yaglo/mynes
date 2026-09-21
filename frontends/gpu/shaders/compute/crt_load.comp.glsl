@@ -42,7 +42,9 @@ void main() {
         float current=0.0, voltage=0.0;
         for(uint s=0u;s<spp;s++) {
             uint i=(line*width+pixel*spp+s)*3u;
-            vec3 drive=clamp(vec3(rgb[i],rgb[i+1u],rgb[i+2u]),0.0,1.0);
+            // Nominal white is not a current ceiling: superwhite must
+            // also load the rail that is attenuating this same signal.
+            vec3 drive=max(vec3(rgb[i],rgb[i+1u],rgb[i+2u]),0.0);
             voltage+=dot(drive,vec3(.299,.587,.114));
             vec3 emitted=max(drive-black_droop*bias,0.0)*max(1.0-strength*rail,0.1);
             current+=dot(pow(emitted,vec3(gamma)),vec3(1.0/3.0));

@@ -764,6 +764,7 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
 
     vgc->timing_enabled = false;
     vgc->frame_brightness = 0.0f;
+    vgc->apl_smoothed = 0.5f;
     vgc->audio_bass_rms = 0.0f;
 
     LOGV("video_gpu_init: ready (signal %u bytes [%dx%d], "
@@ -1172,10 +1173,12 @@ void video_gpu_set_demod(VideoGPUChain *vgc, float phase, float dp)
 
 void video_gpu_set_dynamic_state(VideoGPUChain *vgc,
                                  float frame_brightness,
+                                 float apl_smoothed,
                                  float audio_bass_rms)
 {
     if (!vgc) return;
     vgc->frame_brightness = frame_brightness;
+    vgc->apl_smoothed = apl_smoothed;
     vgc->audio_bass_rms = audio_bass_rms;
 }
 
@@ -1257,11 +1260,12 @@ bool dispatch_gun_current_public(VideoGPUChain *v, SDL_GPUCommandBuffer *cmd) {
     const TVDisplayParams *tv=&v->chain->tv;
     float gamma=tv->gamma>0 ? tv->gamma : 2.4f;
     float pickup=(1.0f-v->chain->cable.shield_effectiveness)*v->chain->cable.length_meters*0.005f;
-    struct { uint32_t count; float r,g,b; uint32_t width,seed; float noise,spp,black_floor; }
+    struct { uint32_t count; float r,g,b; uint32_t width,seed; float noise,spp,black_floor,apl_bias; }
         p={v->rgb_size/(3*sizeof(float)), gamma+tv->phosphor_gamma_offset_r,
            gamma+tv->phosphor_gamma_offset_g,gamma+tv->phosphor_gamma_offset_b,
            (uint32_t)v->signal_fmt.samples_per_line,v->beam_frame_counter,
-           tv->noise_level+pickup,(float)v->signal_fmt.samples_per_line/256.0f,tv->black_floor};
+           tv->noise_level+pickup,(float)v->signal_fmt.samples_per_line/256.0f,tv->black_floor,
+           tv->apl_black_lift*(v->apl_smoothed-0.5f)*0.15f};
     GpuDispatchDesc d={.pipeline=&v->sig_chain.pipelines[CHAIN_KERNEL_GUN_CURRENT],
         .readonly_buffers={v->buf_rgb},.num_readonly_buffers=1,
         .readwrite_buffers={v->buf_gun_current},.num_readwrite_buffers=1,

@@ -52,7 +52,7 @@ struct RGBBuf
 
 constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
 
-kernel void main0(constant Params& _21 [[buffer(0)]], device Reference& _52 [[buffer(4)]], device YBuf& _82 [[buffer(1)]], device IBuf& _143 [[buffer(2)]], device QBuf& _165 [[buffer(3)]], device RGBBuf& _283 [[buffer(5)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+kernel void main0(constant Params& _21 [[buffer(0)]], device Reference& _52 [[buffer(4)]], device YBuf& _82 [[buffer(1)]], device IBuf& _143 [[buffer(2)]], device QBuf& _165 [[buffer(3)]], device RGBBuf& _276 [[buffer(5)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
     uint tid = gl_GlobalInvocationID.x;
     if (tid >= _21.count)
@@ -92,10 +92,7 @@ kernel void main0(constant Params& _21 [[buffer(0)]], device Reference& _52 [[bu
     float R = (((_21.m00 * Y) + (_21.m01 * I)) + (_21.m02 * Q)) + _21.bias_r;
     float G = (((_21.m10 * Y) + (_21.m11 * I)) + (_21.m12 * Q)) + _21.bias_g;
     float B = (((_21.m20 * Y) + (_21.m21 * I)) + (_21.m22 * Q)) + _21.bias_b;
-    R = fast::clamp(R, 0.0, 1.0);
-    G = fast::clamp(G, 0.0, 1.0);
-    B = fast::clamp(B, 0.0, 1.0);
-    _283.rgb_out[(tid * 3u) + 0u] = R;
-    _283.rgb_out[(tid * 3u) + 1u] = G;
-    _283.rgb_out[(tid * 3u) + 2u] = B;
+    _276.rgb_out[(tid * 3u) + 0u] = R;
+    _276.rgb_out[(tid * 3u) + 1u] = G;
+    _276.rgb_out[(tid * 3u) + 2u] = B;
 }

@@ -86,10 +86,10 @@ void main() {
     float G = m10 * Y + m11 * I + m12 * Q + bias_g;
     float B = m20 * Y + m21 * I + m22 * Q + bias_b;
 
-    /* Clamp to [0, 1] for SDR. HDR path would skip this. */
-    R = clamp(R, 0.0, 1.0);
-    G = clamp(G, 0.0, 1.0);
-    B = clamp(B, 0.0, 1.0);
+    /* These are gun-drive voltages, not display RGB. Preserve superwhite
+     * and undershoot through the video amplifier. Gun cutoff is applied
+     * when voltage becomes current; host SDR/HDR fitting belongs after
+     * phosphor emission. A nominal white of one is not a supply rail. */
 
     /* Interleaved RGB output. */
     rgb_out[tid * 3 + 0] = R;

@@ -578,8 +578,7 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
             float cathode_gain_r;           /* offset 172 */
             float cathode_gain_g;           /* offset 176 */
             float cathode_gain_b;           /* offset 180 */
-            float apl_black_lift;           /* offset 184 */
-            float apl_smoothed;             /* offset 188 */
+            float _reserved_apl[2];         /* offsets 184, 188 */
             float thermal_dome_amount;      /* offset 192 */
             float thermal_r;                /* offset 196 */
             float thermal_g;                /* offset 200 */
@@ -601,10 +600,9 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
             float _color_pad[2];
             float phosphor_to_display[3][4];
             float pulse_gain, _pulse_pad[3];
-        } crt_ubo;
+        } crt_ubo = {0};
 
         crt_ubo.pulse_gain = params->pulse_enabled ? params->pulse_gain : 1;
-        memset(crt_ubo._pulse_pad, 0, sizeof(crt_ubo._pulse_pad));
         float phosphor_matrix[3][3];
         crt_phosphor_matrix(params->phosphor_gamut,phosphor_matrix);
         for(int i=0;i<3;i++) {
@@ -666,8 +664,6 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
         crt_ubo.cathode_gain_r    = params->cathode_gain_r > 0 ? params->cathode_gain_r : 1.0f;
         crt_ubo.cathode_gain_g    = params->cathode_gain_g > 0 ? params->cathode_gain_g : 1.0f;
         crt_ubo.cathode_gain_b    = params->cathode_gain_b > 0 ? params->cathode_gain_b : 1.0f;
-        crt_ubo.apl_black_lift    = params->apl_black_lift;
-        crt_ubo.apl_smoothed      = params->apl_smoothed;
         crt_ubo.thermal_dome_amount = params->thermal_dome_amount;
         crt_ubo.thermal_r         = params->thermal_r;
         crt_ubo.thermal_g         = params->thermal_g;
@@ -688,14 +684,10 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
         ct.load_op = SDL_GPU_LOADOP_CLEAR;
         ct.store_op = SDL_GPU_STOREOP_STORE;
         /* Continue the unlit glass level into letterbox/pillarbox margins.
-         * Match the final shader's ambient/APL lift and output transfer so
+         * Match the final shader's ambient level and output transfer so
          * preset changes and HDR white-level changes cannot expose black bars.
          * Beam emission, mask and spatial reflections remain inside the CRT. */
         float surround = params->ambient_light * 0.15f;
-        if (params->apl_black_lift > 0.001f)
-            surround += params->apl_black_lift * (params->apl_smoothed - 0.5f) * 0.15f
-                * (params->hdr_gain > 0.0f ? params->hdr_gain : 1.0f)
-                * (params->pulse_enabled ? params->pulse_gain : 1);
         surround = fminf(fmaxf(surround, 0.0f), fmaxf(params->hdr_headroom, 1.0f));
         if (params->output_hdr)
             surround *= params->sdr_white_level;
@@ -805,11 +797,10 @@ void gpu_display_params_from_tv(GPUDisplayParams *out, const TVDisplayParams *tv
     out->cathode_gain_g    = tv->cathode_gain_g > 0 ? tv->cathode_gain_g : 1.0f;
     out->cathode_gain_b    = tv->cathode_gain_b > 0 ? tv->cathode_gain_b : 1.0f;
 
-    out->apl_black_lift = tv->apl_black_lift;
     out->thermal_dome_amount = tv->thermal_dome_amount;
     out->chromaticity_drive_shift = tv->chromaticity_drive_shift;
     out->microphonic_amount = tv->microphonic_amount;
-    /* apl_smoothed, thermal_r/g/b, audio_bass_rms, frame_phase
+    /* thermal_r/g/b, audio_bass_rms, frame_phase
      * are set per-frame by gpu_render. */
 
     out->glass_glare         = tv->glass_glare;

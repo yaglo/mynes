@@ -418,6 +418,28 @@ static void black_floor_deposition(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoCh
         CHECK(fabs(sum/(H/2)/expected[ch]-1)<.002);
         CHECK(lo<expected[ch]*.1f && hi>expected[ch]*2);
     }
+    // DC-restoration drift changes voltage before gamma and spot deposition.
+    // A negative drift can extinguish the residual gun current altogether.
+    c->tv.apl_black_lift=2;
+    for(int high=0;high<2;high++) {
+        video_gpu_set_dynamic_state(v,0,high ? 1 : 0,0);
+        cmd=SDL_AcquireGPUCommandBuffer(gpu);
+        CHECK(dispatch_gun_current_public(v,cmd));
+        CHECK(dispatch_h_blur_rgb_public(v,cmd));
+        CHECK(dispatch_beam_profile_public(v,cmd));
+        CHECK(SDL_SubmitGPUCommandBuffer(cmd));
+        CHECK(gpu_buffer_download(gpu,v->buf_gun_current,current,v->rgb_size));
+        CHECK(fabsf(current[900]-(high ? powf(.25f,2.4f) : 0))<1e-6f);
+        CHECK(gpu_buffer_download(gpu,v->buf_beam_rgba,out,W*H*8));
+        float lo=1,hi=0;
+        for(int y=H/4;y<3*H/4;y++) {
+            float light=gpu_half_to_float(out[(y*W+1)*4]);
+            lo=fminf(lo,light);hi=fmaxf(hi,light);
+            CHECK(out[y*W*4]==0);
+        }
+        if(high) CHECK(lo<hi*.1f && hi>.05f); else CHECK(hi==0);
+    }
+    c->tv.apl_black_lift=0; v->apl_smoothed=.5f;
     c->tv.black_floor=0;
     c->tv.phosphor_gamma_offset_g=c->tv.phosphor_gamma_offset_b=0;
     free(rgb);free(current);free(dx);free(dy);free(out);
@@ -639,6 +661,45 @@ static void decoder_gain(SDL_GPUDevice *gpu) {
     chain_destroy(&sc,gpu);
 }
 
+/* Decoder output is voltage, so nominal white is not a storage ceiling.
+ * Exercise the real matrix and gun stages with superwhite and undershoot. */
+static void decoder_voltage_range(SDL_GPUDevice *gpu) {
+    SignalPrecompute sp; VideoChain c; VideoGPUChain v;
+    signal_precompute_init(&sp,SIGNAL_REGION_NTSC);
+    video_chain_init_preset(&c,VIDEO_CONN_COMPOSITE,VIDEO_COMB_NONE,SIGNAL_REGION_NTSC);
+    c.tv.noise_level=0; c.tv.black_floor=0; c.tv.apl_black_lift=0;
+    c.tv.gamma=2; c.tv.phosphor_gamma_offset_r=c.tv.phosphor_gamma_offset_g=c.tv.phosphor_gamma_offset_b=0;
+    c.cable.shield_effectiveness=1;
+    CHECK(video_gpu_init(&v,gpu,&c,"shaders/compute",sp.fir_y,sp.fir_y_n,sp.fir_c,sp.fir_c_n,sp.fir_q,sp.fir_q_n));
+    CHECK(video_gpu_set_beam_params(&v,gpu,16,16,1,.2f,.7f));
+    for(int i=0;i<v.sig_chain.num_stages;i++) chain_set_stage_enabled(&v.sig_chain,i,i==v.stage_matrix);
+    float matrix[3][3]={{1,0,0},{.5f,0,0},{.25f,0,0}},bias[3]={-.2f,-.2f,-.2f};
+    video_gpu_set_color_matrix(&v,matrix,bias);
+    float *wave=calloc(1,v.sig_chain.buf_size),*rgb=malloc(v.rgb_size),*current=malloc(v.rgb_size);
+    ChromaAuxLayout chroma=video_chain_chroma_aux_layout(false);
+    CHECK(gpu_buffer_upload(gpu,v.sig_chain.aux[chroma.i_filt],wave,v.sig_chain.buf_size));
+    CHECK(gpu_buffer_upload(gpu,v.sig_chain.aux[chroma.q_filt],wave,v.sig_chain.buf_size));
+    for(int i=0;i<v.raster_fmt.total_samples;i++)
+        wave[i]=1.8f*(float)(i%v.raster_fmt.samples_per_line)/(v.raster_fmt.samples_per_line-1);
+    float reference[240*4]={0};
+    CHECK(gpu_buffer_upload(gpu,v.buf_receiver,reference,sizeof(reference)));
+    CHECK(chain_upload_input(&v.sig_chain,gpu,wave,v.sig_chain.buf_size));
+    CHECK(chain_run(&v.sig_chain,gpu));
+    CHECK(gpu_buffer_download(gpu,v.buf_rgb,rgb,v.rgb_size));
+    SDL_GPUCommandBuffer *cmd=SDL_AcquireGPUCommandBuffer(gpu);
+    CHECK(dispatch_gun_current_public(&v,cmd)); CHECK(SDL_SubmitGPUCommandBuffer(cmd));
+    CHECK(gpu_buffer_download(gpu,v.buf_gun_current,current,v.rgb_size));
+    for(int x=0;x<sp.samples_per_line;x++) for(int ch=0;ch<3;ch++) {
+        float y=wave[65*sp.samples_per_pixel+x];
+        float voltage=y*matrix[ch][0]+bias[ch];
+        CHECK(fabsf(rgb[x*3+ch]-voltage)<.00001f);
+        CHECK(fabsf(current[x*3+ch]-powf(fmaxf(voltage,0),2))<.00001f);
+    }
+    CHECK(rgb[(sp.samples_per_line-1)*3]>1.4f);
+    CHECK(rgb[2]<0);
+    free(wave);free(rgb);free(current);video_gpu_destroy(&v,gpu);
+}
+
 int main(void) {
     CHECK(SDL_Init(SDL_INIT_VIDEO));
     SDL_GPUDevice *gpu = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_MSL, true, NULL);
@@ -659,6 +720,7 @@ int main(void) {
     }
     receiver(gpu);
     decoder_gain(gpu);
+    decoder_voltage_range(gpu);
     separated_yc(gpu);
     rgb_source(gpu);
     rf(gpu);

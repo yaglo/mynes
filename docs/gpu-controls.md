@@ -42,6 +42,16 @@ resolution. At insufficient headroom, the output shoulder reduces resolved
 phosphor peaks, lowering mean brightness. Increasing gain indefinitely then
 compresses highlights instead of restoring an unbounded glow.
 
+The decoder preserves superwhite and undershoot as voltage through the video
+amplifier; gun cutoff and supply loading precede emission. Nominal white is not
+treated as an amplifier rail. Exact amplifier saturation remains uncalibrated.
+The final shoulder scales the entire linear RGB vector instead of clipping
+channels independently. Extended-linear HDR also retains negative sRGB
+coordinates introduced by the phosphor-primary conversion, allowing the host
+colour manager to reproduce colours outside sRGB on capable panels. SDR reduces
+out-of-gamut chroma towards an equal-luminance neutral before output encoding.
+Available headroom and SDR white are queried from the window each frame.
+
 An actual GPU render-target test uses a uniform 0.25 linear input and emission
 gain 2. For the aperture grille, measured red-channel means and maximum RGB
 peaks are:
@@ -56,6 +66,22 @@ These are linear framebuffer measurements, not nits measured on a MacBook.
 Regression tests also check RGB balance, unresolved-mask averaging, ambient
 independence, highlight slopes and output limits. Real panel peak brightness,
 local dimming, viewing distance and ambient reflections remain external factors.
+
+An additional before/after Contra check used unaveraged 3840×2880 phase pairs,
+unchanged presets and a simulated headroom of 4. Removing the decoder's early
+0–1 clamp produced these maximum linear RGB components:
+
+| Preset | Before | After | Mean scene luminance change |
+|---|---:|---:|---:|
+| Sony PVM-14L2 | 1.720 | 2.920 | +0.31% |
+| JVC D-Series | 3.338 | 3.742 | +0.51% |
+| Toshiba 14AF43 | 3.236 | 3.631 | +0.26% |
+| Stas's Favourite | 3.313 | 3.502 | +0.31% |
+
+These are isolated highlight changes, not an increase to preset gain. All four
+also stayed within a simulated 1.6 headroom. Fixed-exposure SDR previews were
+inspected at native crop resolution; they cannot demonstrate actual HDR glow.
+The companion PFM capture preserves signed HDR values; PPM clips to SDR white.
 
 ## High-refresh presentation
 

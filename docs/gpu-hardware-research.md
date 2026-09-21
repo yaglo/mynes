@@ -141,3 +141,39 @@ Unaveraged 3840×2880 Contra comparisons show a subtle shadow correction in Stas
 Favourite and Dying CRT, with unchanged highlight peaks. PVM-14L2's zero-floor
 render is pixel-identical. This is a correction to where light is generated,
 not a newly measured cutoff value or a dramatic preset retuning.
+
+## Voltage range, purity and HDR colour
+
+The decoder formerly clipped each gun-drive channel to 0–1 before amplifier
+filtering. This conflated nominal video white with an amplifier supply rail.
+Voltage now retains superwhite and undershoot until the modeled gun/loading
+stages. Superwhite also contributes to supply load. We have not measured the
+actual rail or saturation curve of each set; the change removes an unsupported
+clamp rather than establishing unlimited real amplifier headroom.
+
+Phosphor emission is nonnegative in its own primary basis, but its conversion to
+extended linear sRGB can require negative coordinates. These now survive HDR
+output and the common RGB highlight shoulder. This follows the
+[SDL extended-linear swapchain contract](https://wiki.libsdl.org/SDL3/SDL_GPUSwapchainComposition)
+and [Apple's extended-colour representation](https://developer.apple.com/documentation/uikit/determining-color-values-with-color-spaces).
+The host performs the final conversion to its display gamut. Headroom and SDR
+white follow [SDL's dynamic window properties](https://wiki.libsdl.org/SDL3/SDL_GetWindowProperties).
+This is not an absolute-nit calibration or proof of a panel's saturated-colour
+peak luminance. GPU readback tests cover signed primary coordinates, highlight
+ratios, SDR equal-luminance gamut fitting and mask energy.
+
+Purity error formerly added colour even to an unexcited black screen. It now
+redistributes excitation before mask coverage, with smooth spatial variation
+and zero output for zero input. The ordering is supported by the description of
+magnetic beam mislanding in [Samsung's CRT construction patent](https://patents.google.com/patent/US6809466B2/en).
+The redistribution coefficients are generic, not a solved magnetic field.
+Secondary cross-phosphor excitation likewise precedes mask coverage.
+
+The legacy `apl_black_lift` control now changes gun-drive bias before gamma and
+spot deposition, instead of adding uniform display light between scanlines and
+in the window margins. Its numeric amplitude therefore has a different transfer
+than older custom presets. The four curated profiles leave this control, purity
+error and secondary scattering at zero; they have not been retuned to disguise
+these corrections. The scene tracker still estimates brightness from the CPU
+framebuffer, not measured cathode current. Tests verify signed bias, gun cutoff,
+dark scanline gaps, blanked areas and conservation of nominal excitation.

@@ -368,11 +368,9 @@ typedef struct {
     float phosphor_gamma_offset_g;
     float phosphor_gamma_offset_b;
 
-    /* Secondary electron scattering (§4.8). Electrons bouncing off
-     * the shadow mask hit adjacent phosphors of other colors, softly
-     * desaturating everything. Blend each channel toward the pixel's
-     * luminance mean by this amount. 0 = pristine, 0.05 = consumer,
-     * 0.12 = well-worn cheap set. */
+    /* Generic cross-phosphor excitation before mask coverage. Mix toward
+     * equal excitation, preserving its nominal sum. Fraction 0..1; not
+     * a measured scattering coefficient for the named tubes. */
     float secondary_scatter;
 
     /* Glass internal reflection pedestal (§5.6). Light bouncing
@@ -393,10 +391,9 @@ typedef struct {
      * visible on flat-field test pattern). */
     float emi_gradient;
 
-    /* Degauss residual tint (§6.1). Spatially smooth per-corner
-     * color deviation; max at the corners. Amplitude of the largest
-     * per-channel offset (0 = clean degauss, 0.03 = typical
-     * mid-life). */
+    /* Generic magnetic purity error: spatially redistribute excitation
+     * among phosphors before mask coverage. Zero beam stays dark. This
+     * strength is not magnetic field in gauss or a calibrated tube age. */
     float degauss_tint;
 
     /* Phosphor grain (§5.1). Fine high-frequency multiplicative
@@ -414,11 +411,10 @@ typedef struct {
     float cathode_gain_g;
     float cathode_gain_b;
 
-    /* §4.9 APL-dependent black level — the DC-restoration circuit in
-     * the video amp shifts the black level with average picture
-     * level. apl_black_lift = amplitude (0 = flat, 0.08 = consumer
-     * cheap-set). Bright scenes lift the black floor, dark scenes
-     * push it down. The slow EMA tracker lives in GPURenderCtx. */
+    /* Generic scene-dependent DC-restoration drift in gun-drive units:
+     * bias = strength * (smoothed scene brightness - .5) * .15.
+     * Applied before gamma/spot deposition, never to unlit glass. The
+     * GPURenderCtx tracker estimates scene brightness, not cathode current. */
     float apl_black_lift;
 
     /* §5.2 Thermal-mask doming approximation. Short version of the

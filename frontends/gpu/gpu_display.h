@@ -93,9 +93,6 @@ typedef struct {
     float cathode_gain_g;
     float cathode_gain_b;
 
-    /* §4.9 APL black lift + slow tracker state (set by gpu_render). */
-    float apl_black_lift;
-    float apl_smoothed;            /* slow-EMA of frame luma */
     /* §5.2 thermal-mask doming — amplitude + per-channel slow-EMA of
      * color load (set by gpu_render, consumed in shader). */
     float thermal_dome_amount;
