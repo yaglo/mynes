@@ -5,19 +5,19 @@
  * First-order IIR lowpass/highpass: y[n] = a·y[n-1] + b·x[n]
  *
  * Each thread processes one complete scanline sequentially (2048 samples).
- * With 240 scanlines dispatched in parallel, this fully utilizes the GPU
- * while avoiding the complexity and artifacts of parallel prefix scan.
+ * Small workgroups spread independent scanlines across the GPU. Each line
+ * retains its original recurrence and floating-point accumulation order.
  *
  * Warm-start: y[-1] = x[0] (assumes the filter was settled before the
  * scanline began). This eliminates the startup ramp artifact.
  *
- * Workgroup: 256 threads. Dispatch: ceil(num_lines / 256) workgroups.
+ * Workgroup: 32 threads. Dispatch: ceil(num_lines / 32) workgroups.
  * In-place: reads and writes the same buffer.
  */
 
 #version 450
 
-layout(local_size_x = 256) in;
+layout(local_size_x = 32) in;
 
 layout(set = 1, binding = 0) buffer DataBuf {
     float data[];

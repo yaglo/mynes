@@ -473,7 +473,7 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     uint32_t receiver_params[] = {(uint32_t)fmt->lines, (uint32_t)fmt->samples_per_line,
         (uint32_t)fmt->samples_per_pixel, (uint32_t)fmt->region};
     vgc->stage_receiver = chain_add_stage(&vgc->sig_chain, "Sync / burst detector",
-        CHAIN_KERNEL_RECEIVER, receiver_params, sizeof(receiver_params), ((uint32_t)fmt->lines+255)/256, 1);
+        CHAIN_KERNEL_RECEIVER, receiver_params, sizeof(receiver_params), gpu_workgroup_count((uint32_t)fmt->lines, CHAIN_SCANLINE_WORKGROUP_SIZE), 1);
     if (vgc->stage_receiver < 0) goto fail;
     ChainStage *receiver = &vgc->sig_chain.stages[vgc->stage_receiver];
     receiver->io_typed=true;

@@ -20,7 +20,7 @@ struct DataBuf
     float data[1];
 };
 
-constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
+constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(32u, 1u, 1u);
 
 struct CarryBuf
 {

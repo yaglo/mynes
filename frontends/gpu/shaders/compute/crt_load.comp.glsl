@@ -2,7 +2,7 @@
  * makes causal horizontal streaks; the slower shared supply follows line
  * current and carries through retrace. Generic RC response, not a named TV. */
 #version 450
-layout(local_size_x=256) in;
+layout(local_size_x=32) in;
 layout(set=1,binding=0) buffer RGB { float rgb[]; };
 layout(set=1,binding=1) buffer Load { float load_map[]; };
 layout(set=2,binding=0) uniform Params {

@@ -155,3 +155,47 @@ The generated MSL and SPIR-V are updated alongside GLSL. Runtime validation and
 image comparisons used Metal; Vulkan performance has not been measured.
 [Raw runs, shader hashes and capture hashes](gpu-filter-optimization-results.json)
 include the intermediate FIR-only run as well as both final repeats.
+
+## Scanline parallelism (2026-09-21)
+
+The next pass, against `c5ebbc0`, changes how work is distributed:
+
+- RC filtering, sync/burst detection and CRT loading use 32-invocation groups
+  instead of 256. Independent scanlines occupy more schedulable groups. The
+  sequential recurrence and arithmetic within each line are unchanged.
+- AGC uses a complete 256-invocation group per scanline. One lane computes
+  sync/porch measurements and updates the original gain history. After a
+  barrier, all lanes apply that gain to different samples. Detector sums and
+  attack/release updates retain their original order.
+- Receiver PLL and shared CRT-supply history remain ordered across lines.
+  Stage dependencies, frame queue depth and presentation timing are unchanged.
+
+On the same M5/Metal machine, two baseline and two final runs produced the
+following averages of per-run medians. Each run again used 12 warmups and 60
+measurements per size; the final pair ran optimized then baseline.
+
+| Look | 1280×960 before → after | 2560×1920 before → after |
+|---|---:|---:|
+| Reference composite | 3.016 → 2.976 ms | 6.684 → 6.667 ms |
+| Basement TV | 5.164 → 4.750 ms | 10.463 → 10.092 ms |
+| Sony PVM-14L2 | 3.638 → 3.614 ms | 7.131 → 7.103 ms |
+| VHS SP consumer | 6.758 → 6.593 ms | 14.389 → 14.178 ms |
+
+The clearest gain is RF/AGC: Basement TV saves 0.37–0.41 ms at 1280×960
+through 2560×1920, or 3.5–8.0% of the complete video-chain time. The much
+smaller Reference/PVM differences are close to measurement noise. Shared-host
+contention was higher during this batch (especially the tails and 640×480
+startup), so compare these paired runs, not their absolute times against
+earlier sections. The 640×480 Reference result was 3.5% slower on the average
+of medians, with substantial variation between runs. A separate 32×4 beam
+workgroup experiment gave no convincing improvement and was discarded.
+
+All 84 PPM/linear-PFM files for consecutive frames across all 21 looks at
+960×720 match the baseline byte-for-byte. GPU tests now also check every RC
+and AGC output sample across complete NTSC/PAL rasters, AGC bootstrap/release/
+attack history, and sync/burst measurements beyond the first workgroup and
+through vertical retrace. All four relevant GPU test suites pass. Vulkan
+runtime/performance has not been measured.
+
+[Raw paired runs and capture/shader hashes](gpu-scanline-optimization-results.json)
+record this pass separately from the earlier filter optimization.

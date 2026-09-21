@@ -28,7 +28,7 @@ struct RGB
     float rgb[1];
 };
 
-constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
+constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(32u, 1u, 1u);
 
 kernel void main0(constant Params& _20 [[buffer(0)]], device Load& _41 [[buffer(2)]], device RGB& _188 [[buffer(1)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {

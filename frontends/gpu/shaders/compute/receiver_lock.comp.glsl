@@ -1,7 +1,7 @@
 /* Measure sync trailing edge, gated porch and burst after the analog path.
  * The search window rejects sub-black picture codes and isolated noise. */
 #version 450
-layout(local_size_x=256) in;
+layout(local_size_x=32) in;
 layout(set=0,binding=0) readonly buffer Raster { float raster[]; };
 layout(set=1,binding=0) writeonly buffer Measurement { vec4 measurement[]; };
 layout(set=2,binding=0) uniform Params {

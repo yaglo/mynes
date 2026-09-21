@@ -62,6 +62,49 @@ static void fir_boundaries(SDL_GPUDevice *gpu) {
     }
 }
 
+/* Line-oriented kernels must cover multiple small workgroups, including the
+ * last partial group, and keep independent per-line history between frames. */
+static void scanline_dispatch(SDL_GPUDevice *gpu) {
+    for(int region=0;region<2;region++) {
+        int spp=region ? 10 : 8, width=341*spp, lines=region ? 312 : 262, n=width*lines;
+        float *in=malloc(n*sizeof(float)), *out=malloc(n*sizeof(float));
+        float *carry=calloc(lines*2,sizeof(float));
+        SignalChain sc; CHECK(chain_init(&sc,gpu,n,"shaders/compute"));
+        sc.samples_per_line=width;
+        GpuRCFilterParams rp={.a=.5f,.b=.5f,.total_count=n,.samples_per_line=width,.num_lines=lines};
+        int rc=chain_add_stage(&sc,"Line recurrence",CHAIN_KERNEL_RC_FILTER,&rp,sizeof(rp),1,1);
+        for(int i=0;i<n;i++) in[i]=(float)((i*37+11)%127)/128;
+        CHECK(chain_upload_input(&sc,gpu,in,n*sizeof(float)));CHECK(chain_run(&sc,gpu));
+        CHECK(chain_download_output(&sc,gpu,out,n*sizeof(float)));
+        for(int y=0;y<lines;y++) {
+            float prev=in[y*width];
+            for(int x=0;x<width;x++) {
+                int i=y*width+x;prev=.5f*prev+.5f*in[i];
+                CHECK(fabsf(out[i]-prev)<1e-7f);
+            }
+        }
+        chain_set_stage_enabled(&sc,rc,false);
+        GpuAGCParams ap={n,width,lines,.25f,.25f,.5f,.25f,4};
+        int agc=chain_add_stage(&sc,"Line gain history",CHAIN_KERNEL_AGC,&ap,sizeof(ap),1,1);
+        ChainStage *s=&sc.stages[agc];s->io_typed=true;s->ro_count=0;s->rw_count=2;
+        s->rw[0]=CBR_BUF_SRC;s->rw[1]=CBR_AUX0;
+        CHECK(gpu_buffer_upload(gpu,sc.aux[0],carry,lines*2*sizeof(float)));
+        const float gains[]={.5f,.75f,.6875f}; // bootstrap, release, attack
+        for(int frame=0;frame<3;frame++) {
+            for(int y=0;y<lines;y++) for(int x=0;x<width;x++)
+                in[y*width+x]=(x>=8*spp && x<20*spp) ? (frame==1 ? -.25f : -.5f) :
+                             (x>=46*spp && x<49*spp) ? 0 : (float)(y%13+1)/16;
+            CHECK(chain_upload_input(&sc,gpu,in,n*sizeof(float)));CHECK(chain_run(&sc,gpu));
+            CHECK(chain_download_output(&sc,gpu,out,n*sizeof(float)));
+            CHECK(gpu_buffer_download(gpu,sc.aux[0],carry,lines*2*sizeof(float)));
+            float gain=gains[frame];
+            for(int i=0;i<n;i++) CHECK(out[i]==in[i]*gain);
+            for(int y=0;y<lines;y++) CHECK(carry[y*2]==gain);
+        }
+        chain_destroy(&sc,gpu);free(in);free(out);free(carry);
+    }
+}
+
 static void temporal(SDL_GPUDevice *gpu, VideoGPUChain *v, uint32_t drive, float expected) {
     uint32_t pixels[16 * 16 * 2];
     for (int i = 0; i < 16 * 16 * 2; i++) pixels[i] = drive;
@@ -481,14 +524,21 @@ static void receiver(SDL_GPUDevice *gpu) {
         CHECK(raster[(vsync+3)*width+100*spp]==0);
         CHECK(raster[243*width+100*spp]==0);
         if(region) CHECK(raster[70*spp]==0 && raster[width+65*spp]==0);
-        uint32_t rp[]={2,width,spp,(uint32_t)region};
-        int lock=chain_add_stage(&sc,"Receiver test",CHAIN_KERNEL_RECEIVER,rp,sizeof(rp),1,1);
+        uint32_t rp[]={lines,width,spp,(uint32_t)region};
+        int lock=chain_add_stage(&sc,"Receiver test",CHAIN_KERNEL_RECEIVER,rp,sizeof(rp),
+                                 gpu_workgroup_count(lines,CHAIN_SCANLINE_WORKGROUP_SIZE),1);
         ChainStage *l=&sc.stages[lock]; l->io_typed=true;
         l->ro_count=1;l->ro[0]=CBR_BUF_SRC;l->rw_count=1;l->rw[0]=CBR_AUX0;
         chain_set_stage_enabled(&sc,encode,false);
         for(unsigned i=0;i<count;i++) raster[i]+=0.125f;
         CHECK(chain_upload_input(&sc,gpu,raster,count*sizeof(float))); CHECK(chain_run(&sc,gpu));
         float ref[8]; CHECK(gpu_buffer_download(gpu,sc.aux[0],ref,sizeof(ref)));
+        float *all_ref=malloc(lines*4*sizeof(float));
+        CHECK(gpu_buffer_download(gpu,sc.aux[0],all_ref,lines*4*sizeof(float)));
+        for(unsigned line=0;line<240;line++) CHECK(all_ref[line*4+2]>.3f);
+        CHECK(all_ref[vsync*4+2]==-1);
+        CHECK(all_ref[(lines-1)*4+2]>.3f);
+        free(all_ref);
         for(int line=0;line<2;line++) {
             float expected=(3+line*signal_region_line_phase(region))*6.28318530718f/12;
             CHECK(fabsf(remainderf(ref[line*4]-expected,6.28318530718f))<1e-4f);
@@ -973,6 +1023,7 @@ int main(void) {
     SDL_GPUDevice *gpu = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_MSL, true, NULL);
     if (!gpu) { fprintf(stderr, "%s\n", SDL_GetError()); return 1; }
     fir_boundaries(gpu);
+    scanline_dispatch(gpu);
     failures += test_display_fidelity(gpu);
     failures += test_crt_load(gpu);
     failures += test_osd(gpu);

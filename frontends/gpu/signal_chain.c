@@ -46,7 +46,7 @@ static const char *kernel_shader_names[CHAIN_KERNEL_COUNT] = {
 /* Workgroup sizes per kernel type. */
 static const int kernel_workgroup_x[CHAIN_KERNEL_COUNT] = {
     [CHAIN_KERNEL_POINTWISE]  = 256,
-    [CHAIN_KERNEL_RC_FILTER]  = 256,   /* sequential: 1 thread per scanline */
+    [CHAIN_KERNEL_RC_FILTER]  = CHAIN_SCANLINE_WORKGROUP_SIZE,   /* sequential: 1 thread per scanline */
     [CHAIN_KERNEL_FIR]        = 256,
     [CHAIN_KERNEL_DELAY]      = 256,
     [CHAIN_KERNEL_COMB]       = 256,
@@ -64,13 +64,13 @@ static const int kernel_workgroup_x[CHAIN_KERNEL_COUNT] = {
     [CHAIN_KERNEL_H_BLUR_RGB] = 256,
     [CHAIN_KERNEL_GUN_CURRENT] = 256,
     [CHAIN_KERNEL_TEMPORAL_BLIT] = 16,  /* 16×16 for 2D dispatch */
-    [CHAIN_KERNEL_AGC]           = 256,
+    [CHAIN_KERNEL_AGC]           = 256, /* one cooperative group per line */
     [CHAIN_KERNEL_RASTER] = 256,
-    [CHAIN_KERNEL_RECEIVER] = 256,
+    [CHAIN_KERNEL_RECEIVER] = CHAIN_SCANLINE_WORKGROUP_SIZE,
     [CHAIN_KERNEL_RECEIVER_PLL] = 1,
-    [CHAIN_KERNEL_CRT_LOAD] = 256,
+    [CHAIN_KERNEL_CRT_LOAD] = CHAIN_SCANLINE_WORKGROUP_SIZE,
     [CHAIN_KERNEL_YC_ROUTE] = 256,
-    [CHAIN_KERNEL_RECEIVER_DEMOD] = 256, /* sequential: 1 thread per scanline */
+    [CHAIN_KERNEL_RECEIVER_DEMOD] = 256, /* independent samples */
 };
 
 /* Resource counts per kernel type: {readonly, readwrite, uniform}. */
@@ -391,19 +391,22 @@ static bool dispatch_typed_stage(SignalChain *chain, ChainStage *s,
 
         SDL_BindGPUComputePipeline(pass, chain->pipelines[kt].pipeline);
 
-        /* RC_FILTER and AGC dispatch per-line (one thread per scanline),
-         * not per-sample. If the chain has a per-line stride, recompute
-         * dispatch_x from num_lines. Other kernels use s->dispatch_x as
-         * passed at registration. */
+        /* RC runs one invocation per line; AGC runs one cooperative group
+         * per line. Other kernels use the registered dispatch dimensions. */
         uint32_t dispatch_x = s->dispatch_x;
         uint32_t dispatch_y = s->dispatch_y;
         uint32_t dispatch_z = s->dispatch_z;
-        if ((kt == CHAIN_KERNEL_RC_FILTER || kt == CHAIN_KERNEL_AGC) &&
+        if (kt == CHAIN_KERNEL_RC_FILTER &&
             chain->samples_per_line > 0) {
             int num_lines = chain->sample_count / chain->samples_per_line;
-            dispatch_x = (uint32_t)((num_lines + 255) / 256);
+            dispatch_x = gpu_workgroup_count((uint32_t)num_lines, chain->pipelines[kt].threadcount_x);
             dispatch_y = 1;
             dispatch_z = 1;
+        } else if (kt == CHAIN_KERNEL_AGC) {
+            GpuAGCParams p;
+            memcpy(&p, s->params, sizeof(p));
+            dispatch_x = p.num_lines;
+            dispatch_y = dispatch_z = 1;
         }
 
         /* Resolve readonly bindings and bind. */

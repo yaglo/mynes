@@ -1,0 +1,844 @@
+{
+  "baseline_commit": "c5ebbc0",
+  "changes": [
+    "32-lane groups for independent RC, sync/burst and CRT-load scanlines",
+    "AGC: one detector lane and 256 gain-application lanes per scanline"
+  ],
+  "runs": {
+    "before_1": {
+      "utc": "2026-09-21T18:30:00.406264+00:00",
+      "platform": "macOS-27.0-arm64-arm-64bit-Mach-O",
+      "cpu": "arm",
+      "recompute_geometry": false,
+      "mask_alignment": "pixels",
+      "panel_scale": 1,
+      "load_before": [
+        1.322265625,
+        1.93359375,
+        2.0390625
+      ],
+      "other_frontends_before": [],
+      "results": [
+        {
+          "mean_ms": 2.945,
+          "median_ms": 2.667,
+          "p95_ms": 5.353,
+          "max_ms": 6.767,
+          "equivalent_fps": 339.6,
+          "preset": "reference_composite",
+          "width": 640,
+          "height": 480
+        },
+        {
+          "mean_ms": 3.467,
+          "median_ms": 3.018,
+          "p95_ms": 5.785,
+          "max_ms": 5.909,
+          "equivalent_fps": 288.4,
+          "preset": "reference_composite",
+          "width": 1280,
+          "height": 960
+        },
+        {
+          "mean_ms": 4.947,
+          "median_ms": 4.503,
+          "p95_ms": 7.213,
+          "max_ms": 7.432,
+          "equivalent_fps": 202.1,
+          "preset": "reference_composite",
+          "width": 1920,
+          "height": 1440
+        },
+        {
+          "mean_ms": 7.531,
+          "median_ms": 6.682,
+          "p95_ms": 9.431,
+          "max_ms": 9.54,
+          "equivalent_fps": 132.8,
+          "preset": "reference_composite",
+          "width": 2560,
+          "height": 1920
+        },
+        {
+          "mean_ms": 4.557,
+          "median_ms": 3.913,
+          "p95_ms": 6.627,
+          "max_ms": 8.393,
+          "equivalent_fps": 219.5,
+          "preset": "basement_tv",
+          "width": 640,
+          "height": 480
+        },
+        {
+          "mean_ms": 5.867,
+          "median_ms": 5.16,
+          "p95_ms": 7.866,
+          "max_ms": 7.913,
+          "equivalent_fps": 170.4,
+          "preset": "basement_tv",
+          "width": 1280,
+          "height": 960
+        },
+        {
+          "mean_ms": 8.139,
+          "median_ms": 7.375,
+          "p95_ms": 10.128,
+          "max_ms": 10.277,
+          "equivalent_fps": 122.9,
+          "preset": "basement_tv",
+          "width": 1920,
+          "height": 1440
+        },
+        {
+          "mean_ms": 11.453,
+          "median_ms": 10.398,
+          "p95_ms": 13.189,
+          "max_ms": 13.338,
+          "equivalent_fps": 87.3,
+          "preset": "basement_tv",
+          "width": 2560,
+          "height": 1920
+        },
+        {
+          "mean_ms": 3.508,
+          "median_ms": 3.132,
+          "p95_ms": 6.304,
+          "max_ms": 7.911,
+          "equivalent_fps": 285.1,
+          "preset": "sony_pvm_14l2",
+          "width": 640,
+          "height": 480
+        },
+        {
+          "mean_ms": 4.133,
+          "median_ms": 3.637,
+          "p95_ms": 6.358,
+          "max_ms": 6.447,
+          "equivalent_fps": 242.0,
+          "preset": "sony_pvm_14l2",
+          "width": 1280,
+          "height": 960
+        },
+        {
+          "mean_ms": 5.845,
+          "median_ms": 5.18,
+          "p95_ms": 7.856,
+          "max_ms": 7.862,
+          "equivalent_fps": 171.1,
+          "preset": "sony_pvm_14l2",
+          "width": 1920,
+          "height": 1440
+        },
+        {
+          "mean_ms": 7.79,
+          "median_ms": 7.112,
+          "p95_ms": 9.83,
+          "max_ms": 9.876,
+          "equivalent_fps": 128.4,
+          "preset": "sony_pvm_14l2",
+          "width": 2560,
+          "height": 1920
+        },
+        {
+          "mean_ms": 6.136,
+          "median_ms": 5.471,
+          "p95_ms": 8.107,
+          "max_ms": 9.298,
+          "equivalent_fps": 163.0,
+          "preset": "vhs_sp_consumer",
+          "width": 640,
+          "height": 480
+        },
+        {
+          "mean_ms": 7.617,
+          "median_ms": 6.768,
+          "p95_ms": 9.521,
+          "max_ms": 10.059,
+          "equivalent_fps": 131.3,
+          "preset": "vhs_sp_consumer",
+          "width": 1280,
+          "height": 960
+        },
+        {
+          "mean_ms": 9.786,
+          "median_ms": 9.043,
+          "p95_ms": 11.646,
+          "max_ms": 11.931,
+          "equivalent_fps": 102.2,
+          "preset": "vhs_sp_consumer",
+          "width": 1920,
+          "height": 1440
+        },
+        {
+          "mean_ms": 13.459,
+          "median_ms": 14.488,
+          "p95_ms": 14.836,
+          "max_ms": 15.016,
+          "equivalent_fps": 74.3,
+          "preset": "vhs_sp_consumer",
+          "width": 2560,
+          "height": 1920
+        }
+      ],
+      "hardware": "hw.model: Mac17,3\nhw.memsize: 25769803776\nmachdep.cpu.brand_string: Apple M5",
+      "load_after": [
+        1.3525390625,
+        1.9189453125,
+        2.0322265625
+      ],
+      "other_frontends_after": [],
+      "metric": "CPU submission to final GPU fence, one frame in flight; actual preset, complete DAC/receiver/CRT/mask/glass; no emulation, audio, vsync, capture, or validation"
+    },
+    "after_1": {
+      "utc": "2026-09-21T18:34:37.521598+00:00",
+      "platform": "macOS-27.0-arm64-arm-64bit-Mach-O",
+      "cpu": "arm",
+      "recompute_geometry": false,
+      "mask_alignment": "pixels",
+      "panel_scale": 1,
+      "load_before": [
+        2.23388671875,
+        2.251953125,
+        2.16455078125
+      ],
+      "other_frontends_before": [],
+      "results": [
+        {
+          "mean_ms": 2.459,
+          "median_ms": 2.097,
+          "p95_ms": 4.788,
+          "max_ms": 4.947,
+          "equivalent_fps": 406.7,
+          "preset": "reference_composite",
+          "width": 640,
+          "height": 480
+        },
+        {
+          "mean_ms": 3.258,
+          "median_ms": 2.975,
+          "p95_ms": 5.72,
+          "max_ms": 5.754,
+          "equivalent_fps": 306.9,
+          "preset": "reference_composite",
+          "width": 1280,
+          "height": 960
+        },
+        {
+          "mean_ms": 5.101,
+          "median_ms": 4.455,
+          "p95_ms": 7.191,
+          "max_ms": 7.269,
+          "equivalent_fps": 196.0,
+          "preset": "reference_composite",
+          "width": 1920,
+          "height": 1440
+        },
+        {
+          "mean_ms": 7.413,
+          "median_ms": 6.671,
+          "p95_ms": 9.337,
+          "max_ms": 9.489,
+          "equivalent_fps": 134.9,
+          "preset": "reference_composite",
+          "width": 2560,
+          "height": 1920
+        },
+        {
+          "mean_ms": 4.081,
+          "median_ms": 3.531,
+          "p95_ms": 6.687,
+          "max_ms": 7.684,
+          "equivalent_fps": 245.1,
+          "preset": "basement_tv",
+          "width": 640,
+          "height": 480
+        },
+        {
+          "mean_ms": 5.401,
+          "median_ms": 4.756,
+          "p95_ms": 7.661,
+          "max_ms": 7.725,
+          "equivalent_fps": 185.2,
+          "preset": "basement_tv",
+          "width": 1280,
+          "height": 960
+        },
+        {
+          "mean_ms": 7.7,
+          "median_ms": 6.981,
+          "p95_ms": 9.692,
+          "max_ms": 9.811,
+          "equivalent_fps": 129.9,
+          "preset": "basement_tv",
+          "width": 1920,
+          "height": 1440
+        },
+        {
+          "mean_ms": 11.214,
+          "median_ms": 10.08,
+          "p95_ms": 12.863,
+          "max_ms": 12.867,
+          "equivalent_fps": 89.2,
+          "preset": "basement_tv",
+          "width": 2560,
+          "height": 1920
+        },
+        {
+          "mean_ms": 3.313,
+          "median_ms": 2.918,
+          "p95_ms": 6.296,
+          "max_ms": 7.204,
+          "equivalent_fps": 301.9,
+          "preset": "sony_pvm_14l2",
+          "width": 640,
+          "height": 480
+        },
+        {
+          "mean_ms": 4.119,
+          "median_ms": 3.608,
+          "p95_ms": 6.332,
+          "max_ms": 6.494,
+          "equivalent_fps": 242.8,
+          "preset": "sony_pvm_14l2",
+          "width": 1280,
+          "height": 960
+        },
+        {
+          "mean_ms": 5.728,
+          "median_ms": 5.114,
+          "p95_ms": 7.809,
+          "max_ms": 7.901,
+          "equivalent_fps": 174.6,
+          "preset": "sony_pvm_14l2",
+          "width": 1920,
+          "height": 1440
+        },
+        {
+          "mean_ms": 7.82,
+          "median_ms": 7.097,
+          "p95_ms": 9.842,
+          "max_ms": 9.906,
+          "equivalent_fps": 127.9,
+          "preset": "sony_pvm_14l2",
+          "width": 2560,
+          "height": 1920
+        },
+        {
+          "mean_ms": 6.333,
+          "median_ms": 5.453,
+          "p95_ms": 8.181,
+          "max_ms": 9.529,
+          "equivalent_fps": 157.9,
+          "preset": "vhs_sp_consumer",
+          "width": 640,
+          "height": 480
+        },
+        {
+          "mean_ms": 7.186,
+          "median_ms": 6.616,
+          "p95_ms": 9.265,
+          "max_ms": 9.344,
+          "equivalent_fps": 139.2,
+          "preset": "vhs_sp_consumer",
+          "width": 1280,
+          "height": 960
+        },
+        {
+          "mean_ms": 9.85,
+          "median_ms": 8.896,
+          "p95_ms": 11.628,
+          "max_ms": 11.836,
+          "equivalent_fps": 101.5,
+          "preset": "vhs_sp_consumer",
+          "width": 1920,
+          "height": 1440
+        },
+        {
+          "mean_ms": 13.243,
+          "median_ms": 14.221,
+          "p95_ms": 14.641,
+          "max_ms": 14.892,
+          "equivalent_fps": 75.5,
+          "preset": "vhs_sp_consumer",
+          "width": 2560,
+          "height": 1920
+        }
+      ],
+      "hardware": "hw.model: Mac17,3\nhw.memsize: 25769803776\nmachdep.cpu.brand_string: Apple M5",
+      "load_after": [
+        2.2646484375,
+        2.25927734375,
+        2.16796875
+      ],
+      "other_frontends_after": [],
+      "metric": "CPU submission to final GPU fence, one frame in flight; actual preset, complete DAC/receiver/CRT/mask/glass; no emulation, audio, vsync, capture, or validation"
+    },
+    "after_2": {
+      "utc": "2026-09-21T18:36:18.193607+00:00",
+      "platform": "macOS-27.0-arm64-arm-64bit-Mach-O",
+      "cpu": "arm",
+      "recompute_geometry": false,
+      "mask_alignment": "pixels",
+      "panel_scale": 1,
+      "load_before": [
+        2.39501953125,
+        2.32958984375,
+        2.2021484375
+      ],
+      "other_frontends_before": [],
+      "results": [
+        {
+          "mean_ms": 3.317,
+          "median_ms": 2.872,
+          "p95_ms": 6.871,
+          "max_ms": 8.188,
+          "equivalent_fps": 301.5,
+          "preset": "reference_composite",
+          "width": 640,
+          "height": 480
+        },
+        {
+          "mean_ms": 3.302,
+          "median_ms": 2.977,
+          "p95_ms": 5.761,
+          "max_ms": 5.78,
+          "equivalent_fps": 302.8,
+          "preset": "reference_composite",
+          "width": 1280,
+          "height": 960
+        },
+        {
+          "mean_ms": 4.867,
+          "median_ms": 4.445,
+          "p95_ms": 7.194,
+          "max_ms": 7.3,
+          "equivalent_fps": 205.5,
+          "preset": "reference_composite",
+          "width": 1920,
+          "height": 1440
+        },
+        {
+          "mean_ms": 7.37,
+          "median_ms": 6.663,
+          "p95_ms": 9.4,
+          "max_ms": 9.46,
+          "equivalent_fps": 135.7,
+          "preset": "reference_composite",
+          "width": 2560,
+          "height": 1920
+        },
+        {
+          "mean_ms": 4.317,
+          "median_ms": 3.51,
+          "p95_ms": 7.224,
+          "max_ms": 9.19,
+          "equivalent_fps": 231.6,
+          "preset": "basement_tv",
+          "width": 640,
+          "height": 480
+        },
+        {
+          "mean_ms": 5.182,
+          "median_ms": 4.743,
+          "p95_ms": 7.458,
+          "max_ms": 7.555,
+          "equivalent_fps": 193.0,
+          "preset": "basement_tv",
+          "width": 1280,
+          "height": 960
+        },
+        {
+          "mean_ms": 7.874,
+          "median_ms": 7.027,
+          "p95_ms": 9.771,
+          "max_ms": 9.901,
+          "equivalent_fps": 127.0,
+          "preset": "basement_tv",
+          "width": 1920,
+          "height": 1440
+        },
+        {
+          "mean_ms": 11.187,
+          "median_ms": 10.103,
+          "p95_ms": 12.888,
+          "max_ms": 13.076,
+          "equivalent_fps": 89.4,
+          "preset": "basement_tv",
+          "width": 2560,
+          "height": 1920
+        },
+        {
+          "mean_ms": 3.139,
+          "median_ms": 2.793,
+          "p95_ms": 5.408,
+          "max_ms": 6.378,
+          "equivalent_fps": 318.5,
+          "preset": "sony_pvm_14l2",
+          "width": 640,
+          "height": 480
+        },
+        {
+          "mean_ms": 3.978,
+          "median_ms": 3.619,
+          "p95_ms": 6.348,
+          "max_ms": 6.402,
+          "equivalent_fps": 251.4,
+          "preset": "sony_pvm_14l2",
+          "width": 1280,
+          "height": 960
+        },
+        {
+          "mean_ms": 5.718,
+          "median_ms": 5.121,
+          "p95_ms": 7.846,
+          "max_ms": 8.051,
+          "equivalent_fps": 174.9,
+          "preset": "sony_pvm_14l2",
+          "width": 1920,
+          "height": 1440
+        },
+        {
+          "mean_ms": 7.889,
+          "median_ms": 7.108,
+          "p95_ms": 9.843,
+          "max_ms": 10.061,
+          "equivalent_fps": 126.8,
+          "preset": "sony_pvm_14l2",
+          "width": 2560,
+          "height": 1920
+        },
+        {
+          "mean_ms": 5.901,
+          "median_ms": 5.277,
+          "p95_ms": 8.07,
+          "max_ms": 9.191,
+          "equivalent_fps": 169.5,
+          "preset": "vhs_sp_consumer",
+          "width": 640,
+          "height": 480
+        },
+        {
+          "mean_ms": 7.273,
+          "median_ms": 6.57,
+          "p95_ms": 9.282,
+          "max_ms": 9.376,
+          "equivalent_fps": 137.5,
+          "preset": "vhs_sp_consumer",
+          "width": 1280,
+          "height": 960
+        },
+        {
+          "mean_ms": 9.919,
+          "median_ms": 8.953,
+          "p95_ms": 11.641,
+          "max_ms": 11.726,
+          "equivalent_fps": 100.8,
+          "preset": "vhs_sp_consumer",
+          "width": 1920,
+          "height": 1440
+        },
+        {
+          "mean_ms": 13.292,
+          "median_ms": 14.135,
+          "p95_ms": 14.766,
+          "max_ms": 14.913,
+          "equivalent_fps": 75.2,
+          "preset": "vhs_sp_consumer",
+          "width": 2560,
+          "height": 1920
+        }
+      ],
+      "hardware": "hw.model: Mac17,3\nhw.memsize: 25769803776\nmachdep.cpu.brand_string: Apple M5",
+      "load_after": [
+        2.63525390625,
+        2.3837890625,
+        2.22265625
+      ],
+      "other_frontends_after": [],
+      "metric": "CPU submission to final GPU fence, one frame in flight; actual preset, complete DAC/receiver/CRT/mask/glass; no emulation, audio, vsync, capture, or validation"
+    },
+    "before_2": {
+      "utc": "2026-09-21T18:36:27.704873+00:00",
+      "platform": "macOS-27.0-arm64-arm-64bit-Mach-O",
+      "cpu": "arm",
+      "recompute_geometry": false,
+      "mask_alignment": "pixels",
+      "panel_scale": 1,
+      "load_before": [
+        2.63525390625,
+        2.3837890625,
+        2.22265625
+      ],
+      "other_frontends_before": [],
+      "results": [
+        {
+          "mean_ms": 2.369,
+          "median_ms": 2.132,
+          "p95_ms": 4.88,
+          "max_ms": 4.926,
+          "equivalent_fps": 422.1,
+          "preset": "reference_composite",
+          "width": 640,
+          "height": 480
+        },
+        {
+          "mean_ms": 3.521,
+          "median_ms": 3.014,
+          "p95_ms": 5.776,
+          "max_ms": 6.108,
+          "equivalent_fps": 284.0,
+          "preset": "reference_composite",
+          "width": 1280,
+          "height": 960
+        },
+        {
+          "mean_ms": 4.971,
+          "median_ms": 4.491,
+          "p95_ms": 7.153,
+          "max_ms": 7.448,
+          "equivalent_fps": 201.2,
+          "preset": "reference_composite",
+          "width": 1920,
+          "height": 1440
+        },
+        {
+          "mean_ms": 7.406,
+          "median_ms": 6.685,
+          "p95_ms": 9.425,
+          "max_ms": 9.598,
+          "equivalent_fps": 135.0,
+          "preset": "reference_composite",
+          "width": 2560,
+          "height": 1920
+        },
+        {
+          "mean_ms": 4.409,
+          "median_ms": 3.895,
+          "p95_ms": 6.623,
+          "max_ms": 8.047,
+          "equivalent_fps": 226.8,
+          "preset": "basement_tv",
+          "width": 640,
+          "height": 480
+        },
+        {
+          "mean_ms": 5.717,
+          "median_ms": 5.168,
+          "p95_ms": 7.874,
+          "max_ms": 7.976,
+          "equivalent_fps": 174.9,
+          "preset": "basement_tv",
+          "width": 1280,
+          "height": 960
+        },
+        {
+          "mean_ms": 8.186,
+          "median_ms": 7.39,
+          "p95_ms": 10.119,
+          "max_ms": 10.26,
+          "equivalent_fps": 122.2,
+          "preset": "basement_tv",
+          "width": 1920,
+          "height": 1440
+        },
+        {
+          "mean_ms": 11.595,
+          "median_ms": 10.527,
+          "p95_ms": 13.232,
+          "max_ms": 13.499,
+          "equivalent_fps": 86.2,
+          "preset": "basement_tv",
+          "width": 2560,
+          "height": 1920
+        },
+        {
+          "mean_ms": 3.218,
+          "median_ms": 2.878,
+          "p95_ms": 5.382,
+          "max_ms": 6.759,
+          "equivalent_fps": 310.7,
+          "preset": "sony_pvm_14l2",
+          "width": 640,
+          "height": 480
+        },
+        {
+          "mean_ms": 3.991,
+          "median_ms": 3.638,
+          "p95_ms": 6.331,
+          "max_ms": 6.353,
+          "equivalent_fps": 250.6,
+          "preset": "sony_pvm_14l2",
+          "width": 1280,
+          "height": 960
+        },
+        {
+          "mean_ms": 5.71,
+          "median_ms": 5.143,
+          "p95_ms": 7.913,
+          "max_ms": 7.957,
+          "equivalent_fps": 175.1,
+          "preset": "sony_pvm_14l2",
+          "width": 1920,
+          "height": 1440
+        },
+        {
+          "mean_ms": 7.999,
+          "median_ms": 7.15,
+          "p95_ms": 9.892,
+          "max_ms": 10.434,
+          "equivalent_fps": 125.0,
+          "preset": "sony_pvm_14l2",
+          "width": 2560,
+          "height": 1920
+        },
+        {
+          "mean_ms": 6.314,
+          "median_ms": 5.427,
+          "p95_ms": 8.775,
+          "max_ms": 10.45,
+          "equivalent_fps": 158.4,
+          "preset": "vhs_sp_consumer",
+          "width": 640,
+          "height": 480
+        },
+        {
+          "mean_ms": 7.462,
+          "median_ms": 6.747,
+          "p95_ms": 9.496,
+          "max_ms": 9.556,
+          "equivalent_fps": 134.0,
+          "preset": "vhs_sp_consumer",
+          "width": 1280,
+          "height": 960
+        },
+        {
+          "mean_ms": 10.252,
+          "median_ms": 9.589,
+          "p95_ms": 11.818,
+          "max_ms": 11.966,
+          "equivalent_fps": 97.5,
+          "preset": "vhs_sp_consumer",
+          "width": 1920,
+          "height": 1440
+        },
+        {
+          "mean_ms": 13.43,
+          "median_ms": 14.29,
+          "p95_ms": 14.861,
+          "max_ms": 15.22,
+          "equivalent_fps": 74.5,
+          "preset": "vhs_sp_consumer",
+          "width": 2560,
+          "height": 1920
+        }
+      ],
+      "hardware": "hw.model: Mac17,3\nhw.memsize: 25769803776\nmachdep.cpu.brand_string: Apple M5",
+      "load_after": [
+        2.30322265625,
+        2.32080078125,
+        2.2021484375
+      ],
+      "other_frontends_after": [],
+      "metric": "CPU submission to final GPU fence, one frame in flight; actual preset, complete DAC/receiver/CRT/mask/glass; no emulation, audio, vsync, capture, or validation"
+    }
+  },
+  "capture_comparison": {
+    "size": "960x720",
+    "pattern": "chart",
+    "first_frame": 12,
+    "files": 84,
+    "changed_files": 0,
+    "sha256": {
+      "arcade_cabinet.ppm": "d01ab045c1061d857c535f521051c96e9220a00e4daedd173a47ef30d22ca2e4",
+      "arcade_cabinet.ppm.linear.pfm": "24b671f1f3cec1a91514750330f01da6624c47703920df08d5b5f5e64c75c2b0",
+      "arcade_cabinet.ppm.next.ppm": "f0b74a9f9e462bf8c600672a7cd696b72cbfdccde12f7fa4caa26e4db4400b9d",
+      "arcade_cabinet.ppm.next.ppm.linear.pfm": "1b2fb1aaf478632becb5221b4c1351bff8140071d025876d2ec7c7ab63b98534",
+      "basement_tv.ppm": "42c2e4bff80e23611a2d19405a25716b1fe9b380c5c31c6c8af9bc9f9f2ade59",
+      "basement_tv.ppm.linear.pfm": "34a76e7c6964185859f77a684eba5efc81d7e0cdbcb8005d5cccf571a3126d9e",
+      "basement_tv.ppm.next.ppm": "27e1c1fd92a2ec7ec67638c4e0ef98da9919c9c58e466cab59f10d7518c3a273",
+      "basement_tv.ppm.next.ppm.linear.pfm": "9b32c48dba5c54638b3380b8b621c0a6450c080f24bb6086f29cc1799aa83cba",
+      "bedroom_rf_1990.ppm": "0913a979f9ac22208f891b159355deb4d21fac5c6b76d38acf6f4c92e60e7467",
+      "bedroom_rf_1990.ppm.linear.pfm": "5f6cba9fa23d63764d26ac662ca68d763e43e41206c5823cc33cea5ce1d8ffa2",
+      "bedroom_rf_1990.ppm.next.ppm": "8209d310970bfd38c906c9dcd3096b42d33658cd45a5dcef03cf44d1ece0f24d",
+      "bedroom_rf_1990.ppm.next.ppm.linear.pfm": "2c434ae21ef0ed6e0356858271817daf46c749b95d70742fc47bd7e092772974",
+      "commodore_1702.ppm": "568afe006163046f02a80931f990791501378e3224f1319db2f212fd4035bf54",
+      "commodore_1702.ppm.linear.pfm": "e85e4cd0eed65dba46421b1242e72296e15fc78b4c5c52d2ac6ea9c2cd162161",
+      "commodore_1702.ppm.next.ppm": "443509da809f44cfca5dbd4e578503c4dad70229a20ca1d303396cddd90a518b",
+      "commodore_1702.ppm.next.ppm.linear.pfm": "1e7aaed594b7d894528d8c7c432be4933d81972fed32863167c462cc6b69b2d7",
+      "dying_crt.ppm": "f8d33b20559a40eb1ed40042f250934f3602bd46686e865432eff67019fde988",
+      "dying_crt.ppm.linear.pfm": "0af50649affc7b33ed38a88143513af6b9da3c6b01caeea88ca06da7bec57757",
+      "dying_crt.ppm.next.ppm": "dfa4ce6430930b0514d4f3c66c4be77a0ee92ae70544a5fff9fc22019f280a02",
+      "dying_crt.ppm.next.ppm.linear.pfm": "54f11528c0779ae3dadb97b8c6cac8759066f05ad97a42b7ac0827c27238e8b3",
+      "famicom_kitchen.ppm": "773c900b339622973959603e8d318bd1210a6889f1f40196f44bdf6a0a234a2c",
+      "famicom_kitchen.ppm.linear.pfm": "f78762cda58af1d675972be42efcafaf2c7bd0ab1d1a0b393731f402d603c55b",
+      "famicom_kitchen.ppm.next.ppm": "e2c183d18c335baa120d1bc7c302e9a308db8ea27ffd86ffeac91d74712aa94c",
+      "famicom_kitchen.ppm.next.ppm.linear.pfm": "771659c08c564c757293c8823515c509941968a6c3fadb423d6c1af53933a057",
+      "jvc_d_series_2000.ppm": "4c9bd3d98b1f31d0e60b785909ff9c437d9c41befb4722d49752c8eb90524106",
+      "jvc_d_series_2000.ppm.linear.pfm": "ce54177f1076f74b19bca8553a2af82831412cd2c4136c2b0ec0ec0ee2829c04",
+      "jvc_d_series_2000.ppm.next.ppm": "0b00f946b08899c3c8e10638fe5587822d0dfa773fa9eecd1a443ebb342d3187",
+      "jvc_d_series_2000.ppm.next.ppm.linear.pfm": "a5a462db3e07ab8229c6cc037497bfed815b7c5783c1e374964c83c84e067d9c",
+      "late_crt_wega.ppm": "9701d0b9662b6c9ecc2ef908324ef00d26283cfa7805dc69821d9133cf3ddae6",
+      "late_crt_wega.ppm.linear.pfm": "04373e9a9b2bafc2c33086287584ed84afe32a39be9c16b94533d9d0f0f6c795",
+      "late_crt_wega.ppm.next.ppm": "b713810278d565a2d32926fcb791b6c82bbf281e4eaca752bf00daeeb45044a5",
+      "late_crt_wega.ppm.next.ppm.linear.pfm": "30bf0b5049e142671499d68d447dab9a11061c5ec4d8eda6a20d86fb3a6a1a49",
+      "living_room_1988.ppm": "5fdc362a00e0850a169db901419dbea4ebf458c305b4604c14bdd37f44dc5ffc",
+      "living_room_1988.ppm.linear.pfm": "9e5c2983e53788586e771c2ea749d86e09915afda0501e964121a116eac2bd27",
+      "living_room_1988.ppm.next.ppm": "fb9141e298274b24666dd53debdcbe28ff5217a15226c8bff6dfec53a0d7ff5b",
+      "living_room_1988.ppm.next.ppm.linear.pfm": "c86266504af2039259ced7d559bf87833d1a16b424605c6ee60ec5898bca7f33",
+      "nec_xm29_arcade.ppm": "8a572533c112e032bf6a569070f7b28ff2b3eb02a5f67dcaa779546acd90033d",
+      "nec_xm29_arcade.ppm.linear.pfm": "99cfe5c19823b551afae5eeac40646e89e2c65557d720a0f20637ed2817a6ceb",
+      "nec_xm29_arcade.ppm.next.ppm": "c1e73e5d619df03af6c3115cf3bfc30c75d182d830e3a162468f646fa6d04e07",
+      "nec_xm29_arcade.ppm.next.ppm.linear.pfm": "0c95c8a6c2e745cd010d9a0a118de4fd812de0232d0dceae275e57422dc193e4",
+      "rca_colortrak_1986.ppm": "7b95e531a2ff7d3676491f02a307f440550acd3eba8772a1d4bc1c962da63365",
+      "rca_colortrak_1986.ppm.linear.pfm": "aa299462260ada3ecaa4c9b979ccf299dfb70dd02aa8117cac872040575ae508",
+      "rca_colortrak_1986.ppm.next.ppm": "abf3684eccef0bf75a5ee0e16b24bddf68195be34a78649d1580592c525ba28e",
+      "rca_colortrak_1986.ppm.next.ppm.linear.pfm": "e092b1b5872d4770eabd9a9fb5c7c26f793d5365e41037670f08b201de9a2710",
+      "reference_composite.ppm": "35750bb22384683b3a33f5a113491b15149f21955835c080bbd43b01009593bc",
+      "reference_composite.ppm.linear.pfm": "13e26a4de0e2c737bea32529554766ea530b99d16f2188a7dade053432a1f46c",
+      "reference_composite.ppm.next.ppm": "d1523d0943c13d668260e062fdbae4b03885c5a3980da58786c890be726ae6f2",
+      "reference_composite.ppm.next.ppm.linear.pfm": "517e282900d25faf985c6c4c3135c8f016c844b5994fb97f136757e13bc1f9c0",
+      "retro_gaming_setup.ppm": "39433dda04b616347b824e9f5771ce4f3a924fa59a22cb7f2cd45cc4338423b7",
+      "retro_gaming_setup.ppm.linear.pfm": "7ad526f707894fb6ab209b91cd70db6bcda96c929d7e49dfc4eb80290f2eed0b",
+      "retro_gaming_setup.ppm.next.ppm": "c5d4571a5b139d5fda145f46eef5f4d6143c5e2adfd5ec8d5518bb0d6a063a57",
+      "retro_gaming_setup.ppm.next.ppm.linear.pfm": "04b810558f57cf36320aa19fba6720100f0894cfb263f01340ded68865e59795",
+      "sony_pvm_14l2.ppm": "31dfcd67d1e181cd1ecb270c5d5b2703e9e98be3dcdcf796f582adacc8871367",
+      "sony_pvm_14l2.ppm.linear.pfm": "40e9aa886c766fb46a65d70034a119325ec89d9ed46145ab64392635bd70f218",
+      "sony_pvm_14l2.ppm.next.ppm": "db03396469fb39ab4ff397f5b42b82ae144ccf1d179d0f432b13ebc5840988a4",
+      "sony_pvm_14l2.ppm.next.ppm.linear.pfm": "c490c18cbec28715ea786e978b94543ea042dbb20ab4e64a2a2b5c8b9cad8d8e",
+      "sony_pvm_20m4u.ppm": "d844110f98be7fb584cfd6c52a8a1f3d7b62d3c3bae88d702361dcf3fd9cee20",
+      "sony_pvm_20m4u.ppm.linear.pfm": "82e9d97cf4f975f4b0c0a9149acc2bf9b41ab259ca2eae4db2b23b5330b9f4bc",
+      "sony_pvm_20m4u.ppm.next.ppm": "95f4b1003831a64b7dcc710e02596846a804a7f45a82fc20697b3a9e73fa7d5e",
+      "sony_pvm_20m4u.ppm.next.ppm.linear.pfm": "2c9204892ae311347e390d1e61a2d45da30aaa55bcd338f6e842e5d2a66c29e8",
+      "stass_favourite.ppm": "d82edc7e9c461a00b9dff82cc4319c7f7d115972b9a7a5303c60aa41035d43b7",
+      "stass_favourite.ppm.linear.pfm": "3d03dd8289c211e0c115a433b93648c4153e00939b61a9f2fa84e8bd66d67919",
+      "stass_favourite.ppm.next.ppm": "ab2c3cf6c4452ad7d6ebc2dbc6abab16c12bac8155b2535887d07a578497ae45",
+      "stass_favourite.ppm.next.ppm.linear.pfm": "ba22824673ce97313b8e2b3eb6df33901a51a6709ead6bfaeb7344b7d75e3c5f",
+      "studio_pvm.ppm": "203648f2e6a280b9e8e95b8496db6ee7c05fcd06398fdccde230c73506e76d90",
+      "studio_pvm.ppm.linear.pfm": "0f891352d96ceb6cd7eb1b874800309c8b3fbf9fe0c09f12c7795f3c0626209b",
+      "studio_pvm.ppm.next.ppm": "66c67b5fda48e5d714156274e2524bc84b1e5823412bda17f5e8a940e8432720",
+      "studio_pvm.ppm.next.ppm.linear.pfm": "920598e7982989987f4e2e12a2bb83bd4a7ac5ccc5b654383756cb85ca1ceed6",
+      "toshiba_14af43.ppm": "0cc2b485fa4787be5361f8f6a0fcf554c35db985478496df58d775f2f25a974b",
+      "toshiba_14af43.ppm.linear.pfm": "5e3a63be62926416cc4fe694a89782a12a6e2135f6d26f99ec972915774ac49f",
+      "toshiba_14af43.ppm.next.ppm": "59c8f76e74d132be3b7ff49f13d8cc087283514b03eacf34e6a624bf75f43e99",
+      "toshiba_14af43.ppm.next.ppm.linear.pfm": "db44d81235f45062a2d4aa77f9d4219dbab230d1cd29f10f79c3cc5f264fc04f",
+      "vhs_sp_consumer.ppm": "b98d00f8eb29ce50e22f2bc70f9375f35f46b5c09ed5af89f8dbcd6b4addfb66",
+      "vhs_sp_consumer.ppm.linear.pfm": "43f50f830b556a5343f000aa23291cb3ee2e4872562aed78b49f9f3798d67f79",
+      "vhs_sp_consumer.ppm.next.ppm": "20ccbb8c0c2e0fa1258d687c1e7e7e3aa2bf8bb794895be4ad5cb803a81d6f3c",
+      "vhs_sp_consumer.ppm.next.ppm.linear.pfm": "887c0bb2b4705fd7b7401ea74e142e6e3d23975cd024342ab40ceb91b8fa4834",
+      "vivid_living_room.ppm": "21292f4669b43bd4dac8f2d510bd9b9a6a8cf4962dc831c9fc135aea4b78be3b",
+      "vivid_living_room.ppm.linear.pfm": "2312bf40e242f92e92c2ea72b502ca8088edbb8815b06d7b5947bdc2e70e6637",
+      "vivid_living_room.ppm.next.ppm": "3e9531621825804d6ee2ee9eb3d91901a21511d93042f4dae08c503d45e16c8a",
+      "vivid_living_room.ppm.next.ppm.linear.pfm": "1bf81373dc548adab19cbccab2d6c74246e8f850984d1132035164de89e872a2",
+      "warm_desktop_monitor.ppm": "c7c516768fac0de29e474f8491c1d36236d1e7aca919ec063ffe7b69e67bc235",
+      "warm_desktop_monitor.ppm.linear.pfm": "f037396be18cd74adc50fb6c5bf5ba2028580367d437405a59b76e9175f8ea67",
+      "warm_desktop_monitor.ppm.next.ppm": "592b33d4346b5244e8e6841d01c67f7b88e107ecbabdfbd794df7f3f899adbbf",
+      "warm_desktop_monitor.ppm.next.ppm.linear.pfm": "333fe38d3d2caca74928643c1c4a4886cd5604c74d494ae66a73c442018a9119"
+    }
+  },
+  "shader_sha256": {
+    "frontends/gpu/shaders/compute/agc.comp.glsl": "9f14259d8e26c49b4fa9f4265387d0aa1ac72f6ee7fb69534c9d85b625a63b08",
+    "frontends/gpu/shaders/compute/rc_filter.comp.glsl": "bbe0f81a64d98a57fd3af598464b0fae79b09f932062715a5916f14ca7584413",
+    "frontends/gpu/shaders/compute/crt_load.comp.glsl": "3ad2b40b9a2552141aa7415f16c23ed2be2391b884691c9130d4453e9a729cc8",
+    "frontends/gpu/shaders/compute/receiver_lock.comp.glsl": "de3d434b0049ecd10f8499cdd042d67f04997c068122bb440de8ed57030b12ce"
+  }
+}

@@ -335,6 +335,7 @@ static bool crt_load_rebind(struct SignalChainFwd *chain, struct ChainStageFwd *
     s->rw_count=2; s->rw[0]=CBR_EXT0; s->rw[1]=CBR_EXT1;
     s->external[0]=v->buf_rgb; s->external[1]=v->buf_crt_load;
     memcpy(s->params,&p,sizeof(p)); s->params_size=sizeof(p);
+    s->dispatch_x=gpu_workgroup_count(p.mode ? 1 : 240, v->sig_chain.pipelines[CHAIN_KERNEL_CRT_LOAD].threadcount_x);
     return true;
 }
 void post_pipeline_install_load_typed(VideoGPUChain *v) {

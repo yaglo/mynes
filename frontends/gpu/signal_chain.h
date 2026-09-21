@@ -29,6 +29,11 @@
 #include <stdint.h>
 #include "gpu_compute.h"
 
+/* Match the local_size_x in rc_filter, receiver_lock and crt_load.
+ * Each invocation owns a whole line; small groups expose more independently
+ * schedulable work without reordering the recurrence within any line. */
+#define CHAIN_SCANLINE_WORKGROUP_SIZE 32
+
 /* ============================================================================
  * Kernel type enumeration (matches the compute shader library)
  * ============================================================================ */
