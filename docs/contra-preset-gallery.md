@@ -2,7 +2,7 @@
 
 For the current presentation, see the [game showcase](nes-visual-showcase.md) and [full-resolution gameplay / beam close-ups](gpu-beam-closeups.md). This page retains controlled diagnostic comparisons at their stated capture resolutions.
 
-Actual output from the GPU renderer at commit `e02fc71`, captured offscreen at **2560×1920**. Every preset receives the same frozen 256×240 Contra boss PPU-code frame, with its own default connection and controls. Host mask alignment is Panel-pixels at 1:1 offscreen scale. This target is larger than the MacBook panel; it is a controlled 4:3 comparison, not a claim about fullscreen panel mapping.
+Actual output from the GPU renderer, captured offscreen at **2560×1920**. The base captures use `e02fc71`; Bedroom RF 1990 was refreshed after its focus/color/HDR tuning, with the same capture conditions. Every preset receives the same frozen 256×240 Contra boss PPU-code frame, with its own default connection and controls. Host mask alignment is Panel-pixels at 1:1 offscreen scale. This target is larger than the MacBook panel; it is a controlled 4:3 comparison, not a claim about fullscreen panel mapping.
 
 Frames 60 and 61 are averaged in **linear light** before sRGB conversion, at a common 0.7 exposure to preserve more highlight detail in SDR. Full-resolution images are lossless WebP. Overview reductions are also made in linear light. The two-frame still average is a review exposure, not an extra emulator filter. These PNG/WebP previews do not reproduce live HDR headroom.
 
@@ -30,7 +30,7 @@ Click a preset name for the complete **2560×1920** render. View native crops at
 |---|---|
 | [Arcade Cabinet](images/contra-gallery/arcade_cabinet.webp) · rgb | Clean source and broad beam distinguish it from the fine RGB monitor. Coarse delta dots dominate at close viewing; this is a generic arcade look, not a PlayChoice palette-ROM model. |
 | [Basement TV](images/contra-gallery/basement_tv.webp) · rf | The darkest, muddiest RF image. Useful as a damaged-set extreme, but not a good default: face detail and highlight separation suffer. |
-| [Bedroom RF 1990](images/contra-gallery/bedroom_rf_1990.webp) · rf | A more usable RF television than Basement: readable face and platform, with colour bleed and a coarse shadow mask. Overlaps the other household profiles. |
+| [Bedroom RF 1990](images/contra-gallery/bedroom_rf_1990.webp) · rf | Clearer luminance detail with soft RF colour, cool highlights and the original 410-triad shadow mask. Gain 1.25 uses available HDR headroom; this SDR gallery does not reproduce its live highlight luminance. |
 | [Compact video monitor](images/contra-gallery/commodore_1702.webp) · svideo | Clean Y/C edges with a softer desktop-monitor beam. More restrained whites than the warm personal variant; generic rather than Commodore-calibrated. |
 
 ![Native-pixel face and platform details](images/contra-gallery/native-crops-1.png)

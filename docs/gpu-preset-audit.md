@@ -7,13 +7,21 @@ The curated, visually polished group is **Sony PVM-14L2, JVC D-Series, Toshiba 1
 
 The library contains 20 profiles. Sony, JVC and Toshiba have published hardware references; Stas's Favourite is a generic worn consumer set. The other profiles remain compatibility and exploratory presets. Beam widths, phosphor spectra, regulation and individual tube condition are estimates, not measurements of 20 televisions.
 
+Bedroom RF 1990 retains its 410-triad shadow mask and RF connection. Its
+3.2 MHz luminance / 0.45 MHz chroma bandwidths preserve clearer edges with soft
+color transitions. The nominal 7800 K white point, small blue cutoff and decoder
+gains provide cooler highlights with mild gray-tracking error. HDR gain 1.25
+feeds the headroom-aware output shoulder; it does not request unavailable panel
+brightness. These settings are a generic consumer interpretation, not calibration
+to a specific tube or camera photograph.
+
 ## Physical identities
 
 | Preset | Source | Face; triads across | Dark → white FWHM, lines | Horizontal sigma, samples | Regulation / condition |
 |---|---|---|---|---|---|
 | Arcade Cabinet | rgb | shadow; 440 | 0.55 → 1.18 | 3 | size response 0.035; rail load 0.025 |
 | Basement TV | rf | shadow; 340 | 0.78 → 1.62 | 5.5 | size response 0.07; rail load 0.1 |
-| Bedroom RF 1990 | rf | shadow; 410 | 0.62 → 1.32 | 4 | size response 0.12; rail load 0.075 |
+| Bedroom RF 1990 | rf | shadow; 410 | 0.54 → 1.14 | 2.8 | size response 0.12; rail load 0.075 |
 | Compact video monitor | svideo | shadow; 520 | 0.54 → 1.02 | 4.2 | regulated |
 | Dying CRT | composite | shadow; 350 | 0.76 → 1.68 | 6 | size response 0.14; rail load 0.12 |
 | Famicom Kitchen | rf | shadow; 380 | 0.6 → 1.3 | 3.5 | size response 0.1; rail load 0.06 |
