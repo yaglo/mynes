@@ -27,6 +27,9 @@ static const char *kernel_shader_names[CHAIN_KERNEL_COUNT] = {
     [CHAIN_KERNEL_DEFLECTION] = "deflection.comp.spv",
     [CHAIN_KERNEL_BEAM]       = "beam_profile.comp.spv",
     [CHAIN_KERNEL_RF]         = "rf_mod_demod.comp.spv",
+    [CHAIN_KERNEL_RF_IF] = "rf_if.comp.spv",
+    [CHAIN_KERNEL_VHS] = "vhs.comp.spv",
+    [CHAIN_KERNEL_OSD] = "osd.comp.spv",
     [CHAIN_KERNEL_VIDEO_AMP]  = "video_amp.comp.spv",
     [CHAIN_KERNEL_H_BLUR_RGB] = "h_blur_rgb.comp.spv",
     [CHAIN_KERNEL_TEMPORAL_BLIT] = "temporal_blit.comp.spv",
@@ -54,6 +57,9 @@ static const int kernel_workgroup_x[CHAIN_KERNEL_COUNT] = {
     [CHAIN_KERNEL_DEFLECTION] = 16,   /* 16×16 for 2D dispatch */
     [CHAIN_KERNEL_BEAM]       = 16,   /* 16×16 for 2D dispatch */
     [CHAIN_KERNEL_RF]         = 256,
+    [CHAIN_KERNEL_RF_IF] = 256,
+    [CHAIN_KERNEL_VHS] = 256,
+    [CHAIN_KERNEL_OSD] = 256,
     [CHAIN_KERNEL_VIDEO_AMP]  = 256,
     [CHAIN_KERNEL_H_BLUR_RGB] = 256,
     [CHAIN_KERNEL_GUN_CURRENT] = 256,
@@ -81,7 +87,10 @@ static const int kernel_resources[CHAIN_KERNEL_COUNT][3] = {
     [CHAIN_KERNEL_PAL_CHROMA] = { 2, 2, 1 },  /* V,U raw → V,U corrected */
     [CHAIN_KERNEL_DEFLECTION] = { 1, 2, 1 },  /* params → landing_x + landing_y */
     [CHAIN_KERNEL_BEAM]       = { 3, 1, 1 },  /* RGB + landing maps → RGBA_out */
-    [CHAIN_KERNEL_RF]         = { 0, 1, 1 },  /* composite in-place */
+    [CHAIN_KERNEL_RF] = { 1, 1, 1 }, /* voltage -> complex noisy carrier */
+    [CHAIN_KERNEL_RF_IF] = { 2, 1, 1 }, /* complex carrier + IF taps -> detected voltage */
+    [CHAIN_KERNEL_VHS] = { 2, 1, 1 },
+    [CHAIN_KERNEL_OSD] = { 1, 1, 1 },
     [CHAIN_KERNEL_VIDEO_AMP]  = { 1, 1, 1 },  /* RGB_in → RGB_out */
     [CHAIN_KERNEL_H_BLUR_RGB] = { 0, 2, 1 },  /* RGB_in + RGB_out as readwrite */
     [CHAIN_KERNEL_GUN_CURRENT] = { 1, 1, 1 },
@@ -474,9 +483,12 @@ void chain_stage_set_default_io(ChainStage *s) {
         break;
 
     case CHAIN_KERNEL_RF:
-        /* In-place on buf[src]. */
-        s->rw[0] = CBR_BUF_SRC; s->rw_count = 1;
-        s->ro_count = 0;
+        s->ro[0]=CBR_BUF_SRC; s->ro_count=1;
+        s->rw[0]=CBR_EXT0; s->rw_count=1;
+        break;
+    case CHAIN_KERNEL_RF_IF:
+        s->ro[0]=CBR_EXT0; s->ro[1]=CBR_TAPS; s->ro_count=2;
+        s->rw[0]=CBR_BUF_DST; s->rw_count=1;
         break;
 
     case CHAIN_KERNEL_POINTWISE:
@@ -485,6 +497,7 @@ void chain_stage_set_default_io(ChainStage *s) {
         s->ro_count = 0;
         break;
 
+    case CHAIN_KERNEL_VHS:
     case CHAIN_KERNEL_FIR:
         /* Reads buf[src] + tap buffer, writes buf[dst]. Flips. */
         s->ro[0] = CBR_BUF_SRC; s->ro[1] = CBR_TAPS; s->ro_count = 2;

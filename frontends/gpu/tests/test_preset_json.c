@@ -158,6 +158,17 @@ static void make_distinctive_preset(PhysicalPreset *p)
     p->tv.mask_pitch_px   = 2.5f;
     p->tv.mask_strength   = 0.66f;
     p->tv.subpixel_layout = 2;
+    p->tv.persistence_tail_ms = 12.5;
+    p->tv.persistence_tail_weight = 0.025;
+    p->rf.if_asymmetry = 0.8;
+    p->rf.tuning_offset_hz = 75000;
+    p->vhs.enabled = 1;
+    p->vhs.luma_bandwidth = 2500000;
+    p->vhs.chroma_bandwidth = 350000;
+    p->vhs.chroma_delay_ns = 125;
+    p->vhs.timebase_ns = 35;
+    p->vhs.chroma_phase_deg = 1.5;
+    p->vhs.noise = 0.004;
     p->tv.persistence_ms  = 1.7f;
 
     p->tv.halation   = 0.09f;
@@ -315,6 +326,17 @@ static int compare_presets(const PhysicalPreset *a, const PhysicalPreset *b,
     ASSERT_NEAR(b->tv.mask_triads,      a->tv.mask_triads,      FLOAT_TOL, "tv.mask_triads");
     ASSERT_NEAR(b->tv.mask_strength,      a->tv.mask_strength,      FLOAT_TOL, "tv.mask_strength");
     ASSERT_EQ_INT(b->tv.subpixel_layout,  a->tv.subpixel_layout,               "tv.subpixel_layout");
+    ASSERT_NEAR(b->tv.persistence_tail_ms,a->tv.persistence_tail_ms,FLOAT_TOL,"tv.persistence_tail_ms");
+    ASSERT_NEAR(b->tv.persistence_tail_weight,a->tv.persistence_tail_weight,FLOAT_TOL,"tv.persistence_tail_weight");
+    ASSERT_NEAR(b->rf.if_asymmetry,a->rf.if_asymmetry,FLOAT_TOL,"rf.if_asymmetry");
+    ASSERT_NEAR(b->rf.tuning_offset_hz,a->rf.tuning_offset_hz,FLOAT_TOL,"rf.tuning_offset_hz");
+    ASSERT_NEAR(b->vhs.enabled,a->vhs.enabled,FLOAT_TOL,"vhs.enabled");
+    ASSERT_NEAR(b->vhs.luma_bandwidth,a->vhs.luma_bandwidth,FLOAT_TOL,"vhs.luma_bandwidth");
+    ASSERT_NEAR(b->vhs.chroma_bandwidth,a->vhs.chroma_bandwidth,FLOAT_TOL,"vhs.chroma_bandwidth");
+    ASSERT_NEAR(b->vhs.chroma_delay_ns,a->vhs.chroma_delay_ns,FLOAT_TOL,"vhs.chroma_delay_ns");
+    ASSERT_NEAR(b->vhs.timebase_ns,a->vhs.timebase_ns,FLOAT_TOL,"vhs.timebase_ns");
+    ASSERT_NEAR(b->vhs.chroma_phase_deg,a->vhs.chroma_phase_deg,FLOAT_TOL,"vhs.chroma_phase_deg");
+    ASSERT_NEAR(b->vhs.noise,a->vhs.noise,FLOAT_TOL,"vhs.noise");
     ASSERT_NEAR(b->tv.persistence_ms,     a->tv.persistence_ms,     FLOAT_TOL, "tv.persistence_ms");
 
     ASSERT_NEAR(b->tv.halation,           a->tv.halation,           FLOAT_TOL, "tv.halation");
@@ -428,6 +450,11 @@ static int test_save_load_roundtrip(void)
     ASSERT_TRUE(preset_json_load(&dst, path), "load failed");
 
     if (!compare_presets(&src, &dst, "roundtrip")) return 0;
+
+    ASSERT_TRUE(write_text_file(path, "{\"vhs\":{\"enabled\":1}}"), "write numeric VHS toggle");
+    ASSERT_TRUE(preset_json_load(&dst, path) && dst.vhs.enabled == 1, "numeric VHS compatibility");
+    ASSERT_TRUE(write_text_file(path, "{\"vhs\":{\"enabled\":false}}"), "write disabled VHS toggle");
+    ASSERT_TRUE(preset_json_load(&dst, path) && dst.vhs.enabled == 0, "boolean VHS disable");
 
     unlink(path);
     return 1;

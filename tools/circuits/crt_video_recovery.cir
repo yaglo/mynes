@@ -1,0 +1,15 @@
+* Generic CRT video-rail recovery equivalent. NOT a Sony/JVC/Toshiba schematic.
+* 1k * 12n = 12 us, matching the model's explicitly assumed rail time constant.
+* A 64-NES-dot rectangular load pulse probes charge and recovery.
+.param dot=1/5369317.5
+Vload input 0 PULSE(0 1 {64*dot} 1p 1p {64*dot} 1m)
+Rrail input rail 1k
+Crail rail 0 12n IC=0
+.control
+set wr_singlescale
+set wr_vecnames
+tran 1n 50u 0 1n
+wrdata recovery.txt v(rail)
+quit
+.endc
+.end

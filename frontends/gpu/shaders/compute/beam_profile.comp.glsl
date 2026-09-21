@@ -132,7 +132,7 @@ void main() {
 
     float R = 0.0, G = 0.0, B = 0.0;
 
-    int radius = min(4, int(ceil(3.0 * clamp(max(sigma_narrow,sigma_wide)*focus_scale,0.05,1.0)
+    int radius = min(4, int(ceil(3.0 * clamp(max(sigma_narrow,2.0*sigma_wide-sigma_narrow)*focus_scale,0.05,1.0)
                                + 0.5/rows_per_line)));
     for (int soff = -radius; soff <= radius; soff++) {
         float lR = 0.0;
@@ -151,7 +151,7 @@ void main() {
         // changes are already carried by the deflection map; summing RGB
         // here would make a regulated green gun widen when red turns on.
         vec3 exponent = vec3(bloom_gamma) / max(vec3(gamma) + vec3(gamma_r,gamma_g,gamma_b),vec3(1.0));
-        vec3 bloom_t = pow(clamp(vec3(lR,lG,lB),0.0,1.0),exponent);
+        vec3 bloom_t = min(pow(max(vec3(lR,lG,lB),vec3(0.0)),exponent),vec3(2.0));
         vec3 sv = clamp(mix(vec3(sigma_narrow),vec3(sigma_wide),bloom_t)
                         * focus_scale,0.05,1.0);
         float pixel_width = 1.0 / rows_per_line;

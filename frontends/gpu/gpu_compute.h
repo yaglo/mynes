@@ -283,6 +283,11 @@ typedef struct {
     uint32_t frame_seed, full_line_samples;
     float sample_rate, hum_phase, hum_hz;
 } GpuRFParams;
+typedef struct { uint32_t count, samples_per_line, tap_count, reserved; } GpuRFIFParams;
+typedef struct {
+    uint32_t count, samples_per_line, tap_count, frame_seed;
+    float delay_samples, timebase_samples, phase_radians, noise;
+} GpuVHSParams;
 
 /* Comb filter Y/C separator parameters (matches comb_filter.comp.glsl). */
 typedef struct {

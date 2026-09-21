@@ -238,6 +238,61 @@ static inline void signal_design_fir(float *taps, int n, float cutoff) {
     signal_design_fir_ex(taps, n, cutoff, 0.0f);
 }
 
+/* Generic receiver IF for a local AM console modulator. The combined
+ * sidebands have unit small-signal video gain; their difference produces
+ * quadrature envelope distortion. A nominal 0.75 MHz Nyquist transition
+ * is a System-M reference, not a fitted NES RF-module transfer function.
+ * taps are interleaved real/imaginary, matching vec2 in rf_if.comp. */
+#define SIGNAL_RF_IF_TAPS 97
+static inline void signal_design_rf_if(float *taps, float fs, float bandwidth,
+                                       float asymmetry, float detune) {
+    const int n=SIGNAL_RF_IF_TAPS,bins=1024;
+    double sum=0;
+    bandwidth=fminf(fs*.45f,fmaxf(1e6f,bandwidth));
+    asymmetry=fminf(1,fmaxf(0,asymmetry));
+    detune=fminf(1e6f,fmaxf(-1e6f,detune));
+    for(int k=0;k<n;k++) {
+        double re=0,im=0;
+        for(int b=-bins/2;b<bins/2;b++) {
+            double f=(double)b*fs/bins,shifted=f+detune;
+            double edge=fmin(1,fmax(0,(fabs(shifted)-(bandwidth-.3e6))/.6e6));
+            double lowpass=.5+.5*cos(M_PI*edge);
+            double slope=sin(M_PI*.5*fmin(1,fmax(-1,shifted/.75e6)));
+            double h=lowpass*(1+asymmetry*slope);
+            double phase=-2*M_PI*b*(k-n/2)/bins;
+            re+=h*cos(phase); im+=h*sin(phase);
+        }
+        double window=.54-.46*cos(2*M_PI*k/(n-1));
+        taps[2*k]=(float)(re*window/bins);
+        taps[2*k+1]=(float)(im*window/bins);
+        sum+=taps[2*k];
+    }
+    // Normalize carrier response so tuning changes sidebands, not DC levels.
+    for(int k=0;k<2*n;k++) taps[k]/=(float)sum;
+}
+
+#define SIGNAL_VHS_TAPS 129
+static inline void signal_design_vhs(float *taps, float fs, float luma_bw,
+                                     float chroma_bw, float delay_samples) {
+    float y[SIGNAL_VHS_TAPS],c[SIGNAL_VHS_TAPS];
+    signal_design_fir(y,SIGNAL_VHS_TAPS,fminf(3e6f,fmaxf(.5e6f,luma_bw))/fs);
+    signal_design_fir(c,SIGNAL_VHS_TAPS,fminf(.6e6f,fmaxf(.1e6f,chroma_bw))/fs);
+    double dc_re=0,dc_im=0;
+    for(int k=0;k<SIGNAL_VHS_TAPS;k++) {
+        double phase=2*M_PI*3579545.454545/fs*(k-SIGNAL_VHS_TAPS/2-delay_samples);
+        taps[4*k]=y[k];
+        taps[4*k+1]=2*c[k]*(float)cos(phase);
+        taps[4*k+2]=2*c[k]*(float)sin(phase);
+        taps[4*k+3]=0;
+        dc_re+=taps[4*k+1]; dc_im+=taps[4*k+2];
+    }
+    // Exact grey neutrality even with finite filter support and envelope delay.
+    for(int k=0;k<SIGNAL_VHS_TAPS;k++) {
+        taps[4*k+1]-=(float)dc_re*c[k];
+        taps[4*k+2]-=(float)dc_im*c[k];
+    }
+}
+
 /* Apply luma peaking (TV "sharpness" control) to an existing FIR.
  * Boosts high frequencies near the cutoff by adding a scaled
  * derivative (highpass) component. Creates edge enhancement.

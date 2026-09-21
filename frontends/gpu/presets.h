@@ -1,11 +1,11 @@
 /*
- * Physical Presets — Historically-Accurate Analog Signal Chain Configurations
+ * Physical Presets — Analog Signal and CRT Configurations
  * ============================================================================
  *
  * A PhysicalPreset bundles every parameter needed to configure both the
  * video and audio signal chains for a specific real-world NES viewing
- * setup. Each field (resistor, capacitor, cable, CRT spec, audio stage)
- * is physically plausible.
+ * setup. Profiles mix published nominal specifications with explicitly
+ * estimated response parameters; they are not unit-specific calibrations.
  *
  * Presets live on disk as JSON files under presets/. The GPU frontend
  * scans that directory at startup, loads each file into a PhysicalPreset
@@ -64,6 +64,7 @@ typedef struct {
 
     /* ---- RF modulator (RF presets only) ---- */
     RFModulatorParams   rf;
+    VHSParams vhs;
 
     /* ---- Signal decode overrides ---- */
     float brightness;               /* Y offset (default 0.0) */

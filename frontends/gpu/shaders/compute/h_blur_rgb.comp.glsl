@@ -8,7 +8,7 @@ layout(set=0,binding=1) buffer RGBOut { float rgb_out[]; };
 layout(set=1,binding=0) uniform Params {
     uint signal_w, num_lines, radius;
     float growth;
-    vec4 weights[9], wide_weights[9];
+    vec4 weights[9], wide_weights[9], over_weights[9];
 };
 vec3 read_rgb(uint base,int x) {
     uint i=(base+uint(clamp(x,0,int(signal_w)-1)))*3u;
@@ -18,7 +18,11 @@ vec3 deposit(vec3 current, uint dx) {
     float narrow=weights[dx/4u][dx%4u];
     if(growth<=0.0) return current*narrow;
     float wide=wide_weights[dx/4u][dx%4u];
-    return current*mix(vec3(narrow),vec3(wide),clamp(current,0.0,1.0));
+    float over=over_weights[dx/4u][dx%4u];
+    vec3 nominal=mix(vec3(narrow),vec3(wide),clamp(current,0.0,1.0));
+    // Continue broadening beyond nominal white. Each endpoint is normalized,
+    // so interpolation redistributes superwhite current without clipping it.
+    return current*mix(nominal,vec3(over),clamp((current-1.0)/3.0,0.0,1.0));
 }
 void main() {
     uint sx=gl_GlobalInvocationID.x, sy=gl_GlobalInvocationID.y;

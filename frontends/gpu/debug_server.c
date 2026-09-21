@@ -84,7 +84,7 @@ typedef struct {
     char socket_path[256];
 
     /* Pending tap request (from client) */
-    DebugControl controls[48];
+    DebugControl controls[DEBUG_MAX_CONTROLS];
     int control_count;
     uint64_t last_snapshot_ms;
     uint64_t last_catalog_ms;
@@ -265,7 +265,7 @@ static bool read_message(DebugServerState *state, uint32_t *out_type,
 }
 
 void debug_server_set_controls(DebugServer *srv, const DebugControl *controls, int count) {
-    if (!srv || count < 0 || count > 48) return;
+    if (!srv || count < 0 || count > DEBUG_MAX_CONTROLS) return;
     DebugServerState *state = (DebugServerState *)srv;
     memcpy(state->controls, controls, (size_t)count * sizeof(*controls));
     state->control_count = count;
@@ -459,7 +459,7 @@ void debug_server_frame(DebugServer *srv,
     free(payload);
 
     /* Versioned physical-control snapshot. Fixed records avoid C struct padding. */
-    uint8_t controls[8 + 48 * 72] = {0};
+    uint8_t controls[8 + DEBUG_MAX_CONTROLS * 72] = {0};
     uint32_t version = 1, count = (uint32_t)state->control_count;
     memcpy(controls, &version, 4); memcpy(controls+4, &count, 4);
     for (uint32_t i = 0; i < count; i++) {

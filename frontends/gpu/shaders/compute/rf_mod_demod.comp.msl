@@ -18,9 +18,14 @@ struct Params
     float hum_hz;
 };
 
-struct CompositeInOut
+struct CompositeIn
 {
     float composite[1];
+};
+
+struct CarrierOut
+{
+    float2 carrier_out[1];
 };
 
 constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
@@ -36,7 +41,7 @@ float prng(thread uint& x)
     return float(x >> uint(8)) * 5.9604644775390625e-08;
 }
 
-kernel void main0(constant Params& _53 [[buffer(0)]], device CompositeInOut& _68 [[buffer(1)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+kernel void main0(constant Params& _53 [[buffer(0)]], device CompositeIn& _68 [[buffer(1)]], device CarrierOut& _172 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
     uint tid = gl_GlobalInvocationID.x;
     if (tid >= _53.count)
@@ -53,11 +58,10 @@ kernel void main0(constant Params& _53 [[buffer(0)]], device CompositeInOut& _68
     float _109 = prng(param_1);
     float angle = 6.283185482025146484375 * _109;
     float2 noisy = float2(carrier, 0.0) + (float2(cos(angle), sin(angle)) * radius);
-    signal = (0.78041827678680419921875 - length(noisy)) / 0.65541827678680419921875;
     uint line = tid / _53.samples_per_line;
     uint sample_in_line = tid % _53.samples_per_line;
     float time_sample = float((line * _53.full_line_samples) + sample_in_line);
     float phase = _53.hum_phase + (time_sample * ((6.283185482025146484375 * _53.hum_hz) / _53.sample_rate));
-    signal += (_53.hum_amplitude * sin(phase));
-    _68.composite[tid] = signal;
+    noisy.x -= ((0.65541827678680419921875 * _53.hum_amplitude) * sin(phase));
+    _172.carrier_out[tid] = noisy;
 }

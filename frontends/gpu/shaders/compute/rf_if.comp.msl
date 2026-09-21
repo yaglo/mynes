@@ -1,0 +1,100 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+#pragma clang diagnostic ignored "-Wmissing-braces"
+
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+template<typename T, size_t Num>
+struct spvUnsafeArray
+{
+    T elements[Num ? Num : 1];
+
+    thread T& operator [] (size_t pos) thread
+    {
+        return elements[pos];
+    }
+    constexpr const thread T& operator [] (size_t pos) const thread
+    {
+        return elements[pos];
+    }
+
+    device T& operator [] (size_t pos) device
+    {
+        return elements[pos];
+    }
+    constexpr const device T& operator [] (size_t pos) const device
+    {
+        return elements[pos];
+    }
+
+    constexpr const constant T& operator [] (size_t pos) const constant
+    {
+        return elements[pos];
+    }
+
+    threadgroup T& operator [] (size_t pos) threadgroup
+    {
+        return elements[pos];
+    }
+    constexpr const threadgroup T& operator [] (size_t pos) const threadgroup
+    {
+        return elements[pos];
+    }
+};
+
+struct CarrierIn
+{
+    float2 carrier[1];
+};
+
+struct Params
+{
+    uint count;
+    uint samples_per_line;
+    uint tap_count;
+    uint reserved;
+};
+
+struct Taps
+{
+    float2 taps[1];
+};
+
+struct VideoOut
+{
+    float video[1];
+};
+
+constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
+
+kernel void main0(device CarrierIn& _49 [[buffer(1)]], constant Params& _57 [[buffer(0)]], device Taps& _109 [[buffer(2)]], device VideoOut& _191 [[buffer(3)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]], uint3 gl_WorkGroupID [[threadgroup_position_in_grid]], uint3 gl_LocalInvocationID [[thread_position_in_threadgroup]])
+{
+    threadgroup spvUnsafeArray<float2, 352> tile;
+    uint i = gl_GlobalInvocationID.x;
+    int first = int(gl_WorkGroupID.x * 256u) - 48;
+    for (uint k = gl_LocalInvocationID.x; k < 352u; k += 256u)
+    {
+        tile[k] = _49.carrier[clamp(first + int(k), 0, int(_57.count) - 1)];
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (i >= _57.count)
+    {
+        return;
+    }
+    int x = int(i % _57.samples_per_line);
+    int base = int(i) - x;
+    int middle = int(_57.tap_count) / 2;
+    float2 v = tile[int(i) - first] * ((device float*)&_109.taps[middle])[0u];
+    for (int d = 1; d <= middle; d++)
+    {
+        float2 a = tile[(base + clamp(x + d, 0, int(_57.samples_per_line) - 1)) - first];
+        float2 b = tile[(base + clamp(x - d, 0, int(_57.samples_per_line) - 1)) - first];
+        float2 h = _109.taps[middle + d];
+        float2 sum = a + b;
+        float2 difference = a - b;
+        v += ((sum * h.x) + (float2(-difference.y, difference.x) * h.y));
+    }
+    _191.video[i] = (0.78041827678680419921875 - length(v)) / 0.65541827678680419921875;
+}

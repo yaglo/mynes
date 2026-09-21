@@ -57,6 +57,9 @@ typedef enum {
     CHAIN_KERNEL_RECEIVER_PLL,   /* line oscillator, holdover and clamp */
     CHAIN_KERNEL_CRT_LOAD,       /* video rail streaking and shared supply */
     CHAIN_KERNEL_GUN_CURRENT,    /* gun voltage -> linear emitted current */
+    CHAIN_KERNEL_RF_IF,          /* complex IF filter and envelope detector */
+    CHAIN_KERNEL_OSD,            /* TV RGB menu, after receiver */
+    CHAIN_KERNEL_VHS,            /* recovered tape Y/C and timebase */
     CHAIN_KERNEL_COUNT
 } ChainKernelType;
 

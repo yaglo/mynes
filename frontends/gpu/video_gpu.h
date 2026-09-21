@@ -52,7 +52,8 @@ typedef struct {
     int stage_cable_rc;         /* Cable equivalent shunt-capacitance pole */
     int stage_tv_input_hp;      /* TV Input HP (RC, disabled) */
     int stage_rf;               /* RF Modulator/Demodulator (noise + hum) */
-    int stage_rf_bw_fir;        /* RF Bandwidth FIR (lowpass for RF channel) */
+    int stage_vhs;
+    int stage_rf_if;            /* complex receiver IF and envelope detector */
     int stage_agc;              /* Automatic Gain Control */
     int stage_ghosting;         /* Ghosting (cable impedance reflection) */
     int stage_comb_bandpass, stage_comb; /* Chroma band and line Y/C separator */
@@ -62,6 +63,9 @@ typedef struct {
     int stage_chroma_q_fir;     /* Chroma Q FIR */
     int stage_pal_chroma;       /* PAL chroma correction (PAL only) */
     int stage_matrix;           /* Matrix decode (Y + region-specific chroma -> RGB). */
+    int stage_osd;
+    SDL_GPUBuffer *buf_osd;
+    uint32_t *osd_cache;
     int stage_post_pipeline;    /* RGB Post (video amp + h_blur custom stage) */
     int stage_crt_load, stage_crt_supply;
     SDL_GPUBuffer *buf_crt_load;
@@ -82,6 +86,7 @@ typedef struct {
     SDL_GPUBuffer *buf_signal_table_alt;
 
     /* --- RGB output buffer (Phase 2: GPU matrix shader writes here) --- */
+    SDL_GPUBuffer *buf_rf_carrier; /* interleaved complex AM carrier */
     SDL_GPUBuffer *buf_rgb;
     SDL_GPUBuffer *buf_rgb2;            /* second RGB buffer for video amp ping-pong */
     SDL_GPUBuffer *buf_gun_current;     /* linear light before horizontal spot spread */
@@ -105,10 +110,12 @@ typedef struct {
     float beam_h_blur_sigma;        /* horizontal blur sigma in signal samples */
     uint32_t beam_frame_counter;    /* incremented each beam dispatch (for noise) */
     SDL_GPUBuffer *buf_phosphor_history; /* accumulated linear-light decay */
+    Uint32 phosphor_history_size;
     bool temporal_history_valid;
     bool smoothing_history_valid;
     uint32_t signal_frame_counter;
     float temporal_blend;           /* optional display smoothing, independent of decay */
+    float tail_r, tail_g, tail_b, tail_weight;
     float blend_r, blend_g, blend_b; /* per-channel phosphor persistence weights */
     float motion_threshold;         /* 3D comb motion detector threshold */
     float edge_focus;               /* beam focus degradation at edges */
@@ -314,5 +321,8 @@ void video_gpu_reset_temporal_state(VideoGPUChain *vgc, SDL_GPUDevice *gpu);
 
 /* Release all GPU resources. Safe to call on a zeroed struct. */
 void video_gpu_destroy(VideoGPUChain *vgc, SDL_GPUDevice *gpu);
+
+/* NULL disables composition; repeated identical overlays do not upload again. */
+bool video_gpu_set_osd(VideoGPUChain *vgc,SDL_GPUDevice *gpu,const uint32_t *rgba);
 
 #endif /* VIDEO_GPU_H */

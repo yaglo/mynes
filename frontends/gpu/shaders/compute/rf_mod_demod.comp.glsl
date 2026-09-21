@@ -1,11 +1,11 @@
-/* Equivalent-baseband negative-AM envelope detector with complex channel
- * noise. The separate video FIR approximates the combined channel response.
- * No explicit RF carrier sampling, VSB/IF asymmetry or intercarrier sound. */
+/* Negative-AM equivalent complex baseband. The following complex IF filters
+ * signal AND noise before envelope detection; no VHF carrier sampling needed. */
 #version 450
 
 layout(local_size_x = 256) in;
 
-layout(set = 1, binding = 0) buffer CompositeInOut { float composite[]; };
+layout(set = 0, binding = 0) readonly buffer CompositeIn { float composite[]; };
+layout(set = 1, binding = 0) writeonly buffer CarrierOut { vec2 carrier_out[]; };
 
 layout(set = 2, binding = 0) uniform Params {
     uint  count;              /* total samples in buffer */
@@ -41,16 +41,12 @@ void main() {
     float radius=sqrt(-2.0*log(max(prng(seed),0.00000006)))*noise_amplitude;
     float angle=6.28318530718*prng(seed ^ 0x68bc21ebu);
     vec2 noisy=vec2(carrier,0)+radius*vec2(cos(angle),sin(angle));
-    signal=(bias-length(noisy))/gain;
 
     uint line = tid / samples_per_line;
     uint sample_in_line = tid % samples_per_line;
     float time_sample = float(line * full_line_samples + sample_in_line);
     float phase = hum_phase + time_sample * (6.28318530718 * hum_hz / sample_rate);
-    signal += hum_amplitude * sin(phase);
+    noisy.x -= gain * hum_amplitude * sin(phase);
 
-    /* RF bandwidth limiting is handled by a separate FIR stage
-     * (RF Bandwidth FIR) in the signal chain, not here. */
-
-    composite[tid] = signal;
+    carrier_out[tid]=noisy;
 }

@@ -109,6 +109,25 @@ int test_display_fidelity(SDL_GPUDevice *gpu) {
     render(gpu,&d,input,target,&p,avg,&peak); CHECK(peak<=1.501f);
     p.mask_strength=0; p.hdr_gain=1; p.sdr_white_level=2;
     render(gpu,&d,input,target,&p,avg,&peak); CHECK(fabsf(avg[0]-0.5f)<0.001f);
+    // Matte faceplate scatters the phosphor pattern itself, preserving field energy.
+    p.sdr_white_level=1; p.hdr_headroom=8; p.mask_type=1;
+    p.mask_pitch_px=4; p.mask_strength=1;
+    render(gpu,&d,input,target,&p,avg,&peak);
+    float glossy=row_amplitude(16,0);
+    p.antiglare_blur=.8f;
+    render(gpu,&d,input,target,&p,avg,&peak);
+    CHECK(row_amplitude(16,0)<glossy*.7f);
+    for(int c=0;c<3;c++) CHECK(fabsf(avg[c]-.25f)<.001f);
+    p.antiglare_blur=0; p.chromaticity_drive_shift=1;
+    float reference[3];
+    p.mask_strength=0; render(gpu,&d,input,target,&p,reference,&peak);
+    p.mask_strength=1;
+    for(int pitch=1;pitch<=4;pitch*=2) {
+        p.mask_pitch_px=(float)pitch;
+        render(gpu,&d,input,target,&p,avg,&peak);
+        for(int c=0;c<3;c++) CHECK(fabsf(avg[c]-reference[c])<.001f);
+    }
+    p.chromaticity_drive_shift=0;
     // A mask smaller than Nyquist must converge to neutral unit energy.
     p.sdr_white_level=1; p.mask_strength=1; p.mask_pitch_px=0.5f;
     for(int type=0;type<3;type++) {

@@ -336,6 +336,8 @@ static inline bool preset_json_save(const PhysicalPreset *p, const char *path)
     fprintf(f, "        \"barrel_v\": %.6f,\n",             p->tv.barrel_v);
     /* Motion-adaptive comb. */
     fprintf(f, "        \"motion_threshold\": %.6f,\n",     p->tv.motion_threshold);
+    fprintf(f, "        \"persistence_tail_ms\": %.6f,\n", p->tv.persistence_tail_ms);
+    fprintf(f, "        \"persistence_tail_weight\": %.6f,\n", p->tv.persistence_tail_weight);
     /* Per-channel persistence. */
     fprintf(f, "        \"persistence_r\": %.6f,\n",        p->tv.persistence_r);
     fprintf(f, "        \"persistence_g\": %.6f,\n",        p->tv.persistence_g);
@@ -412,6 +414,8 @@ static inline bool preset_json_save(const PhysicalPreset *p, const char *path)
     fprintf(f, "        \"carrier_level_dbm\": %.6f,\n", p->rf.carrier_level_dbm);
     fprintf(f, "        \"mod_bandwidth\": %.2f,\n",        p->rf.mod_bandwidth);
     fprintf(f, "        \"noise_floor_dbm\": %.2f,\n",      p->rf.noise_floor_dbm);
+    fprintf(f, "        \"if_asymmetry\": %.6f,\n", p->rf.if_asymmetry);
+    fprintf(f, "        \"tuning_offset_hz\": %.6f,\n", p->rf.tuning_offset_hz);
     fprintf(f, "        \"agc_attack_ms\": %.2f,\n",        p->rf.agc_attack_ms);
     fprintf(f, "        \"agc_release_ms\": %.2f\n",        p->rf.agc_release_ms);
     fprintf(f, "    },\n");
@@ -421,7 +425,16 @@ static inline bool preset_json_save(const PhysicalPreset *p, const char *path)
     fprintf(f, "    \"contrast\": %.6f,\n",                 p->contrast);
     fprintf(f, "    \"chroma_gain\": %.6f,\n",              p->chroma_gain);
 
-    /* ---- Audio overrides ---- */
+    /* ---- VHS recording / playback ---- */
+    fprintf(f, "    \"vhs\": {\n        \"enabled\": %s,\n", p->vhs.enabled ? "true" : "false");
+    fprintf(f, "        \"luma_bandwidth\": %.6f,\n", p->vhs.luma_bandwidth);
+    fprintf(f, "        \"chroma_bandwidth\": %.6f,\n", p->vhs.chroma_bandwidth);
+    fprintf(f, "        \"chroma_delay_ns\": %.6f,\n", p->vhs.chroma_delay_ns);
+    fprintf(f, "        \"timebase_ns\": %.6f,\n", p->vhs.timebase_ns);
+    fprintf(f, "        \"chroma_phase_deg\": %.6f,\n", p->vhs.chroma_phase_deg);
+    fprintf(f, "        \"noise\": %.6f\n", p->vhs.noise);
+    fprintf(f, "    },\n");
+
     fprintf(f, "    \"audio_psu_hum_amplitude\": %.6f,\n",  p->audio_psu_hum_amplitude);
     fprintf(f, "    \"audio_hum_frequency\": %.6f,\n", p->audio_hum_frequency);
     fprintf(f, "    \"audio_hum_harmonic_2\": %.6f,\n", p->audio_hum_harmonic_2);
@@ -448,6 +461,7 @@ typedef enum {
     PJSON_SEC_AUDIO_CABLE,
     PJSON_SEC_TV,
     PJSON_SEC_RF,
+    PJSON_SEC_VHS,
 } PresetJsonSection;
 
 /* The field mapping is independent of whitespace and object order. */
@@ -622,6 +636,8 @@ static inline void preset_json__assign(PhysicalPreset *p, PresetJsonSection sect
         else MATCH_FLOAT(PJSON_SEC_TV, "barrel_v",             p->tv.barrel_v)
         /* Motion-adaptive comb. */
         else MATCH_FLOAT(PJSON_SEC_TV, "motion_threshold",     p->tv.motion_threshold)
+        else MATCH_FLOAT(PJSON_SEC_TV, "persistence_tail_ms", p->tv.persistence_tail_ms)
+        else MATCH_FLOAT(PJSON_SEC_TV, "persistence_tail_weight", p->tv.persistence_tail_weight)
         /* Per-channel persistence. */
         else MATCH_FLOAT(PJSON_SEC_TV, "persistence_r",        p->tv.persistence_r)
         else MATCH_FLOAT(PJSON_SEC_TV, "persistence_g",        p->tv.persistence_g)
@@ -681,12 +697,24 @@ static inline void preset_json__assign(PhysicalPreset *p, PresetJsonSection sect
         else MATCH_FLOAT(PJSON_SEC_TV, "glass_glare_size",        p->tv.glass_glare_size)
         else MATCH_FLOAT(PJSON_SEC_TV, "glass_glare_temp_k",      p->tv.glass_glare_temp_k)
 
+        /* VHS toggle accepts the earlier numeric spelling too. */
+        else if (section == PJSON_SEC_VHS && strcmp(key, "enabled") == 0) {
+            p->vhs.enabled = strcmp(val, "true") == 0 || strtol(val, NULL, 10) != 0;
+        }
+        else MATCH_FLOAT(PJSON_SEC_VHS, "luma_bandwidth", p->vhs.luma_bandwidth)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "chroma_bandwidth", p->vhs.chroma_bandwidth)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "chroma_delay_ns", p->vhs.chroma_delay_ns)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "timebase_ns", p->vhs.timebase_ns)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "chroma_phase_deg", p->vhs.chroma_phase_deg)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "noise", p->vhs.noise)
         /* ---- RF modulator ---- */
         else MATCH_BOOL (PJSON_SEC_RF, "enabled",              p->rf.enabled)
         else MATCH_FLOAT(PJSON_SEC_RF, "carrier_freq",         p->rf.carrier_freq)
         else MATCH_FLOAT(PJSON_SEC_RF, "carrier_level_dbm", p->rf.carrier_level_dbm)
         else MATCH_FLOAT(PJSON_SEC_RF, "mod_bandwidth",        p->rf.mod_bandwidth)
         else MATCH_FLOAT(PJSON_SEC_RF, "noise_floor_dbm",      p->rf.noise_floor_dbm)
+        else MATCH_FLOAT(PJSON_SEC_RF, "if_asymmetry", p->rf.if_asymmetry)
+        else MATCH_FLOAT(PJSON_SEC_RF, "tuning_offset_hz", p->rf.tuning_offset_hz)
         else MATCH_FLOAT(PJSON_SEC_RF, "agc_attack_ms",        p->rf.agc_attack_ms)
         else MATCH_FLOAT(PJSON_SEC_RF, "agc_release_ms",       p->rf.agc_release_ms)
 
@@ -729,6 +757,7 @@ static inline int preset_json__section(const char *key)
     if (!strcmp(key,"audio_cable")) return PJSON_SEC_AUDIO_CABLE;
     if (!strcmp(key,"tv")) return PJSON_SEC_TV;
     if (!strcmp(key,"rf")) return PJSON_SEC_RF;
+    if (!strcmp(key,"vhs")) return PJSON_SEC_VHS;
     return -1;
 }
 

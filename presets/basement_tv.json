@@ -116,7 +116,9 @@
         "mod_bandwidth": 4000000,
         "noise_floor_dbm": -44.0,
         "agc_attack_ms": 3.0,
-        "agc_release_ms": 60.0
+        "agc_release_ms": 60.0,
+        "if_asymmetry": 1.0,
+        "tuning_offset_hz": 0.0
     },
     "brightness": 0.04,
     "contrast": 0.95,

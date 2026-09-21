@@ -52,7 +52,10 @@ get_resources() {
         gun_current)    echo "1 1 1" ;;
         beam_profile)   echo "1 3 1" ;;
         comb_filter)    echo "1 2 2" ;;
-        rf_mod_demod)   echo "1 0 1" ;;
+        rf_mod_demod)   echo "1 1 1" ;;
+        rf_if)          echo "1 2 1" ;;
+        vhs)            echo "1 2 1" ;;
+        osd)            echo "1 1 1" ;;
         video_amp)      echo "1 1 1" ;;
         h_blur_rgb)     echo "1 0 2" ;;
         temporal_blit)  echo "1 2 1" ;;

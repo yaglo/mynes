@@ -25,6 +25,10 @@ struct Params
     float blend_b;
     float motion_threshold;
     uint history_valid;
+    float tail_r;
+    float tail_g;
+    float tail_b;
+    float tail_weight;
 };
 
 struct HistoryBuf
@@ -118,5 +122,18 @@ kernel void main0(device CurBuf& _20 [[buffer(1)]], device PrevBuf& _45 [[buffer
     }
     _266.history_buf[i] = as_type<uint>(half2(light.xy));
     _266.history_buf[i + 1u] = as_type<uint>(half2(float2(light.z, 1.0)));
+    if (_74.tail_weight > 0.0)
+    {
+        uint j_1 = i + ((_74.width * _74.height) * 2u);
+        float3 tail = fast::max(drive, float3(0.0));
+        if (_74.history_valid != 0u)
+        {
+            float3 old = float3(float2(as_type<half2>(_266.history_buf[j_1])), float2(as_type<half2>(_266.history_buf[j_1 + 1u])).x);
+            tail = mix(tail, old, fast::clamp(float3(_74.tail_r, _74.tail_g, _74.tail_b), float3(0.0), float3(0.99989998340606689453125)));
+        }
+        _266.history_buf[j_1] = as_type<uint>(half2(tail.xy));
+        _266.history_buf[j_1 + 1u] = as_type<uint>(half2(float2(tail.z, 1.0)));
+        light = mix(light, tail, float3(fast::clamp(_74.tail_weight, 0.0, 1.0)));
+    }
     out_tex.write(float4(fast::max(light, float3(0.0)), 1.0), uint2(int2(p)));
 }

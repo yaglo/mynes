@@ -15,6 +15,7 @@ layout(set = 2, binding = 0) uniform Params {
     float blend_b;
     float motion_threshold;
     uint history_valid;
+    float tail_r, tail_g, tail_b, tail_weight;
 };
 vec3 current(uint i) {
     return vec3(unpackHalf2x16(cur_buf[i]), unpackHalf2x16(cur_buf[i+1u]).x);
@@ -50,5 +51,18 @@ void main() {
     }
     history_buf[i] = packHalf2x16(light.rg);
     history_buf[i+1u] = packHalf2x16(vec2(light.b, 1.0));
+    if (tail_weight>0.0) {
+        uint j=i+width*height*2u;
+        vec3 tail=max(drive,vec3(0));
+        if (history_valid!=0u) {
+            vec3 old=vec3(unpackHalf2x16(history_buf[j]),unpackHalf2x16(history_buf[j+1u]).x);
+            tail=mix(tail,old,clamp(vec3(tail_r,tail_g,tail_b),vec3(0),vec3(0.9999)));
+        }
+        history_buf[j]=packHalf2x16(tail.rg);
+        history_buf[j+1u]=packHalf2x16(vec2(tail.b,1));
+        // Both states have unit DC gain. Weight is integrated energy, not
+        // peak amplitude: a long lifetime must not brighten steady images.
+        light=mix(light,tail,clamp(tail_weight,0.0,1.0));
+    }
     imageStore(out_tex, ivec2(p), vec4(max(light, vec3(0.0)), 1.0));
 }

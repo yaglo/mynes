@@ -1,0 +1,42 @@
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct Params
+{
+    uint count;
+    uint samples_per_line;
+};
+
+struct Overlay
+{
+    uint rgba[1];
+};
+
+struct Video
+{
+    float rgb[1];
+};
+
+constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
+
+kernel void main0(constant Params& _19 [[buffer(0)]], device Overlay& _50 [[buffer(1)]], device Video& _73 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+{
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= _19.count)
+    {
+        return;
+    }
+    uint y = i / _19.samples_per_line;
+    uint x = ((i % _19.samples_per_line) * 256u) / _19.samples_per_line;
+    uint p = _50.rgba[(y * 256u) + x];
+    if ((p >> uint(24)) == 0u)
+    {
+        return;
+    }
+    float4 ui = unpack_unorm4x8_to_float(p);
+    _73.rgb[3u * i] = mix(_73.rgb[3u * i], ui.x, ui.w);
+    _73.rgb[(3u * i) + 1u] = mix(_73.rgb[(3u * i) + 1u], ui.y, ui.w);
+    _73.rgb[(3u * i) + 2u] = mix(_73.rgb[(3u * i) + 2u], ui.z, ui.w);
+}

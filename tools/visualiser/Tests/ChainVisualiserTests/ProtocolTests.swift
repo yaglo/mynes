@@ -6,6 +6,17 @@ final class ProtocolTests: XCTestCase {
         var value=n.littleEndian
         withUnsafeBytes(of: &value) { data.append(contentsOf: $0) }
     }
+    func testFullControlCatalog() {
+        var data=Data()
+        let count:UInt32=128
+        for n:UInt32 in [5,8+count*72,1,count] { word(n,into:&data) }
+        for i in 0..<count {
+            for n:UInt32 in [i,Float(0.5).bitPattern,Float(0).bitPattern,Float(1).bitPattern] { word(n,into:&data) }
+            data.append(Data(repeating:0,count:56))
+        }
+        XCTAssertEqual(PhysicalControl.decode(data)?.count,128)
+        XCTAssertNil(PhysicalControl.decode(data.dropLast()))
+    }
     func testPresetCatalog() {
         var data=Data()
         for n: UInt32 in [7,156,1,42,1,0,1,0,1] { word(n,into:&data) }

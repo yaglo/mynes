@@ -61,3 +61,20 @@ new KiCad layout and executable SPICE analysis. These two adapted files remain
 under CC BY-SA 4.0, separately from the emulator's source license. Symbol graphics
 are from the [KiCad symbol library](https://gitlab.com/kicad/libraries/kicad-symbols),
 used under its CC BY-SA 4.0 license with the library exception.
+
+## CRT rail implementation check
+
+`crt_video_recovery.cir` is an independent **generic equivalent circuit**, with
+1 kΩ and 12 nF giving the shader's assumed 12 µs recovery. It is original work,
+not a recovered service schematic. A 64-dot load pulse checks charge and decay:
+
+```sh
+(cd build && MYNES_CRT_MEASUREMENTS=/tmp/gpu-rail.csv bin/test_fidelity)
+python3 tools/circuits/measure_crt_recovery.py /tmp/gpu-rail.csv
+```
+
+The 256 actual GPU state samples and interpolated ngspice transient agreed to
+maximum error 1.86e-7 and RMS 7.95e-8 normalized volts in the 2026-09-21 run.
+The test deliberately removes rail feedback to isolate the RC equation. It
+validates the assumed filter, not the capacitance, regulation, EHT behavior or
+recovery time of any Sony, JVC or Toshiba set.

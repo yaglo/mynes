@@ -145,11 +145,25 @@ typedef struct {
     bool  enabled;              /* only true for RF connection */
     float carrier_freq;         /* channel metadata; baseband-equivalent RF does not tune it */
     float carrier_level_dbm;    /* sync-tip carrier power; 0 legacy -> -20 dBm */
-    float mod_bandwidth;        /* equivalent detected-video lowpass edge, Hz */
+    float mod_bandwidth;        /* equivalent receiver IF video edge, Hz */
+    float if_asymmetry;         /* 0=symmetric IF; 1=nominal Nyquist slope */
+    float tuning_offset_hz;     /* receiver IF detuning, not channel metadata */
     float noise_floor_dbm;      /* total additive channel noise before video filtering */
     float agc_attack_ms;        /* AGC attack time constant */
     float agc_release_ms;       /* AGC release time constant */
 } RFModulatorParams;
+
+/* Recovered NTSC VHS response: luma FM / colour-under paths collapsed to
+ * their baseband transfer. No claim of simulating magnetic tape domains. */
+typedef struct {
+    int enabled;
+    float luma_bandwidth;       /* recovered luma lowpass, Hz */
+    float chroma_bandwidth;     /* recovered colour envelope lowpass, Hz */
+    float chroma_delay_ns;      /* envelope delay relative to luma */
+    float timebase_ns;          /* residual line timebase error, peak ns */
+    float chroma_phase_deg;     /* residual line colour phase error, peak degrees */
+    float noise;               /* playback luma noise, peak normalized voltage */
+} VHSParams;
 
 static inline float video_rf_noise_rms(const RFModulatorParams *rf) {
     float carrier=rf->carrier_level_dbm!=0 ? rf->carrier_level_dbm : -20;
@@ -219,7 +233,9 @@ typedef struct {
     float mask_pitch_px;        /* phosphor cell spacing in drawable pixels */
     float mask_strength;        /* phosphor mask blend (0=off, 0.6=visible, 1.0=full) */
     int   subpixel_layout;      /* 0=none, 1=RGB stripe, 2=BGR stripe */
-    float persistence_ms;       /* phosphor decay time (1-3 ms for P22) */
+    float persistence_ms;       /* fast exponential time constant, ms; estimated per tube */
+    float persistence_tail_ms;  /* optional slow time constant, ms */
+    float persistence_tail_weight; /* fraction of integrated light in slow component */
 
     /* Glass. */
     float halation;             /* light scattering in glass (0-0.3) */
@@ -360,10 +376,8 @@ typedef struct {
     /* HDR gain. */
     float hdr_gain;             /* output multiplier (1.0=normal, 1.5=compensate mask, 2.0=bright) */
 
-    /* Per-phosphor gamma offset (§3.6). P22 R/G/B have slightly
-     * different response curves; these are added to the global
-     * encoder exponent per channel. Zero = no per-channel difference
-     * (legacy behavior). Typical P22: R +0.02, G -0.01, B +0.03. */
+    /* Legacy field names: per-gun transfer-exponent offsets model unequal
+     * grey tracking. Estimated controls, not measured phosphor chemistry. */
     float phosphor_gamma_offset_r;
     float phosphor_gamma_offset_g;
     float phosphor_gamma_offset_b;
@@ -380,8 +394,8 @@ typedef struct {
 
     /* Anti-glare sub-pixel blur (§5.6). Matte-screen treatment
      * slightly blurs the image as well as scattering reflections.
-     * Amount in texels of the composite texture (0 = glossy, 0.5 =
-     * heavy matte). */
+     * Radius follows phosphor pitch; amount also sets scattered fraction.
+     * Zero is glossy. This is a generic surface PSF, not a tube measurement. */
     float antiglare_blur;
 
     /* EMI brightness gradient (§5.9). Horizontal-deflection field
@@ -510,6 +524,7 @@ typedef struct {
     /* Stage parameters. */
     CableParams         cable;
     RFModulatorParams   rf;
+    VHSParams vhs;
     TVDisplayParams     tv;
 
     /* Console output stage. */

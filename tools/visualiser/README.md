@@ -1,6 +1,6 @@
 # Signal Studio
 
-Native macOS editor for the SDL3 GPU frontend. The graph follows five physical sections: connection, decoder, beam, phosphor, and glass. Controls change the live emulator through the same update functions as its OSD. The separate Audio controls button opens amplifier, mains-hum and noise controls; these values participate in preset save/load and dirty-state tracking.
+Native macOS editor for the SDL3 GPU frontend. The graph follows five physical sections: connection, decoder, beam, phosphor, and glass. Controls change the live emulator through the same update functions as its OSD. Remaining float parameters inherit the OSD targets, ranges and callbacks, including RF IF and VHS. Enums and toggles are available in the emulator OSD. The separate Audio controls button opens amplifier, mains-hum and noise controls; these values participate in preset save/load and dirty-state tracking.
 
 [See the rendered results](../../docs/nes-visual-showcase.md) · [Four CRT references and native close-ups](../../docs/gpu-beam-closeups.md)
 
@@ -30,7 +30,7 @@ Little-endian messages use a two-word header: type and payload byte count.
 | Type | Direction | Payload |
 | --- | --- | --- |
 | 0 | server → editor | Existing execution-stage snapshot |
-| 5 | server → editor | Version 1, count, 72-byte physical-control records |
+| 5 | server → editor | Version 1, count, 72-byte physical-control records (up to 192) |
 | 6 | editor → server | Control ID and float32 value |
 | 7 | server → editor | Version 1, revision, count, signed active ID, modified flag; 136-byte preset records (ID, user flag, name[128]) |
 | 8 | editor → server | Operation, ID, revision, UTF-8 name[128]; operations 1 load, 2 save, 3 save-as, 4 rename, 5 delete |

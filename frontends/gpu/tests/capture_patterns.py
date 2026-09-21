@@ -22,6 +22,7 @@ parser.add_argument("--onscreen",action="store_true")
 parser.add_argument("--size",default="2560x1664",help="offscreen drawable pixels")
 parser.add_argument("--mask-alignment",choices=["pixels","physical"],default="pixels")
 parser.add_argument("--window-size",default="1280x960")
+parser.add_argument("--pattern",choices=["chart","beam","recovery","chroma","pluge"],default="chart")
 parser.add_argument("--codes",type=Path,help="optional 256x240 PPU-code fixture")
 args=parser.parse_args()
 binary = args.binary.resolve()
@@ -41,6 +42,20 @@ for y in range(240):
             code = 0x20 if (x // (1 + (y - 176) // 8)) % 2 else 0x0f
         else:
             code = 0x20 if 40 < x < 216 and (y % 8 == 0 or x % 8 == 0) else 0x0f
+        if args.pattern == "beam":
+            # Isolated source scanlines: grey levels and colored excitation.
+            levels=[0x00,0x10,0x20,0x16,0x1a,0x12]
+            code=levels[min(x//43,5)] if y in (40,80,120,160,200) and 8<x<248 else 0x0f
+        elif args.pattern == "recovery":
+            # Identical mid-grey surrounds expose the causal wake of patches.
+            code=0x10
+            if 64<=x<128: code=0x20 if y<120 else 0x0f
+        elif args.pattern == "chroma":
+            # Chroma transitions plus high-frequency neutral detail; compare phases.
+            code=[0x16,0x1a,0x12,0x20][min(x//64,3)] if y<120 else (0x20 if x%4<2 else 0x0f)
+        elif args.pattern == "pluge":
+            # NES DAC black/grey steps, not standardized analogue PLUGE voltages.
+            code=[0x0f,0x0d,0x2d,0x3d,0x00,0x10,0x20,0x30][x//32]
         pattern[y * 256 + x] = code
 with tempfile.TemporaryDirectory(prefix="mynes-chart-") as tmp:
     source = Path(tmp) / "chart.bin"

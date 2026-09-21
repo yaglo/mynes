@@ -77,6 +77,32 @@ int test_crt_load(SDL_GPUDevice *gpu) {
         if(white==1) nominal_load=measured;
         else CHECK(fabsf(measured/nominal_load-2)<.001f);
     }
+    // An unloaded first-order rail agrees with an independent RC step response.
+    // Optional export lets tools/circuits/measure_crt_recovery.py compare ngspice.
+    c.tv.beam_current_load=0; c.tv.video_black_droop=0;
+    for(size_t i=0;i<floats;i++) {
+        int dot=(int)(i/3)%sp.samples_per_line/sp.samples_per_pixel;
+        input[i]=dot>=64 && dot<128 ? 1 : 0;
+    }
+    CHECK(gpu_buffer_upload(gpu,v.buf_rgb,input,v.rgb_size));
+    CHECK(chain_run(&v.sig_chain,gpu));
+    CHECK(gpu_buffer_download(gpu,v.buf_crt_load,load,map_count*sizeof(float)));
+    double dt=1.0/(signal_region_sample_rate_hz(SIGNAL_REGION_NTSC)/sp.samples_per_pixel);
+    const char *export_path=getenv("MYNES_CRT_MEASUREMENTS");
+    FILE *csv=export_path ? fopen(export_path,"w") : NULL;
+    if(csv) fprintf(csv,"seconds,gpu_rail\n");
+    double max_error=0;
+    for(int x=0;x<256;x++) {
+        double t=(x+1)*dt,charge=x>=64 ? 1-exp(-(t-64*dt)/12e-6) : 0;
+        if(x>=128) charge=(1-exp(-64*dt/12e-6))*exp(-(t-128*dt)/12e-6);
+        max_error=fmax(max_error,fabs(load[120*256+x]-charge));
+        if(csv) fprintf(csv,"%.12g,%.12g\n",t,load[120*256+x]);
+    }
+    if(csv) fclose(csv);
+    printf("CRT RC step maximum error: %.8g\n",max_error);CHECK(max_error<.00001);
+    // Restore a nonzero load for the following geometry checks.
+    for(size_t i=0;i<floats;i++) input[i]=1;
+    CHECK(gpu_buffer_upload(gpu,v.buf_rgb,input,v.rgb_size));CHECK(chain_run(&v.sig_chain,gpu));
     for(int sign=-1;sign<=1;sign+=2) {
         c.tv.hv_sag=sign*.3f; c.tv.focus_breathing=.2f;
         // Freeze the measured load while checking the inverse landing map.

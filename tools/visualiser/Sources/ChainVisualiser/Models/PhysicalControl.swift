@@ -15,7 +15,7 @@ struct PhysicalControl: Identifiable, Sendable, Equatable {
         }
         guard word(0) == 5, word(4) == data.count - 8, word(8) == 1 else { return nil }
         let count = Int(word(12))
-        guard count <= 48, data.count == 16 + count * 72 else { return nil }
+        guard count <= 192, data.count == 16 + count * 72 else { return nil }
         func string(_ offset: Int, _ length: Int) -> String {
             String(decoding: data[offset..<(offset + length)].prefix(while: { $0 != 0 }), as: UTF8.self)
         }

@@ -439,6 +439,12 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
                 COMMAND test_presets
                 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
+            find_program(MYNES_PYTHON3 NAMES python3)
+            if(MYNES_PYTHON3)
+                add_test(NAME gpu_preset_control_audit
+                    COMMAND ${MYNES_PYTHON3} ${CMAKE_SOURCE_DIR}/frontends/gpu/tests/test_preset_controls.py)
+            endif()
+
             # JSON preset save/load round-trip + string enum tests
             add_executable(test_preset_json
                 frontends/gpu/tests/test_preset_json.c
@@ -484,7 +490,7 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
             add_test(NAME gpu_pipeline_test COMMAND test_pipeline)
             get_target_property(PIPELINE_TEST_SOURCES test_pipeline SOURCES)
             list(REMOVE_ITEM PIPELINE_TEST_SOURCES frontends/gpu/tests/test_pipeline.c)
-            add_executable(test_fidelity frontends/gpu/tests/test_fidelity.c frontends/gpu/tests/test_display_fidelity.c frontends/gpu/tests/test_crt_load.c frontends/gpu/gpu_display.c ${PIPELINE_TEST_SOURCES})
+            add_executable(test_fidelity frontends/gpu/tests/test_fidelity.c frontends/gpu/tests/test_display_fidelity.c frontends/gpu/tests/test_crt_load.c frontends/gpu/tests/test_osd.c frontends/gpu/gpu_display.c ${PIPELINE_TEST_SOURCES})
             target_include_directories(test_fidelity PRIVATE frontends/gpu)
             target_link_libraries(test_fidelity PRIVATE nes_static ${MYNES_SDL3_TARGET} m)
             add_dependencies(test_fidelity gpu_shaders)

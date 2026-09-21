@@ -15,6 +15,7 @@ extern bool dispatch_gun_current_public(VideoGPUChain *, SDL_GPUCommandBuffer *)
 extern bool dispatch_h_blur_rgb_public(VideoGPUChain *, SDL_GPUCommandBuffer *);
 extern int test_display_fidelity(SDL_GPUDevice *gpu);
 extern int test_crt_load(SDL_GPUDevice *gpu);
+extern int test_osd(SDL_GPUDevice *gpu);
 static int failures;
 #define CHECK(x) do { if (!(x)) { fprintf(stderr, "FAIL %d: %s\n", __LINE__, #x); failures++; } } while (0)
 
@@ -31,12 +32,98 @@ static void temporal(SDL_GPUDevice *gpu, VideoGPUChain *v, uint32_t drive, float
         CHECK(fabsf(gpu_half_to_float((uint16_t)pixels[i*2]) - expected) < 0.001f);
 }
 
+static float temporal_output(SDL_GPUDevice *gpu,VideoGPUChain *v) {
+    SDL_GPUTransferBufferCreateInfo info={.usage=SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD,.size=v->beam_rgba_size};
+    SDL_GPUTransferBuffer *b=SDL_CreateGPUTransferBuffer(gpu,&info);
+    SDL_GPUCommandBuffer *cmd=SDL_AcquireGPUCommandBuffer(gpu);
+    SDL_GPUCopyPass *pass=SDL_BeginGPUCopyPass(cmd);
+    SDL_GPUTextureRegion src={.texture=v->tex_beam,.w=v->beam_out_w,.h=v->beam_out_h,.d=1};
+    SDL_GPUTextureTransferInfo dst={.transfer_buffer=b,.pixels_per_row=v->beam_out_w,.rows_per_layer=v->beam_out_h};
+    SDL_DownloadFromGPUTexture(pass,&src,&dst); SDL_EndGPUCopyPass(pass);
+    CHECK(SDL_SubmitGPUCommandBuffer(cmd)); CHECK(SDL_WaitForGPUIdle(gpu));
+    uint16_t *p=SDL_MapGPUTransferBuffer(gpu,b,false);
+    float value=p ? gpu_half_to_float(p[0]) : -1;
+    if(p) SDL_UnmapGPUTransferBuffer(gpu,b);
+    SDL_ReleaseGPUTransferBuffer(gpu,b); return value;
+}
+
+/* Probe sidebands through the actual complex GPU IF and envelope detector. */
+static void rf_sidebands(SDL_GPUDevice *gpu) {
+    enum {N=2048};
+    SignalChain sc; CHECK(chain_init(&sc,gpu,N,"shaders/compute"));
+    SDL_GPUBuffer *carrier=gpu_buffer_create(gpu,2*N*sizeof(float),GPU_BUF_READWRITE);
+    float taps[2*SIGNAL_RF_IF_TAPS];
+    signal_design_rf_if(taps,42954540,4.2e6f,1,0);
+    int ti=chain_upload_taps(&sc,gpu,taps,2*SIGNAL_RF_IF_TAPS);
+    GpuRFIFParams p={N,N,SIGNAL_RF_IF_TAPS,0};
+    int st=chain_add_stage(&sc,"IF",CHAIN_KERNEL_RF_IF,&p,sizeof(p),(N+255)/256,1);
+    sc.stages[st].external[0]=carrier; sc.stages[st].taps_index=ti;
+    float z[2*N],out[N],amplitude[2];
+    for(int side=0;side<2;side++) {
+        for(int i=0;i<N;i++) {
+            double a=2*M_PI*128*i/N;
+            z[2*i]=.8f+.01f*cos(a);z[2*i+1]=.01f*sin(a)*(side ? -1 : 1);
+        }
+        CHECK(gpu_buffer_upload(gpu,carrier,z,sizeof(z)));
+        CHECK(chain_run(&sc,gpu));CHECK(chain_download_output(&sc,gpu,out,sizeof(out)));
+        double re=0,im=0;
+        for(int i=256;i<N-256;i++) { double a=2*M_PI*128*i/N; re+=out[i]*cos(a); im+=out[i]*sin(a); }
+        amplitude[side]=(float)(2*hypot(re,im)/(N-512));
+    }
+    printf("RF IF sideband amplitudes: %.6f %.6f\n",amplitude[0],amplitude[1]);
+    CHECK(amplitude[0]>.025f && amplitude[0]<.035f);
+    CHECK(amplitude[1]<.001f);
+    for(int i=0;i<N;i++) { z[2*i]=.8f; z[2*i+1]=0; }
+    CHECK(gpu_buffer_upload(gpu,carrier,z,sizeof(z)));CHECK(chain_run(&sc,gpu));
+    CHECK(chain_download_output(&sc,gpu,out,sizeof(out)));
+    float gain=.875f/(1+264.0f/788),bias=.125f+gain;
+    for(int i=0;i<N;i++) CHECK(fabsf(out[i]-(bias-.8f)/gain)<1e-5f);
+    SDL_ReleaseGPUBuffer(gpu,carrier);chain_destroy(&sc,gpu);
+}
+
+static void tape_response(SDL_GPUDevice *gpu) {
+    enum {N=2048};
+    SignalChain sc;CHECK(chain_init(&sc,gpu,N,"shaders/compute"));
+    float taps[4*SIGNAL_VHS_TAPS];
+    signal_design_vhs(taps,42954540,2.5e6f,.35e6f,8.0f);
+    int ti=chain_upload_taps(&sc,gpu,taps,4*SIGNAL_VHS_TAPS);
+    GpuVHSParams p={.count=N,.samples_per_line=N,.tap_count=SIGNAL_VHS_TAPS,.delay_samples=8};
+    int st=chain_add_stage(&sc,"Tape",CHAIN_KERNEL_VHS,&p,sizeof(p),N/256,1);
+    sc.stages[st].taps_index=ti;
+    float in[N],out[N];
+    const float frequencies[]={0,1e6f,3579545.454545f,3579545.454545f+1e6f};
+    float amplitude[4];
+    for(int f=0;f<4;f++) {
+        for(int i=0;i<N;i++) in[i]=.25f+.1f*cosf(2*M_PI*frequencies[f]*i/42954540);
+        CHECK(chain_upload_input(&sc,gpu,in,sizeof(in)));CHECK(chain_run(&sc,gpu));
+        CHECK(chain_download_output(&sc,gpu,out,sizeof(out)));
+        double err=0;
+        for(int i=256;i<N-256;i++) err+=(out[i]-.25f)*(out[i]-.25f);
+        amplitude[f]=(float)sqrt(err/(N-512));
+        if(f==0) for(int i=0;i<N;i++) CHECK(fabsf(out[i]-.35f)<1e-5f);
+    }
+    printf("VHS RMS: DC %.5f, 1MHz %.5f, carrier %.5f, upper sideband %.5f\n",
+        amplitude[0],amplitude[1],amplitude[2],amplitude[3]);
+    CHECK(amplitude[1]>.06f && amplitude[1]<.08f);
+    CHECK(amplitude[2]>.06f && amplitude[2]<.08f); // delay envelopes, not carrier phase
+    CHECK(amplitude[3]<.005f);
+    chain_destroy(&sc,gpu);
+}
+
 static void rf(SDL_GPUDevice *gpu) {
     SignalChain sc;
     CHECK(chain_init(&sc, gpu, 256, "shaders/compute"));
     GpuRFParams p = {.count=256, .samples_per_line=128, .noise_amplitude=0.1f,
         .sample_rate=42954540.0f, .full_line_samples=2728, .hum_hz=60.0f};
     int stage = chain_add_stage(&sc, "RF test", CHAIN_KERNEL_RF, &p, sizeof(p), 1, 1);
+    SDL_GPUBuffer *carrier=gpu_buffer_create(gpu,256*2*sizeof(float),GPU_BUF_READWRITE);
+    CHECK(carrier!=NULL);
+    sc.stages[stage].external[0]=carrier;
+    float unit_tap[]={1,0};
+    int ti=chain_upload_taps(&sc,gpu,unit_tap,2);
+    GpuRFIFParams ip={256,128,1,0};
+    int detector=chain_add_stage(&sc,"Envelope",CHAIN_KERNEL_RF_IF,&ip,sizeof(ip),1,1);
+    sc.stages[detector].external[0]=carrier; sc.stages[detector].taps_index=ti;
     float input[256] = {0}, a[256], b[256], repeat[256];
     CHECK(chain_upload_input(&sc, gpu, input, sizeof(input)));
     CHECK(chain_run(&sc, gpu));
@@ -64,6 +151,7 @@ static void rf(SDL_GPUDevice *gpu) {
         CHECK(fabsf(b[i] - 0.2f*sinf(0.7f + 6.28318530718f*60*t)) < 1e-5f);
     }
     chain_destroy(&sc, gpu);
+    SDL_ReleaseGPUBuffer(gpu,carrier);
 }
 
 /* Exercise the actual DAC -> RF -> receiver path over multiple colour-phase
@@ -355,8 +443,8 @@ static void beam_height_response(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoChai
     }
     CHECK(gpu_buffer_upload(gpu,v->buf_deflection_x,dx,W*H*16));
     CHECK(gpu_buffer_upload(gpu,v->buf_deflection_y,dy,W*H*16));
-    const float drive[]={.1f,.25f,.5f,.75f,1};double last=0;
-    for(int k=0;k<5;k++) {
+    const float drive[]={.1f,.25f,.5f,.75f,1,1.2f};double last=0;
+    for(int k=0;k<6;k++) {
         float current=powf(drive[k],c->tv.gamma);
         for(int x=0;x<v->signal_fmt.samples_per_line;x++) for(int ch=0;ch<3;ch++)
             rgb[(LINE*v->signal_fmt.samples_per_line+x)*3+ch]=current;
@@ -523,8 +611,8 @@ static void horizontal_beam_energy(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoCh
     // energy and second moment, including red next to an unchanged green.
     c->tv.beam_spot_growth=.6f; v->beam_h_blur_sigma=3;
     double previous=0, green_moment=0;
-    const float levels[]={.15f,.5f,1};
-    for(int k=0;k<3;k++) {
+    const float levels[]={.15f,.5f,1,1.2f};
+    for(int k=0;k<4;k++) {
         memset(voltage,0,v->rgb_size);
         voltage[center*3]=levels[k];voltage[center*3+1]=.4f;
         CHECK(gpu_buffer_upload(gpu,v->buf_rgb,voltage,v->rgb_size));
@@ -706,6 +794,7 @@ int main(void) {
     if (!gpu) { fprintf(stderr, "%s\n", SDL_GetError()); return 1; }
     failures += test_display_fidelity(gpu);
     failures += test_crt_load(gpu);
+    failures += test_osd(gpu);
     source_phase(gpu);
     comb_separation(gpu);
     {
@@ -724,6 +813,8 @@ int main(void) {
     separated_yc(gpu);
     rgb_source(gpu);
     rf(gpu);
+    rf_sidebands(gpu);
+    tape_response(gpu);
     rf_temporal_continuity(gpu);
     dac_equivalence(gpu, SIGNAL_REGION_NTSC);
     dac_equivalence(gpu, SIGNAL_REGION_PAL);
@@ -759,6 +850,19 @@ int main(void) {
     v.temporal_history_valid=true;
     CHECK(video_gpu_set_beam_params(&v,gpu,16,32,1,0.2f,0.7f));
     CHECK(!v.temporal_history_valid); // Equal pixel area, different texture shape.
+    v.tail_weight=.1f;v.tail_r=v.tail_g=v.tail_b=.8f;
+    v.blend_r=v.blend_g=v.blend_b=.5f;
+    CHECK(video_gpu_set_beam_params(&v,gpu,16,16,1,.2f,.7f));
+    temporal(gpu,&v,0x3c003c00,1);CHECK(fabsf(temporal_output(gpu,&v)-1)<.001f);
+    temporal(gpu,&v,0,.5f);CHECK(fabsf(temporal_output(gpu,&v)-.53f)<.001f);
+    temporal(gpu,&v,0,.25f);CHECK(fabsf(temporal_output(gpu,&v)-.289f)<.001f);
+    v.elapsed_frames=2;
+    temporal(gpu,&v,0,.0625f);CHECK(fabsf(temporal_output(gpu,&v)-.09721f)<.001f);
+    video_gpu_reset_temporal_state(&v,gpu);
+    temporal(gpu,&v,0x3c003c00,1);CHECK(fabsf(temporal_output(gpu,&v)-1)<.001f);
+    v.tail_weight=0;
+    CHECK(video_gpu_set_beam_params(&v,gpu,16,16,1,.2f,.7f));
+    CHECK(v.phosphor_history_size==v.beam_rgba_size && !v.temporal_history_valid);
     video_gpu_destroy(&v,gpu);
     SDL_DestroyGPUDevice(gpu);
     SDL_Quit();

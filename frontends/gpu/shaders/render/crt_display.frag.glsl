@@ -175,26 +175,19 @@ float vignette_factor(vec2 coord, float strength) {
     return clamp(v * v, 0.0, 1.0);
 }
 
-/* -----------------------------------------------------------------------
- * Main
- * ----------------------------------------------------------------------- */
-void main() {
-    /* Beam/raster geometry now lives in deflection.comp.glsl, so this
-     * pass only samples the already-landed beam texture and applies
-     * fixed screen/glass optics at the physical tube face. */
-    vec2 sample_uv = clamp(uv, vec2(0.0), vec2(1.0));
-    vec3 color = vec3(0.0);
-    color = beam_light(sample_uv);
-
+// Excitation and emitted spectral light at one physical phosphor location.
+// Optical surface scattering samples this result, including the grille.
+vec3 phosphor_light(vec2 p, vec2 face_pos) {
+    vec3 color=beam_light(p);
     // Generic purity error: redistribute excitation between phosphors,
     // before their spatial coverage is applied. Magnetic mislanding cannot
     // emit light from a black input. Smooth Cartesian lobes avoid an atan
     // seam; this is not a measured magnetic field or electron-optics model.
     if (degauss_tint > 0.001) {
-        vec2 p = (uv - 0.5) * 2.0;
-        vec3 lobes = 0.5 + 0.25 * vec3(p.x, -0.5*p.x + 0.8660254*p.y,
-                                      -0.5*p.x - 0.8660254*p.y);
-        vec3 lost = color * clamp(degauss_tint * dot(p,p) * 0.12 * lobes, 0.0, 0.5);
+        vec2 pos = (p - 0.5) * 2.0;
+        vec3 lobes = 0.5 + 0.25 * vec3(pos.x, -0.5*pos.x + 0.8660254*pos.y,
+                                      -0.5*pos.x - 0.8660254*pos.y);
+        vec3 lost = color * clamp(degauss_tint * dot(pos,pos) * 0.12 * lobes, 0.0, 0.5);
         color += 0.5 * (lost.yzx + lost.zxy) - lost;
     }
     // Approximate cross-phosphor excitation before the mask, so the light
@@ -204,33 +197,45 @@ void main() {
         color = mix(color, vec3(mean_excitation), clamp(secondary_scatter, 0.0, 1.0));
     }
 
-    /* §5.6 anti-glare blur — matte tube treatments scatter emitted
-     * phosphor light through a fine-grain surface, blurring the
-     * image at sub-pixel scale. Cheap approximation: add a 4-tap
-     * cross at ±antiglare_blur texels and mix in.
-     * 0 = glossy (untreated), 0.3 = heavy matte. */
-    if (antiglare_blur > 0.001) {
-        vec2 ts = antiglare_blur / src_size;
-        vec3 c0 = beam_light(sample_uv + vec2( ts.x,  0.0));
-        vec3 c1 = beam_light(sample_uv + vec2(-ts.x,  0.0));
-        vec3 c2 = beam_light(sample_uv + vec2(0.0,   ts.y));
-        vec3 c3 = beam_light(sample_uv + vec2(0.0,  -ts.y));
-        vec3 blurred = 0.25 * (c0 + c1 + c2 + c3);
-        float mix_amt = clamp(antiglare_blur, 0.0, 1.0);
-        color = mix(color, blurred, mix_amt);
+    vec3 drive=color;
+    if (mask_strength > 0.01)
+        color *= mix(vec3(1.0), phosphor_mask(face_pos), mask_strength);
+    // Generic legacy material-response control, not a measured phosphor fit.
+    // Use unmasked excitation: changing host pitch must not change the
+    // response curve. Shifted emission remains at its originating stripe.
+    if (chromaticity_drive_shift > 0.001) {
+        float s=clamp(chromaticity_drive_shift,0.0,1.0);
+        vec3 response=drive/(1.0+drive);
+        color.b=color.b*(1.0-0.03*s*response.b)+0.04*s*response.g*color.g;
+        color.r*=1.0+0.02*s*response.r;
     }
+    return color;
+}
 
-    /* (d) Phosphor mask — raster-only (no beam → no phosphor emission).
-     * Mask tiles in screen pixels. Barrel distortion in this sim models
-     * yoke deflection error (where the beam lands), not glass curvature —
-     * the mask is physically fixed on the tube face regardless of where
-     * the beam misses, so it stays rectilinear on-screen while only the
-     * image warps. */
-    if (mask_strength > 0.01) {
-        // gl_FragCoord is in drawable pixels, not source texels or UI points.
-        // Include desktop scaling and the window origin; geometry never warps the mask.
-        vec2 local_frag_pos = gl_FragCoord.xy * mask_scale + mask_origin;
-        color *= mix(vec3(1.0), phosphor_mask(local_frag_pos), mask_strength);
+/* -----------------------------------------------------------------------
+ * Main
+ * ----------------------------------------------------------------------- */
+void main() {
+    /* Beam/raster geometry now lives in deflection.comp.glsl, so this
+     * pass only samples the already-landed beam texture and applies
+     * fixed screen/glass optics at the physical tube face. */
+    vec2 sample_uv = clamp(uv, vec2(0.0), vec2(1.0));
+    vec3 color;
+
+    vec2 face_pos=gl_FragCoord.xy*mask_scale+mask_origin;
+    color=phosphor_light(sample_uv,face_pos);
+    // Fine surface scatter acts AFTER emission through the fixed grille.
+    // Radius follows phosphor pitch, not source texture or UI-point size.
+    if (antiglare_blur > 0.001) {
+        float amount=clamp(antiglare_blur,0.0,1.0);
+        vec2 radius=vec2(amount*mask_pitch_pixels)/max(mask_scale,vec2(0.001));
+        vec2 dx=vec2(radius.x,0),dy=vec2(0,radius.y);
+        vec3 blurred=0.25*(
+            phosphor_light(sample_uv+dx/out_size,face_pos+dx*mask_scale)+
+            phosphor_light(sample_uv-dx/out_size,face_pos-dx*mask_scale)+
+            phosphor_light(sample_uv+dy/out_size,face_pos+dy*mask_scale)+
+            phosphor_light(sample_uv-dy/out_size,face_pos-dy*mask_scale));
+        color=mix(color,blurred,amount);
     }
 
     // Glass transports emitted light into neighbouring areas. Both controls
@@ -244,25 +249,6 @@ void main() {
         vec3 h=clamp(halation_strength*tint,vec3(0.0),vec3(1.0));
         float r=clamp(glass_reflection*0.08,0.0,1.0);
         color=mix(color,halo,1.0-(1.0-h)*(1.0-r));
-    }
-
-    /* §5.4 Phosphor chromaticity shift with drive level — each gun's
-     * spectral peak shifts at high drive:
-     *   green: slight blueward shift at high drive (the ZnS:Cu,Al band
-     *          broadens toward shorter wavelengths)
-     *   red:   stable chromaticity, but the slow/fast decay components
-     *          have slightly different hues — high-drive pulses weight
-     *          the fast component (slightly warmer/redder).
-     *   blue:  efficiency drops at high drive → apparent desaturation.
-     * All three are quadratic in drive level, so dark pixels are
-     * unaffected. */
-    if (chromaticity_drive_shift > 0.001) {
-        float r2 = color.r * color.r;
-        float g2 = color.g * color.g;
-        float b2 = color.b * color.b;
-        color.b += g2 * chromaticity_drive_shift * 0.04;
-        color.r += r2 * chromaticity_drive_shift * 0.02;
-        color.b -= b2 * chromaticity_drive_shift * 0.03;
     }
 
     /* §5.3 cathode aging / non-uniformity — center dims faster than

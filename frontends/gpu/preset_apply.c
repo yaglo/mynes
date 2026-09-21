@@ -3,6 +3,7 @@
  * preset_apply.c -- Preset application, OSD menu callbacks, overlay compositing
  */
 #include "preset_apply.h"
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -35,6 +36,27 @@ static void gpu_cb_update_rc_params(void);
 /* ============================================================================
  * Preset application -- drives SignalPrecompute + VideoChain + AudioChain
  * ============================================================================ */
+
+static void apply_audio_preset(PresetCtx *ctx,const PhysicalPreset *p) {
+    /* --- AudioChain --- */
+    audio_chain_init_preset(ctx->audio_chain, p->console_variant,
+                            p->speaker_type, ctx->region);
+    float audio_length=fmaxf(p->audio_cable_length_m,0.0f);
+    float audio_cap=p->audio_cable.capacitance_per_m>0 ? p->audio_cable.capacitance_per_m : 67e-12f;
+    ctx->audio_chain->cable.capacitance=audio_length*audio_cap;
+    ctx->audio_chain->cable.resistance=75.0f + audio_length*fmaxf(p->audio_cable.resistance_per_m,0.0f)
+        + fmaxf(p->audio_cable.connector_resistance,0.0f);
+    if (p->audio_hum_frequency > 0) ctx->audio_chain->psu_hum.frequency = p->audio_hum_frequency;
+    ctx->audio_chain->psu_hum.harmonic_2 = p->audio_hum_harmonic_2;
+    ctx->audio_chain->psu_hum.harmonic_3 = p->audio_hum_harmonic_3;
+    ctx->audio_chain->psu_hum.amplitude=fmaxf(0,p->audio_psu_hum_amplitude);
+    ctx->audio_chain->psu_hum.enabled=p->audio_psu_hum_amplitude>0;
+    ctx->audio_chain->noise_floor.amplitude=fmaxf(0,p->audio_noise_floor);
+    ctx->audio_chain->noise_floor.enabled=p->audio_noise_floor>0;
+    ctx->audio_chain->amp_saturation.drive=fmaxf(1,p->audio_saturation_drive);
+    ctx->audio_chain->amp_saturation.enabled=p->audio_saturation_drive>1.01f;
+    audio_chain_prepare(ctx->audio_chain);
+}
 
 /* CPU-side portion of a preset apply — populates SignalPrecompute,
  * VideoChain, and AudioChain from the preset JSON. Idempotent; safe to
@@ -74,6 +96,19 @@ static void preset_apply_cpu_state_ex(PresetCtx *ctx, const PhysicalPreset *p,
     if (ctx->video_chain->tv.v_size < 0.01f) ctx->video_chain->tv.v_size = 1.0f;
     ctx->video_chain->cable = p->video_cable;
     ctx->video_chain->rf = p->rf;
+    ctx->video_chain->vhs = p->vhs;
+    // Expose effective defaults in the OSD, not a misleading zero value.
+    RFModulatorParams *rf=&ctx->video_chain->rf;
+    rf->enabled=p->connection==VIDEO_CONN_RF;
+    if(rf->carrier_level_dbm==0) rf->carrier_level_dbm=-20;
+    if(rf->noise_floor_dbm==0) rf->noise_floor_dbm=-70;
+    if(rf->mod_bandwidth<=0) rf->mod_bandwidth=4e6f;
+    if(rf->agc_attack_ms<=0) {
+        rf->agc_attack_ms=-signal_region_frame_ms(new_region)/logf(.9f);
+        rf->agc_release_ms=-signal_region_frame_ms(new_region)/logf(.98f);
+    }
+    if(ctx->video_chain->vhs.luma_bandwidth<=0) ctx->video_chain->vhs.luma_bandwidth=2.5e6f;
+    if(ctx->video_chain->vhs.chroma_bandwidth<=0) ctx->video_chain->vhs.chroma_bandwidth=.35e6f;
     ctx->video_chain->console_coupling_R = p->console_coupling_R>0 ? p->console_coupling_R : 75.0f;
     ctx->video_chain->console_coupling_C = p->console_coupling_C;
     ctx->video_chain->console_amp_bw = p->console_amp_bw;
@@ -106,30 +141,7 @@ static void preset_apply_cpu_state_ex(PresetCtx *ctx, const PhysicalPreset *p,
     /* --- SignalPrecompute: color matrix from preset TV params --- */
     rebuild_color_matrix(ctx);
 
-    /* --- AudioChain --- */
-    audio_chain_init_preset(ctx->audio_chain, p->console_variant,
-                            p->speaker_type, new_region);
-    float audio_length=fmaxf(p->audio_cable_length_m,0.0f);
-    float audio_cap=p->audio_cable.capacitance_per_m>0 ? p->audio_cable.capacitance_per_m : 67e-12f;
-    ctx->audio_chain->cable.capacitance=audio_length*audio_cap;
-    ctx->audio_chain->cable.resistance=75.0f + audio_length*fmaxf(p->audio_cable.resistance_per_m,0.0f)
-        + fmaxf(p->audio_cable.connector_resistance,0.0f);
-    if (p->audio_hum_frequency > 0) ctx->audio_chain->psu_hum.frequency = p->audio_hum_frequency;
-    ctx->audio_chain->psu_hum.harmonic_2 = p->audio_hum_harmonic_2;
-    ctx->audio_chain->psu_hum.harmonic_3 = p->audio_hum_harmonic_3;
-    if (p->audio_psu_hum_amplitude > 0) {
-        ctx->audio_chain->psu_hum.enabled = true;
-        ctx->audio_chain->psu_hum.amplitude = p->audio_psu_hum_amplitude;
-    }
-    if (p->audio_noise_floor > 0) {
-        ctx->audio_chain->noise_floor.enabled = true;
-        ctx->audio_chain->noise_floor.amplitude = p->audio_noise_floor;
-    }
-    if (p->audio_saturation_drive > 1.01f) {
-        ctx->audio_chain->amp_saturation.enabled = true;
-        ctx->audio_chain->amp_saturation.drive = p->audio_saturation_drive;
-    }
-    audio_chain_prepare(ctx->audio_chain);
+    apply_audio_preset(ctx,p);
 }
 
 void preset_apply_cpu_state(PresetCtx *ctx, const PhysicalPreset *p) {
@@ -423,6 +435,11 @@ static void gpu_cb_update_beam_params(void) {
     if (!*g_ctx->gpu_video_enabled) return;
     VideoGPUChain *vgc = g_ctx->video_gpu_chain;
     TVDisplayParams *tv = &g_ctx->video_chain->tv;
+    vgc->tail_weight=tv->persistence_tail_ms>0 ? fminf(1,fmaxf(0,tv->persistence_tail_weight)) : 0;
+    int tail_region=vgc->signal_fmt.region;
+    vgc->tail_r=signal_persistence_weight(tail_region,tv->persistence_tail_ms,tv->persistence_r);
+    vgc->tail_g=signal_persistence_weight(tail_region,tv->persistence_tail_ms,tv->persistence_g);
+    vgc->tail_b=signal_persistence_weight(tail_region,tv->persistence_tail_ms,tv->persistence_b);
     float sig_n = video_beam_sigma(tv, false);
     float sig_w = video_beam_sigma(tv, true);
     video_gpu_set_beam_params(vgc, g_ctx->gpu,
@@ -682,6 +699,7 @@ static PhysicalPreset preset_capture_live(void) {
     p.tv                 = g_ctx->video_chain->tv;
     p.video_cable        = g_ctx->video_chain->cable;
     p.rf                 = g_ctx->video_chain->rf;
+    p.vhs                = g_ctx->video_chain->vhs;
     p.console_coupling_R = g_ctx->video_chain->console_coupling_R;
     p.console_coupling_C = g_ctx->video_chain->console_coupling_C;
     p.console_amp_bw     = g_ctx->video_chain->console_amp_bw;
@@ -700,6 +718,11 @@ static PhysicalPreset preset_capture_live(void) {
     p.audio_noise_floor = ac->noise_floor.amplitude;
 
     return p;
+}
+
+static void gpu_cb_audio_setup(void) {
+    PhysicalPreset p=preset_capture_live();
+    apply_audio_preset(g_ctx,&p);
 }
 
 /* Save the live VideoChain + signal state as a JSON preset under
@@ -808,18 +831,8 @@ bool preset_is_user(int index) { return index >= 0 && index < preset_count && pr
 bool preset_is_modified(void) {
     if (!g_ctx || preset_active_index() < 0) return true;
     PhysicalPreset p = preset_capture_live();
-    return memcmp(&p.tv,&preset_baseline.tv,sizeof(p.tv)) ||
-        memcmp(&p.video_cable,&preset_baseline.video_cable,sizeof(p.video_cable)) ||
-        memcmp(&p.rf,&preset_baseline.rf,sizeof(p.rf)) ||
-        p.connection != preset_baseline.connection || p.comb_type != preset_baseline.comb_type ||
-        p.brightness != preset_baseline.brightness || p.contrast != preset_baseline.contrast ||
-        p.chroma_gain != preset_baseline.chroma_gain || p.console_psu_hum != preset_baseline.console_psu_hum ||
-        p.audio_saturation_drive != preset_baseline.audio_saturation_drive ||
-        p.audio_psu_hum_amplitude != preset_baseline.audio_psu_hum_amplitude ||
-        p.audio_hum_frequency != preset_baseline.audio_hum_frequency ||
-        p.audio_hum_harmonic_2 != preset_baseline.audio_hum_harmonic_2 ||
-        p.audio_hum_harmonic_3 != preset_baseline.audio_hum_harmonic_3 ||
-        p.audio_noise_floor != preset_baseline.audio_noise_floor;
+    size_t start=offsetof(PhysicalPreset,connection);
+    return memcmp((const char *)&p+start,(const char *)&preset_baseline+start,sizeof(p)-start)!=0;
 }
 
 static void preset_refresh_menu(void) {
@@ -907,17 +920,18 @@ bool preset_manage(uint32_t op, int index, uint32_t revision,
  * dynamically-scanned preset actions. */
 static OSDMenuItem menu_dac[4];           /* Stage 1: DAC / connection / phase */
 static OSDMenuItem menu_console[5];       /* Stage 2: console output */
-static OSDMenuItem menu_cable[8];         /* Stage 3: cable transmission */
+static OSDMenuItem menu_cable[9];         /* Stage 3: cable transmission */
 static OSDMenuItem menu_comb[5];          /* Stage 5: separation + display smoothing */
 static OSDMenuItem menu_chroma[8];        /* Stage 6-7: chroma demod */
 static OSDMenuItem menu_luma[7];          /* Stage 8: luma processing */
 static OSDMenuItem menu_color_decode[13]; /* Stage 9: matrix decode */
-static OSDMenuItem menu_video_amp[5];     /* Stage 10: video amplifier */
-static OSDMenuItem menu_beam[32];         /* Stage 11: electron beam */
-static OSDMenuItem menu_phosphor[10];     /* Stage 12: phosphor screen */
-static OSDMenuItem menu_glass[24];        /* Stage 13: CRT glass + service geometry */
-static OSDMenuItem menu_env[6];           /* Stage 14: environment */
-static OSDMenuItem menu_audio_chain[9];
+static OSDMenuItem menu_video_amp[48];     /* Stage 10: video amplifier */
+static OSDMenuItem menu_beam[48];         /* Stage 11: electron beam */
+static OSDMenuItem menu_phosphor[48];     /* Stage 12: phosphor screen */
+static OSDMenuItem menu_glass[48];        /* Stage 13: CRT glass + service geometry */
+static OSDMenuItem menu_env[48];           /* Stage 14: environment */
+static OSDMenuItem menu_audio_chain[16];
+static OSDMenuItem menu_rf[7],menu_vhs[7];
 
 /* Mid-level submenus. menu_video[] + preset_menu_root[] are forward-
  * declared near the top of this file so the save action can reach them. */
@@ -1069,6 +1083,7 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_cable[n++] = MI_FLOAT("Shield eff",    &vc->cable.shield_effectiveness, 0.05f, 0.0f, 1.0f, gpu_cb_update_rc_params, "%.2f");
     menu_cable[n++] = MI_FLOAT("Ghost level",   &vc->cable.ghost_level,          0.01f, 0.0f, 0.20f, gpu_cb_update_rc_params, "%.2f");
     menu_cable[n++] = MI_INT("Ghost delay",     &vc->cable.ghost_delay,          2.0f, 0.0f, 40.0f, gpu_cb_update_rc_params, "%d");
+    menu_cable[n++] = MI_FLOAT("Termination (ohm)", &vc->cable.impedance, 5, 10, 300, gpu_cb_update_rc_params, "%.0f");
     const int menu_cable_count=n;
 
     /* ================================================================
@@ -1089,7 +1104,7 @@ void preset_ctx_init(PresetCtx *ctx) {
      * Stage 6-7: Chroma demodulation
      * ================================================================ */
     n = 0;
-    menu_chroma[n++] = MI_FLOAT("I BW (wide)",    &vc->tv.chroma_bandwidth, 50000.0f,  300000.0f, 2000000.0f, gpu_cb_redesign_firs, "%.0f");
+    menu_chroma[n++] = MI_FLOAT("I BW (wide)",    &vc->tv.chroma_bandwidth, 50000.0f,  100000.0f, 2000000.0f, gpu_cb_redesign_firs, "%.0f");
     /* Q bandwidth: NTSC spec = 0.5 MHz (narrower than 1.3 MHz I). Zero
      * here means "equi-band with I", which matches cheap consumer sets
      * and the pre-split pipeline default. */
@@ -1147,14 +1162,17 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_video_amp[n++] = MI_FLOAT("G bandwidth",  &vc->tv.g_bandwidth,  100000.0f, 2000000.0f, 10000000.0f, gpu_cb_reinit_stages, "%.0f");
     menu_video_amp[n++] = MI_FLOAT("B bandwidth",  &vc->tv.b_bandwidth,  100000.0f, 2000000.0f, 10000000.0f, gpu_cb_reinit_stages, "%.0f");
     menu_video_amp[n++] = MI_FLOAT("Gamma",        &vc->tv.gamma,        0.02f, 1.5f, 2.8f, gpu_cb_update_color_matrix, "%.2f");
+    menu_video_amp[n++] = MI_FLOAT("Velocity modulation", &vc->tv.velocity_mod, 0.01f, 0.0f, 1.0f, gpu_cb_update_beam_params, "%.3f");
+    menu_video_amp[n++] = MI_FLOAT("Rise/fall asymmetry", &vc->tv.asym_rise_fall, 0.01f, 0.0f, 1.0f, gpu_cb_update_beam_params, "%.3f");
+    menu_video_amp[n++] = MI_FLOAT("Vertical smear", &vc->tv.vertical_smear, 0.01f, 0.0f, 1.0f, gpu_cb_update_beam_params, "%.3f");
     const int menu_video_amp_count=n;
 
     /* ================================================================
      * Stage 11: Electron beam — spot profile, bloom, convergence, jitter
      * ================================================================ */
     n = 0;
-    menu_beam[n++] = MI_FLOAT("Dark FWHM (lines)", &vc->tv.beam_fwhm_min, 0.02f, 0.12f, 2.35f, gpu_cb_update_beam_params, "%.2f");
-    menu_beam[n++] = MI_FLOAT("White FWHM (lines)", &vc->tv.beam_fwhm_max, 0.02f, 0.12f, 2.35f, gpu_cb_update_beam_params, "%.2f");
+    menu_beam[n++] = MI_FLOAT("Dark FWHM (lines)", &vc->tv.beam_fwhm_min, 0.02f, 0.0f, 2.35f, gpu_cb_update_beam_params, "%.2f");
+    menu_beam[n++] = MI_FLOAT("White FWHM (lines)", &vc->tv.beam_fwhm_max, 0.02f, 0.0f, 2.35f, gpu_cb_update_beam_params, "%.2f");
     menu_beam[n++] = MI_FLOAT("Spot size",         &vc->tv.beam_spot_size,       0.5f, 1.0f, 16.0f, gpu_cb_update_beam_params, "%.1f");
     menu_beam[n++] = MI_FLOAT("Bloom gamma",       &vc->tv.bloom_gamma,          0.1f, 1.0f, 3.0f, gpu_cb_update_beam_params, "%.1f");
     menu_beam[n++] = MI_FLOAT("Edge focus",        &vc->tv.edge_focus,           0.02f, 0.0f, 0.5f, gpu_cb_update_beam_params, "%.2f");
@@ -1177,8 +1195,8 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_beam[n++] = MI_FLOAT("Conv R Y",          &vc->tv.conv_r_y,            0.5f, -5.0f, 5.0f, gpu_cb_update_beam_params, "%+.1f");
     menu_beam[n++] = MI_FLOAT("Conv B X",          &vc->tv.conv_b_x,            0.5f, -10.0f, 10.0f, gpu_cb_update_beam_params, "%+.1f");
     menu_beam[n++] = MI_FLOAT("Conv B Y",          &vc->tv.conv_b_y,            0.5f, -5.0f, 5.0f, gpu_cb_update_beam_params, "%+.1f");
-    menu_beam[n++] = MI_FLOAT("H jitter",          &vc->tv.h_jitter,             0.001f, 0.0f, 0.02f, gpu_cb_update_beam_params, "%.3f");
-    menu_beam[n++] = MI_FLOAT("V jitter",          &vc->tv.v_jitter,             0.001f, 0.0f, 0.02f, gpu_cb_update_beam_params, "%.3f");
+    menu_beam[n++] = MI_FLOAT("H jitter",          &vc->tv.h_jitter,             0.01f, 0.0f, 1.0f, gpu_cb_update_beam_params, "%.3f");
+    menu_beam[n++] = MI_FLOAT("V jitter",          &vc->tv.v_jitter,             0.01f, 0.0f, 1.0f, gpu_cb_update_beam_params, "%.3f");
     menu_beam[n++] = MI_FLOAT("Hum bar",           &vc->tv.hum_bar_amplitude,    0.01f, 0.0f, 0.20f, gpu_cb_update_beam_params, "%.2f");
     menu_beam[n++] = MI_FLOAT("Interference jitter",   &vc->tv.rf_interference,      0.5f, 0.0f, 5.0f, gpu_cb_update_beam_params, "%.1f");
     menu_beam[n++] = MI_FLOAT("Geometry warp",     &vc->tv.geometry_warp,        0.2f, 0.0f, 5.0f, gpu_cb_update_beam_params, "%.1f");
@@ -1190,6 +1208,10 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_beam[n++] = MI_FLOAT("Load focus change",   &vc->tv.focus_breathing,      0.02f, 0.0f, 0.3f, gpu_cb_update_beam_params, "%.2f");
     menu_beam[n++] = MI_FLOAT("Scanline wobble",   &vc->tv.scanline_wobble,      0.05f, 0.0f, 1.0f, gpu_cb_update_beam_params, "%.2f");
     menu_beam[n++] = MI_FLOAT("H spot growth", &vc->tv.beam_spot_growth, 0.05f, 0, 1, gpu_cb_update_beam_params, "%.2f");
+    menu_beam[n++] = MI_FLOAT("Corner astigmatism", &vc->tv.corner_astigmatism, 0.01f, 0.0f, 1.0f, gpu_cb_update_beam_params, "%.3f");
+    menu_beam[n++] = MI_FLOAT("Legacy focus (FWHM=0)", &vc->tv.beam_sharpness, 0.05f, 0.0f, 2.0f, gpu_cb_update_beam_params, "%.3f");
+    menu_beam[n++] = MI_FLOAT("Legacy dark height", &vc->tv.beam_height_min, 0.05f, 0.0f, 2.0f, gpu_cb_update_beam_params, "%.3f");
+    menu_beam[n++] = MI_FLOAT("Legacy white height", &vc->tv.beam_height_max, 0.05f, 0.0f, 2.0f, gpu_cb_update_beam_params, "%.3f");
     const int menu_beam_count=n;
 
     /* ================================================================
@@ -1200,14 +1222,20 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_phosphor[n++] = MI_FLOAT("Mask triads (0=pixels)", &vc->tv.mask_triads, 10.0f, 0.0f, 1200.0f, NULL, "%.0f");
     menu_phosphor[n++] = MI_FLOAT("Pitch (triads=0)",   &vc->tv.mask_pitch_px,       0.5f, 1.0f, 20.0f, gpu_cb_update_beam_params, "%.1f");
     menu_phosphor[n++] = MI_FLOAT("Mask strength",   &vc->tv.mask_strength,       0.05f, 0.0f, 1.0f, gpu_cb_update_beam_params, "%.2f");
-    /* P22 phosphor persistence: scales the per-channel blend weights below.
-     * 2.0ms is the P22 reference; higher = more afterimage smear. Extended
-     * range lets users crank persistence to mask dot crawl during motion. */
-    menu_phosphor[n++] = MI_FLOAT("Persistence ms",  &vc->tv.persistence_ms,      1.0f, 0.5f, 50.0f, gpu_cb_update_beam_params, "%.1f");
-    menu_phosphor[n++] = MI_FLOAT("Persist R",       &vc->tv.persistence_r,       0.02f, 0.5f, 1.0f, gpu_cb_update_beam_params, "%.2f");
-    menu_phosphor[n++] = MI_FLOAT("Persist G",       &vc->tv.persistence_g,       0.02f, 0.5f, 1.0f, gpu_cb_update_beam_params, "%.2f");
-    menu_phosphor[n++] = MI_FLOAT("Persist B",       &vc->tv.persistence_b,       0.02f, 0.5f, 1.0f, gpu_cb_update_beam_params, "%.2f");
+    /* Lifetimes are estimated exponential constants, not a universal P22 specification. */
+    menu_phosphor[n++] = MI_FLOAT("Persistence ms",  &vc->tv.persistence_ms,      1.0f, 0.0f, 100.0f, gpu_cb_update_beam_params, "%.1f");
+    menu_phosphor[n++] = MI_FLOAT("Persist R",       &vc->tv.persistence_r,       0.02f, 0.0f, 2.0f, gpu_cb_update_beam_params, "%.2f");
+    menu_phosphor[n++] = MI_FLOAT("Persist G",       &vc->tv.persistence_g,       0.02f, 0.0f, 2.0f, gpu_cb_update_beam_params, "%.2f");
+    menu_phosphor[n++] = MI_FLOAT("Persist B",       &vc->tv.persistence_b,       0.02f, 0.0f, 2.0f, gpu_cb_update_beam_params, "%.2f");
     menu_phosphor[n++] = MI_CYCLIC("Phosphor order",       &vc->tv.subpixel_layout,     0.0f, 2.0f, gpu_cb_update_beam_params, "RGB (legacy)|RGB|BGR");
+    menu_phosphor[n++] = MI_FLOAT("Slow decay ms", &vc->tv.persistence_tail_ms, 1.0f, 0.0f, 100.0f, gpu_cb_update_beam_params, "%.3f");
+    menu_phosphor[n++] = MI_FLOAT("Slow decay energy", &vc->tv.persistence_tail_weight, 0.01f, 0.0f, 1.0f, gpu_cb_update_beam_params, "%.3f");
+    menu_phosphor[n++] = MI_FLOAT("R gamma offset", &vc->tv.phosphor_gamma_offset_r, 0.01f, -0.5f, 0.5f, gpu_cb_update_beam_params, "%.3f");
+    menu_phosphor[n++] = MI_FLOAT("G gamma offset", &vc->tv.phosphor_gamma_offset_g, 0.01f, -0.5f, 0.5f, gpu_cb_update_beam_params, "%.3f");
+    menu_phosphor[n++] = MI_FLOAT("B gamma offset", &vc->tv.phosphor_gamma_offset_b, 0.01f, -0.5f, 0.5f, gpu_cb_update_beam_params, "%.3f");
+    menu_phosphor[n++] = MI_FLOAT("Cross excitation", &vc->tv.secondary_scatter, 0.01f, 0.0f, 1.0f, gpu_cb_update_beam_params, "%.3f");
+    menu_phosphor[n++] = MI_FLOAT("Drive color shift (generic)", &vc->tv.chromaticity_drive_shift, 0.01f, 0.0f, 1.0f, gpu_cb_update_beam_params, "%.3f");
+    menu_phosphor[n++] = MI_FLOAT("Phosphor grain", &vc->tv.phosphor_grain, 0.01f, 0.0f, 0.3f, gpu_cb_update_beam_params, "%.3f");
     const int menu_phosphor_count=n;
 
     /* ================================================================
@@ -1218,7 +1246,7 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_glass[n++] = MI_FLOAT("Halo tint R",   &vc->tv.halation_tint_r, 0.05f, 0.0f, 2.0f, gpu_cb_update_beam_params, "%.2f");
     menu_glass[n++] = MI_FLOAT("Halo tint G",   &vc->tv.halation_tint_g, 0.05f, 0.0f, 2.0f, gpu_cb_update_beam_params, "%.2f");
     menu_glass[n++] = MI_FLOAT("Halo tint B",   &vc->tv.halation_tint_b, 0.05f, 0.0f, 2.0f, gpu_cb_update_beam_params, "%.2f");
-    menu_glass[n++] = MI_FLOAT("Glass tint",    &vc->tv.glass_tint,  0.02f, 0.5f, 1.0f, gpu_cb_update_beam_params, "%.2f");
+    menu_glass[n++] = MI_FLOAT("Glass tint",    &vc->tv.glass_tint,  0.02f, 0.0f, 2.0f, gpu_cb_update_beam_params, "%.2f");
     menu_glass[n++] = MI_FLOAT("Barrel H",      &vc->tv.barrel,      0.005f, 0.0f, 0.15f, gpu_cb_update_beam_params, "%.3f");
     menu_glass[n++] = MI_FLOAT("Barrel V",      &vc->tv.barrel_v,    0.005f, 0.0f, 0.15f, gpu_cb_update_beam_params, "%.3f");
     menu_glass[n++] = MI_FLOAT("Keystone",      &vc->tv.keystone,    0.005f, -0.1f, 0.1f, gpu_cb_update_beam_params, "%+.3f");
@@ -1244,6 +1272,9 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_glass[n++] = MI_FLOAT("Glare light Y", &vc->tv.glass_glare_light_y, 0.05f, 0.0f, 1.00f, gpu_cb_update_beam_params, "%.2f");
     menu_glass[n++] = MI_FLOAT("Glare size",    &vc->tv.glass_glare_size,    0.02f, 0.02f, 0.60f, gpu_cb_update_beam_params, "%.2f");
     menu_glass[n++] = MI_FLOAT("Glare temp (K)",&vc->tv.glass_glare_temp_k,  200.0f, 0.0f, 10000.0f, gpu_cb_update_beam_params, "%.0f");
+    menu_glass[n++] = MI_FLOAT("Internal scatter", &vc->tv.glass_reflection, 0.02f, 0.0f, 1.0f, gpu_cb_update_beam_params, "%.3f");
+    menu_glass[n++] = MI_FLOAT("Matte scatter", &vc->tv.antiglare_blur, 0.02f, 0.0f, 1.0f, gpu_cb_update_beam_params, "%.3f");
+    menu_glass[n++] = MI_FLOAT("Overscan", &vc->tv.overscan, 0.005f, 0.0f, 0.1f, gpu_cb_update_beam_params, "%.3f");
     const int menu_glass_count=n;
 
     /* ================================================================
@@ -1255,6 +1286,15 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_env[n++] = MI_FLOAT("Gun black level",    &vc->tv.black_floor,    0.005f, 0.0f, 0.10f, gpu_cb_update_beam_params, "%.3f");
     menu_env[n++] = MI_FLOAT("Receiver noise",    &vc->tv.noise_level,    0.005f, 0.0f, 0.10f, gpu_cb_update_beam_params, "%.3f");
     menu_env[n++] = MI_FLOAT("Emission gain",       &vc->tv.hdr_gain,       0.1f, 0.5f, 3.0f, gpu_cb_update_beam_params, "%.1f");
+    menu_env[n++] = MI_FLOAT("EMI gradient", &vc->tv.emi_gradient, 0.02f, 0.0f, 1.0f, gpu_cb_update_beam_params, "%.3f");
+    menu_env[n++] = MI_FLOAT("Purity error", &vc->tv.degauss_tint, 0.02f, 0.0f, 1.0f, gpu_cb_update_beam_params, "%.3f");
+    menu_env[n++] = MI_FLOAT("Center cathode wear", &vc->tv.cathode_center_dim, 0.02f, 0.0f, 0.5f, gpu_cb_update_beam_params, "%.3f");
+    menu_env[n++] = MI_FLOAT("Cathode R gain", &vc->tv.cathode_gain_r, 0.02f, 0.0f, 2.0f, gpu_cb_update_beam_params, "%.3f");
+    menu_env[n++] = MI_FLOAT("Cathode G gain", &vc->tv.cathode_gain_g, 0.02f, 0.0f, 2.0f, gpu_cb_update_beam_params, "%.3f");
+    menu_env[n++] = MI_FLOAT("Cathode B gain", &vc->tv.cathode_gain_b, 0.02f, 0.0f, 2.0f, gpu_cb_update_beam_params, "%.3f");
+    menu_env[n++] = MI_FLOAT("APL bias drift", &vc->tv.apl_black_lift, 0.01f, 0.0f, 1.0f, gpu_cb_update_beam_params, "%.3f");
+    menu_env[n++] = MI_FLOAT("Thermal tint (generic)", &vc->tv.thermal_dome_amount, 0.01f, 0.0f, 0.3f, gpu_cb_update_beam_params, "%.3f");
+    menu_env[n++] = MI_FLOAT("Audio microphonics", &vc->tv.microphonic_amount, 0.01f, 0.0f, 1.0f, gpu_cb_update_beam_params, "%.3f");
     const int menu_env_count=n;
 
     /* ================================================================
@@ -1271,7 +1311,30 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_audio_chain[n++] = MI_FLOAT("PSU 2nd harm",    &ac->psu_hum.harmonic_2,      0.05f, 0.0f, 1.0f, gpu_cb_audio_prepare, "%.2f");
     menu_audio_chain[n++] = MI_FLOAT("PSU 3rd harm",    &ac->psu_hum.harmonic_3,      0.02f, 0.0f, 0.5f, gpu_cb_audio_prepare, "%.2f");
     menu_audio_chain[n++] = MI_FLOAT("Noise amp",       &ac->noise_floor.amplitude,   0.001f, 0.0f, 0.05f, gpu_cb_audio_prepare, "%.3f");
+    menu_audio_chain[n++]=MI_CYCLIC("Console audio circuit", &preset_loaded.console_variant,0,3,gpu_cb_audio_setup,"Famicom|NES front|NES top|Dendy");
+    menu_audio_chain[n++]=MI_CYCLIC("Speaker model", &preset_loaded.speaker_type,0,5,gpu_cb_audio_setup,"Small TV|Console TV|PVM|Arcade|Headphones|Famicom RF");
+    menu_audio_chain[n++]=MI_FLOAT("Audio cable length m", &preset_loaded.audio_cable_length_m,.25f,0,20,gpu_cb_audio_setup,"%.2f");
+    menu_audio_chain[n++]=MI_FLOAT("Audio cable C/m", &preset_loaded.audio_cable.capacitance_per_m,5e-12f,0,200e-12f,gpu_cb_audio_setup,"%.1e");
+    menu_audio_chain[n++]=MI_FLOAT("Audio cable R/m", &preset_loaded.audio_cable.resistance_per_m,.1f,0,5,gpu_cb_audio_setup,"%.2f");
+    menu_audio_chain[n++]=MI_FLOAT("Audio connector R", &preset_loaded.audio_cable.connector_resistance,.1f,0,5,gpu_cb_audio_setup,"%.2f");
     const int menu_audio_chain_count=n;
+
+    n=0;
+    menu_rf[n++]=MI_FLOAT("Carrier level dBm", &vc->rf.carrier_level_dbm, 1,-80,-5,gpu_cb_reinit_stages,"%.0f");
+    menu_rf[n++]=MI_FLOAT("Noise floor dBm", &vc->rf.noise_floor_dbm, 1,-110,-30,gpu_cb_reinit_stages,"%.0f");
+    menu_rf[n++]=MI_FLOAT("IF video edge Hz", &vc->rf.mod_bandwidth, 100000,1000000,6000000,gpu_cb_redesign_firs,"%.0f");
+    menu_rf[n++]=MI_FLOAT("IF asymmetry", &vc->rf.if_asymmetry, .05f,0,1,gpu_cb_redesign_firs,"%.2f");
+    menu_rf[n++]=MI_FLOAT("IF detuning Hz", &vc->rf.tuning_offset_hz, 10000,-1000000,1000000,gpu_cb_redesign_firs,"%.0f");
+    menu_rf[n++]=MI_FLOAT("AGC attack ms", &vc->rf.agc_attack_ms, .1f,.01f,1000,gpu_cb_reinit_stages,"%.2f");
+    menu_rf[n++]=MI_FLOAT("AGC release ms", &vc->rf.agc_release_ms, 1,1,1000,gpu_cb_reinit_stages,"%.1f");
+    n=0;
+    menu_vhs[n++]=MI_TOGGLE("NTSC composite/RF tape", &vc->vhs.enabled,gpu_cb_redesign_firs);
+    menu_vhs[n++]=MI_FLOAT("Luma bandwidth Hz", &vc->vhs.luma_bandwidth, 100000,500000,3000000,gpu_cb_redesign_firs,"%.0f");
+    menu_vhs[n++]=MI_FLOAT("Chroma bandwidth Hz", &vc->vhs.chroma_bandwidth, 10000,100000,600000,gpu_cb_redesign_firs,"%.0f");
+    menu_vhs[n++]=MI_FLOAT("Chroma delay ns", &vc->vhs.chroma_delay_ns, 10,-1000,1000,gpu_cb_redesign_firs,"%.0f");
+    menu_vhs[n++]=MI_FLOAT("Line timing error ns", &vc->vhs.timebase_ns, 5,0,300,gpu_cb_redesign_firs,"%.0f");
+    menu_vhs[n++]=MI_FLOAT("Color phase error deg", &vc->vhs.chroma_phase_deg, .5f,0,20,gpu_cb_redesign_firs,"%.1f");
+    menu_vhs[n++]=MI_FLOAT("Playback noise", &vc->vhs.noise, .001f,0,.05f,gpu_cb_redesign_firs,"%.3f");
 
     /* Everyday picture controls, then the physical chain and tube service controls. */
     menu_picture[0] = menu_luma[4];
@@ -1287,6 +1350,8 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_video[n++] = MI_SUB("PPU / connection", menu_dac, menu_dac_count);
     menu_video[n++] = MI_SUB("Console output", menu_console, menu_console_count);
     menu_video[n++] = MI_SUB("Cable", menu_cable, menu_cable_count);
+    menu_video[n++] = MI_SUB("RF receiver",menu_rf,7);
+    menu_video[n++] = MI_SUB("VHS recording / playback",menu_vhs,7);
     menu_video[n++] = MI_SUB("Y/C separation", menu_comb, menu_comb_count);
     menu_video[n++] = MI_SUB("Chroma decoder", menu_chroma, menu_chroma_count);
     menu_video[n++] = MI_SUB("Luma response", menu_luma, menu_luma_count);
@@ -1349,11 +1414,25 @@ void preset_composite_overlays(PresetCtx *ctx) {
      * the menu (main.c handles M key -> osd_menu_open_root). */
 }
 
+/* Share OSD float targets/ranges/callbacks with the live editor. */
+static void append_osd_controls(DebugControl *out,int *count,const OSDMenuItem *items,int n,const char *group) {
+    for(int i=0;i<n;i++) {
+        const OSDMenuItem *m=&items[i];
+        if(m->submenu) append_osd_controls(out,count,m->submenu,m->submenu_count,m->label);
+        else if(m->type==OSD_MI_FLOAT && m->target) {
+            bool found=false;
+            for(int j=0;j<*count;j++) if(out[j].value==m->target) { found=true; break; }
+            if(!found && *count<DEBUG_MAX_CONTROLS)
+                out[(*count)++]=(DebugControl){m->label,group,m->target,m->min_val,m->max_val,m->on_change};
+        }
+    }
+}
+
 /* The editor uses the same physical values and update paths as the OSD. */
 void preset_register_debug_controls(PresetCtx *ctx, DebugServer *server) {
     TVDisplayParams *tv = &ctx->video_chain->tv;
     AudioChain *ac = ctx->audio_chain;
-    DebugControl controls[] = {
+    DebugControl controls[DEBUG_MAX_CONTROLS] = {
         {"Luma bandwidth (Hz)", "Decoder", &tv->luma_bandwidth, 500000, 8000000, gpu_cb_redesign_firs},
         {"Chroma bandwidth (Hz)", "Decoder", &tv->chroma_bandwidth, 100000, 3000000, gpu_cb_redesign_firs},
         {"Q bandwidth (Hz, 0 = I)", "Decoder", &tv->chroma_q_bandwidth, 0, 2000000, gpu_cb_redesign_firs},
@@ -1372,6 +1451,8 @@ void preset_register_debug_controls(PresetCtx *ctx, DebugServer *server) {
         {"Size sag (+shrink)", "Beam", &tv->hv_sag, -0.5f, 0.5f, gpu_cb_update_beam_params},
         {"Load focus change", "Beam", &tv->focus_breathing, 0, 0.3f, gpu_cb_update_beam_params},
         {"Persistence (ms)", "Phosphor", &tv->persistence_ms, 0, 100, gpu_cb_update_beam_params},
+        {"Slow decay (ms)", "Phosphor", &tv->persistence_tail_ms, 0, 100, gpu_cb_update_beam_params},
+        {"Slow decay energy", "Phosphor", &tv->persistence_tail_weight, 0, 1, gpu_cb_update_beam_params},
         {"Red lifetime scale", "Phosphor", &tv->persistence_r, 0, 1, gpu_cb_update_beam_params},
         {"Green lifetime scale", "Phosphor", &tv->persistence_g, 0, 1, gpu_cb_update_beam_params},
         {"Blue lifetime scale", "Phosphor", &tv->persistence_b, 0, 1, gpu_cb_update_beam_params},
@@ -1385,6 +1466,8 @@ void preset_register_debug_controls(PresetCtx *ctx, DebugServer *server) {
         {"Cable length (m)", "Connection", &ctx->video_chain->cable.length_meters, 0, 20, gpu_cb_update_rc_params},
         {"RF hum", "Connection", &ctx->video_chain->console_psu_hum, 0, 0.1f, gpu_cb_reinit_stages},
         {"RF video bandwidth (Hz)", "Connection", &ctx->video_chain->rf.mod_bandwidth, 1000000, 6000000, gpu_cb_redesign_firs},
+        {"RF IF asymmetry", "Connection", &ctx->video_chain->rf.if_asymmetry, 0, 1, gpu_cb_redesign_firs},
+        {"RF tuning offset (Hz)", "Connection", &ctx->video_chain->rf.tuning_offset_hz, -1000000, 1000000, gpu_cb_redesign_firs},
         {"RF carrier level (dBm)", "Connection", &ctx->video_chain->rf.carrier_level_dbm, -60, -5, gpu_cb_reinit_stages},
         {"RF noise floor (dBm)", "Connection", &ctx->video_chain->rf.noise_floor_dbm, -90, -30, gpu_cb_reinit_stages},
         {"Amplifier drive", "Audio", &ac->amp_saturation.drive, 1, 6, gpu_cb_audio_prepare},
@@ -1394,5 +1477,8 @@ void preset_register_debug_controls(PresetCtx *ctx, DebugServer *server) {
         {"Third harmonic", "Audio", &ac->psu_hum.harmonic_3, 0, 0.5f, gpu_cb_audio_prepare},
         {"Noise floor", "Audio", &ac->noise_floor.amplitude, 0, 0.05f, gpu_cb_audio_prepare},
     };
-    debug_server_set_controls(server, controls, (int)(sizeof(controls)/sizeof(controls[0])));
+    int count=0;
+    while(count<DEBUG_MAX_CONTROLS && controls[count].name) count++;
+    append_osd_controls(controls,&count,preset_menu_root,preset_menu_root_count,"Picture");
+    debug_server_set_controls(server, controls, count);
 }

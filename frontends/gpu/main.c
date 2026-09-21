@@ -167,6 +167,8 @@ static bool load_raw_palette(const char *path) {
 
 /* Performance overlay (V key). */
 static bool             perf_overlay = false;
+static bool             osd_parameter_editing;
+static uint32_t         osd_pixels[GPU_OSD_PIXELS];
 static char             perf_text[128] = "";
 
 /* ============================================================================
@@ -822,7 +824,14 @@ int main(int argc, char **argv) {
     if (!playback) { fprintf(stderr, "Playback worker: %s\n", SDL_GetError()); return 1; }
     const char *stall_env = getenv("MYNES_PRESENT_STALL_MS");
     int presentation_stall_ms = stall_env ? atoi(stall_env) : 0;
-    if (getenv("MYNES_REVIEW_OSD")) osd_menu_open_root(preset_menu_root, preset_menu_root_count, "Setup");
+    const char *review_osd=getenv("MYNES_REVIEW_OSD");
+    if (review_osd) {
+        osd_menu_open_root(preset_menu_root,preset_menu_root_count,"Setup");
+        if (!strcmp(review_osd,"adjust")) {
+            gpu_osd_handle_key(SDL_SCANCODE_RETURN,&osd_parameter_editing);
+            gpu_osd_handle_key(SDL_SCANCODE_RETURN,&osd_parameter_editing);
+        }
+    }
     unsigned previous_picture = 0;
     Uint64 frame_deadline = 0;
     while (running) {
@@ -938,20 +947,12 @@ int main(int argc, char **argv) {
                     if (chain_vis_handle_key(chain_vis, ev.key.scancode, true))
                         break;
                     /* OSD menu navigation. */
-                    if (osd_menu_is_open) {
-                        if (ev.key.scancode == SDL_SCANCODE_UP)        { osd_menu_move(-1); break; }
-                        if (ev.key.scancode == SDL_SCANCODE_DOWN)      { osd_menu_move(+1); break; }
-                        if (ev.key.scancode == SDL_SCANCODE_LEFT)      { osd_menu_adjust(-1); break; }
-                        if (ev.key.scancode == SDL_SCANCODE_RIGHT)     { osd_menu_adjust(+1); break; }
-                        if (ev.key.scancode == SDL_SCANCODE_RETURN)    { osd_menu_activate(); break; }
-                        if (ev.key.scancode == SDL_SCANCODE_BACKSPACE ||
-                            ev.key.scancode == SDL_SCANCODE_ESCAPE)    { osd_menu_back(); break; }
-                        if (ev.key.scancode == SDL_SCANCODE_M)         { osd_menu_close(); break; }
-                    }
+                    if (gpu_osd_handle_key(ev.key.scancode, &osd_parameter_editing)) break;
                     /* Escape: quit. */
                     if (ev.key.scancode == SDL_SCANCODE_ESCAPE) { running = false; break; }
                     /* M: open OSD menu. */
                     if (ev.key.scancode == SDL_SCANCODE_M) {
+                        osd_parameter_editing=false;
                         osd_menu_open_root(preset_menu_root,
                                            preset_menu_root_count, "SETUP");
                         break;
@@ -1183,20 +1184,23 @@ int main(int argc, char **argv) {
                            display_ppu.index_framebuffer, pal);
         }
 
-        /* OSD menu overlay (must be in main.c — osd.h state is per-TU static). */
-        if (osd_menu_is_open && !browser_active) {
-            const uint8_t (*pal)[3] = display_ppu.color_palette
-                                      ? display_ppu.color_palette
-                                      : ppu_palette_2c02;
-            gpu_osd_render(display_ppu.framebuffer, display_ppu.index_framebuffer, pal,
-                osd_menu_current(), preset_display_name(preset_active_index()), preset_is_modified(),
-                preset_ctx.region == SIGNAL_REGION_PAL, &render_ctx);
+        /* A TV-generated RGB OSD bypasses NES encoding and receiver artifacts. */
+        bool osd_visible=!browser_active && osd_menu_is_open;
+        const char *notice=!browser_active && !osd_menu_is_open ? preset_cycle_notice() : NULL;
+        if (osd_visible || (notice && *notice)) memset(osd_pixels,0,sizeof(osd_pixels));
+        if (osd_visible)
+            gpu_osd_render(osd_pixels,osd_menu_current(),osd_parameter_editing,
+                preset_display_name(preset_active_index()),preset_is_modified(),
+                preset_ctx.region==SIGNAL_REGION_PAL,&render_ctx);
+        else if (notice && *notice) {
+            gpu_osd_preset_notice(osd_pixels,notice);
+            osd_visible=true;
         }
-
-        if (!browser_active && !osd_menu_is_open) {
-            const uint8_t (*pal)[3]=display_ppu.color_palette ? display_ppu.color_palette : ppu_palette_2c02;
-            gpu_osd_preset_notice(display_ppu.framebuffer,display_ppu.index_framebuffer,pal,preset_cycle_notice());
+        if (gpu_video_enabled && !video_gpu_set_osd(&video_gpu_chain,gpu,osd_visible ? osd_pixels : NULL)) {
+            fprintf(stderr,"OSD upload failed: %s\n",SDL_GetError());
         }
+        if (osd_visible && (!composite_enabled || !gpu_video_enabled))
+            gpu_osd_blend_rgb(display_ppu.framebuffer,osd_pixels);
 
         /* Performance overlay (V key) — drawn into NES framebuffer so it
          * gets the NTSC composite treatment like the OSD menu. */

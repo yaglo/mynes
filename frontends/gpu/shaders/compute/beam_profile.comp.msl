@@ -146,9 +146,9 @@ kernel void main0(constant Params& _43 [[buffer(0)]], device RGBIn& _98 [[buffer
     float R = 0.0;
     float G = 0.0;
     float B = 0.0;
-    int radius = min(4, int(ceil((3.0 * fast::clamp(fast::max(_43.sigma_narrow, _43.sigma_wide) * focus_scale, 0.0500000007450580596923828125, 1.0)) + (0.5 / rows_per_line))));
-    int _401 = -radius;
-    for (int soff = _401; soff <= radius; soff++)
+    int radius = min(4, int(ceil((3.0 * fast::clamp(fast::max(_43.sigma_narrow, (2.0 * _43.sigma_wide) - _43.sigma_narrow) * focus_scale, 0.0500000007450580596923828125, 1.0)) + (0.5 / rows_per_line))));
+    int _406 = -radius;
+    for (int soff = _406; soff <= radius; soff++)
     {
         float lR = 0.0;
         float lG = 0.0;
@@ -169,7 +169,7 @@ kernel void main0(constant Params& _43 [[buffer(0)]], device RGBIn& _98 [[buffer
         uint param_8 = 2u;
         lB = sample_rgb_channel_linear(param_6, param_7, param_8, _43, _98);
         float3 exponent = float3(_43.bloom_gamma) / fast::max(float3(_43.gamma) + float3(_43.gamma_r, _43.gamma_g, _43.gamma_b), float3(1.0));
-        float3 bloom_t = powr(fast::clamp(float3(lR, lG, lB), float3(0.0), float3(1.0)), exponent);
+        float3 bloom_t = fast::min(powr(fast::max(float3(lR, lG, lB), float3(0.0)), exponent), float3(2.0));
         float3 sv = fast::clamp(mix(float3(_43.sigma_narrow), float3(_43.sigma_wide), bloom_t) * focus_scale, float3(0.0500000007450580596923828125), float3(1.0));
         float pixel_width = 1.0 / rows_per_line;
         float rd = r_d - float(soff);

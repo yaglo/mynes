@@ -33,6 +33,7 @@ roms/
 *.ppm
 *.png
 !docs/images/*.png
+!docs/images/**/*.png
 output_*
 screenshot_*
 /accuracy_*
@@ -63,7 +64,7 @@ coverage/
 # Agent / tool session caches
 .claude/
 .zed/
-tools/__pycache__/
+**/__pycache__/
 
 # Optional CRT USB build
 /build-crt/

@@ -24,6 +24,7 @@
 #include <stdbool.h>
 
 typedef struct DebugServer DebugServer;
+#define DEBUG_MAX_CONTROLS 192
 
 /* Typed physical controls. Values point into the live preset, never uniforms. */
 typedef struct {

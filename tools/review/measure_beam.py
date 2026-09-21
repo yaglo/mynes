@@ -1,4 +1,4 @@
-"""Measure isolated scanline FWHM from paired 4K final linear captures."""
+"""Measure isolated scanline FWHM separately in each 4K linear capture phase."""
 import argparse
 import json
 from pathlib import Path
@@ -47,12 +47,14 @@ def main():
     for preset in PRESETS:
         frames = [read_pfm(directory / f"{preset}.ppm{suffix}.linear.pfm")
                   for suffix in ("", ".next.ppm")]
-        mean = (frames[0] + frames[1]) / 2
         results[preset] = []
-        for x in (1110, 1830, 2550):
-            region = mean[1240:1360, x - 48:x + 48]
-            profile = (region * np.array([0.2126, 0.7152, 0.0722])).sum(2).mean(1)
-            results[preset].append(measure(profile))
+        for phase,frame in enumerate(frames):
+            strokes=[]
+            for x in (1110,1830,2550):
+                region=frame[1240:1360,x-48:x+48]
+                profile=(region*np.array([0.2126,0.7152,0.0722])).sum(2).mean(1)
+                strokes.append(measure(profile))
+            results[preset].append({"phase":phase,"strokes":strokes})
     output = json.dumps(results, indent=2) + "\n"
     (directory / "measurements.json").write_text(output)
     print(output, end="")
