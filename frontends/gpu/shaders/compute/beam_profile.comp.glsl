@@ -11,7 +11,7 @@
  *
  * All raster geometry, convergence, jitter, focus growth, and dwell
  * modulation now come from deflection.comp. This shader is responsible
- * only for beam deposition, hum/noise modulation, and packing.
+ * only for beam deposition, hum modulation, and packing.
  */
 
 #version 450
@@ -149,22 +149,23 @@ void main() {
         lG = sample_rgb_channel_linear(g_center, g_line, 1u);
         lB = sample_rgb_channel_linear(b_center, b_line, 2u);
 
-        float lY = clamp(0.299 * lR + 0.587 * lG + 0.114 * lB, 0.0, 1.0);
-        float bloom_t = pow(lY, bloom_gamma);
-        float sv = (sigma_narrow + (sigma_wide - sigma_narrow) * bloom_t)
-                 * focus_scale;
-        sv = clamp(sv, 0.05, 1.0);
+        // Space charge broadens each gun's own spot. Shared supply/focus
+        // changes are already carried by the deflection map; summing RGB
+        // here would make a regulated green gun widen when red turns on.
+        vec3 exponent = vec3(bloom_gamma) / max(vec3(gamma) + vec3(gamma_r,gamma_g,gamma_b),vec3(1.0));
+        vec3 bloom_t = pow(clamp(vec3(lR,lG,lB),0.0,1.0),exponent);
+        vec3 sv = clamp(mix(vec3(sigma_narrow),vec3(sigma_wide),bloom_t)
+                        * focus_scale,0.05,1.0);
         float pixel_width = 1.0 / rows_per_line;
 
         float rd = r_d - float(soff);
         float gd = g_d - float(soff);
         float bd = b_d - float(soff);
 
-        // Gun voltage becomes light before spatial beam deposition.
-        // Unit-area spots conserve current as focus/bloom changes width.
-        R += pow(max(lR,0.0),gamma+gamma_r) * beam_coverage(rd, sv, pixel_width);
-        G += pow(max(lG,0.0),gamma+gamma_g) * beam_coverage(gd, sv, pixel_width);
-        B += pow(max(lB,0.0),gamma+gamma_b) * beam_coverage(bd, sv, pixel_width);
+        // Both axes spread linear emitted current; focus conserves energy.
+        R += lR * beam_coverage(rd, sv.r, pixel_width);
+        G += lG * beam_coverage(gd, sv.g, pixel_width);
+        B += lB * beam_coverage(bd, sv.b, pixel_width);
     }
 
     R *= dwell;
@@ -183,23 +184,9 @@ void main() {
         B *= hum;
     }
 
-    if (noise_level > 0.0) {
-        uint sr = ox * 1999u + oy * 7919u + frame_counter * 6271u;
-        uint sg = ox * 2999u + oy * 8923u + frame_counter * 4517u;
-        uint sb = ox * 3989u + oy * 9341u + frame_counter * 7211u;
-        sr ^= sr >> 16u; sr *= 0x45d9f3bu; sr ^= sr >> 16u;
-        sg ^= sg >> 16u; sg *= 0x45d9f3bu; sg ^= sg >> 16u;
-        sb ^= sb >> 16u; sb *= 0x45d9f3bu; sb ^= sb >> 16u;
-        float luma = 0.299 * R + 0.587 * G + 0.114 * B;
-        float noise_scale = noise_level * (1.0 - 0.8 * clamp(luma, 0.0, 1.0));
-        R += (float(sr & 0xFFFFu) / 65535.0 - 0.5) * noise_scale;
-        G += (float(sg & 0xFFFFu) / 65535.0 - 0.5) * noise_scale;
-        B += (float(sb & 0xFFFFu) / 65535.0 - 0.5) * noise_scale;
-    }
-
-    R = min(max(R, pow(max(black_floor,0.0),gamma)), 4.0);
-    G = min(max(G, pow(max(black_floor,0.0),gamma)), 4.0);
-    B = min(max(B, pow(max(black_floor,0.0),gamma)), 4.0);
+    R = max(R, pow(max(black_floor,0.0),gamma));
+    G = max(G, pow(max(black_floor,0.0),gamma));
+    B = max(B, pow(max(black_floor,0.0),gamma));
 
     uint idx = pix * 2u;
     rgba_out[idx + 0u] = packHalf2x16(vec2(R, G));

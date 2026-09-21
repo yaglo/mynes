@@ -321,7 +321,11 @@ if(NES_BUILD_GPU_FRONTEND)
     if(MYNES_SDL3_TARGET)
         add_executable(mynes_gpu
             frontends/gpu/main.c
+            frontends/gpu/gpu_osd.c
+            frontends/gpu/gpu_benchmark.c
+            frontends/gpu/playback.c
             frontends/gpu/gpu_render.c
+            frontends/gpu/gpu_output.c
             frontends/gpu/preset_apply.c
             frontends/gpu/gpu_compute.c
             frontends/gpu/gpu_display.c
@@ -341,6 +345,11 @@ if(NES_BUILD_GPU_FRONTEND)
         target_include_directories(mynes_gpu PRIVATE
             frontends/shared)
         target_link_libraries(mynes_gpu PRIVATE nes_static ${MYNES_SDL3_TARGET} pthread)
+        if(APPLE)
+            enable_language(OBJC)
+            target_sources(mynes_gpu PRIVATE frontends/gpu/gpu_output_macos.m)
+            target_link_libraries(mynes_gpu PRIVATE "-framework AppKit" "-framework CoreGraphics")
+        endif()
         message(STATUS "SDL3 found - building GPU frontend")
 
         # Compile GLSL shaders to SPIR-V + MSL at build time.
@@ -420,6 +429,13 @@ if(NES_BUILD_GPU_FRONTEND)
             add_dependencies(test_audio gpu_shaders)
             add_test(NAME gpu_audio_tests COMMAND test_audio)
 
+            add_executable(test_playback frontends/gpu/tests/test_playback.c
+                frontends/gpu/playback.c frontends/gpu/audio_chain.c
+                frontends/gpu/audio_gpu.c frontends/gpu/gpu_compute.c frontends/gpu/gpu_log.c)
+            target_include_directories(test_playback PRIVATE frontends/gpu)
+            target_link_libraries(test_playback PRIVATE nes_static ${MYNES_SDL3_TARGET} m)
+            add_test(NAME gpu_playback_tests COMMAND test_playback)
+
             # GPU pipeline integration test (headless SDL3 GPU compute)
             add_executable(test_pipeline
                 frontends/gpu/tests/test_pipeline.c
@@ -439,7 +455,7 @@ if(NES_BUILD_GPU_FRONTEND)
             add_test(NAME gpu_pipeline_test COMMAND test_pipeline)
             get_target_property(PIPELINE_TEST_SOURCES test_pipeline SOURCES)
             list(REMOVE_ITEM PIPELINE_TEST_SOURCES frontends/gpu/tests/test_pipeline.c)
-            add_executable(test_fidelity frontends/gpu/tests/test_fidelity.c frontends/gpu/tests/test_display_fidelity.c frontends/gpu/gpu_display.c ${PIPELINE_TEST_SOURCES})
+            add_executable(test_fidelity frontends/gpu/tests/test_fidelity.c frontends/gpu/tests/test_display_fidelity.c frontends/gpu/tests/test_crt_load.c frontends/gpu/gpu_display.c ${PIPELINE_TEST_SOURCES})
             target_include_directories(test_fidelity PRIVATE frontends/gpu)
             target_link_libraries(test_fidelity PRIVATE nes_static ${MYNES_SDL3_TARGET} m)
             add_dependencies(test_fidelity gpu_shaders)

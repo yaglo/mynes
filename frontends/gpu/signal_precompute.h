@@ -29,7 +29,7 @@
 typedef struct {
     /* PPU voltage waveform table. Indexed by:
      *   table[(emph << 6) | palette_idx][phase0..phase0+spp-1]
-     * Values normalized to [0,1] (black=0, white=1).
+     * Blank-relative voltage units (sub-black may be negative, white=1).
      *
      * - NTSC (2C02): only `table` is used; `table_alt` stays zero.
      * - PAL  (2C07): `table` is used on even scanlines, `table_alt`
@@ -53,7 +53,7 @@ typedef struct {
     int   phase_field_adv;
     int   phase_num_fields;
     int   demod_rotate;
-    float chroma_gain;          /* post-demod I/Q multiplier (default 1.3) */
+    float chroma_gain;          /* post-demod I/Q multiplier (default 1) */
     /* color_killer moved to TVDisplayParams — shader reads it directly. */
     float brightness;           /* Y offset (default 0.0) */
     float contrast;             /* Y multiplier (default 1.0) */
@@ -155,11 +155,14 @@ static inline void signal_precompute_pal(SignalPrecompute *sp) {
     }
 }
 
-/* Precompute the NTSC 2C02 signal table from Bisqwit's voltage model. */
+/* Terminated 2C02 measurements, NESdev NTSC_video (lidnariq).
+ * Keep picture, emphasis, sync and burst in the same voltage reference.
+ * Blanking is 312 mV; NES white is 1100 mV (not broadcast 100 IRE).
+ * Emphasis changes the measured DAC rails, not a uniform gain multiplier. */
 static inline void signal_precompute_ntsc(SignalPrecompute *sp) {
-    static const float levels[8] = {
-        0.350f, 0.518f, 0.962f, 1.550f,   /* signal low,  luma 0..3 */
-        1.094f, 1.506f, 1.962f, 1.962f,   /* signal high, luma 0..3 */
+    static const float levels[16] = {
+        228, 312, 552, 880, 616, 840, 1100, 1100,
+        192, 256, 448, 712, 500, 676, 896, 896
     };
     const int emph_oct = 0264513;
     const float blacklo = levels[1];
@@ -176,10 +179,10 @@ static inline void signal_precompute_ntsc(SignalPrecompute *sp) {
             for (int p = 0; p < 12; p++) {
                 int in_hi = (color < 13) && (((color + p) % 12) < 6);
                 if (color == 0) in_hi = 1;
-                float sig = levels[level + (in_hi ? 4 : 0)];
                 int octant = (p % 12) >> 1;
                 int mask = (emph_oct >> (3 * octant)) & 0x07;
-                if (emph & mask) sig *= 0.746f;
+                int attenuated = color < 14 && (emph & mask) ? 8 : 0;
+                float sig = levels[level + (in_hi ? 4 : 0) + attenuated];
                 float norm_sig = (sig - blacklo) * norm;
                 sp->table[entry][p] = norm_sig;
                 sp->table[entry][p + 12] = norm_sig;  /* wraparound duplicate */
@@ -188,7 +191,26 @@ static inline void signal_precompute_ntsc(SignalPrecompute *sp) {
     }
 }
 
-/* Design a Hamming-windowed sinc lowpass FIR. */
+/* Chroma-band extraction before line combing. Gaussian frequency response,
+ * unity at the carrier and zero DC: vertical luma detail must not enter the
+ * line averager. half_bandwidth is the approximate -3 dB half-width in Hz. */
+static inline void signal_design_chroma_bandpass(float *taps, int n, float sample_rate,
+                                                 float half_bandwidth) {
+    float window[64], sum=0, dc=0, gain=0;
+    float sigma=sqrtf(logf(2.0f))*sample_rate/(2.0f*(float)M_PI*half_bandwidth);
+    for(int k=0;k<n;k++) {
+        float x=(float)(k-n/2);
+        window[k]=expf(-0.5f*x*x/(sigma*sigma));
+        taps[k]=window[k]*cosf(2.0f*(float)M_PI*x/12.0f);
+        dc+=taps[k]; sum+=window[k];
+    }
+    for(int k=0;k<n;k++) {
+        taps[k]-=dc*window[k]/sum;
+        gain+=taps[k]*cosf(2.0f*(float)M_PI*(k-n/2)/12.0f);
+    }
+    for(int k=0;k<n;k++) taps[k]/=gain;
+}
+
 /* Design a Hamming-windowed sinc FIR lowpass filter.
  * ringing: 0.0 = pure Hamming (smooth), 1.0 = rectangular (max Gibbs ringing).
  * Intermediate values blend between the two, producing controlled overshoot
@@ -254,7 +276,7 @@ static inline void signal_apply_peaking(float *taps, int n, float cutoff,
 }
 
 /* Design a lowpass FIR with a notch (null) at a specific frequency.
- * Used for S-Video luma: preserves full luma bandwidth while killing
+ * Used for composite luma: preserves useful luma bandwidth while killing
  * the 3.58 MHz subcarrier horizontally — no vertical line doubling.
  * notch_freq: normalized frequency to reject (e.g., 1/12 for NTSC subcarrier).
  * notch_depth: rejection strength (0.5-1.0, higher = deeper null). */
@@ -325,21 +347,11 @@ static inline void signal_precompute_init(SignalPrecompute *sp, int region) {
     sp->brightness = 0.0f;
     sp->contrast = 1.0f;
 
-    /* Standard NTSC YIQ → RGB decode matrix with warm tint. */
-    const float warm_r = 1.03f, warm_g = 1.01f, warm_b = 0.97f;
-    const float sat = 1.15f;
-    sp->color_matrix[0][0] = warm_r;
-    sp->color_matrix[0][1] = 1.1222f * sat;
-    sp->color_matrix[0][2] = 0.7391f * sat;
-    sp->color_matrix[1][0] = warm_g;
-    sp->color_matrix[1][1] = -0.3192f * sat;
-    sp->color_matrix[1][2] = -0.7384f * sat;
-    sp->color_matrix[2][0] = warm_b;
-    sp->color_matrix[2][1] = -1.2374f * sat;
-    sp->color_matrix[2][2] = 1.9058f * sat;
-    sp->color_bias[0] = 0.015f;
-    sp->color_bias[1] = 0.015f;
-    sp->color_bias[2] = 0.018f;
+    /* Neutral receiver defaults, identical to preset application. */
+    static const float ntsc[3][3] = {{1,.9563f,.6210f},{1,-.2721f,-.6474f},{1,-1.1070f,1.7046f}};
+    static const float pal[3][3] = {{1,1.140f,0},{1,-.581f,-.395f},{1,0,2.032f}};
+    memcpy(sp->color_matrix, region == SIGNAL_REGION_PAL ? pal : ntsc, sizeof(sp->color_matrix));
+    memset(sp->color_bias, 0, sizeof(sp->color_bias));
 }
 
 static inline int signal_frame_phase(const SignalPrecompute *sp, unsigned frame) {

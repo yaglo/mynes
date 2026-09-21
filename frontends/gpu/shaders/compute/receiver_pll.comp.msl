@@ -1,0 +1,98 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+// Implementation of the GLSL mod() function, which is slightly different than Metal fmod()
+template<typename Tx, typename Ty>
+inline Tx mod(Tx x, Ty y)
+{
+    return x - y * floor(x / y);
+}
+
+struct Reference
+{
+    float4 reference[1];
+};
+
+struct Params
+{
+    uint count;
+    uint full_width;
+    uint samples_per_dot;
+    uint region;
+};
+
+struct Measurement
+{
+    float4 measurement[1];
+};
+
+constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(1u);
+
+static inline __attribute__((always_inline))
+float wrap(thread const float& p)
+{
+    return mod(p + 3.1415927410125732421875, 6.283185482025146484375) - 3.1415927410125732421875;
+}
+
+kernel void main0(device Reference& _26 [[buffer(2)]], constant Params& _32 [[buffer(0)]], device Measurement& _69 [[buffer(1)]])
+{
+    float4 state = _26.reference[_32.count];
+    float advance = (float(_32.full_width % 12u) * 6.283185482025146484375) / 12.0;
+    bool acquire = true;
+    for (uint line = 0u; line < _32.count; line++)
+    {
+        float4 m = _69.measurement[line];
+        float param = state.x + advance;
+        state.x = wrap(param);
+        bool sync = abs(m.w) < (8.0 * float(_32.samples_per_dot));
+        if (m.z < 0.0)
+        {
+            _26.reference[line] = float4(state.x, m.y, 0.0, state.w);
+            acquire = true;
+            continue;
+        }
+        if (sync)
+        {
+            bool _120;
+            if (acquire)
+            {
+                _120 = m.z > 0.00999999977648258209228515625;
+            }
+            else
+            {
+                _120 = acquire;
+            }
+            if (_120)
+            {
+                state = m;
+                acquire = false;
+            }
+            else
+            {
+                state.y = mix(state.y, m.y, 0.3499999940395355224609375);
+                state.w = mix(state.w, m.w, 0.25);
+                if (m.z > 0.00999999977648258209228515625)
+                {
+                    float param_1 = m.x - state.x;
+                    float param_2 = state.x + (0.25 * wrap(param_1));
+                    state.x = wrap(param_2);
+                    state.z = mix(state.z, m.z, 0.25);
+                }
+                else
+                {
+                    state.z *= 0.64999997615814208984375;
+                }
+            }
+        }
+        else
+        {
+            state.z *= 0.64999997615814208984375;
+        }
+        _26.reference[line] = state;
+    }
+    _26.reference[_32.count] = state;
+}

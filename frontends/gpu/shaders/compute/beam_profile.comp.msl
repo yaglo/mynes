@@ -170,26 +170,25 @@ kernel void main0(constant Params& _43 [[buffer(0)]], device RGBIn& _98 [[buffer
         int param_7 = b_line;
         uint param_8 = 2u;
         lB = sample_rgb_channel_linear(param_6, param_7, param_8, _43, _98);
-        float lY = fast::clamp(((0.2989999949932098388671875 * lR) + (0.58700001239776611328125 * lG)) + (0.114000000059604644775390625 * lB), 0.0, 1.0);
-        float bloom_t = powr(lY, _43.bloom_gamma);
-        float sv = (_43.sigma_narrow + ((_43.sigma_wide - _43.sigma_narrow) * bloom_t)) * focus_scale;
-        sv = fast::clamp(sv, 0.0500000007450580596923828125, 1.0);
+        float3 exponent = float3(_43.bloom_gamma) / fast::max(float3(_43.gamma) + float3(_43.gamma_r, _43.gamma_g, _43.gamma_b), float3(1.0));
+        float3 bloom_t = powr(fast::clamp(float3(lR, lG, lB), float3(0.0), float3(1.0)), exponent);
+        float3 sv = fast::clamp(mix(float3(_43.sigma_narrow), float3(_43.sigma_wide), bloom_t) * focus_scale, float3(0.0500000007450580596923828125), float3(1.0));
         float pixel_width = 1.0 / rows_per_line;
         float rd = r_d - float(soff);
         float gd = g_d - float(soff);
         float bd = b_d - float(soff);
         float param_9 = rd;
-        float param_10 = sv;
+        float param_10 = sv.x;
         float param_11 = pixel_width;
-        R += (powr(fast::max(lR, 0.0), _43.gamma + _43.gamma_r) * beam_coverage(param_9, param_10, param_11));
+        R += (lR * beam_coverage(param_9, param_10, param_11));
         float param_12 = gd;
-        float param_13 = sv;
+        float param_13 = sv.y;
         float param_14 = pixel_width;
-        G += (powr(fast::max(lG, 0.0), _43.gamma + _43.gamma_g) * beam_coverage(param_12, param_13, param_14));
+        G += (lG * beam_coverage(param_12, param_13, param_14));
         float param_15 = bd;
-        float param_16 = sv;
+        float param_16 = sv.z;
         float param_17 = pixel_width;
-        B += (powr(fast::max(lB, 0.0), _43.gamma + _43.gamma_b) * beam_coverage(param_15, param_16, param_17));
+        B += (lB * beam_coverage(param_15, param_16, param_17));
     }
     R *= dwell;
     G *= dwell;
@@ -204,29 +203,9 @@ kernel void main0(constant Params& _43 [[buffer(0)]], device RGBIn& _98 [[buffer
         G *= hum;
         B *= hum;
     }
-    if (_43.noise_level > 0.0)
-    {
-        uint sr = ((ox * 1999u) + (oy * 7919u)) + (_43.frame_counter * 6271u);
-        uint sg = ((ox * 2999u) + (oy * 8923u)) + (_43.frame_counter * 4517u);
-        uint sb = ((ox * 3989u) + (oy * 9341u)) + (_43.frame_counter * 7211u);
-        sr ^= (sr >> 16u);
-        sr *= 73244475u;
-        sr ^= (sr >> 16u);
-        sg ^= (sg >> 16u);
-        sg *= 73244475u;
-        sg ^= (sg >> 16u);
-        sb ^= (sb >> 16u);
-        sb *= 73244475u;
-        sb ^= (sb >> 16u);
-        float luma = ((0.2989999949932098388671875 * R) + (0.58700001239776611328125 * G)) + (0.114000000059604644775390625 * B);
-        float noise_scale = _43.noise_level * (1.0 - (0.800000011920928955078125 * fast::clamp(luma, 0.0, 1.0)));
-        R += (((float(sr & 65535u) / 65535.0) - 0.5) * noise_scale);
-        G += (((float(sg & 65535u) / 65535.0) - 0.5) * noise_scale);
-        B += (((float(sb & 65535u) / 65535.0) - 0.5) * noise_scale);
-    }
-    R = fast::min(fast::max(R, powr(fast::max(_43.black_floor, 0.0), _43.gamma)), 4.0);
-    G = fast::min(fast::max(G, powr(fast::max(_43.black_floor, 0.0), _43.gamma)), 4.0);
-    B = fast::min(fast::max(B, powr(fast::max(_43.black_floor, 0.0), _43.gamma)), 4.0);
+    R = fast::max(R, powr(fast::max(_43.black_floor, 0.0), _43.gamma));
+    G = fast::max(G, powr(fast::max(_43.black_floor, 0.0), _43.gamma));
+    B = fast::max(B, powr(fast::max(_43.black_floor, 0.0), _43.gamma));
     uint idx = pix * 2u;
     _295.rgba_out[idx + 0u] = as_type<uint>(half2(float2(R, G)));
     _295.rgba_out[idx + 1u] = as_type<uint>(half2(float2(B, 1.0)));

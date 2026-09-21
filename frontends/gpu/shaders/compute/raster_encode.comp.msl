@@ -12,6 +12,14 @@ inline Tx mod(Tx x, Ty y)
     return x - y * floor(x / y);
 }
 
+// Implementation of signed integer mod accurate to SPIR-V specification
+template<typename Tx, typename Ty>
+inline Tx spvSMod(Tx x, Ty y)
+{
+    Tx remainder = x - y * (x / y);
+    return select(Tx(remainder + y), remainder, remainder == 0 || (x >= 0) == (y >= 0));
+}
+
 struct Params
 {
     uint count;
@@ -23,6 +31,8 @@ struct Params
     uint region;
     uint lines;
     uint separate_yc;
+    float4 backdrop[3];
+    float4 gray_backdrop[3];
 };
 
 struct Active
@@ -47,17 +57,17 @@ struct RasterY
 
 constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
 
-kernel void main0(constant Params& _20 [[buffer(0)]], device Active& _144 [[buffer(1)]], device Raster& _158 [[buffer(3)]], device SourceY& _193 [[buffer(2)]], device RasterY& _207 [[buffer(4)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+kernel void main0(constant Params& _24 [[buffer(0)]], device Active& _272 [[buffer(1)]], device Raster& _295 [[buffer(3)]], device SourceY& _362 [[buffer(2)]], device RasterY& _435 [[buffer(4)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
     uint i = gl_GlobalInvocationID.x;
-    if (i >= _20.count)
+    if (i >= _24.count)
     {
         return;
     }
-    uint line = i / _20.full_width;
-    uint x = i % _20.full_width;
-    uint _dot = x / _20.samples_per_dot;
-    uint start = 65u * _20.samples_per_dot;
+    uint line = i / _24.full_width;
+    uint x = i % _24.full_width;
+    uint _dot = x / _24.samples_per_dot;
+    uint start = 65u * _24.samples_per_dot;
     float value = 0.0;
     float sync = -0.335025370121002197265625;
     if (_dot < 25u)
@@ -66,52 +76,183 @@ kernel void main0(constant Params& _20 [[buffer(0)]], device Active& _144 [[buff
     }
     if ((_dot >= 29u) && (_dot < 44u))
     {
-        float p = (_20.phase_base + (float(line) * _20.line_phase)) + (float(x) - float(start));
-        float _97;
-        if (_20.region == 1u)
+        float p = (_24.phase_base + (float(line) * _24.line_phase)) + (float(x) - float(start));
+        float _101;
+        if (_24.region == 1u)
         {
-            _97 = ((line & 1u) == 1u) ? 4.0 : 7.0;
+            _101 = ((line & 1u) == 1u) ? 4.0 : 7.0;
         }
         else
         {
-            _97 = 8.0;
+            _101 = 8.0;
         }
-        float hue = _97;
+        float hue = _101;
         bool high = mod(p + hue, 12.0) < 6.0;
         value = high ? 0.269035518169403076171875 : (-0.20812182128429412841796875);
     }
-    bool _128 = (line < 240u) && (x >= start);
-    bool _138;
-    if (_128)
+    bool _130;
+    if (_24.region == 0u)
     {
-        _138 = x < (start + _20.active_width);
+        _130 = (line >= 245u) && (line < 248u);
     }
     else
     {
-        _138 = _128;
+        _130 = (line >= 270u) && (line < 273u);
     }
-    if (_138)
+    bool vertical_sync = _130;
+    bool _152 = line < 240u;
+    bool _161;
+    if (_152)
     {
-        value = _144.picture[((line * _20.active_width) + x) - start];
+        _161 = (_24.region == 0u) || (line > 0u);
     }
-    _158.raster[i] = value;
-    if (_20.separate_yc != 0u)
+    else
     {
-        float y = (_dot < 25u) ? sync : 0.0;
-        bool _178 = (line < 240u) && (x >= start);
-        bool _187;
-        if (_178)
+        _161 = _152;
+    }
+    bool picture_line = _161;
+    if ((((_24.region == 0u) && (line < 242u)) && (_dot >= 49u)) && (_dot < 332u))
+    {
+        int phase = int(mod(((_24.phase_base + (float(line) * _24.line_phase)) + float(x)) - float(start), 12.0));
+        float _199;
+        if (_dot == 49u)
         {
-            _187 = x < (start + _20.active_width);
+            _199 = _24.gray_backdrop[phase / 4][spvSMod(phase, 4)];
         }
         else
         {
-            _187 = _178;
+            _199 = _24.backdrop[phase / 4][spvSMod(phase, 4)];
         }
-        if (_187)
+        value = _199;
+    }
+    bool _222 = picture_line && (x >= start);
+    bool _232;
+    if (_222)
+    {
+        _232 = x < (start + _24.active_width);
+    }
+    else
+    {
+        _232 = _222;
+    }
+    if (_232)
+    {
+        bool _238 = _24.region == 1u;
+        bool _263;
+        if (_238)
         {
-            y = _193.source_y[((line * _20.active_width) + x) - start];
+            bool _248 = x < (start + (2u * _24.samples_per_dot));
+            bool _262;
+            if (!_248)
+            {
+                _262 = x >= ((start + _24.active_width) - (2u * _24.samples_per_dot));
+            }
+            else
+            {
+                _262 = _248;
+            }
+            _263 = _262;
         }
-        _207.raster_y[i] = y;
+        else
+        {
+            _263 = _238;
+        }
+        bool pal_border = _263;
+        float _265;
+        if (pal_border)
+        {
+            _265 = 0.0;
+        }
+        else
+        {
+            _265 = _272.picture[((line * _24.active_width) + x) - start];
+        }
+        value = _265;
+    }
+    if (vertical_sync)
+    {
+        value = (_dot < 318u) ? sync : 0.0;
+    }
+    _295.raster[i] = value;
+    if (_24.separate_yc != 0u)
+    {
+        float y = (_dot < 25u) ? sync : 0.0;
+        bool _314 = picture_line && (x >= start);
+        bool _323;
+        if (_314)
+        {
+            _323 = x < (start + _24.active_width);
+        }
+        else
+        {
+            _323 = _314;
+        }
+        if (_323)
+        {
+            bool _329 = _24.region == 1u;
+            bool _353;
+            if (_329)
+            {
+                bool _338 = x < (start + (2u * _24.samples_per_dot));
+                bool _352;
+                if (!_338)
+                {
+                    _352 = x >= ((start + _24.active_width) - (2u * _24.samples_per_dot));
+                }
+                else
+                {
+                    _352 = _338;
+                }
+                _353 = _352;
+            }
+            else
+            {
+                _353 = _329;
+            }
+            bool pal_border_1 = _353;
+            float _355;
+            if (pal_border_1)
+            {
+                _355 = 0.0;
+            }
+            else
+            {
+                _355 = _362.source_y[((line * _24.active_width) + x) - start];
+            }
+            y = _355;
+        }
+        bool _386 = (((_24.region == 0u) && (line < 242u)) && (_dot >= 50u)) && (_dot < 332u);
+        bool _405;
+        if (_386)
+        {
+            bool _394 = (!picture_line) || (x < start);
+            bool _404;
+            if (!_394)
+            {
+                _404 = x >= (start + _24.active_width);
+            }
+            else
+            {
+                _404 = _394;
+            }
+            _405 = _404;
+        }
+        else
+        {
+            _405 = _386;
+        }
+        if (_405)
+        {
+            y = 0.0;
+            for (int k = 0; k < 12; k++)
+            {
+                y += (_24.backdrop[k / 4][spvSMod(k, 4)] / 12.0);
+            }
+        }
+        if (vertical_sync)
+        {
+            y = value;
+        }
+        _435.raster_y[i] = y;
     }
 }

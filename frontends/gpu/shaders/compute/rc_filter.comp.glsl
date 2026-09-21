@@ -35,6 +35,8 @@ layout(set = 2, binding = 0) uniform Params {
     uint  block_offset;  /* not used in sequential mode */
     uint  samples_per_line; /* samples per scanline (2048 for NTSC) */
     uint  num_lines;     /* number of scanlines (240) */
+    float nonlinear_tau_samples;
+    float pad;
 };
 
 void main() {
@@ -48,9 +50,18 @@ void main() {
 
     /* Warm-start: assume filter was settled at x[0]. */
     float y_prev = data[start];
+    float source_prev=y_prev;
 
     for (uint i = start; i < end; i++) {
         float x = data[i];
+        if(nonlinear_tau_samples>0.0) {
+            // Voltage-dependent output impedance, NESdev 2C02G estimate.
+            // Convert blank-relative units back to absolute 0..1.1 V.
+            float ratio=max((x*788.0+312.0)/1100.0,0.0);
+            float input_weight=1.0/(1.0+ratio*nonlinear_tau_samples);
+            source_prev=mix(source_prev,x,input_weight);
+            x=source_prev;
+        }
         float y = a * y_prev + b * x;
         data[i] = y;
         y_prev = y;

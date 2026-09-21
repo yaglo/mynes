@@ -108,10 +108,9 @@ void video_chain_init_preset(VideoChain *chain, VideoConnectionType conn,
     signal_format_init(&chain->signal_fmt, region);
 
     /* ---- Stage 2: Console output ---- */
-    /* NES composite output: 75 ohm source impedance, 10 uF DC-blocking
-     * coupling capacitor (fc ~ 0.21 Hz), amplifier BW ~ 6 MHz. */
+    /* Generic terminated source. Coupling C is retained only for old files. */
     chain->console_coupling_R = 75.0f;          /* ohm */
-    chain->console_coupling_C = 10.0e-6f;       /* 10 uF */
+    chain->console_coupling_C = 0;              /* legacy, no GPU control */
     chain->console_amp_bw     = 6.0e6f;         /* 6 MHz */
     chain->console_psu_hum    = 0.0f;           /* clean by default */
 
@@ -121,8 +120,9 @@ void video_chain_init_preset(VideoChain *chain, VideoConnectionType conn,
     /* ---- Stage 4: RF modulator ---- */
     chain->rf.enabled        = (conn == VIDEO_CONN_RF);
     chain->rf.carrier_freq   = 61.25e6f;        /* Channel 3 (61.25 MHz) */
-    chain->rf.mod_bandwidth  = 3.0e6f;          /* +/- 3 MHz vestigial sideband */
-    chain->rf.noise_floor_dbm = -60.0f;         /* -60 dBm thermal noise */
+    chain->rf.mod_bandwidth  = 4.0e6f;          /* baseband-equivalent channel corner */
+    chain->rf.carrier_level_dbm = -20.0f;       /* sync-tip carrier reference */
+    chain->rf.noise_floor_dbm = -60.0f;         /* total channel noise before video filtering */
     chain->rf.agc_attack_ms  = 100.0f;          /* 100 ms attack */
     chain->rf.agc_release_ms = 1000.0f;         /* 1 s release */
 
@@ -250,14 +250,12 @@ bool video_chain_stage_active(const VideoChain *chain, int stage) {
     VideoConnectionType c = chain->connection;
 
     switch (stage) {
-    /* Stages 1-2: always active (DAC + console output). */
-    case 1:
-    case 2:
-        return true;
+    case 1: return true; /* PPU source, including ideal RGB modification */
+    case 2: return video_connection_uses_signal_decode(c);
 
     /* Stage 3: cable -- active unless direct connection. */
     case 3:
-        return c != VIDEO_CONN_DIRECT;
+        return video_connection_uses_signal_decode(c);
 
     /* Stage 4: RF modulator/demodulator -- RF path only. */
     case 4:
@@ -265,7 +263,7 @@ bool video_chain_stage_active(const VideoChain *chain, int stage) {
 
     /* Stage 5: TV input (coupling + AGC) -- active unless direct. */
     case 5:
-        return c != VIDEO_CONN_DIRECT;
+        return video_connection_uses_signal_decode(c);
 
     /* Stage 6: Comb filter / Y-C separator.
      * RF and Composite need comb filtering to separate Y and C.
@@ -282,9 +280,7 @@ bool video_chain_stage_active(const VideoChain *chain, int stage) {
         return c == VIDEO_CONN_RF || c == VIDEO_CONN_COMPOSITE
             || c == VIDEO_CONN_SVIDEO;
 
-    /* Stage 8: Luma processing -- always active. */
-    case 8:
-        return true;
+    case 8: return video_connection_uses_signal_decode(c);
 
     /* Stage 9: Matrix decode (YIQ/YCbCr -> RGB).
      * Not needed for RGB connections (signal is already RGB).

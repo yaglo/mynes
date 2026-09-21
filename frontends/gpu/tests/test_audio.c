@@ -40,6 +40,19 @@ static void streaming(SDL_GPUDevice *gpu) {
         }
         printf("Speaker %d CPU/GPU max error: %.8f\n",speaker,max_error);
         CHECK(max_error < .0001f);
+        // A missed playback deadline discards the GPU result, then starts
+        // the next block from the CPU fallback state without replaying it.
+        AudioState fallback=cpu, expected=cpu;
+        CHECK(audio_gpu_begin(&a,gpu,&c,&fallback,source,1000));
+        CHECK(!audio_gpu_begin(&a,gpu,&c,&fallback,source,1000));
+        audio_chain_process(&c,&fallback,source,device,1000);
+        audio_chain_process(&c,&expected,source,whole,1000);
+        CHECK(SDL_WaitForGPUFences(gpu,true,&a.pending,1));
+        CHECK(audio_gpu_poll(&a,gpu,NULL,NULL)==1);
+        CHECK(memcmp(&fallback,&expected,sizeof(fallback))==0);
+        CHECK(audio_gpu_process(&a,gpu,&fallback,source,device,1000));
+        audio_chain_process(&c,&expected,source,whole,1000);
+        for(int i=0;i<1000;i++) CHECK(fabsf(device[i]-whole[i])<.0001f);
         // Move the live state between backends without a reset or an extra frame.
         CHECK(audio_gpu_process(&a,gpu,&chunked,source,device,1000));
         audio_chain_process(&c,&cpu,source,whole,1000);

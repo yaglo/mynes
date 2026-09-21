@@ -29,6 +29,9 @@ typedef struct {
     /* Sampler for linear filtering. */
     SDL_GPUSampler *sampler_linear;
 
+    SDL_GPUTexture *mask_tiles[2]; /* shadow dots, staggered slots; linear coverage + mips */
+    SDL_GPUSampler *sampler_mask;
+
     bool initialized;
 } GPUDisplay;
 
@@ -42,7 +45,9 @@ typedef struct {
     float convergence_dynamic;      /* legacy UBO slot, beam path handles convergence */
     float mask_strength;            /* phosphor mask strength (0-1) */
     int   mask_type;                /* 0=shadow, 1=aperture_grille, 2=slot */
-    float mask_pitch_px;            /* mask pitch in display pixels */
+    float mask_pitch_px;            /* one phosphor cell, in mask-coordinate pixels */
+    float mask_row_pitch;           /* 0 = physical aspect; otherwise fitted row spacing */
+    float mask_scale_x, mask_scale_y, mask_origin_x, mask_origin_y;
     float halation_strength;        /* halation blend intensity */
     float halation_tint_r;          /* halation bloom per-channel tint */
     float halation_tint_g;
@@ -95,6 +100,7 @@ typedef struct {
     float thermal_g;
     float thermal_b;
     /* §5.4 phosphor chromaticity drive shift. */
+    int phosphor_gamut;
     float chromaticity_drive_shift;
     /* §6.2 microphonic wobble amplitude + current bass RMS
      * (per-frame updated from gpu_render). */
@@ -144,5 +150,10 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
 /* Fill GPUDisplayParams from a VideoChain's TVDisplayParams. */
 void gpu_display_params_from_tv(GPUDisplayParams *out, const TVDisplayParams *tv,
                                  int comp_w, int comp_h, int win_w, int win_h);
+
+/* Fit the mask to the host panel, independently of the stored CRT preset.
+ * Integer RGB-triad/row periods in pixel mode trade exact CRT pitch for stability. */
+void gpu_display_fit_mask(GPUDisplayParams *p, bool pixel_aligned,
+                         float scale_x, float scale_y, float origin_x, float origin_y);
 
 #endif /* GPU_DISPLAY_H */

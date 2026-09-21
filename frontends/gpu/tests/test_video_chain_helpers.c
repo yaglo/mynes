@@ -10,6 +10,7 @@
 
 #include "../video_chain.h"
 #include "../gpu_half.h"
+#include "../crt_color.h"
 
 static int fails = 0;
 #define CHECK(cond, msg) do { \
@@ -86,8 +87,8 @@ static void test_connection_decode_routing(void) {
           "Composite uses the signal decoder");
     CHECK(video_connection_uses_signal_decode(VIDEO_CONN_SVIDEO) == true,
           "S-Video uses the signal decoder");
-    CHECK(video_connection_uses_signal_decode(VIDEO_CONN_COMPONENT) == true,
-          "Component still routes through the signal decoder");
+    CHECK(video_connection_uses_signal_decode(VIDEO_CONN_COMPONENT) == false,
+          "Component bypasses carrier decoding and keeps baseband colour");
     CHECK(video_connection_uses_signal_decode(VIDEO_CONN_RGB) == false,
           "RGB bypasses the signal decoder");
     CHECK(video_connection_uses_signal_decode(VIDEO_CONN_DIRECT) == false,
@@ -122,6 +123,23 @@ static uint16_t f32_to_f16_bits(float f) {
         return (uint16_t)(sign | 0x7C00u);  /* inf */
     }
     return (uint16_t)(sign | ((uint32_t)exp << 10) | (mant >> 13));
+}
+
+static void test_physical_controls(void) {
+    VideoChain c; video_chain_init_preset(&c,VIDEO_CONN_COMPOSITE,VIDEO_COMB_NONE,0);
+    c.cable.length_meters=1; c.cable.capacitance_per_m=67e-12f;
+    c.cable.resistance_per_m=.1f; c.cable.connector_resistance=.1f;
+    float short_bw=video_cable_bandwidth(&c);
+    CHECK(short_bw>50e6f,"short video lead does not impose a spurious 7 MHz limit");
+    c.cable.length_meters=5;
+    CHECK(video_cable_bandwidth(&c)<short_bw*.21f,"cable response follows capacitance and length");
+    c.tv.beam_fwhm_min=.4f;c.tv.beam_fwhm_max=.8f;
+    CHECK(fabsf(video_beam_sigma(&c.tv,true)/video_beam_sigma(&c.tv,false)-2)<1e-5f,"beam FWHM controls have consistent physical units");
+    c.console_amp_bw=14000;
+    CHECK(video_console_bandwidth(&c)==6e6f,"legacy audio-bandwidth typo cannot destroy video");
+    c.connection=VIDEO_CONN_RGB;
+    CHECK(!video_chain_stage_active(&c,2) && !video_chain_stage_active(&c,8),"RGB skips composite bandwidth and luma filters");
+    CHECK(video_chain_stage_active(&c,11),"RGB retains electron beam");
 }
 
 static void test_half_to_float_exact(void) {
@@ -195,12 +213,44 @@ static void test_timing_ema(void) {
     if (err >= 1e-6) fprintf(stderr, "  got %g expected %g\n", avg, expected);
 }
 
+static void test_colour_response(void) {
+    TVDisplayParams t={.gamma=2.4f,.color_temperature=6500,.saturation=1,
+        .r_drive=1,.g_drive=1,.b_drive=1,.phosphor_gamut=1};
+    float m[3][3],bias[3],d[3],p[3][3];
+    crt_white_drive(&t,d);
+    for(int i=0;i<3;i++) CHECK(fabsf(d[i]-1)<.0001f,"D65 gun voltage is neutral");
+    t.color_temperature=9300; crt_white_drive(&t,d);crt_phosphor_matrix(t.phosphor_gamut,p);
+    float rgb[3]={0};
+    for(int i=0;i<3;i++) for(int j=0;j<3;j++) rgb[i]+=p[i][j]*powf(d[j],t.gamma);
+    float X=.4123908f*rgb[0]+.3575843f*rgb[1]+.1804808f*rgb[2];
+    float Y=.2126390f*rgb[0]+.7151687f*rgb[1]+.0721923f*rgb[2];
+    float Z=.0193308f*rgb[0]+.1191948f*rgb[1]+.9505322f*rgb[2];
+    CHECK(fabsf(Y-1)<.00001f,"whitepoint preserves luminance");
+    CHECK(fabsf(X/(X+Y+Z)-.28307f)<.0001f && fabsf(Y/(X+Y+Z)-.29693f)<.0001f,"D93 emitted chromaticity");
+    CHECK(rgb[2]>1.3f && rgb[0]<.9f,"D93 has a substantial cool white response");
+    t.color_temperature=6500;crt_decoder_matrix(&t,false,1,0,1,m,bias);
+    float reference[3][3];memcpy(reference,m,sizeof(m));
+    t.decoder_red_gain=.2f; t.decoder_blue_gain=-.05f;
+    crt_decoder_matrix(&t,false,1,0,1,m,bias);
+    for(int i=0;i<3;i++) CHECK(fabsf(m[i][0]-reference[i][0])<1e-6f,"decoder push leaves grey neutral");
+    CHECK(fabsf(m[0][1]/reference[0][1]-1.2f)<1e-5f,"R-Y gain independent of gun drive");
+    for(int j=1;j<3;j++) {
+        float dy=.299f*(m[0][j]-reference[0][j])+.587f*(m[1][j]-reference[1][j])+.114f*(m[2][j]-reference[2][j]);
+        CHECK(fabsf(dy)<1e-5f,"decoder axis change preserves nominal luma");
+    }
+}
+
 int main(void) {
+    RFModulatorParams rf={.carrier_level_dbm=-20,.noise_floor_dbm=-70};
+    float noise=video_rf_noise_rms(&rf);rf.noise_floor_dbm+=20;
+    CHECK(fabsf(video_rf_noise_rms(&rf)/noise-10)<.00001f,"20 dB noise power change gives 10x amplitude");
+    test_colour_response();
     test_comb_shader_mode();
     test_chroma_aux_layout();
     test_stage_activation_by_connection();
     test_connection_decode_routing();
     test_region_sample_rates();
+    test_physical_controls();
     test_half_to_float_exact();
     test_half_to_float_roundtrip();
     test_half_inf_nan();

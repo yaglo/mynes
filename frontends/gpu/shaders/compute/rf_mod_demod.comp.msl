@@ -44,10 +44,16 @@ kernel void main0(constant Params& _53 [[buffer(0)]], device CompositeInOut& _68
         return;
     }
     float signal = _68.composite[tid];
-    uint param = tid ^ (_53.frame_seed * 2654435769u);
-    float _82 = prng(param);
-    float _noise = (_82 - 0.5) * 2.0;
-    signal += (_53.noise_amplitude * _noise);
+    float carrier = fast::max(0.78041827678680419921875 - (0.65541827678680419921875 * signal), 0.0);
+    uint seed = tid ^ (_53.frame_seed * 2654435769u);
+    uint param = seed;
+    float _93 = prng(param);
+    float radius = sqrt((-2.0) * log(fast::max(_93, 5.9999997858994902344420552253723e-08))) * _53.noise_amplitude;
+    uint param_1 = seed ^ 1757159915u;
+    float _109 = prng(param_1);
+    float angle = 6.283185482025146484375 * _109;
+    float2 noisy = float2(carrier, 0.0) + (float2(cos(angle), sin(angle)) * radius);
+    signal = (0.78041827678680419921875 - length(noisy)) / 0.65541827678680419921875;
     uint line = tid / _53.samples_per_line;
     uint sample_in_line = tid % _53.samples_per_line;
     float time_sample = float((line * _53.full_line_samples) + sample_in_line);

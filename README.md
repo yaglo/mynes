@@ -88,13 +88,17 @@ SDL2 frontend, headless renderer, and tests. It generates the 2C02/2C07
 waveform, bandwidth-limits it, demodulates chroma, matrix-decodes it, and
 applies the lightweight display treatment needed for real-time play.
 
-**GPU signal chain:** `frontends/gpu/` contains the physical signal-chain
-frontend. The CPU uploads the generated waveform; compute shaders handle
-Y/C separation, PAL chroma correction, luma/chroma filtering, RGB decode,
-deflection maps, beam deposition, temporal persistence, mask/glass, and
-tone mapping. The connection type is not just a quality slider: RF,
-composite, S-Video, RGB, and direct paths activate different stages
-because different cables bypass different real electronics.
+**GPU signal chain:** `frontends/gpu/` contains the SDL3 signal-chain frontend.
+PPU codes drive a measured voltage model, followed by the NTSC/PAL raster,
+receiver sync/burst recovery, Y/C decoding, RGB amplifiers, CRT supply/loading,
+beam deposition, phosphor decay, mask, glass, and SDR/HDR output. Emulation and
+audio run independently of presentation. Presets and live controls are available
+in the OSD and Signal Studio.
+
+See the [model and its limits](docs/gpu-pipeline-reference.md) and
+[benchmarks](docs/gpu-benchmark-results.md), [hardware research](docs/gpu-hardware-research.md),
+and [paired Contra renders](docs/gpu-visual-review.md). The screenshots
+above are historical examples, not calibration targets for the reference profile.
 
 ## Quick Start
 

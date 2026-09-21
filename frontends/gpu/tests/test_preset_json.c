@@ -125,6 +125,8 @@ static void make_distinctive_preset(PhysicalPreset *p)
     p->tv.geometry_warp     = 2.5f;
 
     p->tv.color_temperature = 7500.0f;
+    p->tv.decoder_red_gain=.17f; p->tv.decoder_blue_gain=-.03f;
+    p->tv.phosphor_gamut=2; p->tv.beam_spot_growth=.4f;
     p->tv.r_drive = 1.05f;
     p->tv.g_drive = 0.98f;
     p->tv.b_drive = 1.03f;
@@ -141,6 +143,7 @@ static void make_distinctive_preset(PhysicalPreset *p)
     p->tv.beam_height_min     = 0.55f;
     p->tv.beam_height_max     = 0.85f;
     p->tv.beam_spot_size      = 4.2f;
+    p->tv.beam_fwhm_min = .37f; p->tv.beam_fwhm_max = .89f;
     p->tv.convergence_static  = 0.18f;
     p->tv.convergence_dynamic = 0.11f;
     p->tv.conv_r_x = 2.8f;
@@ -185,6 +188,8 @@ static void make_distinctive_preset(PhysicalPreset *p)
     p->tv.skew_y = 0.015f;
     p->tv.hv_sag = 0.22f;
     p->tv.focus_breathing = 0.14f;
+    p->tv.video_black_droop = 0.18f;
+    p->tv.video_recovery_us = 18;
     p->tv.scanline_wobble = 0.35f;
     p->tv.top_band_shift = 3.5f;
     p->tv.top_edge_skew = -2.25f;
@@ -195,10 +200,12 @@ static void make_distinctive_preset(PhysicalPreset *p)
     /* Console output stage. */
     p->console_coupling_R = 75.0f;
     p->console_coupling_C = 12e-6f;
+    p->console_phase_distortion_ns = 27.0f;
     p->console_amp_bw     = 15500.0f;
     p->console_psu_hum    = 0.004f;
 
     /* RF. */
+    p->rf.carrier_level_dbm=-23;
     p->rf.enabled         = true;
     p->rf.carrier_freq    = 61250000.0f;
     p->rf.mod_bandwidth   = 3000000.0f;
@@ -228,6 +235,11 @@ static int compare_presets(const PhysicalPreset *a, const PhysicalPreset *b,
 {
     (void)context;
 
+    ASSERT_NEAR(b->rf.carrier_level_dbm,a->rf.carrier_level_dbm,FLOAT_TOL,"RF carrier level");
+    ASSERT_NEAR(b->tv.decoder_red_gain,a->tv.decoder_red_gain,FLOAT_TOL,"decoder red gain");
+    ASSERT_NEAR(b->tv.decoder_blue_gain,a->tv.decoder_blue_gain,FLOAT_TOL,"decoder blue gain");
+    ASSERT_NEAR(b->tv.beam_spot_growth,a->tv.beam_spot_growth,FLOAT_TOL,"beam spot growth");
+    ASSERT_EQ_INT(b->tv.phosphor_gamut,a->tv.phosphor_gamut,"phosphor gamut");
     /* Identity. */
     ASSERT_EQ_STR(b->name, a->name, "name");
     ASSERT_EQ_STR(b->description, a->description, "description");
@@ -286,6 +298,8 @@ static int compare_presets(const PhysicalPreset *a, const PhysicalPreset *b,
     ASSERT_NEAR(b->tv.beam_sharpness,     a->tv.beam_sharpness,     FLOAT_TOL, "tv.beam_sharpness");
     ASSERT_NEAR(b->tv.beam_height_min,    a->tv.beam_height_min,    FLOAT_TOL, "tv.beam_height_min");
     ASSERT_NEAR(b->tv.beam_height_max,    a->tv.beam_height_max,    FLOAT_TOL, "tv.beam_height_max");
+    ASSERT_NEAR(b->tv.beam_fwhm_min,a->tv.beam_fwhm_min,FLOAT_TOL,"tv.beam_fwhm_min");
+    ASSERT_NEAR(b->tv.beam_fwhm_max,a->tv.beam_fwhm_max,FLOAT_TOL,"tv.beam_fwhm_max");
     ASSERT_NEAR(b->tv.beam_spot_size,     a->tv.beam_spot_size,     FLOAT_TOL, "tv.beam_spot_size");
     ASSERT_NEAR(b->tv.convergence_static, a->tv.convergence_static, FLOAT_TOL, "tv.convergence_static");
     ASSERT_NEAR(b->tv.convergence_dynamic,a->tv.convergence_dynamic,FLOAT_TOL, "tv.convergence_dynamic");
@@ -331,6 +345,8 @@ static int compare_presets(const PhysicalPreset *a, const PhysicalPreset *b,
     ASSERT_NEAR(b->tv.skew_y,             a->tv.skew_y,             FLOAT_TOL, "tv.skew_y");
     ASSERT_NEAR(b->tv.hv_sag,             a->tv.hv_sag,             FLOAT_TOL, "tv.hv_sag");
     ASSERT_NEAR(b->tv.focus_breathing,    a->tv.focus_breathing,    FLOAT_TOL, "tv.focus_breathing");
+    ASSERT_NEAR(b->tv.video_black_droop,  a->tv.video_black_droop,  FLOAT_TOL, "tv.video_black_droop");
+    ASSERT_NEAR(b->tv.video_recovery_us,  a->tv.video_recovery_us,  FLOAT_TOL, "tv.video_recovery_us");
     ASSERT_NEAR(b->tv.scanline_wobble,    a->tv.scanline_wobble,    FLOAT_TOL, "tv.scanline_wobble");
     ASSERT_NEAR(b->tv.top_band_shift,     a->tv.top_band_shift,     FLOAT_TOL, "tv.top_band_shift");
     ASSERT_NEAR(b->tv.top_edge_skew,      a->tv.top_edge_skew,      FLOAT_TOL, "tv.top_edge_skew");
@@ -342,6 +358,7 @@ static int compare_presets(const PhysicalPreset *a, const PhysicalPreset *b,
     ASSERT_NEAR(b->console_coupling_R,        a->console_coupling_R,        FLOAT_TOL, "console_coupling_R");
     ASSERT_NEAR(b->console_coupling_C * 1e6f, a->console_coupling_C * 1e6f, FLOAT_TOL, "console_coupling_C");
     ASSERT_NEAR(b->console_amp_bw,            a->console_amp_bw,            1.0f,      "console_amp_bw");
+    ASSERT_NEAR(a->console_phase_distortion_ns, b->console_phase_distortion_ns, FLOAT_TOL, "console_phase_distortion_ns");
     ASSERT_NEAR(b->console_psu_hum,           a->console_psu_hum,           FLOAT_TOL, "console_psu_hum");
 
     /* RF. */
@@ -638,6 +655,31 @@ static int test_missing_fields_use_defaults(void)
 /* ============================================================================
  * 7. test_malformed_json -- malformed inputs fail gracefully
  * ============================================================================ */
+
+static int test_compact_nested_json(void)
+{
+    const char *path="/tmp/test_compact_preset.json";
+    const char *json="{\"name\":\"Compact, {quoted}: \\\"yes\\\"\",\"tv\":{\"gamma\":2.4,\"mask_type\":\"slot\",\"unknown\":{\"gamma\":9}},\"connection\":\"component\",\"unknown\":[1,{\"contrast\":7}],\"contrast\":1.1,\"rf\":{\"enabled\":true,\"carrier_level_dbm\":-20}}";
+    ASSERT_TRUE(write_text_file(path,json),"write compact");
+    PhysicalPreset p;
+    ASSERT_TRUE(preset_json_load(&p,path),"compact JSON accepted");
+    ASSERT_EQ_STR(p.name,"Compact, {quoted}: \"yes\"","quoted punctuation");
+    ASSERT_NEAR(p.tv.gamma,2.4,1e-6,"nested unknown cannot replace gamma");
+    ASSERT_EQ_INT(p.tv.mask_type,VIDEO_MASK_SLOT,"compact mask");
+    ASSERT_EQ_INT(p.connection,VIDEO_CONN_COMPONENT,"return to root");
+    ASSERT_NEAR(p.contrast,1.1,1e-6,"unknown array ignored");
+    ASSERT_TRUE(p.rf.enabled,"compact bool");
+    ASSERT_NEAR(p.rf.carrier_level_dbm,-20,1e-6,"negative number");
+    const char *bad[]={"{", "{} junk", "{\"gamma\":1,}", "{\"tv\":{\"gamma\":nan}}", "{\"name\":\"bad\\q\"}", "{\"contrast\":1e999}", "{\"tv\":{\"gamma\":2.}}"};
+    PhysicalPreset before=p;
+    for (size_t i=0;i<sizeof(bad)/sizeof(*bad);i++) {
+        ASSERT_TRUE(write_text_file(path,bad[i]),"write invalid JSON");
+        ASSERT_FALSE(preset_json_load(&p,path),"invalid JSON rejected");
+        ASSERT_TRUE(!memcmp(&p,&before,sizeof(p)),"failure preserves current preset");
+    }
+    unlink(path);
+    return 1;
+}
 
 static int test_malformed_json(void)
 {
@@ -955,6 +997,7 @@ int main(void)
     printf("\n--- Robustness ---\n");
     RUN_TEST(test_missing_fields_use_defaults);
     RUN_TEST(test_malformed_json);
+    RUN_TEST(test_compact_nested_json);
 
     printf("\n--- Directory scan ---\n");
     RUN_TEST(test_scan_dir);

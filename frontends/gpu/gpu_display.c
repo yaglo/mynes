@@ -15,6 +15,7 @@
 
 #include "gpu_display.h"
 #include "gpu_log.h"
+#include "crt_color.h"
 #include <stdio.h>
 #include <math.h>
 #include <stdlib.h>
@@ -23,6 +24,64 @@
 /* ============================================================================
  * Internal helpers
  * ============================================================================ */
+
+/* Repeating phosphor face. Delta dots shift adjacent rows by half a
+ * triad. Inline slots keep each colour in a vertical column; only the
+ * horizontal bridges stagger between neighbouring RGB groups.
+ * Coverage and mipmaps are linear; they describe phosphor area, not sRGB.
+ * This replaces 16 procedural mask evaluations per display pixel. */
+static SDL_GPUTexture *create_mask_tile(SDL_GPUDevice *gpu, bool slots) {
+    enum { SIDE = 128, SUB = 4 };
+    // Exact half-float encodings of 0/16 .. 16/16 sample coverage. Eight-bit
+    // mip rounding biased the primaries differently at small mask pitches.
+    static const Uint16 coverage[17]={0,0x2c00,0x3000,0x3200,0x3400,0x3500,0x3600,0x3700,
+        0x3800,0x3880,0x3900,0x3980,0x3a00,0x3a80,0x3b00,0x3b80,0x3c00};
+    Uint16 pixels[SIDE*SIDE*4];
+    for (int y=0; y<SIDE; y++) for (int x=0; x<SIDE; x++) {
+        int count[3]={0};
+        for (int sy=0; sy<SUB; sy++) for (int sx=0; sx<SUB; sx++) {
+            float py=(y+(sy+0.5f)/SUB)*2.0f/SIDE;
+            float px=(x+(sx+0.5f)/SUB)*(slots ? 6.0f : 3.0f)/SIDE;
+            if(slots) py+=((int)floorf(px/3)%2)*0.5f;
+            else px+=(int)floorf(py)*1.5f;
+            float dx=px-floorf(px)-0.5f, dy=py-floorf(py)-0.5f;
+            bool open=slots ? fabsf(dx)<0.42f && fabsf(dy)<0.37f
+                : (dx*dx/(0.42f*0.42f)+dy*dy/(0.40f*0.40f))<1.0f;
+            if (open) count[(int)floorf(px)%3]++;
+        }
+        for (int c=0;c<3;c++) pixels[(y*SIDE+x)*4+c]=coverage[count[c]];
+        pixels[(y*SIDE+x)*4+3]=0x3c00;
+    }
+    SDL_GPUTextureCreateInfo ti={.type=SDL_GPU_TEXTURETYPE_2D,
+        .format=SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT,
+        .usage=SDL_GPU_TEXTUREUSAGE_SAMPLER|SDL_GPU_TEXTUREUSAGE_COLOR_TARGET,
+        .width=SIDE,.height=SIDE,.layer_count_or_depth=1,.num_levels=8};
+    SDL_GPUTexture *texture=SDL_CreateGPUTexture(gpu,&ti);
+    SDL_GPUTransferBufferCreateInfo bi={.usage=SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,.size=sizeof(pixels)};
+    SDL_GPUTransferBuffer *upload=SDL_CreateGPUTransferBuffer(gpu,&bi);
+    SDL_GPUCommandBuffer *cmd=NULL;
+    if (!texture || !upload) goto fail;
+    void *mapped=SDL_MapGPUTransferBuffer(gpu,upload,false);
+    if (!mapped) goto fail;
+    memcpy(mapped,pixels,sizeof(pixels)); SDL_UnmapGPUTransferBuffer(gpu,upload);
+    cmd=SDL_AcquireGPUCommandBuffer(gpu);
+    if (!cmd) goto fail;
+    SDL_GPUCopyPass *copy=SDL_BeginGPUCopyPass(cmd);
+    if (!copy) goto fail;
+    SDL_GPUTextureTransferInfo src={.transfer_buffer=upload,.pixels_per_row=SIDE,.rows_per_layer=SIDE};
+    SDL_GPUTextureRegion dst={.texture=texture,.w=SIDE,.h=SIDE,.d=1};
+    SDL_UploadToGPUTexture(copy,&src,&dst,false); SDL_EndGPUCopyPass(copy);
+    SDL_GenerateMipmapsForGPUTexture(cmd,texture);
+    bool submitted=SDL_SubmitGPUCommandBuffer(cmd); cmd=NULL;
+    if (!submitted) goto fail;
+    SDL_ReleaseGPUTransferBuffer(gpu,upload);
+    return texture;
+fail:
+    if (cmd) SDL_CancelGPUCommandBuffer(cmd);
+    if (upload) SDL_ReleaseGPUTransferBuffer(gpu,upload);
+    if (texture) SDL_ReleaseGPUTexture(gpu,texture);
+    return NULL;
+}
 
 /* Load a SPIR-V file and create an SDL_GPUShader for the given stage.
  * The caller must release the shader after pipeline creation. */
@@ -235,12 +294,12 @@ bool gpu_display_init_target(GPUDisplay *d, SDL_GPUDevice *gpu,
 
     /* --- CRT display pipeline ---
      * Vertex shader: no samplers, no uniforms.
-     * Fragment shader: 2 samplers (composite + halation), 1 UBO (DisplayParams). */
+     * Fragment shader: 3 samplers (composite + halation + phosphor face), 1 UBO (DisplayParams). */
     {
         SDL_GPUShader *vert = load_shader(gpu, vert_path,
                                           SDL_GPU_SHADERSTAGE_VERTEX, 0, 0);
         SDL_GPUShader *frag = load_shader(gpu, crt_frag_path,
-                                          SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 1);
+                                          SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1);
         if (!vert || !frag) {
             if (vert) SDL_ReleaseGPUShader(gpu, vert);
             if (frag) SDL_ReleaseGPUShader(gpu, frag);
@@ -273,6 +332,17 @@ bool gpu_display_init_target(GPUDisplay *d, SDL_GPUDevice *gpu,
             gpu_display_destroy(d, gpu);
             return false;
         }
+    }
+
+    d->mask_tiles[0]=create_mask_tile(gpu,false);
+    d->mask_tiles[1]=create_mask_tile(gpu,true);
+    SDL_GPUSamplerCreateInfo mask_sampler={.min_filter=SDL_GPU_FILTER_LINEAR,
+        .mag_filter=SDL_GPU_FILTER_LINEAR,.mipmap_mode=SDL_GPU_SAMPLERMIPMAPMODE_LINEAR,
+        .address_mode_u=SDL_GPU_SAMPLERADDRESSMODE_REPEAT,.address_mode_v=SDL_GPU_SAMPLERADDRESSMODE_REPEAT,
+        .address_mode_w=SDL_GPU_SAMPLERADDRESSMODE_REPEAT,.max_lod=7};
+    d->sampler_mask=SDL_CreateGPUSampler(gpu,&mask_sampler);
+    if (!d->mask_tiles[0] || !d->mask_tiles[1] || !d->sampler_mask) {
+        gpu_display_destroy(d,gpu); return false;
     }
 
     /* --- Halation FBOs at quarter window resolution --- */
@@ -319,6 +389,10 @@ void gpu_display_destroy(GPUDisplay *d, SDL_GPUDevice *gpu)
         d->sampler_linear = NULL;
     }
 
+    for (int i=0;i<2;i++) if (d->mask_tiles[i]) {
+        SDL_ReleaseGPUTexture(gpu,d->mask_tiles[i]); d->mask_tiles[i]=NULL;
+    }
+    if (d->sampler_mask) { SDL_ReleaseGPUSampler(gpu,d->sampler_mask); d->sampler_mask=NULL; }
     d->initialized = false;
 }
 
@@ -357,37 +431,21 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
 
     (void)gpu;  /* device not needed for render recording */
 
-    /* -----------------------------------------------------------------------
-     * Halation blur uniforms (std140 layout matching BlurParams).
-     *
-     * BlurParams { vec2 direction; int radius; float threshold; int do_threshold; }
-     *
-     * std140: vec2 at offset 0 (8 bytes), int at offset 8, float at offset 12,
-     *         int at offset 16. Total padded to 32 bytes for safety.
-     * ----------------------------------------------------------------------- */
     struct {
-        float dir_x, dir_y;   /* vec2  direction     (offset 0)  */
-        int   radius;         /* int   radius        (offset 8)  */
-        float threshold;      /* float threshold     (offset 12) */
-        int   do_threshold;   /* int   do_threshold  (offset 16) */
-        float input_gamma;
-        int   _pad[2];        /* pad to 32 bytes                 */
+        float dir_x, dir_y, input_gamma, reserved;
     } blur_params;
+    /* Generic faceplate scatter sigma: 0.6% of picture height. Both axes
+     * use the same screen-space width; window margins do not stretch it. */
+    float picture_w=viewport ? viewport->w : (float)sw;
+    float picture_h=viewport ? viewport->h : (float)sh;
+    float scatter_step=0.006f/6.4f;
 
-    /* -----------------------------------------------------------------------
-     * Pass 1: Horizontal blur (composite → halation_a)
-     *   - Extract bright pixels (do_threshold = 1)
-     *   - Blur horizontally
-     * ----------------------------------------------------------------------- */
     /* Skip halation blur passes when strength is 0. */
     if (params->halation_strength > 0.001f)
     {
         memset(&blur_params, 0, sizeof(blur_params));
-        blur_params.dir_x = 1.0f / (float)d->halation_w;
+        blur_params.dir_x = scatter_step * picture_h / fmaxf(picture_w,1);
         blur_params.dir_y = 0.0f;
-        blur_params.radius = 16;
-        blur_params.threshold = 0.65f;
-        blur_params.do_threshold = 1;
         blur_params.input_gamma = params->input_gamma;
 
         SDL_GPUColorTargetInfo ct;
@@ -418,10 +476,7 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
     if (params->halation_strength > 0.001f) {
         memset(&blur_params, 0, sizeof(blur_params));
         blur_params.dir_x = 0.0f;
-        blur_params.dir_y = 1.0f / (float)d->halation_h;
-        blur_params.radius = 16;
-        blur_params.threshold = 0.65f;
-        blur_params.do_threshold = 0;
+        blur_params.dir_y = scatter_step;
         blur_params.input_gamma = 0;
 
         SDL_GPUColorTargetInfo ct;
@@ -539,9 +594,20 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
             float glass_glare_size;         /* offset 236 */
             float glass_glare_temp_k;
             float input_gamma, hdr_headroom, sdr_white_level;
-            int output_hdr;       /* offset 240 */
+            int output_hdr;       /* offset 256 */
+            float mask_row_pitch;
+            float mask_scale_x, mask_scale_y; /* vec2, offset 264 */
+            float mask_origin_x, mask_origin_y; /* vec2, offset 272 */
+            float _color_pad[2];
+            float phosphor_to_display[3][4];
         } crt_ubo;
 
+        float phosphor_matrix[3][3];
+        crt_phosphor_matrix(params->phosphor_gamut,phosphor_matrix);
+        for(int i=0;i<3;i++) {
+            for(int j=0;j<3;j++) crt_ubo.phosphor_to_display[i][j]=phosphor_matrix[i][j];
+            crt_ubo.phosphor_to_display[i][3]=0;
+        }
         crt_ubo.src_w = (float)comp_w;
         crt_ubo.src_h = (float)comp_h;
         crt_ubo.out_w = viewport ? viewport->w : (float)sw;
@@ -557,6 +623,11 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
         crt_ubo.sdr_white_level = params->sdr_white_level;
         crt_ubo.output_hdr = params->output_hdr;
         crt_ubo.mask_pitch_pixels = params->mask_pitch_px;
+        crt_ubo.mask_row_pitch = params->mask_row_pitch;
+        crt_ubo.mask_scale_x = params->mask_scale_x > 0 ? params->mask_scale_x : 1;
+        crt_ubo.mask_scale_y = params->mask_scale_y > 0 ? params->mask_scale_y : 1;
+        crt_ubo.mask_origin_x = params->mask_origin_x;
+        crt_ubo.mask_origin_y = params->mask_origin_y;
         crt_ubo.halation_strength = params->halation_strength;
         crt_ubo.vignette_strength = params->vignette;
         crt_ubo.gamma = params->gamma;
@@ -641,13 +712,15 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
                 SDL_SetGPUViewport(pass, viewport);
             }
 
-            /* Bind both samplers: slot 0 = composite, slot 1 = halation. */
-            SDL_GPUTextureSamplerBinding sampler_binds[2];
+            /* Beam, glass scattering, and the fixed phosphor face. */
+            SDL_GPUTextureSamplerBinding sampler_binds[3];
             sampler_binds[0].texture = composite_tex;
             sampler_binds[0].sampler = d->sampler_linear;
             sampler_binds[1].texture = d->tex_halation_b;
             sampler_binds[1].sampler = d->sampler_linear;
-            SDL_BindGPUFragmentSamplers(pass, 0, sampler_binds, 2);
+            sampler_binds[2].texture=d->mask_tiles[params->mask_type==2 ? 1 : 0];
+            sampler_binds[2].sampler=d->sampler_mask;
+            SDL_BindGPUFragmentSamplers(pass, 0, sampler_binds, 3);
 
             SDL_PushGPUFragmentUniformData(cmd, 0, &crt_ubo, sizeof(crt_ubo));
 
@@ -675,6 +748,10 @@ void gpu_display_params_from_tv(GPUDisplayParams *out, const TVDisplayParams *tv
     out->mask_type = (int)tv->mask_type;
 
     /* Phosphor cell spacing in drawable pixels; legacy JSON used a misleading mm key. */
+    out->phosphor_gamut = tv->phosphor_gamut;
+    out->mask_row_pitch = 0;
+    out->mask_scale_x = out->mask_scale_y = 1;
+    out->mask_origin_x = out->mask_origin_y = 0;
     out->mask_pitch_px = tv->mask_pitch_px;
     if (tv->mask_triads > 0.0f)
         out->mask_pitch_px = (float)win_w / (3.0f * tv->mask_triads);
@@ -741,4 +818,18 @@ void gpu_display_params_from_tv(GPUDisplayParams *out, const TVDisplayParams *tv
     out->glass_glare_size    = (tv->glass_glare_size > 0.0f)
                                 ? tv->glass_glare_size : 0.18f;
     out->glass_glare_temp_k  = tv->glass_glare_temp_k;
+}
+
+void gpu_display_fit_mask(GPUDisplayParams *p, bool pixel_aligned,
+                         float scale_x, float scale_y, float origin_x, float origin_y) {
+    p->mask_scale_x=fmaxf(scale_x,0.01f);p->mask_scale_y=fmaxf(scale_y,0.01f);
+    p->mask_origin_x=origin_x;p->mask_origin_y=origin_y;
+    p->mask_pitch_px*=p->mask_scale_x;
+    if(pixel_aligned) {
+        // Quantize the RGB repeat, not each colour cell. A nominal 4.6-pixel
+        // triad should become five pixels, not six. Filtered cell edges can
+        // cover neighbouring pixels while the whole mask remains periodic.
+        p->mask_pitch_px=fmaxf(3,roundf(3*p->mask_pitch_px))/3;
+        p->mask_row_pitch=fmaxf(1,roundf(p->mask_pitch_px*(p->mask_type==2 ? 2.4f : 0.8660254f)));
+    }
 }

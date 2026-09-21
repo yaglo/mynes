@@ -94,7 +94,7 @@ static inline void waveform_apply_beam_edges(float *waveform,
 
     /* Fast path: everything off. */
     if (fade_px < 1e-4f && osh_amp < 1e-4f &&
-        (drift_wpx < 1e-4f || fabsf(drift_deg) < 1e-4f) && tv->beam_current_load < 1e-4f) {
+        (drift_wpx < 1e-4f || fabsf(drift_deg) < 1e-4f)) {
         return;
     }
 
@@ -143,40 +143,6 @@ static inline void waveform_apply_beam_edges(float *waveform,
                 float a = tab[entry][pA_mod];
                 float b = tab[entry][pB_mod];
                 dst[s] = a + (b - a) * frac;
-            }
-        }
-    }
-
-    /* Per-scanline beam current loading: bright features along a line
-     * drain the EHT supply progressively, so samples AFTER a bright
-     * patch get dimmed by the accumulated sag; the left side of the
-     * line (before any bright content) stays at full amplitude. Each
-     * scanline begins with the HV recovered from the previous line's
-     * horizontal retrace. We integrate luma as we sweep left-to-right
-     * and apply an exponential-decay recovery so a narrow bright spike
-     * sags the screen briefly rather than indefinitely.
-     *
-     *   drain coeff  = strength (per-sample drop per unit of bright signal)
-     *   recover coeff = drain/8 (HV recharges slower than it drains)
-     *
-     * Saturates at sag=1.0 so amplitude can't flip sign.  */
-    if (tv->beam_current_load > 1e-4f) {
-        float strength = tv->beam_current_load;
-        if (strength > 1.0f) strength = 1.0f;
-        float drain_per_sample = strength / (float)spl;
-        float recover_per_sample = drain_per_sample * 0.125f;
-        for (int sy = 0; sy < 240; sy++) {
-            float *line = &waveform[sy * spl];
-            float sag = 0.0f;
-            for (int s = 0; s < spl; s++) {
-                float v = line[s];
-                /* Drain scales with how bright THIS sample is;
-                 * recovery is constant. */
-                if (v > 0.0f) sag += v * drain_per_sample;
-                sag -= recover_per_sample;
-                if (sag < 0.0f) sag = 0.0f;
-                if (sag > 0.9f) sag = 0.9f;
-                line[s] = v * (1.0f - sag);
             }
         }
     }

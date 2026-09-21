@@ -231,6 +231,8 @@ typedef struct {
     uint32_t block_offset;      /* not used in sequential mode */
     uint32_t samples_per_line;  /* samples per scanline (2048 for NTSC) */
     uint32_t num_lines;         /* number of scanlines (240) */
+    float nonlinear_tau_samples; /* NTSC output pole at reference white */
+    float pad;
 } GpuRCFilterParams;
 
 bool gpu_dispatch_rc_filter(
@@ -290,38 +292,6 @@ typedef struct {
     float    blend;             /* comb strength (0..1) */
     uint32_t delay_samples;     /* receiver 1H delay; 0 = samples_per_line */
 } GpuCombParams;
-
-/* Comb filter dispatch: reads composite signal, writes Y and C. */
-static inline bool gpu_dispatch_comb(
-    SDL_GPUCommandBuffer *cmd,
-    const GpuPipeline *pipeline,
-    SDL_GPUBuffer *buf_signal,
-    SDL_GPUBuffer *buf_y,
-    SDL_GPUBuffer *buf_c,
-    const GpuCombParams *params,
-    Uint32 num_workgroups) {
-    GpuDispatchDesc desc;
-    memset(&desc, 0, sizeof(desc));
-    desc.pipeline = pipeline;
-
-    /* Comb: 1 readonly (signal), 2 readwrite (Y + C outputs). */
-    desc.readonly_buffers[0] = buf_signal;
-    desc.num_readonly_buffers = 1;
-
-    desc.readwrite_buffers[0] = buf_y;
-    desc.readwrite_buffers[1] = buf_c;
-    desc.num_readwrite_buffers = 2;
-
-    desc.uniforms[0].data = params;
-    desc.uniforms[0].size = sizeof(*params);
-    desc.num_uniforms = 1;
-
-    desc.groupcount_x = num_workgroups;
-    desc.groupcount_y = 1;
-    desc.groupcount_z = 1;
-
-    return gpu_dispatch(cmd, &desc);
-}
 
 /* AGC parameters (matches agc.comp.glsl). */
 typedef struct {

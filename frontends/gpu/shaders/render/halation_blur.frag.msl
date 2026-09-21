@@ -1,18 +1,56 @@
 #pragma clang diagnostic ignored "-Wmissing-prototypes"
+#pragma clang diagnostic ignored "-Wmissing-braces"
 
 #include <metal_stdlib>
 #include <simd/simd.h>
 
 using namespace metal;
 
+template<typename T, size_t Num>
+struct spvUnsafeArray
+{
+    T elements[Num ? Num : 1];
+
+    thread T& operator [] (size_t pos) thread
+    {
+        return elements[pos];
+    }
+    constexpr const thread T& operator [] (size_t pos) const thread
+    {
+        return elements[pos];
+    }
+
+    device T& operator [] (size_t pos) device
+    {
+        return elements[pos];
+    }
+    constexpr const device T& operator [] (size_t pos) const device
+    {
+        return elements[pos];
+    }
+
+    constexpr const constant T& operator [] (size_t pos) const constant
+    {
+        return elements[pos];
+    }
+
+    threadgroup T& operator [] (size_t pos) threadgroup
+    {
+        return elements[pos];
+    }
+    constexpr const threadgroup T& operator [] (size_t pos) const threadgroup
+    {
+        return elements[pos];
+    }
+};
+
 struct BlurParams
 {
     float2 direction;
-    int radius;
-    float threshold;
-    int do_threshold;
     float input_gamma;
 };
+
+constant spvUnsafeArray<float, 17> _107 = spvUnsafeArray<float, 17>({ 0.062955386936664581298828125, 0.0621915571391582489013671875, 0.059955231845378875732421875, 0.05640529096126556396484375, 0.051785685122013092041015625, 0.0463977269828319549560546875, 0.04056774079799652099609375, 0.0346148125827312469482421875, 0.02882307581603527069091796875, 0.0234215557575225830078125, 0.01857326366007328033447265625, 0.01437334530055522918701171875, 0.010854869149625301361083984375, 0.00799997150897979736328125, 0.0057537290267646312713623046875, 0.0040383823215961456298828125, 0.00276606646366417407989501953125 });
 
 struct main0_out
 {
@@ -25,13 +63,13 @@ struct main0_in
 };
 
 static inline __attribute__((always_inline))
-float3 light(thread const float2& p, texture2d<float> tex_input, sampler tex_inputSmplr, constant BlurParams& _31)
+float3 light(thread const float2& p, texture2d<float> tex_input, sampler tex_inputSmplr, constant BlurParams& _30)
 {
     float3 v = fast::max(tex_input.sample(tex_inputSmplr, p).xyz, float3(0.0));
     float3 _38;
-    if (_31.input_gamma > 0.0)
+    if (_30.input_gamma > 0.0)
     {
-        _38 = powr(v, float3(_31.input_gamma));
+        _38 = powr(v, float3(_30.input_gamma));
     }
     else
     {
@@ -40,28 +78,18 @@ float3 light(thread const float2& p, texture2d<float> tex_input, sampler tex_inp
     return _38;
 }
 
-fragment main0_out main0(main0_in in [[stage_in]], constant BlurParams& _31 [[buffer(0)]], texture2d<float> tex_input [[texture(0)]], sampler tex_inputSmplr [[sampler(0)]])
+fragment main0_out main0(main0_in in [[stage_in]], constant BlurParams& _30 [[buffer(0)]], texture2d<float> tex_input [[texture(0)]], sampler tex_inputSmplr [[sampler(0)]])
 {
     main0_out out = {};
-    float sigma = float(_31.radius) * 0.4000000059604644775390625;
-    float inv_2sigma2 = 1.0 / ((2.0 * sigma) * sigma);
     float2 param = in.uv;
-    float3 center = light(param, tex_input, tex_inputSmplr, _31);
-    float w0 = 1.0;
-    float3 accum = center * w0;
-    float weight_sum = w0;
-    for (int i = 1; i <= _31.radius; i++)
+    float3 accum = light(param, tex_input, tex_inputSmplr, _30) * 0.062955386936664581298828125;
+    for (int i = 1; i <= 16; i++)
     {
-        float fi = float(i);
-        float w = exp(((-fi) * fi) * inv_2sigma2);
-        float2 offset = _31.direction * fi;
+        float2 offset = _30.direction * float(i);
         float2 param_1 = in.uv + offset;
-        float3 s_pos = light(param_1, tex_input, tex_inputSmplr, _31);
         float2 param_2 = in.uv - offset;
-        float3 s_neg = light(param_2, tex_input, tex_inputSmplr, _31);
-        accum += ((s_pos + s_neg) * w);
-        weight_sum += (2.0 * w);
+        accum += ((light(param_1, tex_input, tex_inputSmplr, _30) + light(param_2, tex_input, tex_inputSmplr, _30)) * _107[i]);
     }
-    out.frag_color = float4(accum / float3(weight_sum), 1.0);
+    out.frag_color = float4(accum, 1.0);
     return out;
 }

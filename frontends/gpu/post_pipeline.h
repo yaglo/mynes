@@ -5,9 +5,9 @@
  * Owns the RGB / beam-domain stages that run AFTER the composite
  * signal chain completes:
  *   1. Matrix decode (typed stage)
- *   2. RGB post (video amp + horizontal blur, custom stage)
+ *   2. RGB amplifiers (custom stage), followed by video/supply loading
  *   3. Deflection map (typed stage)
- *   4. Beam output (beam deposition + temporal blit, custom stage)
+ *   4. Beam output (horizontal spot blur + beam deposition + temporal blit, custom stage)
  *
  * Matrix decode and deflection now run as proper typed stages; the two
  * custom stages are the parts that still need side effects or storage
@@ -18,10 +18,10 @@
 
 #include "video_gpu.h"
 
-/* Execute the RGB post stage (video amp + h-blur). */
+/* Execute the RGB post stage (video amplifiers). */
 bool post_rgb_dispatch(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd);
 
-/* Execute the beam-output stage (beam deposition + temporal blit). */
+/* Execute the beam-output stage (horizontal spot blur + beam deposition + temporal blit). */
 bool beam_output_dispatch(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd);
 
 /* Chain-stage custom-dispatch adapters. `user` must be the
@@ -41,6 +41,7 @@ void post_pipeline_install_matrix_typed(VideoGPUChain *vgc);
 /* Install the typed deflection-map stage. Call after the stage slot has
  * been registered in video_gpu_init; the rebind fills the landing-map
  * buffers and uniform pack each frame once beam params are available. */
+void post_pipeline_install_load_typed(VideoGPUChain *vgc);
 void post_pipeline_install_deflection_typed(VideoGPUChain *vgc);
 
 #endif /* POST_PIPELINE_H */

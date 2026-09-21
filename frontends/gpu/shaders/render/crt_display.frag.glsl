@@ -15,11 +15,13 @@ layout(location = 0) in vec2 uv;
 layout(location = 0) out vec4 frag_color;
 
 /* Textures. */
-layout(set = 0, binding = 0) uniform sampler2D tex_composite;  /* linear beam/history */
-layout(set = 0, binding = 1) uniform sampler2D tex_halation;   /* scattered linear beam light */
+layout(set = 2, binding = 0) uniform sampler2D tex_composite;  /* linear beam/history */
+layout(set = 2, binding = 1) uniform sampler2D tex_halation;   /* scattered linear beam light */
+
+layout(set = 2, binding = 2) uniform sampler2D tex_mask; /* linear phosphor coverage, mip filtered */
 
 /* Uniforms matching TVDisplayParams fields. */
-layout(set = 1, binding = 0) uniform DisplayParams {
+layout(set = 3, binding = 0) uniform DisplayParams {
     vec2  src_size;               /* composite texture dimensions (1170, 960) */
     vec2  out_size;               /* display/viewport dimensions */
     float barrel;                 /* horizontal curvature */
@@ -87,126 +89,59 @@ layout(set = 1, binding = 0) uniform DisplayParams {
     float glass_glare_temp_k;
     float input_gamma, hdr_headroom, sdr_white_level;
     int output_hdr;
+    float mask_row_pitch;
+    vec2 mask_scale, mask_origin;
+    vec4 phosphor_to_display[3];
 };
 
 /* Mask coordinates are local to the CRT viewport. Each stripe is one
  * phosphor; three stripes form an RGB triad. The beam has already spread
  * upstream: mask coverage must not blur RGB samples a second time. */
-float mask_effective_pitch(float pitch, int subpixel_mode) {
-    /* RGB/BGR selection should only control left-to-right phosphor
-     * order. Forcing the whole mask to a 1-pixel pitch creates a
-     * strong beat pattern against the real panel and makes moire
-     * worse, especially on sharp presets. */
-    return max(pitch, 0.05);
+// Band-limited aperture stripes. A positive Fejer reconstruction filter
+// removes unresolved harmonics without erasing the resolved RGB fundamental.
+// Interpolating successive filter orders makes resize continuous; both have
+// unit integral and nonnegative coverage. The final sinc integrates the
+// output pixel footprint. This filters the phosphor face, not the beam.
+float sinc_pi(float x) {
+    return abs(x)<0.0001 ? 1.0 : sin(3.14159265359*x)/(3.14159265359*x);
 }
-
-/* Which phosphor colour is at this screen position? Returns (1,0,0), (0,1,0), or (0,0,1).
- * Also returns dot_shape (0-1) for the phosphor's active area.
- *
- * When subpixel_mode > 0, the mask keeps its requested pitch, but the
- * triad order follows the physical panel's left-to-right subpixel
- * arrangement:
- *   subpixel_mode=1: RGB stripe (Apple Retina, most LCDs)
- *   subpixel_mode=2: BGR stripe (Samsung OLED, some panels) */
-void phosphor_at(vec2 frag_pos, int type, float pitch, int subpixel_mode,
-                 out vec3 phosphor_color, out float dot_shape) {
-    float dot_pitch = mask_effective_pitch(pitch, subpixel_mode);
-    float cell_x = frag_pos.x / dot_pitch;
-    float aa_x = clamp(0.5 * fwidth(cell_x), 0.0, 0.35);
-    int slot_idx = 0;
-
-    if (type == 1) {
-        /* Aperture grille: vertical stripes, no Y structure. */
-        float fx = fract(cell_x) - 0.5;
-        dot_shape = 1.0 - smoothstep(0.36 - aa_x, 0.50 + aa_x, abs(fx));
-        slot_idx = int(floor(cell_x));
-    } else if (type == 2) {
-        /* Slot mask: tall rectangular RGB groups (~1:2.5 width:height),
-         * offset rows (half-triad stagger), H+V dark gaps. */
-        float slot_height = max(dot_pitch * 2.4, 1.0);
-        float row_phase = frag_pos.y / slot_height;
-        float aa_y = clamp(0.5 * fwidth(row_phase), 0.0, 0.35);
-        float row_shift = mod(floor(row_phase), 2.0) * 0.5;
-        float slot_phase = cell_x + row_shift;
-        float fx = fract(slot_phase) - 0.5;
-        float fy = fract(row_phase) - 0.5;
-        float sx = 1.0 - smoothstep(0.34 - aa_x, 0.50 + aa_x, abs(fx));
-        float sy = 1.0 - smoothstep(0.24 - aa_y, 0.50 + aa_y, abs(fy));
-        dot_shape = sx * sy;
-        slot_idx = int(floor(slot_phase));
-    } else {
-        /* Shadow mask: circular / rounded triads on a staggered grid. */
-        float row_pitch = max(dot_pitch * 0.90, 1.0);
-        float row_phase = frag_pos.y / row_pitch;
-        float aa_y = clamp(0.5 * fwidth(row_phase), 0.0, 0.35);
-        float row_shift = mod(floor(row_phase), 2.0) * 0.5;
-        float slot_phase = cell_x + row_shift;
-        float fx = fract(slot_phase) - 0.5;
-        float fy = fract(row_phase) - 0.5;
-        float ell = length(vec2(fx / 0.42, fy / 0.34));
-        float aa = max(aa_x, aa_y) * 0.9;
-        dot_shape = 1.0 - smoothstep(0.80 - aa, 1.02 + aa, ell);
-        slot_idx = int(floor(slot_phase));
+vec3 aperture_mask(float x, float pitch) {
+    float period=3.0*max(pitch,0.05);
+    float footprint=max(1.0,mask_scale.x);
+    float sampled_period=period/footprint;
+    int order=min(int(floor(sampled_period*0.5)),16);
+    if(order<1) return vec3(1.0);
+    float transition=1.0-smoothstep(0.45,0.5,float(order)/sampled_period);
+    // A grille wire separates RGB groups more than neighbouring phosphors.
+    // Equal gaps at every colour erased the achromatic triad structure.
+    // These normalized stripe dimensions are nominal, not a Sony tube fit.
+    vec3 phase=6.28318530718*(x/period-vec3(0.21,0.50,0.79));
+    vec3 coverage=vec3(1.0);
+    for(int n=1;n<=order;n++) {
+        float k=float(n);
+        float previous=max(1.0-k/float(order),0.0);
+        float current=1.0-k/float(order+1);
+        float weight=mix(previous,current,transition);
+        float amplitude=2.0*sinc_pi(k*0.28)*sinc_pi(k/sampled_period)*weight;
+        coverage+=amplitude*cos(k*phase);
     }
-
-    /* Phosphor colour selector. Use the subpixel setting to pick the
-     * physical left-to-right order, but keep the mask geometry chosen
-     * by `type`. */
-    int triad_slot = int(mod(float(slot_idx), 3.0));
-    if (subpixel_mode == 2) {
-        triad_slot = 2 - triad_slot; /* BGR */
-    }
-    if (triad_slot == 0)      phosphor_color = vec3(1.0, 0.0, 0.0);
-    else if (triad_slot == 1) phosphor_color = vec3(0.0, 1.0, 0.0);
-    else                      phosphor_color = vec3(0.0, 0.0, 1.0);
-}
-
-float mask_alias_risk(vec2 frag_pos, int type, float pitch, int subpixel_mode) {
-    float dot_pitch = mask_effective_pitch(pitch, subpixel_mode);
-    float cell_x = frag_pos.x / dot_pitch;
-    float risk_x = smoothstep(0.32, 0.78, fwidth(cell_x));
-
-    if (type == 1) return risk_x;
-
-    float row_pitch = (type == 2)
-        ? max(dot_pitch * 2.4, 1.0)
-        : max(dot_pitch * 0.90, 1.0);
-    float row_phase = frag_pos.y / row_pitch;
-    float risk_y = smoothstep(0.32, 0.78, fwidth(row_phase));
-    return max(risk_x, risk_y);
-}
-
-// Pixel-footprint integration of the fixed phosphor face. Beam spreading
-// has already happened upstream; do not convolve RGB dots a second time.
-float stripe_integral(float x, float left) {
-    float t=x-left;
-    return floor(t/3.0)*0.86 + clamp(mod(t,3.0),0.0,0.86);
+    return subpixel_layout==2 ? coverage.bgr : coverage;
 }
 vec3 phosphor_mask(vec2 pos) {
-    // Fade detail approaching the output Nyquist limit. Energy remains one
-    // when triads cannot be resolved, avoiding false color and resize moire.
-    float unresolved = smoothstep(0.25, 0.5, 1.0 / (3.0 * max(mask_pitch_pixels,0.05)));
-    if (unresolved >= 0.999) return vec3(1.0);
-    if(mask_type==1) {
-        float pitch=max(mask_pitch_pixels,0.05);
-        float a=(pos.x-0.5)/pitch, b=(pos.x+0.5)/pitch;
-        vec3 m;
-        for(int c=0;c<3;c++) m[c]=(stripe_integral(b,float(c)+0.07)-stripe_integral(a,float(c)+0.07))*pitch*3.0/0.86;
-        return mix(subpixel_layout==2 ? m.bgr : m, vec3(1.0), unresolved);
-    }
-    vec3 coverage = vec3(0.0);
-    for (int y=0; y<4; y++) for (int x=0; x<4; x++) {
-        vec2 p = pos + (vec2(x,y)+0.5)/4.0-0.5;
-        vec3 primary; float shape;
-        phosphor_at(p, mask_type, mask_pitch_pixels, subpixel_layout, primary, shape);
-        coverage += primary * shape;
-    }
-    // Average open area of each cell. Calibration preserves white-field
-    // energy; local phosphor peaks require HDR headroom.
-    float area = mask_type == 1 ? 0.86 : (mask_type == 2 ? 0.84*0.74 : 0.42*0.34*3.14159265*0.83);
-    vec3 resolved = coverage * (3.0 / (16.0*area));
-    unresolved = max(unresolved, mask_alias_risk(pos,mask_type,mask_pitch_pixels,subpixel_layout));
-    return mix(resolved,vec3(1.0),unresolved);
+    if(mask_type==1) return aperture_mask(pos.x,mask_pitch_pixels);
+    float pitch=max(mask_pitch_pixels,0.05);
+    float row_pitch=mask_row_pitch>0.0 ? mask_row_pitch : pitch*(mask_type==2 ? 2.4 : 0.8660254);
+    vec2 period=vec2((mask_type==2 ? 6.0 : 3.0)*pitch,2.0*row_pitch);
+    vec2 coord=pos/period;
+    // The coarsest mip is the actual per-colour mean of the generated tile.
+    // Dividing by it keeps each primary's field energy at one after filtering.
+    vec3 dc=textureLod(tex_mask,vec2(0.5),7.0).rgb;
+    // Filter for whichever is coarser: drawable pixels or physical panel pixels.
+    vec2 footprint=max(vec2(1.0),mask_scale)/period;
+    vec3 coverage=textureGrad(tex_mask,coord,vec2(footprint.x,0.0),vec2(0.0,footprint.y)).rgb/max(dc,vec3(0.001));
+    float unresolved=smoothstep(0.40,0.50,max(1.0,mask_scale.x)/(3.0*pitch));
+    coverage=mix(coverage,vec3(1.0),unresolved);
+    return subpixel_layout==2 ? coverage.bgr : coverage;
 }
 vec3 beam_light(vec2 p) {
     vec3 v = max(texture(tex_composite,p).rgb,vec3(0.0));
@@ -277,7 +212,9 @@ void main() {
      * the beam misses, so it stays rectilinear on-screen while only the
      * image warps. */
     if (mask_strength > 0.01 && !outside_raster) {
-        vec2 local_frag_pos = uv * out_size;
+        // gl_FragCoord is in drawable pixels, not source texels or UI points.
+        // Include desktop scaling and the window origin; geometry never warps the mask.
+        vec2 local_frag_pos = gl_FragCoord.xy * mask_scale + mask_origin;
         color *= mix(vec3(1.0), phosphor_mask(local_frag_pos), mask_strength);
     }
 
@@ -389,6 +326,12 @@ void main() {
                          sin(theta * 1.8 + 4.189));
         color += tilt * (r * r) * degauss_tint * 0.04;
     }
+
+    // Express phosphor emission in the host's linear-sRGB colour space,
+    // after the mask: a red phosphor is not an LCD's ideal red primary.
+    color=vec3(dot(phosphor_to_display[0].rgb,color),
+               dot(phosphor_to_display[1].rgb,color),
+               dot(phosphor_to_display[2].rgb,color));
 
     /* Apply glass tint (phosphor light attenuated through glass). */
     color *= glass_tint;
@@ -517,7 +460,16 @@ void main() {
     // Gain is a LINEAR luminance multiplier. SDR and EDR share the same
     // phosphor/glass model and differ only in their final output encoding.
     color *= hdr_gain > 0.0 ? hdr_gain : 1.0;
-    color = clamp(color,vec3(0.0),vec3(max(hdr_headroom,1.0)));
+    color = max(color,vec3(0.0));
+    // Output adaptation, not tube physics. A continuous shoulder preserves
+    // highlight gradients and RGB ratios when the host lacks phosphor peak
+    // headroom. Independent channel clipping used to wash out the grille.
+    float peak=max(max(color.r,color.g),color.b);
+    float limit=max(hdr_headroom,1.0), knee=0.75*limit;
+    if (peak>knee) {
+        float mapped=knee+(limit-knee)*(peak-knee)/(peak-knee+limit-knee);
+        color*=mapped/peak;
+    }
     color = output_hdr != 0 ? color * sdr_white_level : srgb_encode(color);
 
     frag_color = vec4(color, 1.0);

@@ -11,6 +11,8 @@ struct Params
     uint block_offset;
     uint samples_per_line;
     uint num_lines;
+    float nonlinear_tau_samples;
+    float pad;
 };
 
 struct DataBuf
@@ -43,9 +45,17 @@ kernel void main0(constant Params& _20 [[buffer(0)]], device DataBuf& _63 [[buff
         return;
     }
     float y_prev = _63.data[start];
+    float source_prev = y_prev;
     for (uint i = start; i < end; i++)
     {
         float x = _63.data[i];
+        if (_20.nonlinear_tau_samples > 0.0)
+        {
+            float ratio = fast::max(((x * 788.0) + 312.0) / 1100.0, 0.0);
+            float input_weight = 1.0 / (1.0 + (ratio * _20.nonlinear_tau_samples));
+            source_prev = mix(source_prev, x, input_weight);
+            x = source_prev;
+        }
         float y = (_20.a * y_prev) + (_20.b * x);
         _63.data[i] = y;
         y_prev = y;

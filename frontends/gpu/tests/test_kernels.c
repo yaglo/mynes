@@ -481,25 +481,12 @@ static int test_comb_blend_partial(void) {
     return 1;
 }
 
-/* Simulate the shader's 3-line comb: Y = mix(signal, 4-line avg, blend) */
+/* Analytic three-scanline chroma rejection, not a four-line box filter. */
 static int test_comb_3line_cancellation(void) {
-    /* 4-line average: chroma cancels over 2 full phase cycles.
-     * Lines N,N-2 have phase +C; N-1,N-3 have phase -C. Average = Y. */
-    int n = 24;
-    float lines[4][24];  /* N-3, N-2, N-1, N (most recent last) */
-    float Y = 0.5f, C_amp = 0.3f;
-    float dp = 2.0f * (float)M_PI / 12.0f;
-    for (int i = 0; i < n; i++) {
-        lines[0][i] = Y + C_amp * cosf(dp * i);  /* N-3: same phase as N-1 */
-        lines[1][i] = Y - C_amp * cosf(dp * i);  /* N-2: opposite */
-        lines[2][i] = Y + C_amp * cosf(dp * i);  /* N-1: same */
-        lines[3][i] = Y - C_amp * cosf(dp * i);  /* N: opposite */
-    }
-    /* Wait — this isn't quite right. Real NTSC: phase inverts every line,
-     * so N, N-1, N-2, N-3 have phases: +C, -C, +C, -C. Average all 4 = Y. */
-    for (int i = 0; i < n; i++) {
-        float avg4 = (lines[3][i] + lines[2][i] + lines[1][i] + lines[0][i]) * 0.25f;
-        ASSERT_NEAR(avg4, Y, 1e-6f, "3-line comb: chroma cancels in 4-line avg");
+    for(int i=0;i<24;i++) {
+        float c=0.3f*cosf(2.0f*(float)M_PI*i/12.0f);
+        float y=((0.5f-c)+2*(0.5f+c)+(0.5f-c))*0.25f;
+        ASSERT_NEAR(y,0.5f,1e-6f,"three-scanline chroma rejection");
     }
     return 1;
 }

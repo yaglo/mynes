@@ -57,8 +57,11 @@ void main() {
     if (tid >= count) return;
 
     uint line = tid / active_width;
-    uint source = line * samples_per_line + active_offset + tid % active_width;
-    float Y = y_in[source] - reference[line].y;
+    float position = clamp(float(active_offset + tid % active_width) + reference[line].w,
+                           0.0, float(samples_per_line-2u));
+    uint source = line * samples_per_line + uint(position);
+    float fraction = fract(position);
+    float Y = mix(y_in[source], y_in[source+1u], fraction) - reference[line].y;
 
     /* Read I/Q from a delayed position (color trails behind brightness). */
     int delayed_tid = int(source);
@@ -68,8 +71,8 @@ void main() {
         delayed_tid = clamp(int(source) - chroma_delay,
                             int(line_start), int(line_end) - 1);
     }
-    float I = i_in[delayed_tid];
-    float Q = q_in[delayed_tid];
+    float I = mix(i_in[delayed_tid], i_in[min(delayed_tid+1,int((line+1u)*samples_per_line)-1)], fraction);
+    float Q = mix(q_in[delayed_tid], q_in[min(delayed_tid+1,int((line+1u)*samples_per_line)-1)], fraction);
 
     /* Suppress colour when the received burst is too weak to lock. */
     if (color_killer_threshold > 0.0) {

@@ -166,6 +166,9 @@ bool mynes_config_load(MynesConfig *cfg) {
                 cfg->recent_roms[cfg->recent_count][MYNES_PATH_MAX - 1] = '\0';
                 cfg->recent_count++;
             }
+        } else if (strstr(s, "\"gpu_mask_alignment\"")) {
+            const char *colon=strchr(s, ':');
+            cfg->gpu_mask_alignment=colon && atoi(colon+1)==1 ? 1 : 0;
         } else if (strstr(s, "\"last_preset\"")) {
             const char *colon = strchr(s, ':');
             if (colon) {
@@ -208,6 +211,7 @@ bool mynes_config_save(const MynesConfig *cfg) {
         fputs(i + 1 < cfg->recent_count ? ",\n" : "\n", f);
     }
     fprintf(f, "    ],\n");
+    fprintf(f, "    \"gpu_mask_alignment\": %d,\n",cfg->gpu_mask_alignment==1 ? 1 : 0);
     fprintf(f, "    \"last_preset\": ");
     json_escape(f, cfg->last_preset);
     fprintf(f, "\n}\n");

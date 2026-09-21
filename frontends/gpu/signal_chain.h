@@ -54,6 +54,9 @@ typedef enum {
     CHAIN_KERNEL_RECEIVER,
     CHAIN_KERNEL_RECEIVER_DEMOD,        /* burst phase + back-porch clamp */
     CHAIN_KERNEL_YC_ROUTE,        /* separated source Y/C receiver routing */
+    CHAIN_KERNEL_RECEIVER_PLL,   /* line oscillator, holdover and clamp */
+    CHAIN_KERNEL_CRT_LOAD,       /* video rail streaking and shared supply */
+    CHAIN_KERNEL_GUN_CURRENT,    /* gun voltage -> linear emitted current */
     CHAIN_KERNEL_COUNT
 } ChainKernelType;
 
@@ -182,13 +185,14 @@ typedef struct {
  * ============================================================================ */
 
 #define CHAIN_MAX_STAGES     32
-#define CHAIN_MAX_TAP_BUFS    4
+#define CHAIN_MAX_TAP_BUFS    8
 #define CHAIN_MAX_AUX_BUFS    4
 
 typedef struct {
     /* Stage array (the chain definition). */
     ChainStage stages[CHAIN_MAX_STAGES];
     int        num_stages;
+    int        first_stage;       /* component/RGB input enters after the receiver */
 
     /* GPU pipelines (one per kernel type, shared across stages). */
     GpuPipeline pipelines[CHAIN_KERNEL_COUNT];

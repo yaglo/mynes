@@ -30,7 +30,8 @@ typedef struct {
     int              *current_preset;
     MynesConfig      *config;
     int               region;
-    NES              *nes;
+    PPU              *display_ppu;
+    APUAnalog        *analog_controls;
     ChainVis         *chain_vis;
     /* Filled by main after shader resolution so preset_apply can do a
      * full destroy+init of the GPU chain when preset topology changes
@@ -96,6 +97,7 @@ int         preset_total_count(void);
 const char *preset_display_name(int idx);
 int         preset_load_index(int idx);          /* returns idx on success, -1 otherwise */
 int         preset_load_index_exact(int idx);    /* startup path: honour preset region */
+int         preset_register_file(const char *path); /* read-only external preset, no copy/write */
 int         preset_find_by_slug(const char *s);  /* substring match on path/name, -1 if none */
 
 /* Editor catalog and commands. IDs are registry slots guarded by revision. */

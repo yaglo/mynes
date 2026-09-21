@@ -1,19 +1,34 @@
 #!/usr/bin/env python3
-"""Render PPU-code charts through real presets for visual review (not timing).
+"""Render PPU-code charts or a game through real presets for visual review.
 Usage: python3 frontends/gpu/tests/capture_patterns.py build/bin/mynes_gpu /tmp/crt-review
-Outputs SDR PPM captures; EDR highlights above reference white are clipped.
+Outputs final-render PPM + linear PFM, offscreen and silent by default.
 """
 import os
+import argparse
 from pathlib import Path
 import subprocess
-import sys
 import tempfile
-import time
 
 root = Path(__file__).resolve().parents[3]
-binary = Path(sys.argv[1]).resolve()
-out = Path(sys.argv[2]).resolve()
+parser=argparse.ArgumentParser(description=__doc__)
+parser.add_argument("binary",type=Path)
+parser.add_argument("out",type=Path)
+parser.add_argument("presets",nargs="*")
+parser.add_argument("--all",action="store_true")
+parser.add_argument("--rom",type=Path)
+parser.add_argument("--frame",type=int,default=180)
+parser.add_argument("--native-fullscreen",action="store_true")
+parser.add_argument("--onscreen",action="store_true")
+parser.add_argument("--size",default="2560x1664",help="offscreen drawable pixels")
+parser.add_argument("--mask-alignment",choices=["pixels","physical"],default="pixels")
+parser.add_argument("--window-size",default="1280x960")
+parser.add_argument("--codes",type=Path,help="optional 256x240 PPU-code fixture")
+args=parser.parse_args()
+binary = args.binary.resolve()
+out = args.out.resolve()
 out.mkdir(parents=True, exist_ok=True)
+presets=args.presets or ["sony_pvm_14l2", "jvc_d_series_2000", "toshiba_14af43", "stass_favourite"]
+if args.all: presets=[p.stem for p in sorted((root/"presets").glob("*.json"))]
 pattern = bytearray(256 * 240)
 gray = [0x0f, 0x0d, 0x2d, 0x3d, 0x00, 0x10, 0x20, 0x30]
 for y in range(240):
@@ -30,31 +45,17 @@ for y in range(240):
 with tempfile.TemporaryDirectory(prefix="mynes-chart-") as tmp:
     source = Path(tmp) / "chart.bin"
     source.write_bytes(pattern)
-    for preset in ["reference_composite", "studio_pvm", "living_room_1988"]:
-        capture = Path(tmp) / (preset + ".ppm")
-        env = dict(os.environ, XDG_CONFIG_HOME=tmp, MYNES_CAPTURE_PATH=str(capture))
+    for preset in presets:
+        capture = out / (preset + ".ppm")
+        env = dict(os.environ, XDG_CONFIG_HOME=tmp)
         with (out / (preset + ".log")).open("w") as log:
-            process = subprocess.Popen([str(binary), "--simulate-frame", str(source),
-                "--preset", "presets/" + preset + ".json"], cwd=root, env=env, stdout=log, stderr=log)
-            try:
-                deadline = time.monotonic() + 60
-                previous_size = 0
-                while time.monotonic() < deadline:
-                    if process.poll() is not None:
-                        raise RuntimeError("Renderer exited: " + preset)
-                    size = capture.stat().st_size if capture.exists() else 0
-                    if size and size == previous_size:
-                        break
-                    previous_size = size
-                    time.sleep(0.25)
-                else:
-                    raise TimeoutError("Missing capture: " + preset)
-                (out / capture.name).write_bytes(capture.read_bytes())
-                print(out / capture.name, flush=True)
-            finally:
-                process.terminate()
-                try:
-                    process.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait()
+            input_args=[str(args.rom.resolve())] if args.rom else ["--simulate-frame",str(args.codes.resolve() if args.codes else source)]
+            host_args=["--mask-alignment",args.mask_alignment,"--window-size",args.window_size]
+            if not args.onscreen: host_args += ["--offscreen",args.size]
+            elif args.native_fullscreen: host_args.append("--native-fullscreen")
+            subprocess.run([str(binary), *input_args, *host_args,
+                "--preset", "presets/" + preset + ".json", "--screenshot-after", str(args.frame),
+                "--screenshot-pair", "--screenshot-path", str(capture)], cwd=root, env=env, stdout=log,
+                stderr=log, check=True, timeout=60)
+        assert capture.exists(), "Missing final CRT capture: " + preset
+        print(capture, flush=True)

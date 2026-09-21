@@ -21,13 +21,14 @@
 #version 450
 
 layout(local_size_x = 16, local_size_y = 16) in;
+layout(set=0,binding=0) readonly buffer CRTLoad { float load_map[]; };
 
 /* Output A: landed signal X for R/G/B + dwell factor.
  *   out_x[pixel*4 + 0] = r_x
  *   out_x[pixel*4 + 1] = g_x
  *   out_x[pixel*4 + 2] = b_x
  *   out_x[pixel*4 + 3] = dwell */
-layout(set = 0, binding = 0) writeonly buffer DeflectionX {
+layout(set = 1, binding = 0) writeonly buffer DeflectionX {
     float out_x[];
 };
 
@@ -36,7 +37,7 @@ layout(set = 0, binding = 0) writeonly buffer DeflectionX {
  *   out_y[pixel*4 + 1] = g_y
  *   out_y[pixel*4 + 2] = b_y
  *   out_y[pixel*4 + 3] = sigma_scale */
-layout(set = 1, binding = 0) writeonly buffer DeflectionY {
+layout(set = 1, binding = 1) writeonly buffer DeflectionY {
     float out_y[];
 };
 
@@ -140,9 +141,14 @@ void main() {
     float kv = barrel_v > 0.001 ? barrel_v : barrel;
     vec2 warped = barrel_distort(uv_wobble, barrel, kv);
 
-    if (hv_sag > 0.001) {
-        float expand = 1.0 + hv_sag * frame_brightness * 0.08;
-        warped = (warped - 0.5) * expand + 0.5;
+    uint load_line=uint(clamp(y_uv*240.0,0.0,239.0));
+    uint load_dot=uint(clamp(x_uv*256.0,0.0,255.0));
+    float picture_load=0.65*load_map[256u*240u+load_line]+0.35*load_map[load_line*256u+load_dot];
+    // Inverse landing coordinates: positive sag contracts the picture;
+    // negative models EHT-dominated expansion. Keep the historical preset sign.
+    if (abs(hv_sag) > 0.0001) {
+        float size_load = 1.0 + hv_sag * picture_load * 0.16;
+        warped = (warped - 0.5) * size_load + 0.5;
     }
 
     if (abs(rotation) > 0.0001) {
@@ -163,10 +169,14 @@ void main() {
     }
 
     if (overscan > 0.001) {
-        warped = (warped - 0.5) / max(1.0 - overscan * 2.0, 0.2) + 0.5;
+        // Inverse mapping: zooming the raster samples a smaller source
+        // interval. Dividing here incorrectly shrank the raster into borders.
+        warped = (warped - 0.5) * max(1.0 - overscan * 2.0, 0.2) + 0.5;
     }
 
-    float tube_envelope = rect_envelope(warped, 0.0025, 0.0025);
+    // The tube's visible face does not grow with overscan or rotate with
+    // service geometry. Clip the moving raster against this fixed aperture.
+    float tube_envelope = rect_envelope(barrel_distort(tube_uv,barrel,kv),0.0025,0.0025);
 
     vec2 raster = warped;
     raster.x = (warped.x - 0.5 - h_pos) / max(h_size, 0.01) + 0.5;
@@ -275,7 +285,7 @@ void main() {
         focus_scale *= 1.0 + psu_hum * 0.4 * sin(psu_phase);
     }
     if (focus_breathing > 0.001) {
-        focus_scale *= 1.0 + focus_breathing * sin(float(frame_counter) * 0.08);
+        focus_scale *= 1.0 + focus_breathing * picture_load;
     }
 
     /* Dwell / velocity. Derived from the local horizontal deflection

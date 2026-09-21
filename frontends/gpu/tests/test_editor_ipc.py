@@ -17,9 +17,9 @@ root = Path(__file__).resolve().parents[3]
 binary = Path(sys.argv[1]).resolve()
 with tempfile.TemporaryDirectory(prefix="mynes-editor-") as tmp:
     sockpath = str(Path(tmp) / "editor.sock")
-    env = dict(os.environ, XDG_CONFIG_HOME=tmp, MYNES_DEBUG_SOCKET=sockpath)
+    env = dict(os.environ, XDG_CONFIG_HOME=tmp, MYNES_DEBUG_SOCKET=sockpath, MYNES_REVIEW_NO_INPUT="1")
     with open(Path(tmp) / "frontend.log", "w+") as log:
-        process = subprocess.Popen([str(binary), "--debug-server", "--preset", "presets/studio_pvm.json"], cwd=root, env=env, stdout=log, stderr=log)
+        process = subprocess.Popen([str(binary), "--debug-server", "--offscreen", "640x480", "--preset", "presets/studio_pvm.json"], cwd=root, env=env, stdout=log, stderr=log)
         try:
             for _ in range(100):
                 if Path(sockpath).exists():
@@ -94,11 +94,15 @@ with tempfile.TemporaryDirectory(prefix="mynes-editor-") as tmp:
             edit(0.75)
             edit(0.012, b"Mains hum")
             edit(0.35, b"Second harmonic")
+            edit(0.18, b"Horizontal streaks")
+            edit(24, b"Recovery (us)")
             revision, active, dirty, entries = command(2, active, revision)
             assert not dirty and abs(json.loads(paths[0].read_text())["tv"]["saturation"]-.75)<1e-5
             saved = json.loads(paths[0].read_text())
             assert abs(saved["audio_psu_hum_amplitude"]-.012)<1e-5
             assert abs(saved["audio_hum_harmonic_2"]-.35)<1e-5
+            assert abs(saved["tv"]["video_black_droop"]-.18)<1e-5
+            assert saved["tv"]["video_recovery_us"]==24
             revision, active, dirty, entries = command(4, active, revision, "Renamed CRT")
             assert entries[active][2]=="Renamed CRT"
             bundled = next(e[0] for e in entries if not e[1] and "Bedroom" in e[2])
@@ -119,6 +123,7 @@ with tempfile.TemporaryDirectory(prefix="mynes-editor-") as tmp:
             print("Preset IPC: active preset, dirty state, stalled reader, fragmented edits, save-as, save, rename, topology switch, bundled protection, stale revision rejection, delete: PASS")
             client.close()
         except Exception:
+            print(f"Frontend exit status: {process.poll()}",file=sys.stderr)
             log.flush(); log.seek(0); print(log.read(), file=sys.stderr)
             raise
         finally:

@@ -33,6 +33,9 @@ static const char *kernel_shader_names[CHAIN_KERNEL_COUNT] = {
     [CHAIN_KERNEL_AGC]           = "agc.comp.spv",
     [CHAIN_KERNEL_RASTER] = "raster_encode.comp.spv",
     [CHAIN_KERNEL_RECEIVER] = "receiver_lock.comp.spv",
+    [CHAIN_KERNEL_RECEIVER_PLL] = "receiver_pll.comp.spv",
+    [CHAIN_KERNEL_CRT_LOAD] = "crt_load.comp.spv",
+    [CHAIN_KERNEL_GUN_CURRENT] = "gun_current.comp.spv",
     [CHAIN_KERNEL_RECEIVER_DEMOD] = "receiver_demod.comp.spv",
     [CHAIN_KERNEL_YC_ROUTE] = "yc_route.comp.spv",
 };
@@ -53,10 +56,13 @@ static const int kernel_workgroup_x[CHAIN_KERNEL_COUNT] = {
     [CHAIN_KERNEL_RF]         = 256,
     [CHAIN_KERNEL_VIDEO_AMP]  = 256,
     [CHAIN_KERNEL_H_BLUR_RGB] = 256,
+    [CHAIN_KERNEL_GUN_CURRENT] = 256,
     [CHAIN_KERNEL_TEMPORAL_BLIT] = 16,  /* 16×16 for 2D dispatch */
     [CHAIN_KERNEL_AGC]           = 256,
     [CHAIN_KERNEL_RASTER] = 256,
     [CHAIN_KERNEL_RECEIVER] = 256,
+    [CHAIN_KERNEL_RECEIVER_PLL] = 1,
+    [CHAIN_KERNEL_CRT_LOAD] = 256,
     [CHAIN_KERNEL_YC_ROUTE] = 256,
     [CHAIN_KERNEL_RECEIVER_DEMOD] = 256, /* sequential: 1 thread per scanline */
 };
@@ -68,19 +74,22 @@ static const int kernel_resources[CHAIN_KERNEL_COUNT][3] = {
     [CHAIN_KERNEL_RC_FILTER]  = { 0, 2, 1 },  /* data + carry */
     [CHAIN_KERNEL_FIR]        = { 2, 1, 1 },  /* input + taps → output */
     [CHAIN_KERNEL_DELAY]      = { 2, 1, 1 },  /* input + prev → output */
-    [CHAIN_KERNEL_COMB]       = { 1, 2, 1 },  /* signal → Y + C */
+    [CHAIN_KERNEL_COMB]       = { 2, 2, 1 },  /* composite + chroma band → Y + C */
     [CHAIN_KERNEL_MODULATOR]  = { 1, 2, 1 },  /* input → out1 + out2 */
     [CHAIN_KERNEL_DAC]        = { 3, 2, 1 },  /* indices + table → waveform */
     [CHAIN_KERNEL_MATRIX]     = { 4, 1, 1 },  /* Y,I,Q → RGB */
     [CHAIN_KERNEL_PAL_CHROMA] = { 2, 2, 1 },  /* V,U raw → V,U corrected */
-    [CHAIN_KERNEL_DEFLECTION] = { 0, 2, 1 },  /* params → landing_x + landing_y */
+    [CHAIN_KERNEL_DEFLECTION] = { 1, 2, 1 },  /* params → landing_x + landing_y */
     [CHAIN_KERNEL_BEAM]       = { 3, 1, 1 },  /* RGB + landing maps → RGBA_out */
     [CHAIN_KERNEL_RF]         = { 0, 1, 1 },  /* composite in-place */
     [CHAIN_KERNEL_VIDEO_AMP]  = { 1, 1, 1 },  /* RGB_in → RGB_out */
     [CHAIN_KERNEL_H_BLUR_RGB] = { 0, 2, 1 },  /* RGB_in + RGB_out as readwrite */
+    [CHAIN_KERNEL_GUN_CURRENT] = { 1, 1, 1 },
     [CHAIN_KERNEL_TEMPORAL_BLIT] = { 2, 1, 1 },  /* cur+prev, recursive history, and output texture */
     [CHAIN_KERNEL_RASTER] = { 2, 2, 1 },
     [CHAIN_KERNEL_RECEIVER] = { 1, 1, 1 },
+    [CHAIN_KERNEL_RECEIVER_PLL] = { 1, 1, 1 },
+    [CHAIN_KERNEL_CRT_LOAD] = { 0, 2, 1 },
     [CHAIN_KERNEL_RECEIVER_DEMOD] = { 2, 2, 1 },
     [CHAIN_KERNEL_YC_ROUTE] = { 2, 2, 1 },
     [CHAIN_KERNEL_AGC]           = { 0, 2, 1 },  /* data + carry in-place */
@@ -487,8 +496,8 @@ void chain_stage_set_default_io(ChainStage *s) {
         break;
 
     case CHAIN_KERNEL_COMB:
-        /* Reads buf[src]; writes buf[dst] (Y) + aux[0] (C). Flips. */
-        s->ro[0] = CBR_BUF_SRC; s->ro_count = 1;
+        /* Original signal + extracted chroma band. Writes Y + C. */
+        s->ro[0] = CBR_BUF_SRC; s->ro[1] = CBR_AUX1; s->ro_count = 2;
         s->rw[0] = CBR_BUF_DST; s->rw[1] = CBR_AUX0; s->rw_count = 2;
         break;
 
@@ -520,7 +529,7 @@ bool chain_run_cmd(SignalChain *chain, SDL_GPUCommandBuffer *cmd) {
      * so timing_avg_us tracks recent trends while smoothing jitter. */
     const double ema_alpha = 0.10;
 
-    for (int i = 0; i < chain->num_stages; i++) {
+    for (int i = chain->first_stage; i < chain->num_stages; i++) {
         ChainStage *s = &chain->stages[i];
         if (!s->enabled || s->bypass) continue;
 
@@ -639,7 +648,7 @@ const char *chain_get_stage_name(const SignalChain *chain, int index) {
 }
 
 bool chain_get_stage_enabled(const SignalChain *chain, int index) {
-    if (index >= 0 && index < chain->num_stages)
+    if (index >= chain->first_stage && index < chain->num_stages)
         return chain->stages[index].enabled;
     return false;
 }

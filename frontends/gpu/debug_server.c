@@ -106,6 +106,7 @@ static bool flush_output(DebugServerState *state) {
         if (n < 0 && errno == EINTR) continue;
         if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return true;
         if (n <= 0) {
+            fprintf(stderr,"Signal Studio send closed: %s\n",n<0 ? strerror(errno) : "EOF");
             close(state->client_sock);
             state->client_sock = -1;
             state->output_start = state->output_end = 0;
@@ -242,12 +243,14 @@ static bool read_message(DebugServerState *state, uint32_t *out_type,
     uint8_t frame[520];
     ssize_t n = recv(sock, frame, sizeof(frame), MSG_PEEK | MSG_DONTWAIT);
     if (n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)) {
+        fprintf(stderr,"Signal Studio receive closed: %s\n",n<0 ? strerror(errno) : "EOF");
         close(sock); state->client_sock = -1;
     }
     if (n < 8) { pthread_mutex_unlock(&state->client_lock); return false; }
     DebugMessageHeader hdr;
     memcpy(&hdr, frame, sizeof(hdr));
     if (hdr.payload_size > max_payload_size || hdr.payload_size > sizeof(frame)-8) {
+        fprintf(stderr,"Signal Studio invalid frame: type %u, size %u\n",hdr.msg_type,hdr.payload_size);
         close(sock); state->client_sock = -1;
         pthread_mutex_unlock(&state->client_lock); return false;
     }
@@ -427,7 +430,7 @@ void debug_server_frame(DebugServer *srv,
 
     /* Fill in video stages */
     for (uint32_t i = 0; i < num_video_stages; i++) {
-        stage_infos[i].enabled = video_chain->stages[i].enabled ? 1 : 0;
+        stage_infos[i].enabled = i >= (uint32_t)video_chain->first_stage && video_chain->stages[i].enabled ? 1 : 0;
         stage_infos[i].bypassed = video_chain->stages[i].bypass ? 1 : 0;
         stage_infos[i].kernel_type = (uint8_t)video_chain->stages[i].kernel_type;
         stage_infos[i].pad = 0;

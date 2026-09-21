@@ -7,6 +7,7 @@ extern bool video_gpu_comb_active_public(const VideoGPUChain *vgc);
 extern bool dispatch_video_amp_public     (VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd);
 extern bool dispatch_h_blur_rgb_public    (VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd);
 extern bool dispatch_beam_profile_public  (VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd);
+extern bool dispatch_gun_current_public   (VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd);
 extern bool dispatch_temporal_blit_public (VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd);
 
 static inline ChainBufRef aux_ref(int slot) {
@@ -214,7 +215,7 @@ static bool deflection_rebind(struct SignalChainFwd *chain_fwd,
     p.top_band_end        = tv ? tv->top_band_end : 34.0f;
     p.top_edge_width      = tv ? tv->top_edge_width : 0.08f;
 
-    s->ro_count = 0;
+    s->ro_count = 1; s->ro[0] = CBR_EXT2; s->external[2] = vgc->buf_crt_load;
     s->rw[0] = CBR_EXT0;
     s->rw[1] = CBR_EXT1;
     s->rw_count = 2;
@@ -231,10 +232,11 @@ static bool deflection_rebind(struct SignalChainFwd *chain_fwd,
 bool post_rgb_dispatch(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd) {
     if (!vgc || !cmd) return false;
 
+    const TVDisplayParams *tv = &vgc->chain->tv;
+    bool loading = tv->beam_current_load > 0 || tv->video_black_droop > 0 || fabsf(tv->hv_sag) > 0 || tv->focus_breathing > 0;
+    chain_set_stage_enabled(&vgc->sig_chain, vgc->stage_crt_load, loading);
+    chain_set_stage_enabled(&vgc->sig_chain, vgc->stage_crt_supply, loading);
     (void)dispatch_video_amp_public(vgc, cmd);
-    if (vgc->buf_deflection_x && vgc->buf_deflection_y) {
-        (void)dispatch_h_blur_rgb_public(vgc, cmd);
-    }
     return true;
 }
 
@@ -243,9 +245,10 @@ bool beam_output_dispatch(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd) {
     if (!vgc->buf_beam_rgba || !vgc->buf_deflection_x || !vgc->buf_deflection_y) {
         return true;
     }
-    (void)dispatch_beam_profile_public(vgc, cmd);
-    (void)dispatch_temporal_blit_public(vgc, cmd);
-    return true;
+    return dispatch_gun_current_public(vgc, cmd)
+        && dispatch_h_blur_rgb_public(vgc, cmd)
+        && dispatch_beam_profile_public(vgc, cmd)
+        && dispatch_temporal_blit_public(vgc, cmd);
 }
 
 void post_pipeline_install_matrix_typed(VideoGPUChain *vgc) {
@@ -273,7 +276,7 @@ void post_pipeline_install_deflection_typed(VideoGPUChain *vgc) {
     s->custom_user = NULL;
     s->rebind = deflection_rebind;
     s->rebind_user = vgc;
-    s->ro_count = 0;
+    s->ro_count = 1; s->ro[0] = CBR_EXT2; s->external[2] = vgc->buf_crt_load;
     s->rw[0] = CBR_EXT0;
     s->rw[1] = CBR_EXT1;
     s->rw_count = 2;
@@ -292,7 +295,7 @@ bool post_rgb_chain_dispatch(void *chain, void *stage,
     bool ok = post_rgb_dispatch(vgc, cmd);
     if (ok && stage) {
         ChainStage *s = (ChainStage *)stage;
-        s->external[0] = vgc->buf_rgb2;
+        s->external[0] = vgc->buf_rgb;
         s->snapshot_size = vgc->rgb_size;
     }
     return ok;
@@ -303,4 +306,29 @@ bool beam_output_chain_dispatch(void *chain, void *stage,
     (void)chain;
     (void)stage;
     return beam_output_dispatch((VideoGPUChain *)user, cmd);
+}
+
+static bool crt_load_rebind(struct SignalChainFwd *chain, struct ChainStageFwd *stage, void *user) {
+    (void)chain;
+    VideoGPUChain *v = user;
+    ChainStage *s = (ChainStage *)stage;
+    const TVDisplayParams *tv = &v->chain->tv;
+    struct { uint32_t width, spp; float gamma, strength, dot_seconds; uint32_t mode; float elapsed; uint32_t region; float black_droop, recovery_us, pad[2]; } p = {
+        v->signal_fmt.samples_per_line, v->signal_fmt.samples_per_pixel,
+        tv->gamma > 0 ? tv->gamma : 2.4f, tv->beam_current_load,
+        v->signal_fmt.samples_per_pixel / signal_region_sample_rate_hz(v->signal_fmt.region),
+        s == &v->sig_chain.stages[v->stage_crt_supply], fmaxf(1,v->elapsed_frames), v->signal_fmt.region,
+        tv->video_black_droop, tv->video_recovery_us > 0 ? tv->video_recovery_us : 18, {0,0}
+    };
+    s->rw_count=2; s->rw[0]=CBR_EXT0; s->rw[1]=CBR_EXT1;
+    s->external[0]=v->buf_rgb; s->external[1]=v->buf_crt_load;
+    memcpy(s->params,&p,sizeof(p)); s->params_size=sizeof(p);
+    return true;
+}
+void post_pipeline_install_load_typed(VideoGPUChain *v) {
+    int indices[]={v->stage_crt_load,v->stage_crt_supply};
+    for(int i=0;i<2;i++) {
+        ChainStage *s=&v->sig_chain.stages[indices[i]];
+        s->io_typed=true; s->rebind=crt_load_rebind; s->rebind_user=v;
+    }
 }

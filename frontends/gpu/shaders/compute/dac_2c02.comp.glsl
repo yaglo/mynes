@@ -3,13 +3,13 @@
  * =====================================
  *
  * Converts NES PPU palette+emphasis indices into composite waveform
- * voltages using Bisqwit's 2C02 voltage model. This is Stage 1 of
+ * voltages using the uploaded measured DAC rails. This is Stage 1 of
  * the physical signal chain — the point where digital palette indices
  * become an analog composite signal.
  *
  * Input:  256×240 uint16 palette index buffer
  *         (bits 0..5 = palette index, bits 6..8 = emphasis)
- *         + precomputed signal table (512 entries × 12 phases)
+ *         + precomputed signal table (512 entries × 24 floats)
  *
  * Output: 2048×240 (NTSC) or 2560×240 (PAL) float waveform buffer
  *         (8 or 10 samples per NES pixel × 256 pixels per scanline)
@@ -62,7 +62,8 @@ layout(set = 2, binding = 0) uniform Params {
     uint  phase_field_adv;     /* phase advance per frame (not used here, CPU tracks) */
     uint  frame_field;         /* field index within dot crawl cycle */
     uint  use_alt_table;       /* 1 = PAL (alternate odd lines), 0 = NTSC */
-    uint separate_yc;
+    uint source_mode;          /* 0=composite, 1=Y/C, 2=ideal component/RGB modification */
+    vec4 rgb_row_r, rgb_row_g, rgb_row_b; /* matrix rows and bias for RGB input */
 };
 
 void main() {
@@ -85,6 +86,28 @@ void main() {
     /* 9-bit entry: bits 0..5 = palette, bits 6..8 = emphasis. */
     uint entry = pixel_val & 0x1FFu;
 
+    if(source_mode==2u) {
+        // An ideal separated RGB modification: derive the cycle's DC and
+        // quadrature components from measured DAC voltages. This is not an
+        // RGB palette, and not an assertion that a stock 2C02 has RGB pins.
+        vec3 yiq=vec3(0.0);
+        float rotate=use_alt_table!=0u ? 3.0 : 4.0;
+        for(uint p=0u;p<12u;p++) {
+            float v=signal_table[entry*24u+p];
+            float phase=(float(p)+rotate)*6.28318530718/12.0;
+            yiq+=v*vec3(1.0,2.0*cos(phase),2.0*sin(phase))/12.0;
+        }
+        vec4 source=vec4(yiq,1.0);
+        vec3 rgb=vec3(dot(rgb_row_r,source),dot(rgb_row_g,source),dot(rgb_row_b,source));
+        uint base=(sy*samples_per_line+px*samples_per_pixel)*3u;
+        for(uint s=0u;s<samples_per_pixel;s++) {
+            waveform[base+s*3u]=rgb.r;
+            waveform[base+s*3u+1u]=rgb.g;
+            waveform[base+s*3u+2u]=rgb.b;
+        }
+        return;
+    }
+
     /* Compute phase offset for this pixel on this scanline.
      * Phase advances by samples_per_pixel per NES pixel (8 NTSC, 10 PAL).
      * The subcarrier has 12 slots per cycle, so phase wraps mod 12. */
@@ -106,12 +129,12 @@ void main() {
     // Ideal separated-output modification: DC and AC components of the
     // same DAC code. This is a voltage-cycle mean, never an RGB palette.
     float dc = 0.0;
-    if (separate_yc != 0u) {
+    if (source_mode == 1u) {
         for (uint p=0u; p<12u; p++)
             dc += (alt ? signal_table_alt[entry*24u+p] : signal_table[entry*24u+p]) / 12.0;
     }
     for (uint s = 0; s < samples_per_pixel; s++) {
-        if (separate_yc != 0u) source_y[wave_base+s] = dc;
+        if (source_mode == 1u) source_y[wave_base+s] = dc;
         waveform[wave_base + s] = alt
             ? signal_table_alt[table_base + s]
             : signal_table[table_base + s];

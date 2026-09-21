@@ -1,5 +1,5 @@
 /*
- * Signal Precompute Tests — Bisqwit 2C02 DAC + FIR Design
+ * Signal Precompute Tests — Terminated 2C02 DAC + FIR Design
  * ========================================================
  *
  * Verifies the standalone precompute module (no dependency on the
@@ -85,13 +85,33 @@ static float fir_tap_sum(const float *taps, int n) {
 }
 
 /* ============================================================================
- * Bisqwit 2C02 DAC tests
+ * Terminated 2C02 DAC tests
  * ============================================================================ */
+
+static int test_published_voltage_rails(void) {
+    SignalPrecompute sp;
+    signal_precompute_ntsc(&sp);
+    /* Independent measurements in millivolts, including flat rails and
+     * sub-black; 14 mV accounts for published noise/quantization uncertainty. */
+    const int codes[] = {0x0d, 0x1d, 0x2d, 0x3d, 0x00, 0x10, 0x20, 0x30};
+    const float measured[] = {228,312,552,880,616,840,1100,1100};
+    const float emphasized[] = {192,256,448,712,500,676,896,896};
+    for (int i=0;i<8;i++) for (int ph=0;ph<12;ph++) {
+        ASSERT_NEAR(sp.table[codes[i]][ph]*788+312, measured[i], 14, "terminated DAC rail mV");
+        ASSERT_NEAR(sp.table[codes[i]|(7<<6)][ph]*788+312, emphasized[i], 14, "emphasis rail mV");
+    }
+    for (int emph=0;emph<8;emph++) for (int code=14;code<64;code+=16)
+        for (int ph=0;ph<12;ph++) {
+            ASSERT_NEAR(sp.table[(emph<<6)|code][ph], 0, 1e-6f, "$xE ignores emphasis");
+            ASSERT_NEAR(sp.table[(emph<<6)|(code+1)][ph], 0, 1e-6f, "$xF ignores emphasis");
+        }
+    return 1;
+}
 
 static int test_dac_black_waveform(void) {
     /* Palette index 0x1D is NES "black": luma level 1, color >= 13,
-     * so level forced to 1 and in_hi=0 → signal stays at blacklo (0.518).
-     * After normalization, 0.518 → 0.0. */
+     * so level forced to 1 and in_hi=0 → signal stays at blacklo (312 mV).
+     * After normalization, 312 mV → 0.0. */
     SignalPrecompute sp;
     signal_precompute_ntsc(&sp);
 
@@ -104,8 +124,8 @@ static int test_dac_black_waveform(void) {
 
 static int test_dac_white_waveform(void) {
     /* Palette index 0x20: luma level 2, color 0 → in_hi forced to 1,
-     * signal = levels[2 + 4] = levels[6] = 1.962 = whitehi.
-     * After normalization: (1.962 - 0.518) / (1.962 - 0.518) = 1.0. */
+     * signal = levels[2 + 4] = levels[6] = 1100 mV = whitehi.
+     * After normalization: (1100 mV - 312 mV) / (1100 mV - 312 mV) = 1.0. */
     SignalPrecompute sp;
     signal_precompute_ntsc(&sp);
 
@@ -143,7 +163,7 @@ static int test_dac_emphasis_attenuation(void) {
     signal_precompute_ntsc(&sp);
 
     /* Use palette index 0x30 (bright, "lightest" level) which is
-     * level=3, color=0 → in_hi=1 always, so sig = levels[3+4] = 1.962. */
+     * level=3, color=0 → in_hi=1 always, so sig = levels[3+4] = 1100 mV. */
     int pal_idx = 0x30;
     int entry0 = (0 << 6) | pal_idx;
     int entry7 = (7 << 6) | pal_idx;
@@ -156,7 +176,7 @@ static int test_dac_emphasis_attenuation(void) {
                m0, m7);
         return 0;
     }
-    /* Sanity: emph7 should be noticeably lower (0.746 factor). */
+    /* All three emphasis gates lower the white rail to 896 mV. */
     if (m7 > m0 * 0.9f) {
         printf("  FAIL: emph7 mean %.4f not attenuated enough vs emph0 %.4f\n",
                m7, m0);
@@ -166,29 +186,8 @@ static int test_dac_emphasis_attenuation(void) {
 }
 
 static int test_dac_emphasis_octant_mask(void) {
-    /* emph_oct = 0264513 (octal).
-     *   octant 0 → mask = (0264513 >> 0) & 7 = 3 (0b011 → R|G? no: bits are RGB)
-     *   Actually mask bits per shader: bit0=R, bit1=G, bit2=B.
-     *   emph=1 is "R only" (bit0 set). A given octant is attenuated iff
-     *   (emph & mask_for_that_octant) != 0.
-     *
-     *   Octal 0264513:
-     *     digit 0 (lsb) = 3  → mask=3 (R|G) → emph=1 attenuates (1 & 3 != 0)
-     *     digit 1       = 1  → mask=1 (R)   → emph=1 attenuates
-     *     digit 2       = 5  → mask=5 (R|B) → emph=1 attenuates
-     *     digit 3       = 4  → mask=4 (B)   → emph=1 does NOT attenuate
-     *     digit 4       = 6  → mask=6 (G|B) → emph=1 does NOT attenuate
-     *     digit 5       = 2  → mask=2 (G)   → emph=1 does NOT attenuate
-     *
-     *   The task description says "R emphasis attenuates octants {2,4}",
-     *   but using the octal literal 0264513 the low digits are octants 0..5
-     *   and R (emph=1) attenuates octants whose mask has bit0 set: that's
-     *   digits with odd value (1,3,5,7). From the literal those are
-     *   octants 0 (mask 3), 1 (mask 1), 2 (mask 5).
-     *
-     *   So verify: comparing emph=1 to emph=0 for a bright color,
-     *   octants 0,1,2 are attenuated (phases 0-1, 2-3, 4-5) and
-     *   octants 3,4,5 (phases 6-7, 8-9, 10-11) are identical. */
+    /* R emphasis attenuates phases 0..5; G and B gates rotate by 4
+     * and 8 samples. $xE/$xF remain blank regardless of emphasis. */
     SignalPrecompute sp;
     signal_precompute_ntsc(&sp);
 
@@ -205,11 +204,6 @@ static int test_dac_emphasis_octant_mask(void) {
         float s0 = sp.table[e0][p];
         float s1 = sp.table[e1][p];
         if (1 & mask) {
-            /* R emphasis should attenuate by factor 0.746 (BEFORE normalization).
-             * After (sig - blacklo) * norm, the diff is 0.746 scaling applied
-             * to sig then re-normalized. So ratio s1/s0 should be less than 1
-             * but NOT exactly 0.746 (because blacklo is subtracted).
-             * We verify s1 < s0. */
             if (!(s1 < s0 - 1e-4f)) {
                 printf("  FAIL: octant %d (phase %d) mask=%d should attenuate but s1=%.4f !< s0=%.4f\n",
                        octant, p, mask, s1, s0);
@@ -439,11 +433,9 @@ static int test_init_ntsc_defaults(void) {
         printf("  FAIL: phase_num_fields=%d (expected 2)\n", sp.phase_num_fields);
         return 0;
     }
-    ASSERT_NEAR(sp.color_matrix[0][0], 1.03f, 1e-5f, "warm_r");
-
-    if (!(sp.color_bias[0] > 0.0f)) {
-        printf("  FAIL: color_bias[0]=%.4f not > 0\n", sp.color_bias[0]);
-        return 0;
+    for(int c=0;c<3;c++) {
+        ASSERT_NEAR(sp.color_matrix[c][0], 1, 1e-6f, "neutral grayscale gain");
+        ASSERT_NEAR(sp.color_bias[c], 0, 1e-6f, "no hidden black lift");
     }
 
     /* Also sanity-check that FIR taps have unit DC gain after init. */
@@ -608,7 +600,8 @@ static int test_clock_phase_and_decay(void) {
 int main(void) {
     printf("=== Signal Precompute Tests ===\n\n");
 
-    printf("--- Bisqwit 2C02 DAC ---\n");
+    printf("--- Terminated 2C02 DAC ---\n");
+    RUN_TEST(test_published_voltage_rails);
     RUN_TEST(test_dac_black_waveform);
     RUN_TEST(test_dac_white_waveform);
     RUN_TEST(test_dac_saturated_colors);

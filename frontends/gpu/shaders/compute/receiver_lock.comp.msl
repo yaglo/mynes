@@ -16,14 +16,14 @@ struct Raster
     float raster[1];
 };
 
-struct Reference
+struct Measurement
 {
-    float4 reference[1];
+    float4 measurement[1];
 };
 
 constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
 
-kernel void main0(constant Params& _19 [[buffer(0)]], device Raster& _64 [[buffer(1)]], device Reference& _189 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+kernel void main0(constant Params& _19 [[buffer(0)]], device Raster& _62 [[buffer(1)]], device Measurement& _153 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
     uint line = gl_GlobalInvocationID.x;
     if (line >= _19.count)
@@ -31,36 +31,92 @@ kernel void main0(constant Params& _19 [[buffer(0)]], device Raster& _64 [[buffe
         return;
     }
     uint base = line * _19.full_width;
+    uint spp = _19.samples_per_dot;
     float black = 0.0;
-    uint b0 = 46u * _19.samples_per_dot;
-    uint b1 = 49u * _19.samples_per_dot;
-    for (uint x = b0; x < b1; x++)
+    float tip = 0.0;
+    uint _48 = 334u * spp;
+    for (uint x = _48; x < (338u * spp); x++)
     {
-        black += _64.raster[base + x];
+        black += _62.raster[base + x];
     }
-    black /= float(b1 - b0);
-    uint start = 31u * _19.samples_per_dot;
-    uint n = (((42u * _19.samples_per_dot) - start) / 12u) * 12u;
+    black /= float(4u * spp);
+    uint _82 = 8u * spp;
+    for (uint x_1 = _82; x_1 < (16u * spp); x_1++)
+    {
+        tip += _62.raster[base + x_1];
+    }
+    tip /= float(8u * spp);
+    float threshold = (black + tip) * 0.5;
+    bool vertical = tip < (black - 0.07999999821186065673828125);
+    for (uint _dot = 80u; _dot <= 300u; _dot += 20u)
+    {
+        bool _142;
+        if (vertical)
+        {
+            _142 = _62.raster[base + (_dot * spp)] < threshold;
+        }
+        else
+        {
+            _142 = vertical;
+        }
+        vertical = _142;
+    }
+    if (vertical)
+    {
+        _153.measurement[line] = float4(0.0, black, -1.0, 0.0);
+        return;
+    }
+    float offset = 0.0;
+    bool found = false;
+    if (tip < (black - 0.07999999821186065673828125))
+    {
+        uint _173 = 18u * spp;
+        for (uint x_2 = _173; x_2 < (32u * spp); x_2++)
+        {
+            float a = _62.raster[(base + x_2) - 1u];
+            float b = _62.raster[base + x_2];
+            if ((a < threshold) && (b >= threshold))
+            {
+                offset = ((float(x_2) - 1.0) + ((threshold - a) / fast::max(b - a, 9.9999999747524270787835121154785e-07))) - ((25.0 * float(spp)) - 0.5);
+                found = true;
+                break;
+            }
+        }
+    }
+    if (!found)
+    {
+        _153.measurement[line] = float4(0.0, black, 0.0, 1000000.0);
+        return;
+    }
+    int shift = int(round(offset));
+    black = 0.0;
+    uint _249 = 46u * spp;
+    for (uint x_3 = _249; x_3 < (49u * spp); x_3++)
+    {
+        black += _62.raster[base + uint(int(x_3) + shift)];
+    }
+    black /= float(3u * spp);
+    uint start = uint(int(31u * spp) + shift);
+    uint n = ((11u * spp) / 12u) * 12u;
     float c = 0.0;
     float s = 0.0;
-    for (uint x_1 = 0u; x_1 < n; x_1++)
+    for (uint x_4 = 0u; x_4 < n; x_4++)
     {
-        float p = (float(int(start + x_1) - int(65u * _19.samples_per_dot)) * 6.283185482025146484375) / 12.0;
-        float v = _64.raster[(base + start) + x_1] - black;
+        float p = (float(int(start + x_4) - int(65u * spp)) * 6.283185482025146484375) / 12.0;
+        float v = _62.raster[(base + start) + x_4] - black;
         c += (v * cos(p));
         s += (v * sin(p));
     }
     float amplitude = (2.0 * length(float2(c, s))) / float(n);
-    float _164;
+    float _360;
     if (_19.region == 1u)
     {
-        _164 = ((line & 1u) == 1u) ? 1.5 : 4.5;
+        _360 = ((line & 1u) == 1u) ? 1.5 : 4.5;
     }
     else
     {
-        _164 = 5.5;
+        _360 = 5.5;
     }
-    float burst_axis = _164;
-    float phase = precise::atan2(-s, c) - ((burst_axis * 6.283185482025146484375) / 12.0);
-    _189.reference[line] = float4(phase, black, amplitude, 0.0);
+    float burst_axis = _360;
+    _153.measurement[line] = float4(precise::atan2(-s, c) - ((burst_axis * 6.283185482025146484375) / 12.0), black, amplitude, offset);
 }

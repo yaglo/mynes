@@ -32,11 +32,10 @@
 /* GPU signal chain (NO composite.h). */
 #include "signal_precompute.h"
 #include "video_gpu.h"
-#include "gpu_half.h"
 #include "gpu_display.h"
 #include "audio_chain.h"
 #include "audio_gpu.h"
-#include "audio_sync.h"
+#include "playback.h"
 #include "video_chain.h"
 #include "presets.h"
 #include "chain_vis.h"
@@ -46,10 +45,12 @@
 
 /* Extracted modules. */
 #include "gpu_render.h"
+#include "gpu_benchmark.h"
 #include "preset_apply.h"
 #include "waveform_gen.h"
 #include "test_signals.h"
 #include "gpu_log.h"
+#include "gpu_osd.h"
 
 /* Shared frontend helpers. */
 #include "browser.h"
@@ -89,15 +90,12 @@ static float           *waveform_buf = NULL;
 static float           *gpu_rgb_out = NULL;
 static unsigned         frame_count = 0;
 
-/* One block per emulated frame; both backends preserve the same state. */
-static float cpu_audio_frame[AUDIO_BLOCK_CAPACITY];
-static float audio_output[AUDIO_BLOCK_CAPACITY];
-static int audio_frame_pos;
-static AudioState audio_state;
-static AudioRateCtrl audio_rate_ctrl;
-static bool audio_playing;
-static int audio_fade_remaining;
-static FILE *audio_capture, *audio_trace;
+/* Rendering owns a picture copy; NES and audio belong to the playback worker. */
+static Playback *playback;
+static PlaybackFrame picture;
+static PPU display_ppu;
+static APUAnalog analog_controls;
+static bool playback_active;
 
 /* Chain visualiser. */
 static ChainVis        *chain_vis = NULL;
@@ -183,75 +181,6 @@ static bool frame_wanted(unsigned frame, const int *list, int n) {
     return false;
 }
 
-static void apu_sample_callback(void *user_data, float sample) {
-    (void)user_data;
-
-    if (audio_frame_pos < AUDIO_BLOCK_CAPACITY)
-        cpu_audio_frame[audio_frame_pos++] = sample;
-}
-
-float g_audio_bass_rms = 0.0f;
-
-static void audio_reset(void) {
-    if (audio_stream) {
-        SDL_ClearAudioStream(audio_stream);
-        SDL_SetAudioStreamFrequencyRatio(audio_stream, 1.0f);
-    }
-    memset(&audio_state, 0, sizeof(audio_state));
-    memset(&audio_rate_ctrl, 0, sizeof(audio_rate_ctrl));
-    audio_frame_pos = 0;
-    audio_fade_remaining = AUDIO_STREAM_RATE / 200;
-    g_audio_bass_rms = 0;
-    nes.apu.hp_filter1 = nes.apu.hp_filter2 = nes.apu.lp_filter = 0;
-    nes.apu.hp_prev_input1 = nes.apu.hp_prev_input2 = 0;
-}
-
-static void audio_adjust_rate(double frame_seconds) {
-    if (!audio_stream) return;
-    int bytes = SDL_GetAudioStreamQueued(audio_stream);
-    if (bytes >= 0) SDL_SetAudioStreamFrequencyRatio(audio_stream,
-        audio_sync_ratio(&audio_rate_ctrl, bytes / (int)sizeof(float), frame_seconds));
-}
-
-static void audio_submit_frame(void) {
-    int count = audio_frame_pos;
-    audio_frame_pos = 0;
-    if (!count || !audio_stream) return;
-    bool processed = use_gpu_audio && gpu_audio_enabled &&
-        audio_gpu_process(&audio_gpu, gpu, &audio_state, cpu_audio_frame, audio_output, count);
-    if (!processed) {
-        if (use_gpu_audio) {
-            fprintf(stderr, "GPU audio failed; continuing with CPU chain: %s\n", SDL_GetError());
-            use_gpu_audio = false;
-        }
-        audio_chain_process(&audio_chain, &audio_state, cpu_audio_frame, audio_output, count);
-    }
-    int bytes = SDL_GetAudioStreamQueued(audio_stream);
-    if (bytes >= 0 && audio_sync_stale(bytes / (int)sizeof(float), count)) {
-        // A long presentation/OS stall must not leave old gameplay queued.
-        SDL_ClearAudioStream(audio_stream);
-        memset(&audio_rate_ctrl, 0, sizeof(audio_rate_ctrl));
-        SDL_SetAudioStreamFrequencyRatio(audio_stream, 1.0f);
-        audio_fade_remaining = AUDIO_STREAM_RATE / 200;
-    }
-    for (int i = 0; i < count; ++i) {
-        float sample = fmaxf(-1.0f, fminf(1.0f, audio_output[i] * 1.5f));
-        // Track post-coupling acoustic energy, not the APU DAC's DC bias.
-        g_audio_bass_rms = .9995f * g_audio_bass_rms + .0005f * sample * sample;
-        if (audio_fade_remaining > 0) {
-            sample *= 1.0f - (float)audio_fade_remaining / (AUDIO_STREAM_RATE / 200);
-            --audio_fade_remaining;
-        }
-        audio_output[i] = sample;
-    }
-    if (audio_capture) fwrite(audio_output, sizeof(float), count, audio_capture);
-    if (audio_trace) fprintf(audio_trace, "%u,%d,%d,%.7f,%d\n", frame_count, count,
-        SDL_GetAudioStreamQueued(audio_stream) / (int)sizeof(float),
-        SDL_GetAudioStreamFrequencyRatio(audio_stream), use_gpu_audio);
-    if (!SDL_PutAudioStreamData(audio_stream, audio_output, count * sizeof(float)))
-        fprintf(stderr, "Audio submission failed: %s\n", SDL_GetError());
-}
-
 /* ============================================================================
  * Input handling
  * ============================================================================ */
@@ -271,7 +200,6 @@ static void handle_key(SDL_Scancode sc, bool down) {
     }
     if (down) controller_state |= mask;
     else      controller_state &= ~mask;
-    nes.controller[0] = controller_state;
 }
 
 /* ============================================================================
@@ -290,10 +218,23 @@ int main(int argc, char **argv) {
     int debug_dump_frames[32];
     int debug_dump_count = 0;
     bool debug_server_enabled = false;  /* --debug-server: ChainVisualiser IPC socket */
+    bool benchmark = false, force_sdr = false, screenshot_requested = false, native_fullscreen = false;
+    int mask_alignment_override=-1,window_width=1280,window_height=960;
+    char manual_screenshot_path[256];
+    int exit_status = 0;
+    int offscreen_w=0,offscreen_h=0;
+    FILE *playback_trace=NULL;
+    const char *trace_path=getenv("MYNES_PLAYBACK_TRACE"), *limit_env=getenv("MYNES_PLAYBACK_FRAMES");
+    const char *bench_capture=getenv("MYNES_PLAYBACK_READBACK_PATH");
+    unsigned playback_limit=limit_env ? (unsigned)strtoul(limit_env,NULL,10) : 0;
+    unsigned last_trace_frame=0, next_bench_capture=120;
     const char *debug_socket = getenv("MYNES_DEBUG_SOCKET");
     if (!debug_socket) debug_socket = "/tmp/mynes_gpu_debug.sock";
     const char *static_frame_path = NULL;  /* --simulate-frame <file.bin>: bypass emulation */
     const char *preset_path = NULL;        /* --preset <path.json>: apply on startup */
+    int screenshot_count = 1, screenshots_taken = 0;
+    char next_screenshot_path[4096];
+    bool review_no_input = getenv("MYNES_REVIEW_NO_INPUT") != NULL;
     int screenshot_after = 0;              /* --screenshot-after <N>: dump and exit */
     const char *screenshot_path = "/tmp/gpu_capture.ppm";
     uint8_t *static_frame_buf = NULL;      /* 256*240 palette indices when loaded */
@@ -319,12 +260,39 @@ int main(int argc, char **argv) {
             }
         } else if (strcmp(argv[i], "--debug-server") == 0) {
             debug_server_enabled = true;
+        } else if (strcmp(argv[i], "--benchmark") == 0) {
+            benchmark = true;
+        } else if(strcmp(argv[i],"--offscreen")==0 && i+1<argc) {
+            if(sscanf(argv[++i],"%dx%d",&offscreen_w,&offscreen_h)!=2 || offscreen_w<64 || offscreen_h<64 || offscreen_w>8192 || offscreen_h>8192) {
+                fprintf(stderr,"Offscreen size must be WIDTHxHEIGHT in pixels\n");return 1;
+            }
+            review_no_input=true;
+        } else if (strcmp(argv[i], "--native-fullscreen") == 0) {
+            native_fullscreen=true;
+        } else if (strcmp(argv[i], "--mask-alignment") == 0 && i+1<argc) {
+            const char *mode=argv[++i];
+            if(strcmp(mode,"pixels")==0) mask_alignment_override=0;
+            else if(strcmp(mode,"physical")==0) mask_alignment_override=1;
+            else { fprintf(stderr,"Mask alignment must be pixels or physical\n");return 1; }
+        } else if (strcmp(argv[i], "--window-size") == 0 && i+1<argc) {
+            if(sscanf(argv[++i],"%dx%d",&window_width,&window_height)!=2 || window_width<64 || window_height<64 || window_width>8192 || window_height>8192) {
+                fprintf(stderr,"Window size must be WIDTHxHEIGHT in window coordinates\n");return 1;
+            }
+        } else if (strcmp(argv[i], "--sdr") == 0) {
+            force_sdr = true;
         } else if (strcmp(argv[i], "--simulate-frame") == 0 && i + 1 < argc) {
             static_frame_path = argv[++i];
         } else if (strcmp(argv[i], "--preset") == 0 && i + 1 < argc) {
             preset_path = argv[++i];
         } else if (strcmp(argv[i], "--screenshot-after") == 0 && i + 1 < argc) {
             screenshot_after = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--screenshot-pair") == 0) {
+            screenshot_count = 2;
+        } else if (strcmp(argv[i], "--screenshot-frames") == 0 && i + 1 < argc) {
+            screenshot_count = atoi(argv[++i]);
+            if (screenshot_count < 1 || screenshot_count > 240) {
+                fprintf(stderr, "Screenshot count must be 1..240\n"); return 1;
+            }
         } else if (strcmp(argv[i], "--screenshot-path") == 0 && i + 1 < argc) {
             screenshot_path = argv[++i];
         } else if (strcmp(argv[i], "--verbose") == 0 || strcmp(argv[i], "-v") == 0) {
@@ -343,6 +311,16 @@ int main(int argc, char **argv) {
                    "  --debug-server        Start Unix socket at /tmp/mynes_gpu_debug.sock\n"
                    "                        for the ChainVisualiser dev tool\n"
                    "                        (tools/visualiser)\n"
+                   "  --screenshot-after N  Capture final CRT output and exit at frame N\n"
+                   "  --screenshot-path P   PPM destination (+ linear-light PFM)\n"
+                   "  --screenshot-pair     Capture N and N+1 for phase comparison\n"
+                   "  --screenshot-frames N Capture 1..240 consecutive frames\n"
+                   "  --benchmark           Fence complete preset chain at four resolutions\n"
+                   "  --offscreen WxH       Hidden, silent playback into a pixel-sized target\n"
+                   "  --sdr                 Use SDR output for display comparisons\n"
+                   "  --native-fullscreen   Enter native panel mode (F toggles back)\n"
+                   "  --mask-alignment M    pixels (default) or physical CRT pitch\n"
+                   "  --window-size WxH     Initial window size (UI coordinates)\n"
                    "  -h, --help            Show this help\n",
                    argv[0]);
             return 0;
@@ -363,6 +341,7 @@ int main(int argc, char **argv) {
 
     /* Persistent config (recent ROMs, last preset). */
     mynes_config_load(&mynes_config);
+    render_ctx.mask_alignment=mask_alignment_override>=0 ? mask_alignment_override : mynes_config.gpu_mask_alignment;
 
     /* --- SDL3 init --- */
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO)) {
@@ -381,10 +360,13 @@ int main(int argc, char **argv) {
     }
     LOGV("GPU backend: %s\n", SDL_GetGPUDeviceDriver(gpu));
 
+    SDL_WindowFlags window_flags=SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+    if (benchmark || offscreen_w) window_flags |= SDL_WINDOW_HIDDEN;
+    else if (screenshot_after > 0 || review_no_input) window_flags |= SDL_WINDOW_NOT_FOCUSABLE;
     window = SDL_CreateWindow(
         "MyNES (GPU)",
-        1280, 960,
-        SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY
+        window_width, window_height,
+        window_flags
     );
     if (!window) {
         fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
@@ -401,8 +383,14 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    if(native_fullscreen && !offscreen_w) {
+        if(!gpu_output_toggle_fullscreen(window,true) || !SDL_SyncWindow(window)) {
+            fprintf(stderr,"Native fullscreen failed: %s\n",SDL_GetError());
+            SDL_DestroyGPUDevice(gpu);SDL_DestroyWindow(window);SDL_Quit();return 1;
+        }
+    }
     /* Enable vsync + HDR (EDR on macOS) if supported. */
-    bool hdr_available = SDL_WindowSupportsGPUSwapchainComposition(gpu, window,
+    bool hdr_available = !force_sdr && SDL_WindowSupportsGPUSwapchainComposition(gpu, window,
         SDL_GPU_SWAPCHAINCOMPOSITION_HDR_EXTENDED_LINEAR);
     /* Enable EDR (HDR extended linear) if available. Values >1.0 map to
      * brighter-than-SDR-white on the display. Screenshots may appear
@@ -430,12 +418,13 @@ int main(int argc, char **argv) {
         &spec, NULL, NULL
     );
     if (audio_stream) {
+        if(offscreen_w) SDL_SetAudioStreamGain(audio_stream,0);
         SDL_ResumeAudioStreamDevice(audio_stream);
     }
 
     /* --- NES init --- */
     nes_init(&nes);
-    apu_set_audio_callback(&nes.apu, apu_sample_callback, NULL);
+    analog_controls = nes.apu.analog;
 
     /* Try to load a realistic RGB palette for the raw-display path.
      * Checked in priority order; first hit wins. */
@@ -537,7 +526,9 @@ int main(int argc, char **argv) {
     preset_ctx.current_preset = &current_preset;
     preset_ctx.config = &mynes_config;
     preset_ctx.region = region;
-    preset_ctx.nes = &nes;
+    display_ppu.color_palette = nes.ppu.color_palette;
+    preset_ctx.display_ppu = &display_ppu;
+    preset_ctx.analog_controls = &analog_controls;
     preset_ctx.chain_vis = NULL;  /* set after chain_vis_create */
     preset_ctx.shader_dir = NULL; /* set after shader_dir_buf is resolved */
     preset_ctx.render_ctx = &render_ctx;
@@ -551,9 +542,10 @@ int main(int argc, char **argv) {
      * or init with zero-size buffers (pre-only). */
     int startup_preset_idx = -1;
     if (preset_path) {
-        const char *slash = strrchr(preset_path, '/');
-        const char *stem = slash ? slash + 1 : preset_path;
-        startup_preset_idx = preset_find_by_slug(stem);
+        startup_preset_idx=preset_register_file(preset_path);
+        if(startup_preset_idx<0 && !strchr(preset_path,'/') && !strstr(preset_path,".json"))
+            startup_preset_idx=preset_find_by_slug(preset_path);
+        if(startup_preset_idx<0) { fprintf(stderr,"Could not load requested preset: %s\n",preset_path);return 1; }
     }
     if (startup_preset_idx < 0 && mynes_config.last_preset[0])
         startup_preset_idx = preset_find_by_slug(mynes_config.last_preset);
@@ -581,15 +573,6 @@ int main(int argc, char **argv) {
     gpu_audio_enabled = audio_gpu_init(&audio_gpu, gpu, &audio_chain, shader_dir);
     if (!gpu_audio_enabled) fprintf(stderr, "GPU audio unavailable; CPU chain remains active\n");
     use_gpu_audio = gpu_audio_enabled && getenv("MYNES_GPU_AUDIO") != NULL;
-    audio_reset();
-    const char *audio_capture_path = getenv("MYNES_AUDIO_CAPTURE");
-    const char *audio_trace_path = getenv("MYNES_AUDIO_TRACE");
-    if (audio_capture_path) audio_capture = fopen(audio_capture_path, "wb");
-    if (audio_trace_path) {
-        audio_trace = fopen(audio_trace_path, "w");
-        if (audio_trace) fprintf(audio_trace, "frame,samples,queued,ratio,gpu\n");
-    }
-
     /* --- GPU video signal chain --- */
     if (video_gpu_init(&video_gpu_chain, gpu, &video_chain, shader_dir,
                        sig_state.fir_y, sig_state.fir_y_n,
@@ -644,6 +627,7 @@ int main(int argc, char **argv) {
              * 4:3 viewport within the window — no stretching needed. */
             int win_pw, win_ph;
             SDL_GetWindowSizeInPixels(window, &win_pw, &win_ph);
+            if(offscreen_w) { win_pw=offscreen_w;win_ph=offscreen_h; }
             float aspect = 4.0f / 3.0f;
             int beam_w, beam_h, beam_rps;
             if ((float)win_pw / (float)win_ph > aspect) {
@@ -669,10 +653,8 @@ int main(int argc, char **argv) {
                  * for buffer allocation. The real values come from the preset. */
                 {
                     TVDisplayParams *tv = &video_chain.tv;
-                    float sig_n = (0.35f - tv->beam_sharpness * 0.20f) * (0.4f + tv->beam_height_min * 0.8f);
-                    float sig_w = 0.30f + tv->beam_height_max * 0.33f;
-                    if (sig_n < 0.10f) sig_n = 0.10f;
-                    if (sig_w < 0.20f) sig_w = 0.20f;
+                    float sig_n = video_beam_sigma(tv, false);
+                    float sig_w = video_beam_sigma(tv, true);
                     video_gpu_chain.beam_sigma_narrow = sig_n;
                     video_gpu_chain.beam_sigma_wide = sig_w;
                     video_gpu_chain.beam_h_blur_sigma = tv->beam_spot_size > 0 ? tv->beam_spot_size : 6.0f;
@@ -731,6 +713,17 @@ int main(int argc, char **argv) {
      * / stage params. One call, not a re-parse of the preset JSON. */
     preset_apply_gpu_push(&preset_ctx);
 
+    if (benchmark) {
+        char render_path[1024];
+        snprintf(render_path,sizeof(render_path),"%s/../render",shader_dir);
+        printf("BENCH preset=%s\n",preset_path ? preset_path : preset_display_name(current_preset));
+        if (!gpu_video_enabled || !gpu_benchmark(&video_gpu_chain,gpu,&sig_state,render_path,render_ctx.mask_alignment==0)) {
+            fprintf(stderr,"Benchmark failed: %s\n",SDL_GetError());
+            exit_status=1;
+        }
+        goto cleanup;
+    }
+
     /* ROM region overrides the preset region. The preset is a
      * "video chain" description (cable + TV + colour matrix), not a
      * region decision — an iNES header that flags PAL is an
@@ -758,6 +751,9 @@ int main(int argc, char **argv) {
     }
 
     /* --- Debug server (for SwiftUI visualiser, --debug-server only) --- */
+    render_ctx.offscreen_w=offscreen_w;render_ctx.offscreen_h=offscreen_h;
+    const char *headroom_env=getenv("MYNES_OFFSCREEN_HEADROOM");
+    render_ctx.offscreen_headroom=headroom_env ? fmaxf(1,atof(headroom_env)) : 1.6f;
     if (debug_server_enabled) {
         debug_srv = debug_server_create(debug_socket);
         if (!debug_srv) {
@@ -772,6 +768,19 @@ int main(int argc, char **argv) {
      * Main loop
      * ======================================================================== */
 
+    if(trace_path) {
+        playback_trace=fopen(trace_path,"w");
+        if(!playback_trace) { perror(trace_path); exit_status=1; goto cleanup; }
+        fprintf(playback_trace,"frame,skipped,start_ns,ready_ns,submit_ns,emulation_ms,audio_ms,encode_ms,present_ms,swap_wait_ms,capture_ms,width,height\n");
+    }
+    playback = playback_create(&nes, gpu, gpu_audio_enabled ? &audio_gpu : NULL,
+                               audio_stream, screenshot_after ? screenshot_after + screenshot_count - 1 : playback_limit,
+                               screenshot_count > 1 ? screenshot_after : 0);
+    if (!playback) { fprintf(stderr, "Playback worker: %s\n", SDL_GetError()); return 1; }
+    const char *stall_env = getenv("MYNES_PRESENT_STALL_MS");
+    int presentation_stall_ms = stall_env ? atoi(stall_env) : 0;
+    if (getenv("MYNES_REVIEW_OSD")) osd_menu_open_root(preset_menu_root, preset_menu_root_count, "Setup");
+    unsigned previous_picture = 0;
     Uint64 frame_deadline = 0;
     while (running) {
         /* The OSD region toggle can flip the pipeline from inside
@@ -791,6 +800,10 @@ int main(int argc, char **argv) {
         /* --- Event processing --- */
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
+            /* Offline captures use explicit frame-script input only. Live
+             * keyboard events must not change the test ROM or its preset. */
+            if ((screenshot_after > 0 || review_no_input) &&
+                (ev.type == SDL_EVENT_KEY_DOWN || ev.type == SDL_EVENT_KEY_UP)) continue;
             switch (ev.type) {
                 case SDL_EVENT_QUIT:
                     running = false;
@@ -844,7 +857,7 @@ int main(int argc, char **argv) {
                                         new_region == SIGNAL_REGION_PAL ? 1 : 0);
                                 }
                                 nes_reset(&nes);
-                                audio_reset();
+                                nes_rom_free(&rom);
                                 rom = new_rom;
                                 rom_loaded = true;
                                 free(static_frame_buf);
@@ -868,6 +881,8 @@ int main(int argc, char **argv) {
                     /* O: reopen the browser mid-session. */
                     if (ev.key.scancode == SDL_SCANCODE_O) {
                         browser_init(&browser, NULL, &mynes_config);
+                        playback_pause(playback);
+                        playback_active = false;
                         browser_active = true;
                         break;
                     }
@@ -919,14 +934,8 @@ int main(int argc, char **argv) {
                     /* F11 or F: toggle fullscreen + hide cursor. */
                     if (ev.key.scancode == SDL_SCANCODE_F11 ||
                         ev.key.scancode == SDL_SCANCODE_F) {
-                        Uint32 flags = SDL_GetWindowFlags(window);
-                        if (flags & SDL_WINDOW_FULLSCREEN) {
-                            SDL_SetWindowFullscreen(window, false);
-                            SDL_ShowCursor();
-                        } else {
-                            SDL_SetWindowFullscreen(window, true);
-                            SDL_HideCursor();
-                        }
+                        if(!gpu_output_toggle_fullscreen(window,render_ctx.mask_alignment==0))
+                            fprintf(stderr,"Fullscreen: %s\n",SDL_GetError());
                     }
                     /* D: dump GPU pipeline output as PPM for debugging. */
                     if (ev.key.scancode == SDL_SCANCODE_D) {
@@ -958,10 +967,10 @@ int main(int argc, char **argv) {
                             /* Check index framebuffer. */
                             int nz_idx = 0;
                             for (int t = 0; t < 256*240; t++)
-                                if (nes.ppu.index_framebuffer[t] != 0) nz_idx++;
+                                if (display_ppu.index_framebuffer[t] != 0) nz_idx++;
                             printf("Index FB: %d/%d non-zero\n", nz_idx, 256*240);
                             /* Try generating waveform RIGHT NOW and check. */
-                            waveform_generate(waveform_buf, nes.ppu.index_framebuffer,
+                            waveform_generate(waveform_buf, display_ppu.index_framebuffer,
                                               &sig_state, frame_count);
                             printf("After fresh generate, waveform[120*spl..+16]:\n  ");
                             for (int x = 0; x < 16; x++)
@@ -995,78 +1004,8 @@ int main(int argc, char **argv) {
                             printf("Temporal blend: OFF (dot crawl visible)\n");
                         }
                     }
-                    /* F5: screenshot — two-phase NTSC blend + HDR float16. */
-                    if (ev.key.scancode == SDL_SCANCODE_F5) {
-                        int bw, bh;
-                        SDL_GPUTexture *btex = video_gpu_get_beam_texture(&video_gpu_chain);
-                        if (btex && video_gpu_get_beam_size(&video_gpu_chain, &bw, &bh)) {
-                            /* Run a second frame to get the opposite NTSC phase. */
-                            float old_blend = video_gpu_chain.temporal_blend;
-                            video_gpu_chain.temporal_blend = 0.5f;
-
-                            /* Re-process current frame with blend=0.5
-                             * (prev buffer already has the previous phase). */
-                            waveform_generate(waveform_buf, nes.ppu.index_framebuffer,
-                                              &sig_state, frame_count);
-                            {
-                                int field_ph = signal_frame_phase(&sig_state, frame_count);
-                                float bp = (float)(sig_state.phase_base + field_ph + sig_state.demod_rotate)
-                                           * (2.0f * (float)M_PI / 12.0f);
-                                video_gpu_chain.signal_phase_base = sig_state.phase_base + field_ph;
-                video_gpu_chain.signal_line_phase = sig_state.phase_line_adv;
-                video_gpu_chain.demod_line_phase = sig_state.phase_line_adv * (2.0f * (float)M_PI / 12.0f);
-                video_gpu_set_demod(&video_gpu_chain, bp, video_gpu_chain.demod_dp);
-                            }
-                            video_gpu_process(&video_gpu_chain, gpu, waveform_buf, NULL);
-
-                            /* Download the blended beam (float16). */
-                            int beam_bytes = bw * bh * 8;
-                            uint8_t *shot = (uint8_t *)malloc(beam_bytes);
-                            if (shot && video_gpu_download_beam(&video_gpu_chain, gpu, shot)) {
-                                /* Convert float16 to 16-bit PNG via PPM (lossless). */
-                                char path[256];
-                                snprintf(path, sizeof(path), "/tmp/nes_screenshot_%u.ppm", frame_count);
-                                FILE *fp = fopen(path, "wb");
-                                if (fp) {
-                                    /* Output at 4:3 aspect: scale Y to match.
-                                     * Beam is bw × bh where bh = 240*rps. Target: bw × (bw * 3/4). */
-                                    int out_w = bw;
-                                    int out_h = bw * 3 / 4;  /* 4:3 aspect */
-                                    fprintf(fp, "P6\n%d %d\n255\n", out_w, out_h);
-                                    for (int oy = 0; oy < out_h; oy++) {
-                                        /* Map output Y to beam Y. */
-                                        int sy = (int)((float)oy / (float)out_h * (float)bh);
-                                        if (sy >= bh) sy = bh - 1;
-                                        for (int ox = 0; ox < out_w; ox++) {
-                                            int idx = sy * bw + ox;
-                                            uint32_t rg, ba;
-                                            memcpy(&rg, shot + idx * 8, 4);
-                                            memcpy(&ba, shot + idx * 8 + 4, 4);
-                                            uint16_t rh = rg & 0xFFFF, gh = (rg >> 16) & 0xFFFF;
-                                            uint16_t bh_val = ba & 0xFFFF;
-                                            float rf = gpu_half_to_float(rh);
-                                            float gf = gpu_half_to_float(gh);
-                                            float bf = gpu_half_to_float(bh_val);
-                                            /* Reinhard tone map: x/(1+x) for soft HDR rolloff. */
-                                            if (rf > 0) rf = rf / (1.0f + rf);
-                                            if (gf > 0) gf = gf / (1.0f + gf);
-                                            if (bf > 0) bf = bf / (1.0f + bf);
-                                            uint8_t px[3] = {
-                                                (uint8_t)fminf(rf * 255.0f, 255),
-                                                (uint8_t)fminf(gf * 255.0f, 255),
-                                                (uint8_t)fminf(bf * 255.0f, 255)
-                                            };
-                                            fwrite(px, 3, 1, fp);
-                                        }
-                                    }
-                                    fclose(fp);
-                                    printf("Screenshot: %s (%dx%d, 16-bit PPM, NTSC blended)\n", path, bw, bh);
-                                }
-                            }
-                            free(shot);
-                            video_gpu_chain.temporal_blend = old_blend;
-                        }
-                    }
+                    /* F5 captures the actual display pass, including mask/glass. */
+                    if (ev.key.scancode == SDL_SCANCODE_F5) screenshot_requested = true;
                     /* P: cycle presets (scanned from presets/). */
                     if (ev.key.scancode == SDL_SCANCODE_P) {
                         int n = preset_total_count();
@@ -1105,6 +1044,7 @@ int main(int argc, char **argv) {
                     break;
 
                 case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+                    if(offscreen_w) break;
                     if (gpu_video_enabled && video_gpu_chain.beam_out_w > 0) {
                         int w = ev.window.data1, h = ev.window.data2;
                         if (w * 3 > h * 4) w = h * 4 / 3;
@@ -1126,93 +1066,91 @@ int main(int argc, char **argv) {
             }
         }
 
-        /* Advance emulation at the console rate, independently of monitor Hz.
-         * A deadline (not a second full-frame sleep after vsync) avoids drift. */
         if (!rom_loaded && !browser_active) { SDL_Delay(10); continue; }
-        Uint64 now = SDL_GetTicksNS();
-        Uint64 period = (Uint64)(signal_region_frame_ms(preset_ctx.region) * 1000000.0);
-        if (!frame_deadline || now > frame_deadline + period * 3) frame_deadline = now;
-        if (now < frame_deadline) SDL_DelayPrecise(frame_deadline - now);
-        frame_deadline += period;
-
-        /* --- Audio sync: correct device clock drift before producing a block --- */
-        bool play_audio = rom_loaded && !browser_active && !static_frame_buf;
-        if (play_audio != audio_playing) {
-            audio_reset();
-            audio_playing = play_audio;
+        bool live = rom_loaded && !browser_active && !static_frame_buf;
+        PlaybackControls controls = { .audio = audio_chain, .analog = analog_controls,
+            .region = preset_ctx.region, .gpu_audio = use_gpu_audio != 0,
+            .controller = controller_state };
+        playback_controls(playback, &controls);
+        if (live != playback_active) {
+            if (live) playback_resume(playback); else playback_pause(playback);
+            playback_active = live;
         }
-        if (play_audio) audio_adjust_rate(period / 1e9);
-        // The frontend owns the analog chain; retain core anti-alias FIR and
-        // DAC mixing but avoid applying the console filters a second time.
-        nes.apu.filter_config = (APUFilterConfig){1.0, 1.0, 1.0};
-        nes.apu.sample_rate = AUDIO_STREAM_RATE;
-
-        /* --- Run one NES frame (skip when the browser is the source).
-         * The browser writes directly into the PPU framebuffer below,
-         * then rides the same composite + CRT pipeline a real game would. */
-        Uint64 t_emu0 = SDL_GetPerformanceCounter();
-        if (static_frame_buf) {
-            /* Static-frame mode: paint a fixed palette-index framebuffer
-             * into the PPU every frame, bypass CPU/PPU emulation so the
-             * composite/GPU chain runs against a known reference image. */
-            const uint8_t (*pal)[3] = nes.ppu.color_palette
-                                      ? nes.ppu.color_palette
-                                      : ppu_palette_2c02;
-            for (int i = 0; i < 256 * 240; i++) {
-                uint8_t idx = static_frame_buf[i] & 0x3F;
-                nes.ppu.index_framebuffer[i] = (uint16_t)idx;
-                nes.ppu.framebuffer[i*3+0] = pal[idx][0];
-                nes.ppu.framebuffer[i*3+1] = pal[idx][1];
-                nes.ppu.framebuffer[i*3+2] = pal[idx][2];
-            }
-        } else if (rom_loaded && !browser_active) {
-            nes_run_frame(&nes);
-        }
-        /* Recover this picture's line-zero clock from the PPU position at
-         * VBlank. Actual skipped dots are already reflected in its clock. */
+        Uint64 t_emu0 = 0, t_emu1 = 0;
         sig_state.frame_phase_override = -1;
-        if (rom_loaded && !browser_active && !static_frame_buf) {
-            uint64_t dots = nes.ppu.next_dot_master_tick / 4;
-            uint64_t position = (uint64_t)nes.ppu.scanline * 341 + nes.ppu.dot;
-            if (dots >= position)
-                sig_state.frame_phase_override = (int)(((dots - position) % 12)
-                                                       * sig_state.samples_per_pixel % 12);
+        if (live) {
+            if(!gpu_render_prepare(&render_ctx)) { SDL_Delay(1); continue; }
+            if (!playback_read(playback, &picture)) { SDL_Delay(1); continue; }
+            memcpy(display_ppu.framebuffer, picture.rgb, sizeof(picture.rgb));
+            memcpy(display_ppu.index_framebuffer, picture.codes, sizeof(picture.codes));
+            video_gpu_chain.elapsed_frames = previous_picture ? picture.number - previous_picture : 1;
+            previous_picture = picture.number;
+            video_gpu_chain.signal_frame_counter = picture.number - 1;
+            video_gpu_chain.beam_frame_counter = picture.number - 1;
+            render_ctx.frame_counter = picture.number - 1;
+            frame_count = picture.number - 1;
+            sig_state.frame_phase_override = picture.phase;
+            t_emu1 = picture.emulation_ticks;
+            render_ctx.audio_bass_rms = picture.audio_energy;
+            if (presentation_stall_ms > 0 && picture.number >= 60) {
+                SDL_Delay(presentation_stall_ms);
+                presentation_stall_ms = 0;
+            }
+        } else {
+            Uint64 now = SDL_GetTicksNS();
+            Uint64 period = (Uint64)(signal_region_frame_ms(preset_ctx.region) * 1000000.0);
+            if (!frame_deadline || now > frame_deadline + period * 3) frame_deadline = now;
+            if (now < frame_deadline) SDL_DelayPrecise(frame_deadline - now);
+            frame_deadline += period;
+            if (static_frame_buf) {
+                const uint8_t (*pal)[3] = display_ppu.color_palette ? display_ppu.color_palette : ppu_palette_2c02;
+                for (int i = 0; i < 256 * 240; i++) {
+                    uint8_t idx = static_frame_buf[i] & 0x3f;
+                    display_ppu.index_framebuffer[i] = idx;
+                    memcpy(display_ppu.framebuffer + i * 3, pal[idx], 3);
+                }
+            }
         }
-        Uint64 t_emu1 = SDL_GetPerformanceCounter();
 
-        if (play_audio) audio_submit_frame();
-        else audio_frame_pos = 0;
+        /* The core exposes the backdrop at frame handoff. Raster-side palette
+         * writes are not observed here; this snapshot is used only outside the picture. */
+        unsigned backdrop = live ? picture.backdrop : 0x0f;
+        memcpy(video_gpu_chain.backdrop, sig_state.table[backdrop], 12 * sizeof(float));
+        memcpy(video_gpu_chain.gray_backdrop, sig_state.table[backdrop & 0x1f0], 12 * sizeof(float));
 
         /* --- Overlays (before signal processing) --- */
         preset_composite_overlays(&preset_ctx);
 
         /* ROM browser overlay — fullscreen, supersedes everything else. */
         if (browser_active) {
-            const uint8_t (*pal)[3] = nes.ppu.color_palette
-                                      ? nes.ppu.color_palette
+            const uint8_t (*pal)[3] = display_ppu.color_palette
+                                      ? display_ppu.color_palette
                                       : ppu_palette_2c02;
-            browser_render(&browser, nes.ppu.framebuffer,
-                           nes.ppu.index_framebuffer, pal);
+            browser_render(&browser, display_ppu.framebuffer,
+                           display_ppu.index_framebuffer, pal);
         }
 
         /* OSD menu overlay (must be in main.c — osd.h state is per-TU static). */
         if (osd_menu_is_open && !browser_active) {
-            const uint8_t (*pal)[3] = nes.ppu.color_palette
-                                      ? nes.ppu.color_palette
+            const uint8_t (*pal)[3] = display_ppu.color_palette
+                                      ? display_ppu.color_palette
                                       : ppu_palette_2c02;
-            osd_menu_render_nes(nes.ppu.framebuffer,
-                                nes.ppu.index_framebuffer, pal);
+            gpu_osd_render(display_ppu.framebuffer, display_ppu.index_framebuffer, pal,
+                osd_menu_current(), preset_display_name(preset_active_index()), preset_is_modified(),
+                preset_ctx.region == SIGNAL_REGION_PAL, render_ctx.hdr_enabled,
+                render_ctx.hdr_enabled ? SDL_GetFloatProperty(SDL_GetWindowProperties(window),
+                    SDL_PROP_WINDOW_HDR_HEADROOM_FLOAT, 1.0f) : 1.0f, &render_ctx);
         }
 
         /* Performance overlay (V key) — drawn into NES framebuffer so it
          * gets the NTSC composite treatment like the OSD menu. */
         if (perf_overlay && perf_text[0]) {
-            const uint8_t (*pal)[3] = nes.ppu.color_palette
-                                      ? nes.ppu.color_palette
+            const uint8_t (*pal)[3] = display_ppu.color_palette
+                                      ? display_ppu.color_palette
                                       : ppu_palette_2c02;
             OSDNesFB t;
-            t.rgb = nes.ppu.framebuffer;
-            t.idx = nes.ppu.index_framebuffer;
+            t.rgb = display_ppu.framebuffer;
+            t.idx = display_ppu.index_framebuffer;
             t.pal = pal;
 
             int tw = osd_nesfb_text_width(perf_text, 1);
@@ -1232,32 +1170,29 @@ int main(int argc, char **argv) {
         /* --- Video output --- */
         Uint64 t_gpu0 = SDL_GetPerformanceCounter(), t_gpu1 = t_gpu0;
         render_ctx.frame_brightness =
-            gpu_render_compute_frame_brightness(nes.ppu.framebuffer);
-        render_ctx.raw_ppu_rgb = nes.ppu.framebuffer;
-        extern float g_audio_bass_rms;
-        render_ctx.audio_bass_rms = g_audio_bass_rms;
+            gpu_render_compute_frame_brightness(display_ppu.framebuffer);
+        render_ctx.raw_ppu_rgb = display_ppu.framebuffer;
         gpu_render_update_dynamic_state(&render_ctx);
 
-        bool signal_decode_active = composite_enabled
-                                 && gpu_video_enabled
+        bool gpu_crt_active = composite_enabled && gpu_video_enabled;
+        bool signal_decode_active = gpu_crt_active
                                  && video_connection_uses_signal_decode(video_chain.connection);
         bool frame_advanced = false;
 
-        if (signal_decode_active) {
+        if (gpu_crt_active) {
             /* Generate the DAC waveform on GPU when no CPU-only edge effects
              * or waveform diagnostics are requested. Both paths use PPU codes. */
             const TVDisplayParams *tv = &video_chain.tv;
-            bool gpu_dac = test_signal_mode == 0 &&
+            bool gpu_dac = !signal_decode_active || (test_signal_mode == 0 &&
                 video_gpu_chain.pipe_dac.pipeline && video_gpu_chain.buf_signal_table &&
                 (video_chain.connection == VIDEO_CONN_SVIDEO || (!debug_dump &&
                  tv->beam_edge_fade == 0 && tv->beam_edge_overshoot == 0 &&
-                 (tv->burst_lock_drift == 0 || tv->burst_lock_drift_width == 0) &&
-                 tv->beam_current_load == 0));
+                 (tv->burst_lock_drift == 0 || tv->burst_lock_drift_width == 0))));
             if (test_signal_mode == 0 && (!gpu_dac || debug_dump)) {
-                waveform_generate(waveform_buf, nes.ppu.index_framebuffer,
+                waveform_generate(waveform_buf, display_ppu.index_framebuffer,
                                   &sig_state, frame_count);
                 waveform_apply_beam_edges(waveform_buf,
-                                          nes.ppu.index_framebuffer,
+                                          display_ppu.index_framebuffer,
                                           &sig_state, &video_chain.tv,
                                           frame_count);
             } else if (test_signal_mode != 0) {
@@ -1294,7 +1229,7 @@ int main(int argc, char **argv) {
             int out_w = spl;
             int out_h = 240;
 
-            bool dump_this_frame = debug_dump &&
+            bool dump_this_frame = signal_decode_active && debug_dump &&
                 frame_wanted(frame_count, debug_dump_frames, debug_dump_count);
 
             /* Pre-process waveform snapshot. */
@@ -1312,10 +1247,10 @@ int main(int argc, char **argv) {
                                         render_ctx.hv_sag_state,
                                         render_ctx.audio_bass_rms);
             t_gpu0 = SDL_GetPerformanceCounter();
-            float *readback = (dump_this_frame || (screenshot_after > 0 && frame_count >= (unsigned)screenshot_after) ||
+            float *readback = (dump_this_frame ||
                 !video_gpu_get_beam_texture(&video_gpu_chain)) ? gpu_rgb_out : NULL;
             bool gpu_ok = gpu_dac
-                ? video_gpu_process_full(&video_gpu_chain, gpu, nes.ppu.index_framebuffer,
+                ? video_gpu_process_full(&video_gpu_chain, gpu, display_ppu.index_framebuffer,
                     sig_state.phase_base + signal_frame_phase(&sig_state, frame_count - 1),
                     sig_state.phase_line_adv, 0, readback)
                 : video_gpu_process(&video_gpu_chain, gpu, waveform_buf, readback);
@@ -1391,20 +1326,18 @@ int main(int argc, char **argv) {
                 /* GPU dispatch failed: fall back to raw RGB. */
                 gpu_render_ensure_texture(&render_ctx, 256, 240);
                 gpu_render_upload_rgba(&render_ctx,
-                    gpu_render_ppu_to_rgba8(nes.ppu.framebuffer), 256, 240);
+                    gpu_render_ppu_to_rgba8(display_ppu.framebuffer), 256, 240);
             }
         } else if (composite_enabled) {
-            /* Either GPU video is unavailable, or this preset's
-             * connection type is source-domain RGB/Direct and should
-             * bypass the composite decoder entirely. */
+            /* GPU video is unavailable. */
             gpu_render_ensure_texture(&render_ctx, 256, 240);
             gpu_render_upload_rgba(&render_ctx,
-                gpu_render_ppu_to_rgba8(nes.ppu.framebuffer), 256, 240);
+                gpu_render_ppu_to_rgba8(display_ppu.framebuffer), 256, 240);
         } else {
             /* Raw RGB path: palette LUT output, no composite. */
             gpu_render_ensure_texture(&render_ctx, 256, 240);
             gpu_render_upload_rgba(&render_ctx,
-                gpu_render_ppu_to_rgba8(nes.ppu.framebuffer), 256, 240);
+                gpu_render_ppu_to_rgba8(display_ppu.framebuffer), 256, 240);
         }
 
         if (!frame_advanced) {
@@ -1412,72 +1345,50 @@ int main(int argc, char **argv) {
         }
 
         /* --- Capture debug tap snapshots (GPU buffer readback for visualiser) --- */
-        if (signal_decode_active && tap_mgr && debug_tap_enabled_count(tap_mgr) > 0) {
+        if (gpu_crt_active && tap_mgr && debug_tap_enabled_count(tap_mgr) > 0) {
             debug_tap_capture(tap_mgr, gpu, frame_count);
         }
 
+        if(live && bench_capture && picture.number>=next_bench_capture) {
+            render_ctx.capture_path=bench_capture;
+            next_bench_capture=picture.number+60;
+        }
+        if (screenshot_requested) {
+            snprintf(manual_screenshot_path,sizeof(manual_screenshot_path),"/tmp/nes_screenshot_%u.ppm",frame_count);
+            render_ctx.capture_path = manual_screenshot_path;
+        }
+        if (screenshot_after > 0 && frame_count >= (unsigned)screenshot_after) {
+            if (screenshot_count == 2)
+                snprintf(next_screenshot_path, sizeof(next_screenshot_path), "%s.next.ppm", screenshot_path);
+            else
+                snprintf(next_screenshot_path, sizeof(next_screenshot_path), "%s.frame-%03d.ppm", screenshot_path, screenshots_taken);
+            render_ctx.capture_path = screenshots_taken ? next_screenshot_path : screenshot_path;
+        }
         Uint64 t_render0 = SDL_GetPerformanceCounter();
         gpu_render_frame(&render_ctx, &video_chain);
         Uint64 t_render1 = SDL_GetPerformanceCounter();
+        if(live && playback_trace && render_ctx.submit_ns) {
+            double ms=1000.0/SDL_GetPerformanceFrequency();
+            fprintf(playback_trace,"%u,%u,%llu,%llu,%llu,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%d,%d\n",
+                picture.number,last_trace_frame ? picture.number-last_trace_frame-1 : 0,
+                (unsigned long long)picture.start_ns,(unsigned long long)picture.ready_ns,
+                (unsigned long long)render_ctx.submit_ns,picture.emulation_ticks*ms,picture.audio_ns/1e6,
+                (t_gpu1-t_gpu0)*ms,(t_render1-t_render0)*ms+render_ctx.swap_wait_ns/1e6,render_ctx.swap_wait_ns/1e6,
+                render_ctx.capture_ns/1e6,render_ctx.drawable_w,render_ctx.drawable_h);
+            last_trace_frame=picture.number;
+        }
+        if(live && playback_limit && picture.number>=playback_limit) running=false;
 
-        /* --- Screenshot + exit hook ---
-         * Dumps the beam-profile output (bw × bh) scaled to 4:3 aspect
-         * so the PPM looks like what the user sees on screen, instead
-         * of the raw 2048×240 signal-resolution RGB which has wrong
-         * aspect and height. Falls back to the raw signal if the beam
-         * output isn't available (GPU beam stage not initialised). */
-        if (screenshot_after > 0 && frame_count >= (unsigned)screenshot_after) {
-            int bw, bh;
-            if (gpu_video_enabled &&
-                video_gpu_get_beam_size(&video_gpu_chain, &bw, &bh) &&
-                bw > 0 && bh > 0) {
-                int beam_bytes = bw * bh * 8;   /* float16x4 = 8 bytes/px */
-                uint8_t *shot = (uint8_t *)malloc(beam_bytes);
-                if (shot && video_gpu_download_beam(&video_gpu_chain, gpu, shot)) {
-                    int out_w = bw;
-                    int out_h = bw * 3 / 4;   /* scale to 4:3 */
-                    FILE *fp = fopen(screenshot_path, "wb");
-                    if (fp) {
-                        fprintf(fp, "P6\n%d %d\n255\n", out_w, out_h);
-                        for (int oy = 0; oy < out_h; oy++) {
-                            int sy = (int)((float)oy / (float)out_h * (float)bh);
-                            if (sy >= bh) sy = bh - 1;
-                            for (int ox = 0; ox < out_w; ox++) {
-                                int idx = sy * bw + ox;
-                                uint32_t rg, ba;
-                                memcpy(&rg, shot + idx * 8, 4);
-                                memcpy(&ba, shot + idx * 8 + 4, 4);
-                                uint16_t rh = rg & 0xFFFF, gh = (rg >> 16) & 0xFFFF;
-                                uint16_t bh_val = ba & 0xFFFF;
-                                float rf = gpu_half_to_float(rh);
-                                float gf = gpu_half_to_float(gh);
-                                float bf = gpu_half_to_float(bh_val);
-                                /* Reinhard tone map for HDR→SDR rolloff. */
-                                if (rf > 0) rf = rf / (1.0f + rf);
-                                if (gf > 0) gf = gf / (1.0f + gf);
-                                if (bf > 0) bf = bf / (1.0f + bf);
-                                uint8_t px[3] = {
-                                    (uint8_t)(rf < 0 ? 0 : (rf > 1 ? 255 : rf * 255)),
-                                    (uint8_t)(gf < 0 ? 0 : (gf > 1 ? 255 : gf * 255)),
-                                    (uint8_t)(bf < 0 ? 0 : (bf > 1 ? 255 : bf * 255))
-                                };
-                                fwrite(px, 1, 3, fp);
-                            }
-                        }
-                        fclose(fp);
-                        fprintf(stderr, "Captured frame %u to %s (%dx%d, 4:3 from beam)\n",
-                                frame_count, screenshot_path, out_w, out_h);
-                    }
-                }
-                free(shot);
-            } else {
-                /* Fallback: raw signal dump. */
-                int spl = sig_state.samples_per_line;
-                dump_frame_ppm(screenshot_path, gpu_rgb_out, spl, 240);
-                fprintf(stderr, "Captured frame %u to %s (%dx%d raw signal)\n",
-                        frame_count, screenshot_path, spl, 240);
+        if (render_ctx.capture_path) {
+            if (!render_ctx.capture_complete) fprintf(stderr, "Final display capture failed: %s\n", SDL_GetError());
+            fprintf(stderr, "Capture frame %u, carrier phase %d\n", frame_count,
+                    signal_frame_phase(&sig_state, frame_count - 1));
+            if (screenshot_after > 0) {
+                ++screenshots_taken;
+                running = render_ctx.capture_complete && screenshots_taken < screenshot_count;
             }
-            running = false;
+            screenshot_requested = false;
+            render_ctx.capture_path = NULL;
         }
 
         /* --- Send frame snapshot to debug server (visualiser) --- */
@@ -1503,10 +1414,9 @@ int main(int argc, char **argv) {
                 double emu_ms = (double)perf_emu_total * 1000.0 / (double)freq / perf_frames;
                 double gpu_ms = (double)perf_gpu_total * 1000.0 / (double)freq / perf_frames;
                 double ren_ms = (double)perf_render_total * 1000.0 / (double)freq / perf_frames;
-                double tot_ms = emu_ms + gpu_ms + ren_ms;
                 snprintf(perf_text, sizeof(perf_text),
-                         "EMU %.1f GPU %.1f REN %.1f TOT %.1f",
-                         emu_ms, gpu_ms, ren_ms, tot_ms);
+                         "EMU %.1f ENC %.1f PRESENT %.1f",
+                         emu_ms, gpu_ms, ren_ms);
                 perf_emu_total = perf_gpu_total = perf_render_total = 0;
                 perf_frames = 0;
                 perf_last_print = t_render1;
@@ -1518,8 +1428,10 @@ int main(int argc, char **argv) {
      * Cleanup
      * ======================================================================== */
 
-    if (audio_capture) fclose(audio_capture);
-    if (audio_trace) fclose(audio_trace);
+cleanup:
+    if(playback_trace) fclose(playback_trace);
+    playback_destroy(playback);
+    gpu_render_release_pending(&render_ctx);
     if (debug_srv) debug_server_destroy(debug_srv);
     if (tap_mgr) debug_tap_destroy(tap_mgr);
     chain_vis_destroy(chain_vis);
@@ -1536,5 +1448,5 @@ int main(int argc, char **argv) {
     SDL_DestroyWindow(window);
     SDL_DestroyGPUDevice(gpu);
     SDL_Quit();
-    return 0;
+    return exit_status;
 }

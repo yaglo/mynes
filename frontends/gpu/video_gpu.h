@@ -1,51 +1,7 @@
-/*
- * Video GPU Chain -- GPU Compute Signal Processing for Video
- * ============================================================
- *
- * Replaces the CPU comp_process() pipeline with GPU compute dispatches.
- * The CPU only generates the composite waveform buffer (float, 2048x240
- * for NTSC or 2560x240 for PAL) and uploads it. All signal processing
- * from Y/C separation through RGB matrix decode runs on GPU.
- *
- * Processing chain (first-pass, core NTSC decode):
- *
- *   Upload: CPU waveform buffer -> GPU buf_signal
- *
- *   Stage 8 (luma processing):
- *     FIR lowpass on Y to kill the 3.58 MHz subcarrier.
- *     Input: buf_signal (raw composite)
- *     Output: buf_y (filtered luma at signal resolution)
- *
- *   Stage 7 (chroma demod):
- *     I = signal * cos(carrier) then FIR lowpass
- *     Q = signal * sin(carrier) then FIR lowpass
- *     Input: buf_signal
- *     Output: buf_i, buf_q (demodulated chroma at signal resolution)
- *
- *   Stage 9 (matrix decode):
- *     Y,I,Q -> R,G,B via 3x3 color matrix + bias
- *     Input: buf_y, buf_i, buf_q
- *     Output: buf_rgb (interleaved R,G,B floats at signal resolution)
- *
- * The output is a float RGB buffer at 2048x240 (NTSC) or 2560x240 (PAL),
- * 3 floats per pixel (R, G, B in [0,1]). The display layer downsamples
- * and gamma-corrects to the final texture.
- *
- * Buffer layout:
- *   All signal-domain buffers are 1D float arrays, row-major.
- *   Scanline N starts at offset N * samples_per_line.
- *   The RGB output is 3x wider: scanline N at offset N * spl * 3.
- *
- * Dispatch model:
- *   Each FIR/modulator/pointwise dispatch processes the ENTIRE frame
- *   (all 240 scanlines) in a single dispatch with enough workgroups.
- *   The natural parallelism is samples_per_line * 240 independent
- *   samples. Workgroup size 256, dispatched as ceil(total_samples/256).
- *
- * See video_chain.h for stage definitions and activation logic.
- * See gpu_compute.h for the dispatch infrastructure.
- * See audio_gpu.c for the reference pattern (same dispatch style).
- */
+/* GPU waveform generation, full-raster receiver and linear-light CRT pipeline.
+ * VideoGPUChain owns the signal runner plus DAC, beam and phosphor resources.
+ * Live input is PPU codes; CPU waveform upload remains a diagnostic path.
+ * See docs/gpu-pipeline-reference.md for stages, units and model limitations. */
 
 #ifndef VIDEO_GPU_H
 #define VIDEO_GPU_H
@@ -68,43 +24,38 @@
  * resources the chain runner doesn't own (DAC pipeline, index buffers,
  * signal table, and the CPU-side matrix decode state).
  *
- * Signal chain stages (built in video_gpu_init):
- *   [0] Console Output HP  -- RC_FILTER (disabled, Phase 2)
- *   [1] Console Output LP  -- RC_FILTER (disabled, Phase 2)
- *   [2] Cable RC           -- RC_FILTER (disabled, Phase 2)
- *   [3] TV Input HP        -- RC_FILTER (disabled, Phase 2)
- *   [4] Luma FIR           -- FIR (Y bandwidth limit)
- *   [5] Chroma Demod       -- MODULATOR (IQ extraction, dual-output)
- *   [6] Chroma I FIR       -- FIR (I bandwidth limit)
- *   [7] Chroma Q FIR       -- FIR (Q bandwidth limit)
- *   [8] PAL Chroma         -- PAL U sign fix + 1H V averaging (PAL only)
- *   [9] Matrix Decode      -- Y + region-corrected chroma -> RGB
- *   [10] RGB Post          -- video amp + horizontal RGB blur
- *   [11] Deflection Map    -- coherent beam landing / dwell / focus state
- *   [12] Beam Output       -- beam deposition + temporal blend
  */
+
+typedef struct {
+    uint32_t count, full_width, active_width, samples_per_dot;
+    float phase_base, line_phase;
+    uint32_t region, lines, separate_yc, pad[3];
+    float backdrop[12], gray_backdrop[12];
+} GpuRasterParams;
 
 typedef struct {
     /* --- Generic signal chain runner (owns ping-pong + aux buffers) --- */
     SignalChain sig_chain;
     SignalFormat raster_fmt; /* full lines upstream; signal_fmt remains active-picture format */
-    int stage_raster, stage_receiver;
+    int stage_raster, stage_receiver, stage_receiver_pll;
     int stage_y_console, stage_y_cable, stage_y_ghost, stage_yc_route;
     bool source_separated;
     int signal_phase_base, signal_line_phase;
-    SDL_GPUBuffer *buf_receiver;
+    SDL_GPUBuffer *buf_receiver, *buf_receiver_measurements;
+    float backdrop[12], gray_backdrop[12];
+    unsigned elapsed_frames;
 
 
     /* --- Stage indices into sig_chain (for runtime parameter updates) --- */
     int stage_console_hp;       /* Console Output HP (RC, disabled) */
-    int stage_console_lp;       /* Console Output LP (RC, disabled) */
-    int stage_cable_rc;         /* Cable RC (RC, disabled) */
+    int stage_console_lp;       /* Console output impedance and bandwidth */
+    int stage_cable_rc;         /* Cable equivalent shunt-capacitance pole */
     int stage_tv_input_hp;      /* TV Input HP (RC, disabled) */
     int stage_rf;               /* RF Modulator/Demodulator (noise + hum) */
     int stage_rf_bw_fir;        /* RF Bandwidth FIR (lowpass for RF channel) */
     int stage_agc;              /* Automatic Gain Control */
     int stage_ghosting;         /* Ghosting (cable impedance reflection) */
-    int stage_comb;             /* Comb Filter (Y/C separator) */
+    int stage_comb_bandpass, stage_comb; /* Chroma band and line Y/C separator */
     int stage_luma_fir;         /* Luma FIR */
     int stage_chroma_demod;     /* Chroma Demod (modulator, dual-output) */
     int stage_chroma_i_fir;     /* Chroma I FIR */
@@ -112,6 +63,8 @@ typedef struct {
     int stage_pal_chroma;       /* PAL chroma correction (PAL only) */
     int stage_matrix;           /* Matrix decode (Y + region-specific chroma -> RGB). */
     int stage_post_pipeline;    /* RGB Post (video amp + h_blur custom stage) */
+    int stage_crt_load, stage_crt_supply;
+    SDL_GPUBuffer *buf_crt_load;
     int stage_deflection;       /* Beam landing / dwell / focus map */
     int stage_beam_output;      /* Beam deposition + temporal blend custom stage */
 
@@ -131,6 +84,7 @@ typedef struct {
     /* --- RGB output buffer (Phase 2: GPU matrix shader writes here) --- */
     SDL_GPUBuffer *buf_rgb;
     SDL_GPUBuffer *buf_rgb2;            /* second RGB buffer for video amp ping-pong */
+    SDL_GPUBuffer *buf_gun_current;     /* linear light before horizontal spot spread */
     SDL_GPUBuffer *buf_pal_v;           /* corrected PAL V after 1H averaging */
     SDL_GPUBuffer *buf_pal_u;           /* corrected PAL U after odd-line sign fix */
     SDL_GPUBuffer *buf_deflection_x;    /* r/g/b landed X + dwell (float4/pixel) */

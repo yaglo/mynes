@@ -1,6 +1,6 @@
 {
     "name": "Fine aperture grille",
-    "description": "Fine aperture grille: svideo input, aperture grille tube. A tuned display profile; not a measurement of a particular TV.",
+    "description": "High-resolution aperture grille with separated Y/C, a 1200-triad face and tightly focused spots. Generic monitor; fine structure needs sufficient output resolution.",
     "connection": "svideo",
     "comb_type": "none",
     "console_variant": 1,
@@ -15,7 +15,7 @@
         "impedance": 75.0,
         "shield_effectiveness": 0.96,
         "ghost_delay": 0,
-        "ghost_level": 0.0
+        "ghost_level": 0
     },
     "audio_cable": {
         "length_meters": 1.0,
@@ -23,7 +23,7 @@
         "capacitance_per_m": 5e-11,
         "num_sections": 2,
         "connector_resistance": 0.02,
-        "impedance": 75.0,
+        "impedance": 75,
         "shield_effectiveness": 0.96,
         "ghost_delay": 0,
         "ghost_level": 0.0
@@ -34,7 +34,7 @@
         "hue_offset": 0.0,
         "saturation": 1.0,
         "fir_ringing": 0.0,
-        "rf_interference": 0.0,
+        "rf_interference": 0,
         "geometry_warp": 0.0,
         "color_temperature": 6500.0,
         "r_drive": 1.0,
@@ -46,11 +46,8 @@
         "r_bandwidth": 7500000.0,
         "g_bandwidth": 7500000.0,
         "b_bandwidth": 7500000.0,
-        "gamma": 2.2,
-        "beam_sharpness": 1.0,
-        "beam_height_min": 0.7,
-        "beam_height_max": 0.3,
-        "beam_spot_size": 3.0,
+        "gamma": 2.4,
+        "beam_spot_size": 1.6,
         "convergence_static": 0.02,
         "convergence_dynamic": 0.01,
         "conv_r_x": 0.0,
@@ -61,8 +58,8 @@
         "v_jitter": 0.0,
         "mask_type": "aperture_grille",
         "mask_pitch_px": 1.0,
-        "mask_strength": 0.45,
-        "subpixel_layout": 1,
+        "mask_strength": 1.0,
+        "subpixel_layout": 0,
         "persistence_ms": 1.2,
         "halation": 0.02,
         "glass_tint": 1.0,
@@ -96,11 +93,17 @@
         "halation_tint_g": 1.0,
         "halation_tint_b": 1.0,
         "beam_current_load": 0.0,
-        "mask_triads": 600
+        "mask_triads": 1200,
+        "beam_fwhm_min": 0.28,
+        "beam_fwhm_max": 0.52,
+        "keystone": 0,
+        "rotation": 0,
+        "skew_x": 0,
+        "skew_y": 0,
+        "scanline_wobble": 0
     },
     "console_coupling_R": 75.0,
-    "console_coupling_C": 1e-05,
-    "console_amp_bw": 14000.0,
+    "console_amp_bw": 6000000,
     "console_psu_hum": 0.0,
     "rf": {
         "enabled": false,
@@ -117,5 +120,6 @@
     "audio_noise_floor": 0,
     "audio_saturation_drive": 1,
     "audio_cable_length_m": 1.0,
-    "comb_notch_depth": 0.0
+    "comb_notch_depth": 0.0,
+    "console_phase_distortion_ns": 30
 }

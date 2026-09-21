@@ -1,3 +1,5 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+
 #include <metal_stdlib>
 #include <simd/simd.h>
 
@@ -7,7 +9,10 @@ struct Params
 {
     uint signal_w;
     uint num_lines;
-    float sigma;
+    uint radius;
+    float growth;
+    float4 weights[9];
+    float4 wide_weights[9];
 };
 
 struct RGBIn
@@ -22,48 +27,63 @@ struct RGBOut
 
 constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
 
-kernel void main0(constant Params& _25 [[buffer(0)]], device RGBIn& _122 [[buffer(1)]], device RGBOut& _164 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+static inline __attribute__((always_inline))
+float3 read_rgb(thread const uint& base, thread const int& x, constant Params& _33, device RGBIn& _48)
+{
+    uint i = (base + uint(clamp(x, 0, int(_33.signal_w) - 1))) * 3u;
+    return float3(_48.rgb_in[i], _48.rgb_in[i + 1u], _48.rgb_in[i + 2u]);
+}
+
+static inline __attribute__((always_inline))
+float3 deposit(thread const float3& current, thread const uint& dx, constant Params& _33)
+{
+    float narrow = _33.weights[dx / 4u][dx % 4u];
+    if (_33.growth <= 0.0)
+    {
+        return current * narrow;
+    }
+    float wide = _33.wide_weights[dx / 4u][dx % 4u];
+    return current * mix(float3(narrow), float3(wide), fast::clamp(current, float3(0.0), float3(1.0)));
+}
+
+kernel void main0(constant Params& _33 [[buffer(0)]], device RGBIn& _48 [[buffer(1)]], device RGBOut& _201 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
     uint sx = gl_GlobalInvocationID.x;
     uint sy = gl_GlobalInvocationID.y;
-    bool _31 = sx >= _25.signal_w;
-    bool _40;
-    if (!_31)
+    bool _124 = sx >= _33.signal_w;
+    bool _132;
+    if (!_124)
     {
-        _40 = sy >= _25.num_lines;
+        _132 = sy >= _33.num_lines;
     }
     else
     {
-        _40 = _31;
+        _132 = _124;
     }
-    if (_40)
+    if (_132)
     {
         return;
     }
-    float hs = fast::max(_25.sigma, 0.5);
-    int h_radius = int(ceil(hs * 3.0));
-    h_radius = min(h_radius, 24);
-    float inv_2hs2 = 1.0 / ((2.0 * hs) * hs);
-    float sr = 0.0;
-    float sg = 0.0;
-    float sb = 0.0;
-    float wt = 0.0;
-    uint base = sy * _25.signal_w;
-    int cx = int(sx);
-    int _85 = -h_radius;
-    for (int dx = _85; dx <= h_radius; dx++)
+    uint base = sy * _33.signal_w;
+    uint param = base;
+    int param_1 = int(sx);
+    float3 param_2 = read_rgb(param, param_1, _33, _48);
+    uint param_3 = 0u;
+    float3 current = deposit(param_2, param_3, _33);
+    for (uint dx = 1u; dx <= _33.radius; dx++)
     {
-        float w = exp((-float(dx * dx)) * inv_2hs2);
-        int x = clamp(cx + dx, 0, int(_25.signal_w) - 1);
-        uint idx = (base + uint(x)) * 3u;
-        sr += (_122.rgb_in[idx + 0u] * w);
-        sg += (_122.rgb_in[idx + 1u] * w);
-        sb += (_122.rgb_in[idx + 2u] * w);
-        wt += w;
+        uint param_4 = base;
+        int param_5 = int(sx) - int(dx);
+        float3 param_6 = read_rgb(param_4, param_5, _33, _48);
+        uint param_7 = dx;
+        uint param_8 = base;
+        int param_9 = int(sx) + int(dx);
+        float3 param_10 = read_rgb(param_8, param_9, _33, _48);
+        uint param_11 = dx;
+        current += (deposit(param_6, param_7, _33) + deposit(param_10, param_11, _33));
     }
-    float inv_wt = 1.0 / wt;
     uint out_idx = (base + sx) * 3u;
-    _164.rgb_out[out_idx + 0u] = sr * inv_wt;
-    _164.rgb_out[out_idx + 1u] = sg * inv_wt;
-    _164.rgb_out[out_idx + 2u] = sb * inv_wt;
+    _201.rgb_out[out_idx] = current.x;
+    _201.rgb_out[out_idx + 1u] = current.y;
+    _201.rgb_out[out_idx + 2u] = current.z;
 }

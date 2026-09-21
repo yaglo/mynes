@@ -12,27 +12,32 @@ struct Params
     uint delay_samples;
 };
 
-struct SignalBuf
+struct Band
+{
+    float band[1];
+};
+
+struct Signal
 {
     float signal_in[1];
 };
 
-struct YBuf
-{
-    float y_out[1];
-};
-
-struct CBuf
+struct C
 {
     float c_out[1];
 };
 
+struct Y
+{
+    float y_out[1];
+};
+
 constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
 
-kernel void main0(constant Params& _20 [[buffer(0)]], device SignalBuf& _51 [[buffer(1)]], device YBuf& _265 [[buffer(2)]], device CBuf& _272 [[buffer(3)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+kernel void main0(constant Params& _20 [[buffer(0)]], device Band& _80 [[buffer(2)]], device Signal& _129 [[buffer(1)]], device C& _230 [[buffer(4)]], device Y& _237 [[buffer(3)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
-    uint tid = gl_GlobalInvocationID.x;
-    if (tid >= _20.count)
+    uint t = gl_GlobalInvocationID.x;
+    if (t >= _20.count)
     {
         return;
     }
@@ -46,115 +51,56 @@ kernel void main0(constant Params& _20 [[buffer(0)]], device SignalBuf& _51 [[bu
         _36 = _20.samples_per_line;
     }
     uint delay = _36;
-    float signal = _51.signal_in[tid];
-    float y;
-    float c;
-    switch (_20.mode)
+    uint _50;
+    if (t >= delay)
     {
-        case 0u:
-        {
-            y = signal;
-            c = 0.0;
-            break;
-        }
-        case 1u:
-        {
-            int prev_idx = int(tid) - int(delay);
-            float _80;
-            if (prev_idx >= 0)
-            {
-                _80 = _51.signal_in[prev_idx];
-            }
-            else
-            {
-                _80 = signal;
-            }
-            float prev_signal = _80;
-            float avg = (signal + prev_signal) * 0.5;
-            float diff = (signal - prev_signal) * 0.5;
-            y = mix(signal, avg, _20.blend);
-            c = _20.blend * diff;
-            break;
-        }
-        case 2u:
-        {
-            int prev1_idx = int(tid) - int(delay);
-            int prev2_idx = int(tid) - (2 * int(delay));
-            float _127;
-            if (prev1_idx >= 0)
-            {
-                _127 = _51.signal_in[prev1_idx];
-            }
-            else
-            {
-                _127 = signal;
-            }
-            float prev1 = _127;
-            float _139;
-            if (prev2_idx >= 0)
-            {
-                _139 = _51.signal_in[prev2_idx];
-            }
-            else
-            {
-                _139 = signal;
-            }
-            float prev2 = _139;
-            float avg1 = (signal + prev1) * 0.5;
-            float diff1 = (signal - prev1) * 0.5;
-            float vert_diff = abs(signal - prev2);
-            float vert_blend = _20.blend * (1.0 - fast::clamp(vert_diff * 4.0, 0.0, 0.5));
-            y = mix(signal, avg1, vert_blend);
-            c = vert_blend * diff1;
-            break;
-        }
-        case 3u:
-        {
-            int prev1_idx_1 = int(tid) - int(delay);
-            int prev2_idx_1 = int(tid) - (2 * int(delay));
-            int prev3_idx = int(tid) - (3 * int(delay));
-            float _204;
-            if (prev1_idx_1 >= 0)
-            {
-                _204 = _51.signal_in[prev1_idx_1];
-            }
-            else
-            {
-                _204 = signal;
-            }
-            float prev1_1 = _204;
-            float _216;
-            if (prev2_idx_1 >= 0)
-            {
-                _216 = _51.signal_in[prev2_idx_1];
-            }
-            else
-            {
-                _216 = signal;
-            }
-            float prev2_1 = _216;
-            float _228;
-            if (prev3_idx >= 0)
-            {
-                _228 = _51.signal_in[prev3_idx];
-            }
-            else
-            {
-                _228 = signal;
-            }
-            float prev3 = _228;
-            float avg4 = (((signal + prev1_1) + prev2_1) + prev3) * 0.25;
-            y = mix(signal, avg4, _20.blend);
-            c = _20.blend * (signal - avg4);
-            break;
-        }
-        default:
-        {
-            y = signal;
-            c = 0.0;
-            break;
-        }
+        _50 = t - delay;
     }
-    _265.y_out[tid] = y;
-    _272.c_out[tid] = c;
+    else
+    {
+        _50 = t;
+    }
+    uint before = _50;
+    uint _66;
+    if ((t + delay) < _20.count)
+    {
+        _66 = t + delay;
+    }
+    else
+    {
+        _66 = t;
+    }
+    uint after = _66;
+    float b = _80.band[t];
+    float c = 0.0;
+    if (_20.mode == 1u)
+    {
+        c = 0.5 * (b - _80.band[before]);
+    }
+    if (_20.mode == 3u)
+    {
+        c = (0.5 * b) - (0.25 * (_80.band[before] + _80.band[after]));
+    }
+    if (_20.mode == 2u)
+    {
+        float low = _129.signal_in[t] - b;
+        float ep = abs(low - (_129.signal_in[before] - _80.band[before])) + abs(b + _80.band[before]);
+        float en = abs(low - (_129.signal_in[after] - _80.band[after])) + abs(b + _80.band[after]);
+        float wp = 1.0 - smoothstep(0.02999999932944774627685546875, 0.180000007152557373046875, ep);
+        float wn = 1.0 - smoothstep(0.02999999932944774627685546875, 0.180000007152557373046875, en);
+        if (before == t)
+        {
+            wp = 0.0;
+        }
+        if (after == t)
+        {
+            wn = 0.0;
+        }
+        float sum = wp + wn;
+        float comb = (0.5 * ((wp * (b - _80.band[before])) + (wn * (b - _80.band[after])))) / fast::max(sum, 9.9999999747524270787835121154785e-07);
+        c = mix(b, comb, fast::min(sum, 1.0));
+    }
+    c *= _20.blend;
+    _230.c_out[t] = c;
+    _237.y_out[t] = _129.signal_in[t] - c;
 }

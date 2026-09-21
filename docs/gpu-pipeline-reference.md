@@ -1,149 +1,131 @@
-# GPU video pipeline: implementation and validation
+# GPU signal, receiver, and CRT model
 
-This describes the SDL3 `mynes_gpu` frontend, not the SDL2 composite renderer. The GPU work does not change the CPU/PPU core.
+This describes the SDL3 `mynes_gpu` frontend. The SDL2 composite renderer is a separate implementation. Frontend work is isolated from CPU/PPU accuracy changes.
 
-## Signal source
+## Signal source and calibration
 
-NES palette RAM holds colour/emphasis codes, not RGB values. In composite/RF modes these codes select a time-varying voltage waveform. The cached 512 × 24 tables are DAC voltage samples, not an RGB palette. NTSC uses the published Bisqwit 2C02 voltage model; PAL uses the existing measured 2C07 levels and alternate-line phase mapping.
+The composite path starts with PPU colour/emphasis **codes**, not an RGB palette. They select the 2C02/2C07 voltage waveform. The cached 512 × 24 tables contain voltage samples. Normal playback uploads codes and generates that waveform on GPU; legacy source-edge diagnostic controls can select the equivalent CPU generator.
 
-The active image contains 256 × 240 codes. There are 8 samples per NTSC dot and 10 per PAL dot, at 12 samples per colour-subcarrier cycle. A 341-dot line therefore advances carrier phase by 4/12 cycle in NTSC and 2/12 in PAL. For running games the frontend derives the frame phase from the existing PPU clock, including skipped dots. Synthetic frames use the corresponding timing sequence.
+The NTSC table uses the published **75-ohm terminated measurements**, rather than scaling unloaded DAC levels with one emphasis factor:
 
-Eligible presets upload the compact code buffer and synthesize the waveform on GPU. Presets using the existing CPU-only edge/current-load effects generate the same active voltage waveform on CPU. Both routes enter the same decoder. Tests compare their output over multiple NTSC and PAL frames.
+| Rail, mV | Level 0 | Level 1 | Level 2 | Level 3 |
+|---|---:|---:|---:|---:|
+| Low | 228 | 312 | 552 | 880 |
+| High | 616 | 840 | 1100 | 1100 |
+| Emphasized low | 192 | 256 | 448 | 712 |
+| Emphasized high | 500 | 676 | 896 | 896 |
 
-## Receiver
+Blanking is 312 mV, reference white 1100 mV, and sync 48 mV. Internally, blanking is zero and the 788 mV blank-to-white span is one. Tests allow the source's approximately 10 mV noise plus 4 mV quantization uncertainty. E/F colour codes remain black under emphasis. PAL retains the measured 2C07 rails and alternating-line phase mapping. These measurements describe particular chips, not every console revision. [NESdev NTSC measurements](https://www.nesdev.org/wiki/NTSC_video), [PAL measurements](https://www.nesdev.org/wiki/PAL_video).
 
-The raster stage surrounds each active line with sync, porch, and colour burst. Internally, line buffers begin at horizontal sync; active video starts at sample `65 * samples_per_dot`. Analogue buffers contain `341 * samples_per_dot` samples per line; decoded RGB buffers contain only `256 * samples_per_dot`.
+NTSC uses eight samples per dot; PAL uses ten, both at twelve samples per subcarrier cycle. A 341-dot line advances phase by four samples in NTSC and two in PAL. Gameplay phase comes from the existing PPU clock, including skipped dots. Synthetic patterns use the corresponding timing sequence. The receiver matrix starts neutral, without hidden saturation, temperature, or black-lift adjustments.
 
-The current stages are:
+## Raster and receiver
 
-1. DAC voltage synthesis and horizontal raster encoding.
-2. Console/cable filtering, optional RF impairments, bandwidth filtering, sync-keyed AGC, and echoes.
-3. Burst-gated carrier phase estimation and back-porch black-level restoration.
-4. Y/C separation, luma filtering, quadrature chroma demodulation and filtering.
-5. PAL parity correction and delay-line averaging when applicable.
-6. Receiver colour matrix and gun amplifier response.
-7. Raster landing map and beam deposition.
-8. Recursive phosphor history in linear light.
-9. Fixed phosphor mask, glass scattering, ambient reflection and output encoding.
+The analogue buffers contain 341 dots × 262 NTSC or 312 PAL lines. Each buffer line starts at horizontal sync; active picture begins 65 dots later. Horizontal sync, porch, burst, borders and vertical blanking are generated before console/cable filtering. NTSC bottom-border/backdrop and monochrome porch-pulse behaviour are represented. PAL includes the top and side blanking. Vertical sync is a broad pulse on NTSC lines 245–247 and PAL lines 270–272. The PAL alignment is inferred from the PPU decoder transitions, including their one-line output delay. [BreakingNES PAL decoder](https://raw.githubusercontent.com/emu-russia/breaks/master/BreakingNESWiki_DeepL/PPU/pal.md).
 
-Burst is measured after the analogue path. The colour killer uses received burst amplitude rather than dark picture pixels. Burst amplitude also controls chroma gain; the detector restores the factor of two lost in quadrature mixing. The color matrix has no hidden saturation boost. AGC compares sync tip with the back porch, independently of scene brightness. NTSC line combs use a broadcast receiver's 2730-sample delay; a NES line is 2728 samples, so the two-sample horizontal displacement is intentional.
+The main sequence is:
 
-S-Video computes Y from each code's full carrier-cycle mean and C from its
-remaining modulation. Sync stays on Y and burst stays on C. Console/cable
-filtering and reflections apply to both components without introducing luma
-into chroma. This ideal separated-source mode bypasses composite-only source
-edge effects and luma notching. Externally supplied diagnostic waveforms remain
-composite inputs. A monochrome detail chart verifies no false colour in NTSC
-or PAL, including cable reflections.
+1. PPU DAC and full raster.
+2. Console/cable filtering, RF impairments, echoes, and sync-keyed AGC.
+3. Sync-edge and burst detection, receiver PLL, and back-porch clamp.
+4. Y/C separation, luma filtering, quadrature chroma detection and filtering.
+5. PAL delay-line correction when selected.
+6. Colour matrix and independent RGB video amplifiers.
+7. Video supply loading and incomplete DC-restoration recovery.
+8. Deflection/convergence/focus, gun voltage-to-current conversion, and beam spread.
+9. Recursive phosphor decay, physical mask coverage, glass/room effects, and output encoding.
 
-RF noise varies by frame. Hum uses actual sample time including horizontal blanking and the region's frame period. Zero-valued hum and persistence settings disable their effects.
+Horizontal gates follow the detected sync edge instead of assuming the edge always arrives at its ideal position. A generic line loop smooths phase, clamp level, amplitude, and horizontal timing; it holds phase through missing bursts, suppresses colour during retrace, and reacquires afterwards. Burst amplitude controls chroma gain and colour killing. AGC measures sync independently of picture brightness. The loop constants are behavioural values, not measurements of a named decoder IC. The vertical pulse is present in the signal, but a free-running vertical oscillator and loss-of-lock rolling are not simulated.
 
-## CRT and HDR
+NTSC line combs retain a broadcast receiver's 2730-sample delay against the NES's 2728-sample line. A chroma BPF precedes the line operation, preserving low-band horizontal boundaries. Two-line mode uses one delay; three-line mode is centred on the middle of a two-delay store. Adaptive mode selects correlated neighbours and otherwise falls back to horizontal separation. These are generic topologies, not chip-exact algorithms. PAL bypasses NTSC combs and uses horizontal separation plus its chroma delay line. S-Video separates each code's cycle mean from its modulation at the source; Y carries sync and C carries burst. Filtering and echoes apply to both. This represents an ideal separated source, not a measured console modification. RGB similarly derives ideal DC/quadrature colour from each code's voltage cycle, skips reception, and enters at the RGB amplifiers. It still runs gun transfer, beam, convergence, load, phosphor and glass. Stock 2C02 has no RGB output; arcade RGB-PPU ROM palettes and particular RGB modifications are not emulated by this source option.
 
-Gun response converts voltage to light before Gaussian beam deposition. Beam profiles have unit area and are integrated over pixel footprints, so changing focus or render size spreads energy rather than creating it. The beam texture follows the actual viewport size, including fractional scanline scales and window resize. Each gun has its own bandwidth filter. Phosphor decay is recursive per-channel history, not just a blend with the previous unaccumulated frame. Reset and resize invalidate history. Optional motion smoothing is a separate display effect, not a 3D receiver comb.
+The NTSC composite/RF source now also has a voltage-dependent output-impedance stage. `console_phase_distortion_ns=30` selects the published 2C02G estimate; zero restores the ideal rails. It produces brightness-dependent hue rotation relative to burst, rather than an arbitrary palette adjustment. PAL and ideal separated/RGB sources do not apply this NTSC estimate.
 
-Beam textures, persistence, masks and glass scattering use linear light. Aperture-grille coverage integrates the pixel footprint analytically. Dot and slot masks use footprint samples; unresolved patterns blend toward their mean to reduce aliasing. Masks modulate the existing landed beam rather than blurring neighbouring RGB phosphors a second time. Their normalization preserves average white-field energy, which means resolved phosphor peaks can require substantially more headroom than the field average.
+The source has a generic 6 MHz equivalent pole, separately adjustable from receiver bandwidth. Old presets that accidentally stored the audio 14 kHz corner are imported as 6 MHz. Cable filtering uses its shunt capacitance and the parallel source/termination resistance, instead of imposing an arbitrary 7 MHz limit on a short lead. This is a lumped approximation, not measured transmission-line loss. The old coupling-capacitor field was never implemented; it is retained only for file compatibility and removed from the OSD and shipped profiles. In particular, the former comment claiming 75 Ω / 10 µF was a 0.21 Hz no-op was wrong: it is about 212 Hz. No capacitor simulation is claimed.
 
-`mask_triads` holds a constant number of RGB triads across the tube, keeping its density stable when resizing. All bundled presets use this mode. Zero selects the legacy `mask_pitch_px` phosphor-cell spacing in drawable pixels. Older files using the misleading `mask_pitch_mm` key still load. These are **not** measured tube pitches in millimetres or automatic calibration to a monitor's physical subpixels. Unresolved triads fade to neutral unit energy near the output Nyquist limit. Mask coordinates use the CRT viewport, not the window including margins.
+RF uses an equivalent negative-AM envelope detector with complex Gaussian noise and a 49-tap detected-video bandwidth filter. `carrier_level_dbm` is the sync-tip carrier reference; `noise_floor_dbm` is total noise power at the pre-filter injection point. Per-axis noise RMS is `sqrt(0.5) * 10^((noise-carrier)/20)`. Sync tip is unit carrier and reference white is 12.5%. Legacy zero values select −20/−70 dBm defaults. The model does not sample the VHF carrier, simulate VSB/IF asymmetry or demodulate intercarrier audio; frequency remains metadata. A 48-frame actual-decoder regression checks noise correlation at lags 1–12 independently of the colour cycle.
 
-`hdr_gain` is a linear luminance multiplier. The EDR path writes extended linear sRGB. It checks swapchain setup success and reads current SDL HDR headroom and SDR-white scaling. The SDR path uses the same light model and applies the sRGB transfer function at output. Peaks beyond available headroom clip; an SDR panel cannot reproduce arbitrarily bright, narrow phosphor peaks while retaining both average brightness and black gaps.
+Component and RGB use the ideal source-modification path: integrate the DAC voltage cycle, decode colour and drive the complete CRT. Component no longer reads stale/zero composite chroma buffers. This is an ideal colour-difference roundtrip, without component cable/ADC losses; an unmodified NES has no component output. See the [complete preset audit](gpu-preset-audit.md).
 
-Halation redistributes linear light; it is no longer a gamma-domain brightness boost. Screen-reflection, aging and purity controls remain phenomenological approximations.
+Backdrop outside the picture uses the core's frame-handoff palette/mask snapshot. Per-dot border palette writes and exact odd-frame raster pulse duration are not exported by this frontend. Core accuracy work remains separate.
 
-## Pacing and performance
+## Beam loading, streaks, and breathing
 
-The renderer waits for an available swapchain image instead of advancing through unavailable frames. A console-rate deadline also prevents emulation from following a 120 Hz display at double speed. This does not provide VRR or an audio-master multi-rate scheduler; sustained machine contention can still reduce playback speed.
+The beam's dark and white spot widths are exposed as `beam_fwhm_min` / `beam_fwhm_max` in source scanlines. Gaussian pixel-area integration conserves energy through fractional resizing. Each gun's space-charge broadening follows its own current; shared supply focus is separate. Legacy sharpness/height fields are converted on import. Receiver noise is added to voltage before gun transfer and spatial spreading, not painted over drawable pixels. The Gaussian spot is still an approximation; measured high-current CRT spots can have non-Gaussian tails. [Infante, CRT spot analysis](https://sid.onlinelibrary.wiley.com/doi/abs/10.1889/1.1984864).
 
-Normal GPU display does not download decoded RGB. Explicit diagnostic captures may synchronize/read back. GPU validation is opt-in with `MYNES_GPU_VALIDATION=1`; tests enable it. The editor labels its per-stage measurements as CPU encoding time. No throughput claims should be based on the recent contended runs. The editor now observes topology separately from timing; identical controls/catalogs do not invalidate views. Telemetry is limited to 4 Hz, and the footer to 1 Hz. Optional received-frame logging distinguishes a connected idle-CPU sample from a disconnected editor.
+Loading belongs to the receiver/CRT, after the RGB amplifiers. It no longer changes the console's transmitted composite waveform or forces a CPU waveform pass.
 
-## Validation
+- `beam_current_load`: video-rail gain reduction from causal gun-current loading, with a nominal 12 µs recovery.
+- `video_black_droop`: incomplete DC restoration. A causal luma-dependent bias produces a dark wake following bright material and a brighter wake following dark material. Zero disables it.
+- `video_recovery_us`: bias recovery time; zero in older files selects 18 µs.
+- `hv_sag`: raster-size response to local and regulated supply load. **Positive contracts, negative expands**, preserving the historical preset sign. Which direction dominates depends on the set's deflection and EHT regulation.
+- `focus_breathing`: load-dependent focus growth, replacing a decorative sine-wave focus animation.
 
-- `ctest --test-dir build -R '^gpu_' --output-on-failure`
-- `swift test --package-path tools/visualiser`
-- `python3 frontends/gpu/tests/test_editor_ipc.py build/bin/mynes_gpu`
+The shared supply follows successive scanlines with nominal 1 ms attack and 2 ms recovery, including discharge across vertical blanking. Local and shared loading affect deflection together. Skipped presentation frames advance this approximate supply using elapsed emulated time. A preset reset clears its supply memory. These time constants and couplings are a generic receiver model, not component measurements of the PVM. Overscan enlarges and crops the raster, while the visible tube aperture remains fixed; it no longer shrinks the picture into a border.
 
-The fidelity suite checks CPU/GPU DAC equivalence, burst phase and DC recovery, loss of burst, scene-independent sync AGC, changing/repeatable RF noise, recursive persistence, reset/resize, rendered SDR transfer, linear HDR gain, display-headroom limits, mask energy/colour balance, detector gain under attenuation, fractional-scale beam energy, unresolved masks and ambient-lit margins.
+Stas's Favourite deliberately retains visible horizontal recovery and modest contraction/focus change. Living Room, Bedroom RF and Famicom Kitchen retain milder supply behaviour. The reference and nominal PVM stay regulated. OSD and Signal Studio expose these controls, and preset save/load preserves them.
 
-Set `MYNES_CAPTURE_PATH=/tmp/crt.ppm` to export the final CRT render after 180 frames. This is an SDR preview of the final shader, with EDR highlights clipped to reference white. It cannot verify physical HDR luminance. The older screenshot/debug paths export intermediate buffers.
+Video-amplifier supply ripple and coupling/DC-restoration faults can produce horizontal streaks; EHT/deflection regulation can change raster size and focus. The models represent these mechanisms without claiming that a screenshot identifies a particular failed component. [Repair FAQ: video-amplifier streaks](https://www.repairfaq.org/REPAIR/F_monfaq.html), [TI: coupling and line droop](https://e2e.ti.com/support/data-converters-group/data-converters/f/data-converters-forum/334435/tvp5150am1-clock-grounding-and-power-up-sequence-questions), [Repair FAQ: blooming](https://www.repairfaq.org/samnew/tvfaq/tvbloom.htm).
 
-## Limits and sources
+## Light, phosphors, and HDR
 
-This is a sampled behavioural model, not a calibrated reproduction of every NES revision and CRT. Horizontal gates are fixed; there is no dynamic sync-separator/deflection PLL or vertical-sync raster simulation. Burst phase is estimated per line, not through a measured analogue PLL. NTSC borders use blanking rather than per-dot backdrop history. PAL horizontal blanking currently shares the NTSC dot-layout approximation. RF models baseband impairments rather than a complete tuner/VSB carrier/envelope circuit. S-Video derives ideal source-separated Y/C from the PPU voltage codes; it is not a measurement of a particular output modification. RGB is a decoded idealized source, not a native 2C02 output. Tube presets are tuning profiles, not measurements of named specimens.
+Gun voltage becomes linear emitted current **before either axis of spatial beam spread**. Horizontal blur therefore preserves the light from a narrow highlight rather than averaging voltage and then losing energy through gamma. Vertical Gaussian spots integrate over each output pixel's footprint. Changing focus spreads energy; it does not create it. Beam width follows current, including load-dependent focus and convergence. Tests cover isolated highlight energy, fractional scanline scaling, and narrow/wide spots.
 
-These limits are explicit so a plausible-looking image is not mistaken for verified hardware equivalence.
+Beam and history buffers are RGBA16F. Phosphor decay is recursive per channel and accounts for elapsed emulated frames. Explicit display smoothing remains separate from receiver comb filtering and is disabled across dropped-picture gaps.
 
-References:
+Presets specify a triad count across the tube. Host display settings separately choose **Panel pixels** (default) or **CRT pitch**. Panel mode fits each complete RGB triad and mask-row pitch to whole native panel pixels using the actual 4:3 game viewport. Its effective triad count therefore differs from the nominal tube at limited resolutions. CRT-pitch mode retains nominal density and filters unresolved detail. `F`/`F11` selects native fullscreen in panel mode. The OSD reports drawable size and effective density; window resize, movement and fullscreen recalculate mask coordinates. This is pixel alignment, not inferred LCD-subpixel calibration.
 
-- [NESdev: NTSC video and measured 2C02 timing/levels](https://www.nesdev.org/wiki/NTSC_video)
-- [NESdev: PAL video and alternate-line decoding](https://www.nesdev.org/wiki/PAL_video)
-- [SDL GPU swapchain formats and transfer functions](https://wiki.libsdl.org/SDL3/SDL_GPUSwapchainComposition)
-- [SDL dynamic window HDR properties](https://wiki.libsdl.org/SDL3/SDL_GetWindowProperties)
+Aperture stripes use a positive Fejer reconstruction and analytic footprint integration; unequal within-triad and between-triad gaps preserve a common vertical divider in white. Dot/slot masks use half-float periodic coverage and mip filtering. Dot rows shift horizontally; inline slot masks retain vertical RGB columns with alternating bridge positions. DC normalization keeps primary means neutral. Integer panel periods avoid a slowly beating uniform mask; beam/mask interaction and any later scaling can still introduce visible patterns. At insufficient resolution, matching the exact tube pitch and retaining individually resolved phosphors are incompatible requirements.
 
-## Reference and preset review
+`hdr_gain` multiplies linear light. HDR writes extended linear sRGB using SDL's current headroom and SDR-white scale; SDR applies the sRGB transfer function once at output. A continuous, RGB-ratio-preserving shoulder begins at 75% of available headroom and asymptotically approaches the host peak. This is explicitly display adaptation after tube physics: it preserves highlight structure better than independent channel clipping, but compresses the simulated peak-to-average ratio. Lower light output or more host headroom reduces that compromise. This is relative luminance, **not an absolute-nit calibration**. The current display's HDR/SDR mode and headroom appear in the OSD. `--sdr` permits an explicit comparison. Ambient black extends across window margins.
 
-`reference_composite.json` is the default for a fresh configuration. It uses a
-neutral composite receiver, D65 gun balance, gamma 2.4, a fine aperture grille,
-and a dark room without added wear. Existing saved preset selections still win.
-Bundled profiles retain their filenames for compatibility but no longer claim
-measured reproductions of named TVs. Ordinary profiles have reduced ambient
-reflection, unity output gain and no decorative beam noise/jitter. Deliberately
-worn profiles retain those effects.
+Glass scattering redistributes light with a nominal Gaussian sigma of 0.6% of picture height, independent of window resolution. Horizontal beam weights are prepared once per dispatch instead of recomputing exponentials per sample. Neither optimization changes the intended energy normalization.
 
-Start comparisons with Reference composite, Studio aperture grille,
-Living Room 1988, Bedroom RF 1990 and Arcade Cabinet. Other profiles remain
-available as variations and for existing saved selections. The S-Video and RGB
-profiles retain the source-model limitations listed above.
+ room reflection, phosphor grain, aging, thermal purity, and microphonic controls remain generic approximations. A static image cannot validate CRT impulse response. A normal sample-and-hold LCD still has different motion persistence, panel response, pixel structure, and peak luminance from a scanned CRT; ordinary 60 Hz playback does not reproduce the physical moving beam. No claim of indistinguishable hardware reproduction is made.
 
-Visual review uses PPU-code grayscale, all 64 color codes, fine monochrome bars
-and a grid. These expose black lift, hue, cross-color and scanline/mask aliasing.
-Offscreen float tests independently check linear energy and HDR headroom; SDR
-captures cannot establish actual display luminance or physical CRT equivalence.
+## Sony PVM-14L2 nominal profile
 
-## Streaming audio
+The Sony profile uses the published 267.5 × 200.6 mm viewable raster, 0.25 mm aperture-grille pitch (about **1070 triads across**), D65 option, and 10 MHz RGB bandwidth. It uses full phosphor-mask modulation. At limited resolution, the default panel mode fits a coarser grille; physical-pitch mode preserves nominal density while filtering it. Sony specifies a P22 tube and 600 TV lines; TV lines are not a triad count. [Sony specification](https://www.sony.jp/pro-monitor/products/PVM-14L2/), [Sony catalogue](https://www.sony.jp/products/catalog/SPC_PVM-20N6J.PDF).
 
-The APU still owns DAC mixing and anti-alias resampling in the unchanged core.
-This frontend takes its 44.1 kHz callback with the core's analogue filters set
-to unity, then applies the console → cable → speaker chain exactly once.
-CPU and GPU backends use the same coefficients and continuous state. The GPU
-processes one short temporal block in a single dispatch with reusable transfer
-buffers. There is no second decimator or fixed per-frame sample count. High-pass
-coupling, amplifier bandwidth/saturation, three hum harmonics, seeded white
-noise, TV coupling and both speaker biquads are implemented. Equivalent console
-RC values use nominal filter corners; speakers remain generic resonant/high-cut
-models, not measured cabinet/cone responses. Nonlinear processing is at 44.1 kHz.
-GPU playback still requires a synchronous audio readback; CPU is the economical
-default. `A` or Setup → Audio changes backend without resetting filter history.
+Sony also specifies 120 cd/m² standard luminance. We do not turn that into an arbitrary HDR multiplier: physical output needs the LCD's measured white level. The composite preset now uses a generic adaptive comb with 0.75 MHz chroma half-bandwidth, following the documented MC141627/CXA2163 path. Receiver loop, gamma, detailed beam shape, phosphor spectra/decay, ABL and unit condition remain generic. The preset is explicitly named **Sony PVM-14L2 (nominal)** rather than claiming calibration to the user's unit.
 
-SDL receives one mono block per emulated frame. Queue feedback reads **input**
-bytes with `SDL_GetAudioStreamQueued`; converted output bytes depend on the
-playback device's channel count and sample rate. The APU sample clock stays
-fixed; SDL's resampler makes a smoothed correction limited to ±0.5%. The target
-is 10 ms queued before a new frame. Queued input exceeding 80 ms is discarded
-with a short fade-in so a stall cannot leave old gameplay buffered indefinitely.
-ROM changes and browser transitions clear stale audio. These figures exclude
-hardware/device latency, and persistent host overload can still underrun.
+## Playback and audio
 
-Signal Studio's Audio controls and preset saves include drive, hum frequency and
-harmonics, and noise. Ordinary/reference profiles avoid added hum, hiss and
-saturation; explicitly worn profiles retain those effects. The in-game audio
-stage bypasses now affect both backends. `S` no longer silently removes part of
-the CRT: the old switch is Setup → Diagnostics → Mask/glass bypass. It leaves
-decoding, beam deposition and persistence running and is not a grid-only control.
+A worker owns the core and audio clock; the main thread owns UI/presentation. A bounded latest-picture mailbox drops old pictures when rendering falls behind. Swapchain waits and window/OSD work no longer directly pause the APU. Pause waits for a frame boundary, clears audio and stale pictures, and hands core ownership back before cartridge replacement. A paired offline capture can explicitly preserve both consecutive pictures.
 
-Checks: `ctest --test-dir build -R '^gpu_' --output-on-failure` includes Metal
-streaming audio comparisons, irregular block boundaries, backend state transfer,
-DC/frequency response and queue-clock drift. For real game captures:
+The core supplies 44.1 kHz resampled mono samples with its analogue filters set to unity. This frontend applies console → cable → speaker processing once. CPU and GPU use the same continuous state, coefficient preparation and counts. GPU audio has one bounded in-flight block and a fence-polled readback. If its short deadline expires, CPU processing starts from the unchanged input state; the late GPU result is discarded. CPU remains the economical default. `A` switches backend; the OSD explains GPU fallback.
+
+The worker derives the audio resampling clock from observed CPU cycles per PPU dot and the selected region's dot rate. The current core advances three dots per CPU cycle in PAL as well as NTSC; assuming the hardware PAL ratio would generate about 6.67% too much audio at 50 Hz. This frontend adapter corrects stream duration. It does **not** correct the core's PAL instruction/APU timing or establish hardware-accurate PAL pitch. If the core ratio changes, the adapter follows it.
+
+SDL receives one mono block per console frame. Queue feedback uses **input** bytes and limits resampler correction to ±0.5%. The target is 10 ms before adding a frame; stale queued input above 80 ms is cleared with a short fade. These numbers exclude the device's output latency. Severe CPU contention can still underrun. Speaker responses and nonlinear processing at 44.1 kHz are generic, not measured cabinet models.
+
+## Editor, captures, and validation
+
+Signal Studio exposes active preset, modified state, save-as/save/rename/delete, and live model controls. Socket backpressure is bounded; a temporarily stalled reader must not disconnect or lose preset commands. Topology changes and telemetry have separate observations; timing is throttled to 4 Hz. Stage timings are **CPU command encoding**, not GPU execution measurements.
+
+`F5` and `--screenshot-after N` capture the **final CRT display**, including mask, glass and margins. Each PPM has a `.linear.pfm` sidecar preserving relative linear HDR values. `--screenshot-pair` captures actual frames N and N+1, retaining both phases. `review_captures.py` averages those floats in linear light for a still exposure, then makes PNG overviews/crops. It does not enable a playback smoothing filter. SDR previews clip highlights above reference white.
+
+For reproducible game captures, `MYNES_REVIEW_START_FRAME=N` presses Start for two emulated frames beginning at N. `MYNES_REVIEW_OSD=1` opens the setup menu. These diagnostics are opt-in. See the [visual review](gpu-visual-review.md) for paired captures and remaining limits.
 
 ```sh
+ctest --test-dir build -R '^gpu_' --output-on-failure
+swift test --package-path tools/visualiser
+python3 frontends/gpu/tests/test_editor_ipc.py build/bin/mynes_gpu
 python3 frontends/gpu/tests/test_audio_playback.py build/bin/mynes_gpu game.nes /tmp/audio-review
 python3 frontends/gpu/tests/capture_patterns.py build/bin/mynes_gpu /tmp/crt-review
+python3 frontends/gpu/tests/capture_streaks.py build/bin/mynes_gpu /tmp/streak-review game.nes
+python3 frontends/gpu/tests/review_captures.py /tmp/crt-review
+python3 frontends/gpu/tests/benchmark_pipeline.py build/bin/mynes_gpu /tmp/gpu-bench
 ```
 
-Audio capture diagnostics use `MYNES_AUDIO_CAPTURE` (mono native float32,
-44.1 kHz) and `MYNES_AUDIO_TRACE` (CSV queue/input count/backend). The playback
-check converts captures to WAV and compares duration/samples from both backends.
-`MYNES_GPU_AUDIO=1` selects GPU audio at startup. These are functional checks at
-normal pacing, not performance benchmarks.
+The [hardware research](gpu-hardware-research.md) records sources and stage-by-stage assumptions. The image review script requires NumPy and Pillow. Its overviews resize linear light before sRGB encoding; `--exposure 0.5` preserves more EDR highlight detail in an SDR review. Native crops are not resampled. Tests cover voltage rails, CPU/GPU DAC equivalence, raster/retrace, delayed sync, burst dropout and reacquisition, AGC, PAL separation, causal bright/dark recovery, deflection sign/focus, beam energy, decay, mask/HDR output, asynchronous audio cancellation, playback pause/ROM replacement, and preset round trips. AccuracyCoin is outside this frontend validation.
 
-Audio queue API reference: [SDL queued input bytes](https://wiki.libsdl.org/SDL3/SDL_GetAudioStreamQueued)
-and [SDL frequency correction](https://wiki.libsdl.org/SDL3/SDL_SetAudioStreamFrequencyRatio).
+`--benchmark` runs the actual selected preset from code upload through the final offscreen CRT pass at four fixed resolutions. Twelve warmups precede sixty individually fenced frames. It reports median, mean, p95 and maximum CPU-submission-to-GPU-completion time. Emulation/audio/vsync/capture are excluded; driver scheduling and host contention are included. Validation is off for performance runs and opt-in in playback with `MYNES_GPU_VALIDATION=1`. See [measured results](gpu-benchmark-results.md).
+
+## Colour response and reproducible offscreen review
+
+`crt_color.h` separates decoder colour-difference gain, voltage-domain white balance and emitted-light primaries. White temperature follows the CIE daylight locus (nominal 6500 anchors D65), preserving Y before solving for each gun's voltage gain. `phosphor_gamut` selects legacy 709, nominal 525/SMPTE-C or nominal 625/EBU primaries. The final matrix operates on linear phosphor light; P22 is not a claim of measured SMPTE-C chromaticities. [ITU-T H.273](https://www.itu.int/rec/dologin_pub.asp?id=T-REC-H.273-201612-S%21%21PDF-E&lang=e&type=items), [daylight white-point construction](https://docs.acescentral.com/white-point/).
+
+Horizontal spot growth uses two normalized kernels weighted by each source gun's current, so widening deposits light rather than inventing it. PVM's nominal vertical test spans 0.388 to 0.900 line FWHM across 10–100% drive, with integrated-energy error below 0.01%. These are model tests, not measurements of a 14L2.
+
+`--offscreen 2560x1664` renders into an exact-size hidden target and mutes SDL output while continuing audio processing and queueing. It uses fixed 1.6× review headroom, overridable with `MYNES_OFFSCREEN_HEADROOM`. Playback tests default to this mode. Window presentation/vsync are necessarily absent; real core, APU, audio and the full GPU render remain included. `--screenshot-frames N` records up to 240 consecutive final renders. A `--preset` file is loaded by its actual path; compact JSON is supported and malformed files fail instead of silently producing a zeroed preset.

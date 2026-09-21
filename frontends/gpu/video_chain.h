@@ -1,43 +1,12 @@
-/*
- * Video Signal Chain — Stage Definitions
- * ========================================
- *
- * Defines the video signal path from 2C02 composite waveform to CRT
- * phosphor output as composable kernel stages. The chain is selected
- * by connection type (RF/Composite/S-Video/Component/RGB) — each type
- * activates a different subset of stages.
- *
- * Stage 1: 2C02 DAC (CPU-side, Bisqwit waveform — uploaded to GPU)
- * Stage 2: Console output (RC HP coupling + RC LP amp BW + PSU hum)
- * Stage 3: Cable/transmission (distributed RC ladder + ghosting + noise)
- * Stage 4: RF modulator + demodulator (optional, RF path only)
- * Stage 5: TV input (RC HP coupling + AGC)
- * Stage 6: Comb filter / Y-C separator (none/1-line/2-line/3-line; absent on S-Video)
- * Stage 7: Chroma demodulator (mod×2 + FIR×2)
- * Stage 8: Luma processing (FIR BW limit + peaking + brightness/contrast)
- * Stage 9: Matrix decode (YIQ→RGB, color temp, per-gun drive)
- *   ── signal domain ends ──
- * Stage 10: Video amplifier (RC LP×3 per-gun BW + gamma + clip)
- * Stage 11: Electron beam (spot profile + convergence + jitter)
- * Stage 12: Phosphor screen (mask + persistence + scanlines)
- * Stage 13: CRT glass (halation + tint + curvature)
- * Stage 14: Environment (vignette + ambient + display gamma → HDR)
- *
- * Connection types and which stages they activate:
- *
- *   RF:        all stages (1-14), including stage 4 RF mod/demod
- *   Composite: stages 1-3, 5-14 (skip RF mod/demod)
- *   S-Video:   stages 1-3, 5, 7-14 (Y/C already separated, no comb)
- *   Component: stages 1-2, 3(triple cable), skip 6-7, 8-14
- *   RGB:       stages 1-2, 3(quad cable), skip 6-9, 10-14
- *   Direct:    stages 1-2, skip 3-9, 10-14 (shortest path)
- */
+/* Signal/receiver and CRT controls. Connection routing is defined below;
+ * current stage order and units are documented in gpu-pipeline-reference.md. */
 
 #ifndef VIDEO_CHAIN_H
 #define VIDEO_CHAIN_H
 
 #include "signal_format.h"
 #include <stdbool.h>
+#include <math.h>
 
 /* ============================================================================
  * Connection types
@@ -53,16 +22,12 @@ typedef enum {
     VIDEO_CONN_COUNT
 } VideoConnectionType;
 
-/* Does this connection type still need the composite-style GPU signal
- * decoder (waveform → Y/C separation → matrix decode)?
- *
- * RGB and Direct are source-domain RGB paths: they should bypass the
- * composite decoder and render from the live PPU framebuffer through
- * the CRT display pass instead. This prevents presets like PlayChoice-10
- * from entering an incomplete decoder path that never produces a fresh
- * RGB buffer. */
+/* RF/composite/Y-C require carrier demodulation. Component/RGB/Direct use
+ * the ideal separated-output modification: integrate the measured DAC's
+ * DC and quadratures, then form gun voltages before the same CRT stages.
+ * An ideal YPbPr encode/decode cancels; its cable/ADC losses are not modeled. */
 static inline bool video_connection_uses_signal_decode(VideoConnectionType c) {
-    return c != VIDEO_CONN_RGB && c != VIDEO_CONN_DIRECT;
+    return c == VIDEO_CONN_RF || c == VIDEO_CONN_COMPOSITE || c == VIDEO_CONN_SVIDEO;
 }
 
 /* ============================================================================
@@ -70,10 +35,10 @@ static inline bool video_connection_uses_signal_decode(VideoConnectionType c) {
  * ============================================================================ */
 
 typedef enum {
-    VIDEO_COMB_NONE = 0,        /* No comb (Direct/RGB only) */
-    VIDEO_COMB_1LINE,           /* Basic TV: 1H delay comb (adjacent lines, opposite phase) */
-    VIDEO_COMB_2LINE,           /* Decent TV: 2H delay comb */
-    VIDEO_COMB_3LINE,           /* High-end / PVM: 4-line average */
+    VIDEO_COMB_NONE = 0,        /* Notch/bandwidth Y/C separation; no line comb */
+    VIDEO_COMB_1LINE,           /* Two scanlines, 1H delay */
+    VIDEO_COMB_2LINE,           /* Legacy adaptive three-line separator */
+    VIDEO_COMB_3LINE,           /* Three scanlines, centred 2H delay store */
     VIDEO_COMB_BYPASS,          /* S-Video input: Y/C already separated */
 } VideoCombType;
 
@@ -179,11 +144,20 @@ typedef struct {
 typedef struct {
     bool  enabled;              /* only true for RF connection */
     float carrier_freq;         /* Ch 3 = 61.25 MHz, Ch 4 = 67.25 MHz */
-    float mod_bandwidth;        /* vestigial sideband BW (±3 MHz) */
-    float noise_floor_dbm;      /* thermal noise (-70 to -50 dBm) */
+    float carrier_level_dbm;    /* sync-tip carrier power; 0 legacy -> -20 dBm */
+    float mod_bandwidth;        /* equivalent detected-video lowpass edge, Hz */
+    float noise_floor_dbm;      /* total additive channel noise before video filtering */
     float agc_attack_ms;        /* AGC attack time constant */
     float agc_release_ms;       /* AGC release time constant */
 } RFModulatorParams;
+
+static inline float video_rf_noise_rms(const RFModulatorParams *rf) {
+    float carrier=rf->carrier_level_dbm!=0 ? rf->carrier_level_dbm : -20;
+    // Complex AWGN divides total power equally between I and Q. Convert
+    // a power difference in dB to amplitude with /20, never the old /26.
+    float noise=rf->noise_floor_dbm!=0 ? rf->noise_floor_dbm : -70;
+    return .70710678118f*powf(10,(noise-carrier)/20);
+}
 
 /* ============================================================================
  * TV / display parameters
@@ -200,6 +174,8 @@ typedef struct {
     float luma_bandwidth;       /* Hz (3.0-6.0 MHz) */
     float hue_offset;           /* degrees (tint control) */
     float saturation;           /* multiplier (color control) */
+    float decoder_red_gain;     /* R-Y gain offset; 0 = unity, +0.15 = red push */
+    float decoder_blue_gain;    /* B-Y gain offset; independent of white balance */
     float fir_ringing;          /* FIR window blend: 0=Hamming, 1=rect (Gibbs ringing) */
     float luma_peaking;         /* TV sharpness: 0=off, 0.3=moderate, 0.8=aggressive edge boost */
     /* Subcarrier notch depth in Y FIR. 0.95 = -26 dB (clean, default,
@@ -221,10 +197,13 @@ typedef struct {
     float gamma;                /* CRT phosphor gamma (2.2-2.5) */
 
     /* Beam. */
-    float beam_sharpness;       /* spot width (0.3-1.0) */
+    float beam_sharpness;       /* dark-beam focus control (0-2, higher narrows) */
     float beam_height_min;      /* min scanline height (dark) */
     float beam_height_max;      /* max scanline height (bright) */
+    float beam_fwhm_min;        /* low-current spot FWHM in scanlines; 0 = legacy focus */
+    float beam_fwhm_max;        /* white-current spot FWHM in scanlines; 0 = legacy height */
     float beam_spot_size;       /* horizontal blur in signal samples (1-12) */
+    float beam_spot_growth;     /* fractional horizontal sigma growth at white current */
     float convergence_static;   /* fixed R/B offset (0-1) */
     float convergence_dynamic;  /* edge-dependent offset (0-1) */
     float conv_r_x;             /* red horizontal offset in signal samples */
@@ -236,6 +215,7 @@ typedef struct {
 
     /* Phosphor. */
     VideoMaskType mask_type;
+    int phosphor_gamut;         /* 0=709 compatibility, 1=nominal 525, 2=nominal 625 */
     float mask_triads;          /* RGB triads across the tube; 0 uses legacy pixel pitch */
     float mask_pitch_px;        /* phosphor cell spacing in drawable pixels */
     float mask_strength;        /* phosphor mask blend (0=off, 0.6=visible, 1.0=full) */
@@ -256,7 +236,7 @@ typedef struct {
     float black_floor;          /* minimum output level (PVM: 0.005, consumer: 0.02-0.03) */
 
     /* Noise. */
-    float noise_level;          /* per-pixel noise amplitude (0=none, 0.04=heavy) */
+    float noise_level;          /* receiver output voltage noise, before gun transfer and spot spread */
 
     /* Mains hum. */
     float hum_bar_amplitude;    /* hum bar strength (0=none, 0.08=visible band) */
@@ -300,18 +280,14 @@ typedef struct {
     float burst_lock_drift;
     float burst_lock_drift_width;
 
-    /* Per-scanline beam current loading (APL sag).
-     * On a real CRT each scanline draws beam current proportional to its
-     * total brightness. Busy scanlines (many bright pixels) pull the EHT
-     * supply down briefly and come out visibly dimmer than quiet ones —
-     * so on a flat coloured background, any row that contains bright
-     * sprites reads as a faintly darker stripe across the whole screen.
-     *
-     *   0.00 = perfectly regulated supply (PVM, pro monitor).
-     *   0.08 = noticeable on consumer sets (cheap TV).
-     *   0.20 = failing / overdriven CRT.
-     * Applied as: out = in * (1 - strength * line_apl). */
+    /* Post-amplifier video-rail loading. A causal 12 us RC follows gun
+     * current, reducing emission after bright patches and recovering after
+     * dark ones. Generic supply model: 0=regulated, .08=visible, .20=worn. */
     float beam_current_load;
+    /* Incomplete video DC restoration: causal luma-dependent bias error.
+     * Separate from supply/gain sag; 0 disables horizontal dark/bright wakes. */
+    float video_black_droop;
+    float video_recovery_us;    /* bias recovery time; 0 selects nominal 18 us */
 
     /* Barrel distortion. */
     float barrel_v;             /* vertical curvature (0=same as barrel) */
@@ -321,7 +297,7 @@ typedef struct {
     float rotation;             /* image rotation in radians (-0.05 to +0.05) */
     float skew_x;               /* horizontal parallelogram shear (-0.1 to +0.1) */
     float skew_y;               /* vertical parallelogram shear (-0.1 to +0.1) */
-    float hv_sag;               /* HV supply sag — bright scenes expand image (0-0.3) */
+    float hv_sag;               /* load-dependent raster size: +contracts, -expands */
 
     /* CRT service-menu geometry (HPOS/VPOS/HSIZE/VSIZE).
      * Size 1.0 = raster fills the tube; <1.0 shows the tube edge; >1.0 overscan.
@@ -332,7 +308,7 @@ typedef struct {
     float v_size;               /* vertical raster size (0.5 - 1.5) */
 
     /* PSU-driven beam instability (vertical wobble + focus modulation). */
-    float focus_breathing;      /* slow AFC-driven focus drift (0-0.2) */
+    float focus_breathing;      /* focus growth with local/regulated gun load (0-0.2) */
     float scanline_wobble;      /* per-line sinusoidal curvature from HV ripple (0-0.5) */
     /* Localized top-of-raster geometry faults from vertical retrace /
      * yoke settle. Lets a band of scanlines drift or kink without
@@ -513,6 +489,16 @@ typedef struct {
     float glass_glare_temp_k;
 } TVDisplayParams;
 
+/* Legacy presets keep their spot widths. New controls expose FWHM directly,
+ * avoiding three overlapping controls with different hidden scale factors. */
+static inline float video_beam_sigma(const TVDisplayParams *tv, bool bright) {
+    float fwhm = bright ? tv->beam_fwhm_max : tv->beam_fwhm_min;
+    if (fwhm > 0.0f) return fmaxf(0.05f, fminf(fwhm / 2.354820045f, 1.0f));
+    return bright ? fmaxf(0.20f, 0.30f + tv->beam_height_max * 0.33f)
+        : fmaxf(0.10f, (0.35f - tv->beam_sharpness * 0.20f)
+                       * (0.4f + tv->beam_height_min * 0.8f));
+}
+
 /* ============================================================================
  * Complete video chain configuration
  * ============================================================================ */
@@ -536,8 +522,26 @@ typedef struct {
     float console_coupling_R;   /* output impedance (Ω) */
     float console_coupling_C;   /* coupling cap (F) */
     float console_amp_bw;       /* amp bandwidth (Hz) */
+    float console_phase_distortion_ns; /* nonlinear output impedance, 0 disables */
     float console_psu_hum;      /* PSU hum amplitude */
 } VideoChain;
+
+/* A short lead's lumped shunt capacitance driven by the parallel source
+ * and termination resistances. This is a first-order approximation, not
+ * measured skin/dielectric loss or a transmission-line solution. */
+static inline float video_cable_bandwidth(const VideoChain *c) {
+    float source=c->console_coupling_R>0 ? c->console_coupling_R : 75.0f;
+    float load=c->cable.impedance>0 ? c->cable.impedance : 75.0f;
+    float length=fmaxf(c->cable.length_meters,0.0f);
+    float r=source*load/(source+load)+length*fmaxf(c->cable.resistance_per_m,0.0f)
+           +fmaxf(c->cable.connector_resistance,0.0f);
+    float tau=r*length*fmaxf(c->cable.capacitance_per_m,0.0f);
+    return tau>0 ? fminf(200e6f,1.0f/(6.28318530718f*tau)) : 200e6f;
+}
+static inline float video_console_bandwidth(const VideoChain *c) {
+    // Old files accidentally stored the AUDIO 14 kHz corner in this field.
+    return c->console_amp_bw>=100000.0f ? c->console_amp_bw : 6e6f;
+}
 
 /* Initialize video chain with defaults for a given connection type. */
 void video_chain_init_preset(VideoChain *chain, VideoConnectionType conn,

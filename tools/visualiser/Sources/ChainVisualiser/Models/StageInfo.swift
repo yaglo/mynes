@@ -7,18 +7,20 @@ enum KernelType: String, CaseIterable, Sendable {
     case videoAmp = "Video amplifier", blur = "Beam width", temporal = "Persistence", agc = "AGC"
     case raster = "PPU raster", receiver = "Burst lock", receiverDemod = "Chroma detector"
     case separatedYC = "Separated Y/C"
+    case receiverPLL = "Receiver PLL", crtLoad = "CRT supply", gunCurrent = "Gun current"
     case unknown = "Unknown"
 
     static func from(ordinal: UInt8) -> KernelType {
         let types: [KernelType] = [.pointwise, .rcFilter, .fir, .delay, .comb, .modulator, .dac,
-                                  .matrix, .pal, .deflection, .beam, .rf, .videoAmp, .blur, .temporal, .agc, .raster, .receiver, .receiverDemod, .separatedYC]
+                                  .matrix, .pal, .deflection, .beam, .rf, .videoAmp, .blur, .temporal, .agc, .raster, .receiver, .receiverDemod, .separatedYC,
+                                  .receiverPLL, .crtLoad, .gunCurrent]
         return Int(ordinal) < types.count ? types[Int(ordinal)] : .unknown
     }
     var group: String {
         switch self {
         case .separatedYC, .raster, .rcFilter, .delay, .rf, .agc: return "Connection"
-        case .receiver, .receiverDemod, .pointwise, .fir, .comb, .modulator, .dac, .matrix, .pal: return "Decoder"
-        case .deflection, .beam, .videoAmp, .blur: return "Beam"
+        case .receiver, .receiverPLL, .receiverDemod, .pointwise, .fir, .comb, .modulator, .dac, .matrix, .pal: return "Decoder"
+        case .deflection, .beam, .videoAmp, .blur, .crtLoad, .gunCurrent: return "Beam"
         case .temporal: return "Phosphor"
         case .unknown: return "Decoder"
         }

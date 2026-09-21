@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <math.h>
 #include <dirent.h>
 #include "presets.h"
 
@@ -231,6 +232,10 @@ static inline bool preset_json_save(const PhysicalPreset *p, const char *path)
     fprintf(f, "        \"geometry_warp\": %.6f,\n",        p->tv.geometry_warp);
     /* Matrix decode. */
     fprintf(f, "        \"color_temperature\": %.1f,\n",    p->tv.color_temperature);
+    fprintf(f, "        \"phosphor_gamut\": %d,\n", p->tv.phosphor_gamut);
+    fprintf(f, "        \"beam_spot_growth\": %.6f,\n", p->tv.beam_spot_growth);
+    fprintf(f, "        \"decoder_blue_gain\": %.6f,\n", p->tv.decoder_blue_gain);
+    fprintf(f, "        \"decoder_red_gain\": %.6f,\n", p->tv.decoder_red_gain);
     fprintf(f, "        \"r_drive\": %.6f,\n",              p->tv.r_drive);
     fprintf(f, "        \"g_drive\": %.6f,\n",              p->tv.g_drive);
     fprintf(f, "        \"b_drive\": %.6f,\n",              p->tv.b_drive);
@@ -246,6 +251,8 @@ static inline bool preset_json_save(const PhysicalPreset *p, const char *path)
     fprintf(f, "        \"beam_sharpness\": %.6f,\n",       p->tv.beam_sharpness);
     fprintf(f, "        \"beam_height_min\": %.6f,\n",      p->tv.beam_height_min);
     fprintf(f, "        \"beam_height_max\": %.6f,\n",      p->tv.beam_height_max);
+    fprintf(f, "        \"beam_fwhm_min\": %.6f,\n",       p->tv.beam_fwhm_min);
+    fprintf(f, "        \"beam_fwhm_max\": %.6f,\n",       p->tv.beam_fwhm_max);
     fprintf(f, "        \"beam_spot_size\": %.6f,\n",       p->tv.beam_spot_size);
     fprintf(f, "        \"convergence_static\": %.6f,\n",   p->tv.convergence_static);
     fprintf(f, "        \"convergence_dynamic\": %.6f,\n",  p->tv.convergence_dynamic);
@@ -284,6 +291,8 @@ static inline bool preset_json_save(const PhysicalPreset *p, const char *path)
     fprintf(f, "        \"halation_tint_g\": %.6f,\n",          p->tv.halation_tint_g);
     fprintf(f, "        \"halation_tint_b\": %.6f,\n",          p->tv.halation_tint_b);
     fprintf(f, "        \"beam_current_load\": %.6f,\n",        p->tv.beam_current_load);
+    fprintf(f, "        \"video_black_droop\": %.6f,\n",        p->tv.video_black_droop);
+    fprintf(f, "        \"video_recovery_us\": %.6f,\n",        p->tv.video_recovery_us);
     fprintf(f, "        \"beam_edge_fade\": %.6f,\n",           p->tv.beam_edge_fade);
     fprintf(f, "        \"beam_edge_overshoot\": %.6f,\n",      p->tv.beam_edge_overshoot);
     fprintf(f, "        \"burst_lock_drift\": %.6f,\n",         p->tv.burst_lock_drift);
@@ -358,12 +367,14 @@ static inline bool preset_json_save(const PhysicalPreset *p, const char *path)
     fprintf(f, "    \"console_coupling_R\": %.6f,\n",       p->console_coupling_R);
     fprintf(f, "    \"console_coupling_C\": %.12g,\n",      p->console_coupling_C);
     fprintf(f, "    \"console_amp_bw\": %.1f,\n",           p->console_amp_bw);
+    fprintf(f, "    \"console_phase_distortion_ns\": %.1f,\n", p->console_phase_distortion_ns);
     fprintf(f, "    \"console_psu_hum\": %.6f,\n",          p->console_psu_hum);
 
     /* ---- RF modulator ---- */
     fprintf(f, "    \"rf\": {\n");
     fprintf(f, "        \"enabled\": %s,\n",                p->rf.enabled ? "true" : "false");
     fprintf(f, "        \"carrier_freq\": %.2f,\n",         p->rf.carrier_freq);
+    fprintf(f, "        \"carrier_level_dbm\": %.6f,\n", p->rf.carrier_level_dbm);
     fprintf(f, "        \"mod_bandwidth\": %.2f,\n",        p->rf.mod_bandwidth);
     fprintf(f, "        \"noise_floor_dbm\": %.2f,\n",      p->rf.noise_floor_dbm);
     fprintf(f, "        \"agc_attack_ms\": %.2f,\n",        p->rf.agc_attack_ms);
@@ -395,7 +406,7 @@ static inline bool preset_json_save(const PhysicalPreset *p, const char *path)
  * preset_json_load -- read a JSON file into a PhysicalPreset
  * ============================================================================ */
 
-/* Section tracker for the simple line-by-line parser. */
+/* Supported preset objects. Unknown objects are validated and ignored. */
 typedef enum {
     PJSON_SEC_TOP = 0,
     PJSON_SEC_VIDEO_CABLE,
@@ -404,105 +415,10 @@ typedef enum {
     PJSON_SEC_RF,
 } PresetJsonSection;
 
-static inline bool preset_json_load(PhysicalPreset *p, const char *path)
+/* The field mapping is independent of whitespace and object order. */
+static inline void preset_json__assign(PhysicalPreset *p, PresetJsonSection section,
+                                       const char *key, char *val)
 {
-    if (!p || !path) return false;
-
-    FILE *f = fopen(path, "r");
-    if (!f) return false;
-
-    /* Read entire file into memory. */
-    fseek(f, 0, SEEK_END);
-    long fsize = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    if (fsize <= 0 || fsize > 1024 * 1024) { fclose(f); return false; }
-
-    char *buf = (char *)malloc((size_t)fsize + 1);
-    if (!buf) { fclose(f); return false; }
-    size_t nread = fread(buf, 1, (size_t)fsize, f);
-    fclose(f);
-    buf[nread] = '\0';
-
-    /* Zero-init so missing fields default to 0. name / description live
-     * in-struct as fixed-size char arrays, so they're initialised to
-     * empty strings by the memset. */
-    memset(p, 0, sizeof(*p));
-
-    /* Identity-transform defaults for fields whose "zero = identity" would
-     * be wrong (HPOS/VPOS/HSIZE/VSIZE: 0 would collapse the raster). If
-     * the JSON specifies them, they'll be overwritten below. */
-    p->chroma_gain = 1.0f;
-    p->tv.luma_notch_depth = 0.95f;
-    p->tv.h_size = 1.0f;
-    p->tv.v_size = 1.0f;
-    p->tv.top_band_start = 18.0f;
-    p->tv.top_band_end   = 34.0f;
-    p->tv.top_edge_width = 0.08f;
-
-    PresetJsonSection section = PJSON_SEC_TOP;
-
-    /* Parse line by line. */
-    char *line = buf;
-    while (line && *line) {
-        char *eol = strchr(line, '\n');
-        if (eol) *eol = '\0';
-
-        char *s = preset_json__strip(line);
-
-        /* Skip empty lines and braces-only lines. */
-        if (*s == '\0' || *s == '{' || (*s == '}' && strlen(s) <= 2)) {
-            /* Closing brace: return to top-level. */
-            if (*s == '}') section = PJSON_SEC_TOP;
-            line = eol ? eol + 1 : NULL;
-            continue;
-        }
-
-        /* Detect section openers: "section_name": { */
-        if (strstr(s, "\"video_cable\"") && strstr(s, "{")) {
-            section = PJSON_SEC_VIDEO_CABLE;
-            line = eol ? eol + 1 : NULL;
-            continue;
-        }
-        if (strstr(s, "\"audio_cable\"") && strstr(s, "{")) {
-            section = PJSON_SEC_AUDIO_CABLE;
-            line = eol ? eol + 1 : NULL;
-            continue;
-        }
-        if (strstr(s, "\"tv\"") && strstr(s, "{")) {
-            section = PJSON_SEC_TV;
-            line = eol ? eol + 1 : NULL;
-            continue;
-        }
-        if (strstr(s, "\"rf\"") && strstr(s, "{")) {
-            section = PJSON_SEC_RF;
-            line = eol ? eol + 1 : NULL;
-            continue;
-        }
-
-        /* Extract "key": value from the line. */
-        char *quote1 = strchr(s, '"');
-        if (!quote1) { line = eol ? eol + 1 : NULL; continue; }
-        char *quote2 = strchr(quote1 + 1, '"');
-        if (!quote2) { line = eol ? eol + 1 : NULL; continue; }
-
-        /* Extract key. */
-        size_t key_len = (size_t)(quote2 - quote1 - 1);
-        char key[128];
-        if (key_len >= sizeof(key)) key_len = sizeof(key) - 1;
-        memcpy(key, quote1 + 1, key_len);
-        key[key_len] = '\0';
-
-        /* Find the colon, then the value. */
-        char *colon = strchr(quote2 + 1, ':');
-        if (!colon) { line = eol ? eol + 1 : NULL; continue; }
-        char *val = preset_json__strip(colon + 1);
-
-        /* Strip trailing comma. */
-        size_t vlen = strlen(val);
-        if (vlen > 0 && val[vlen - 1] == ',') val[--vlen] = '\0';
-
-        /* ---- Match key to field based on current section ---- */
-
 #define MATCH_FLOAT(sec, fname, field) \
     if (section == (sec) && strcmp(key, (fname)) == 0) { (field) = strtof(val, NULL); }
 #define MATCH_INT(sec, fname, field) \
@@ -547,6 +463,7 @@ static inline bool preset_json_load(PhysicalPreset *p, const char *path)
         else MATCH_FLOAT(PJSON_SEC_TOP, "console_coupling_R", p->console_coupling_R)
         else MATCH_FLOAT(PJSON_SEC_TOP, "console_coupling_C", p->console_coupling_C)
         else MATCH_FLOAT(PJSON_SEC_TOP, "console_amp_bw",     p->console_amp_bw)
+        else MATCH_FLOAT(PJSON_SEC_TOP, "console_phase_distortion_ns", p->console_phase_distortion_ns)
         else MATCH_FLOAT(PJSON_SEC_TOP, "console_psu_hum",    p->console_psu_hum)
 
         /* Signal decode overrides. */
@@ -597,6 +514,10 @@ static inline bool preset_json_load(PhysicalPreset *p, const char *path)
         else MATCH_FLOAT(PJSON_SEC_TV, "geometry_warp",        p->tv.geometry_warp)
         /* Matrix decode. */
         else MATCH_FLOAT(PJSON_SEC_TV, "color_temperature",    p->tv.color_temperature)
+        else MATCH_INT(PJSON_SEC_TV, "phosphor_gamut", p->tv.phosphor_gamut)
+        else MATCH_FLOAT(PJSON_SEC_TV, "beam_spot_growth", p->tv.beam_spot_growth)
+        else MATCH_FLOAT(PJSON_SEC_TV, "decoder_blue_gain", p->tv.decoder_blue_gain)
+        else MATCH_FLOAT(PJSON_SEC_TV, "decoder_red_gain", p->tv.decoder_red_gain)
         else MATCH_FLOAT(PJSON_SEC_TV, "r_drive",              p->tv.r_drive)
         else MATCH_FLOAT(PJSON_SEC_TV, "g_drive",              p->tv.g_drive)
         else MATCH_FLOAT(PJSON_SEC_TV, "b_drive",              p->tv.b_drive)
@@ -612,6 +533,8 @@ static inline bool preset_json_load(PhysicalPreset *p, const char *path)
         else MATCH_FLOAT(PJSON_SEC_TV, "beam_sharpness",       p->tv.beam_sharpness)
         else MATCH_FLOAT(PJSON_SEC_TV, "beam_height_min",      p->tv.beam_height_min)
         else MATCH_FLOAT(PJSON_SEC_TV, "beam_height_max",      p->tv.beam_height_max)
+        else MATCH_FLOAT(PJSON_SEC_TV, "beam_fwhm_min",       p->tv.beam_fwhm_min)
+        else MATCH_FLOAT(PJSON_SEC_TV, "beam_fwhm_max",       p->tv.beam_fwhm_max)
         else MATCH_FLOAT(PJSON_SEC_TV, "beam_spot_size",       p->tv.beam_spot_size)
         else MATCH_FLOAT(PJSON_SEC_TV, "convergence_static",   p->tv.convergence_static)
         else MATCH_FLOAT(PJSON_SEC_TV, "convergence_dynamic",  p->tv.convergence_dynamic)
@@ -654,6 +577,8 @@ static inline bool preset_json_load(PhysicalPreset *p, const char *path)
         else MATCH_FLOAT(PJSON_SEC_TV, "halation_tint_g",          p->tv.halation_tint_g)
         else MATCH_FLOAT(PJSON_SEC_TV, "halation_tint_b",          p->tv.halation_tint_b)
         else MATCH_FLOAT(PJSON_SEC_TV, "beam_current_load",        p->tv.beam_current_load)
+        else MATCH_FLOAT(PJSON_SEC_TV, "video_black_droop",        p->tv.video_black_droop)
+        else MATCH_FLOAT(PJSON_SEC_TV, "video_recovery_us",        p->tv.video_recovery_us)
         else MATCH_FLOAT(PJSON_SEC_TV, "beam_edge_fade",           p->tv.beam_edge_fade)
         else MATCH_FLOAT(PJSON_SEC_TV, "beam_edge_overshoot",      p->tv.beam_edge_overshoot)
         else MATCH_FLOAT(PJSON_SEC_TV, "burst_lock_drift",         p->tv.burst_lock_drift)
@@ -724,6 +649,7 @@ static inline bool preset_json_load(PhysicalPreset *p, const char *path)
         /* ---- RF modulator ---- */
         else MATCH_BOOL (PJSON_SEC_RF, "enabled",              p->rf.enabled)
         else MATCH_FLOAT(PJSON_SEC_RF, "carrier_freq",         p->rf.carrier_freq)
+        else MATCH_FLOAT(PJSON_SEC_RF, "carrier_level_dbm", p->rf.carrier_level_dbm)
         else MATCH_FLOAT(PJSON_SEC_RF, "mod_bandwidth",        p->rf.mod_bandwidth)
         else MATCH_FLOAT(PJSON_SEC_RF, "noise_floor_dbm",      p->rf.noise_floor_dbm)
         else MATCH_FLOAT(PJSON_SEC_RF, "agc_attack_ms",        p->rf.agc_attack_ms)
@@ -732,12 +658,138 @@ static inline bool preset_json_load(PhysicalPreset *p, const char *path)
 #undef MATCH_FLOAT
 #undef MATCH_INT
 #undef MATCH_BOOL
+}
 
-        line = eol ? eol + 1 : NULL;
+static inline void preset_json__space(char **cursor)
+{
+    while (**cursor == ' ' || **cursor == '\t' || **cursor == '\r' || **cursor == '\n') ++*cursor;
+}
+
+/* Return the end of one JSON string, leaving its quotes intact for the
+ * existing field decoder. Escaped punctuation never acts as structure. */
+static inline char *preset_json__string_end(char *s)
+{
+    if (*s++ != '"') return NULL;
+    while (*s) {
+        if (*s == '"') return s + 1;
+        if ((unsigned char)*s < 32) return NULL;
+        if (*s++ == '\\') {
+            if (!*s) return NULL;
+            if (*s == 'u') {
+                ++s;
+                for (int i=0; i<4; ++i, ++s)
+                    if (!((*s>='0' && *s<='9') || (*s>='a' && *s<='f') || (*s>='A' && *s<='F'))) return NULL;
+            } else {
+                if (!strchr("\"\\/bfnrt", *s)) return NULL;
+                ++s;
+            }
+        }
     }
+    return NULL;
+}
 
-    free(buf);
+static inline int preset_json__section(const char *key)
+{
+    if (!strcmp(key,"video_cable")) return PJSON_SEC_VIDEO_CABLE;
+    if (!strcmp(key,"audio_cable")) return PJSON_SEC_AUDIO_CABLE;
+    if (!strcmp(key,"tv")) return PJSON_SEC_TV;
+    if (!strcmp(key,"rf")) return PJSON_SEC_RF;
+    return -1;
+}
+
+/* Validate nested unknown properties too, so additions can be ignored without
+ * accidentally applying their fields to the surrounding preset section. */
+static inline bool preset_json__value(char **cursor, PhysicalPreset *p,
+                                      int section, const char *key, int depth)
+{
+    if (depth > 16) return false;
+    preset_json__space(cursor);
+    char *s=*cursor;
+    if (*s=='{' || *s=='[') {
+        bool object=*s=='{'; char close=object ? '}' : ']';
+        int child_section=depth==0 ? PJSON_SEC_TOP :
+            (depth==1 && object && section==PJSON_SEC_TOP ? preset_json__section(key) : -1);
+        *cursor=s+1; preset_json__space(cursor);
+        if (**cursor==close) { ++*cursor; return true; }
+        for (;;) {
+            char member[128]="";
+            if (object) {
+                s=*cursor; char *end=preset_json__string_end(s);
+                if (!end) return false;
+                char saved=*end; *end=0;
+                const char *decoded=preset_json__unescape(s);
+                snprintf(member,sizeof(member),"%s",decoded);
+                *end=saved; *cursor=end; preset_json__space(cursor);
+                if (**cursor!=':') return false;
+                ++*cursor;
+            }
+            if (!preset_json__value(cursor,p,object ? child_section : -1,member,depth+1)) return false;
+            preset_json__space(cursor);
+            if (**cursor==close) { ++*cursor; return true; }
+            if (**cursor!=',') return false;
+            ++*cursor; preset_json__space(cursor);
+        }
+    }
+    char *end=NULL;
+    if (*s=='"') end=preset_json__string_end(s);
+    else if (!strncmp(s,"true",4)) end=s+4;
+    else if (!strncmp(s,"false",5)) end=s+5;
+    else if (!strncmp(s,"null",4)) end=s+4;
+    else {
+        end=s;
+        if (*end=='-') ++end;
+        if (*end=='0') ++end;
+        else {
+            if (*end<'1' || *end>'9') return false;
+            while (*end>='0' && *end<='9') ++end;
+        }
+        if (*end=='.') {
+            ++end;
+            if (*end<'0' || *end>'9') return false;
+            while (*end>='0' && *end<='9') ++end;
+        }
+        if (*end=='e' || *end=='E') {
+            ++end; if (*end=='+' || *end=='-') ++end;
+            if (*end<'0' || *end>'9') return false;
+            while (*end>='0' && *end<='9') ++end;
+        }
+        if (!isfinite(strtof(s,NULL))) return false;
+    }
+    if (!end) return false;
+    char saved=*end; *end=0;
+    if (section>=0 && strcmp(s,"null")) preset_json__assign(p,(PresetJsonSection)section,key,s);
+    *end=saved; *cursor=end;
     return true;
+}
+
+static inline bool preset_json_load(PhysicalPreset *p, const char *path)
+{
+    if (!p || !path) return false;
+    FILE *f=fopen(path,"rb");
+    if (!f) return false;
+    if (fseek(f,0,SEEK_END)) { fclose(f); return false; }
+    long size=ftell(f);
+    if (size<=0 || size>1024*1024 || fseek(f,0,SEEK_SET)) { fclose(f); return false; }
+    char *buf=malloc((size_t)size+1);
+    if (!buf) { fclose(f); return false; }
+    size_t read=fread(buf,1,(size_t)size,f);
+    fclose(f); buf[read]=0;
+    PhysicalPreset parsed={0};
+    parsed.chroma_gain=1;
+    parsed.tv.luma_notch_depth=.95f;
+    parsed.tv.h_size=parsed.tv.v_size=1;
+    parsed.tv.top_band_start=18;
+    parsed.tv.top_band_end=34;
+    parsed.tv.top_edge_width=.08f;
+    char *cursor=buf;
+    preset_json__space(&cursor);
+    bool ok=read==(size_t)size && strlen(buf)==read && *cursor=='{' &&
+        preset_json__value(&cursor,&parsed,PJSON_SEC_TOP,"",0);
+    preset_json__space(&cursor);
+    ok=ok && !*cursor;
+    if (ok) *p=parsed;  /* An invalid file must not corrupt a live preset. */
+    free(buf);
+    return ok;
 }
 
 /* ============================================================================

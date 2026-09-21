@@ -50,6 +50,11 @@ struct Params
     float top_edge_width;
 };
 
+struct CRTLoad
+{
+    float load_map[1];
+};
+
 struct DeflectionX
 {
     float out_x[1];
@@ -101,7 +106,7 @@ float hashSigned(thread const uint& x)
     return (_61 * 2.0) - 1.0;
 }
 
-kernel void main0(constant Params& _153 [[buffer(0)]], device DeflectionX& _1182 [[buffer(1)]], device DeflectionY& _1206 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+kernel void main0(constant Params& _153 [[buffer(0)]], device CRTLoad& _299 [[buffer(1)]], device DeflectionX& _1216 [[buffer(2)]], device DeflectionY& _1240 [[buffer(3)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
     uint ox = gl_GlobalInvocationID.x;
     uint oy = gl_GlobalInvocationID.y;
@@ -157,10 +162,13 @@ kernel void main0(constant Params& _153 [[buffer(0)]], device DeflectionX& _1182
     float param_1 = _153.barrel;
     float param_2 = kv;
     float2 warped = barrel_distort(param, param_1, param_2);
-    if (_153.hv_sag > 0.001000000047497451305389404296875)
+    uint load_line = uint(fast::clamp(y_uv * 240.0, 0.0, 239.0));
+    uint load_dot = uint(fast::clamp(x_uv * 256.0, 0.0, 255.0));
+    float picture_load = (0.64999997615814208984375 * _299.load_map[61440u + load_line]) + (0.3499999940395355224609375 * _299.load_map[(load_line * 256u) + load_dot]);
+    if (abs(_153.hv_sag) > 9.9999997473787516355514526367188e-05)
     {
-        float expand = 1.0 + ((_153.hv_sag * _153.frame_brightness) * 0.07999999821186065673828125);
-        warped = ((warped - float2(0.5)) * expand) + float2(0.5);
+        float size_load = 1.0 + ((_153.hv_sag * picture_load) * 0.1599999964237213134765625);
+        warped = ((warped - float2(0.5)) * size_load) + float2(0.5);
     }
     if (abs(_153.rotation) > 9.9999997473787516355514526367188e-05)
     {
@@ -169,17 +177,17 @@ kernel void main0(constant Params& _153 [[buffer(0)]], device DeflectionX& _1182
         float sr = sin(_153.rotation);
         warped = float2((c.x * cr) - (c.y * sr), (c.x * sr) + (c.y * cr)) + float2(0.5);
     }
-    bool _346 = abs(_153.skew_x) > 9.9999997473787516355514526367188e-05;
-    bool _355;
-    if (!_346)
+    bool _383 = abs(_153.skew_x) > 9.9999997473787516355514526367188e-05;
+    bool _392;
+    if (!_383)
     {
-        _355 = abs(_153.skew_y) > 9.9999997473787516355514526367188e-05;
+        _392 = abs(_153.skew_y) > 9.9999997473787516355514526367188e-05;
     }
     else
     {
-        _355 = _346;
+        _392 = _383;
     }
-    if (_355)
+    if (_392)
     {
         float2 c_1 = warped - float2(0.5);
         warped = float2(c_1.x + (_153.skew_x * c_1.y), c_1.y + (_153.skew_y * c_1.x)) + float2(0.5);
@@ -192,19 +200,22 @@ kernel void main0(constant Params& _153 [[buffer(0)]], device DeflectionX& _1182
     }
     if (_153.overscan > 0.001000000047497451305389404296875)
     {
-        warped = ((warped - float2(0.5)) / float2(fast::max(1.0 - (_153.overscan * 2.0), 0.20000000298023223876953125))) + float2(0.5);
+        warped = ((warped - float2(0.5)) * fast::max(1.0 - (_153.overscan * 2.0), 0.20000000298023223876953125)) + float2(0.5);
     }
-    float2 param_3 = warped;
-    float param_4 = 0.0024999999441206455230712890625;
-    float param_5 = 0.0024999999441206455230712890625;
-    float tube_envelope = rect_envelope(param_3, param_4, param_5);
+    float2 param_3 = tube_uv;
+    float param_4 = _153.barrel;
+    float param_5 = kv;
+    float2 param_6 = barrel_distort(param_3, param_4, param_5);
+    float param_7 = 0.0024999999441206455230712890625;
+    float param_8 = 0.0024999999441206455230712890625;
+    float tube_envelope = rect_envelope(param_6, param_7, param_8);
     float2 raster = warped;
     raster.x = (((warped.x - 0.5) - _153.h_pos) / fast::max(_153.h_size, 0.00999999977648258209228515625)) + 0.5;
     raster.y = (((warped.y - 0.5) - _153.v_pos) / fast::max(_153.v_size, 0.00999999977648258209228515625)) + 0.5;
-    float2 param_6 = raster;
-    float param_7 = 0.0040000001899898052215576171875;
-    float param_8 = 0.00449999980628490447998046875;
-    float raster_envelope = rect_envelope(param_6, param_7, param_8);
+    float2 param_9 = raster;
+    float param_10 = 0.0040000001899898052215576171875;
+    float param_11 = 0.00449999980628490447998046875;
+    float raster_envelope = rect_envelope(param_9, param_10, param_11);
     float visibility = tube_envelope * raster_envelope;
     float cx = (raster.x * 2.0) - 1.0;
     float cy = (raster.y * 2.0) - 1.0;
@@ -213,9 +224,9 @@ kernel void main0(constant Params& _153 [[buffer(0)]], device DeflectionX& _1182
     float line_uv = (float(sy_nom) + 0.5) / 240.0;
     uint line_seed = ((sy_nom * 1103515245u) + (_153.frame_counter * 12345u)) + 2654435769u;
     float slow_sway = (sin(frame_t * 0.62999999523162841796875) * 0.699999988079071044921875) + (sin((frame_t * 0.20999999344348907470703125) + 1.7000000476837158203125) * 0.300000011920928955078125);
-    uint param_9 = line_seed;
-    uint param_10 = line_seed ^ 2246822507u;
-    float pll_jitter = hashSigned(param_9) + (0.5 * hashSigned(param_10));
+    uint param_12 = line_seed;
+    uint param_13 = line_seed ^ 2246822507u;
+    float pll_jitter = hashSigned(param_12) + (0.5 * hashSigned(param_13));
     float ripple = sin((float(sy_nom) * 0.189999997615814208984375) + (frame_t * 1.39999997615814208984375));
     float flyback_ring = exp((-float(sy_nom)) / 18.0) * sin((float(sy_nom) * 0.920000016689300537109375) + (frame_t * 1.89999997615814208984375));
     float group_shift = sin((floor(float(sy_nom) / 4.0) * 0.829999983310699462890625) + (frame_t * 0.699999988079071044921875));
@@ -225,8 +236,8 @@ kernel void main0(constant Params& _153 [[buffer(0)]], device DeflectionX& _1182
         float rf_step = sin((float(sy_nom) * 0.4699999988079071044921875) + (frame_t * 0.310000002384185791015625));
         h_shift_px += floor((rf_step * _153.rf_interference) + 0.5);
     }
-    uint param_11 = (_153.frame_counter * 4099u) + 17u;
-    float field_jump_px = (_153.v_jitter * 0.25) * hashSigned(param_11);
+    uint param_14 = (_153.frame_counter * 4099u) + 17u;
+    float field_jump_px = (_153.v_jitter * 0.25) * hashSigned(param_14);
     float top_settle_px = ((_153.v_jitter * 1.60000002384185791015625) * exp((-float(sy_nom)) / 14.0)) * sin((float(sy_nom) * 0.7799999713897705078125) + (frame_t * 1.25));
     float bottom_compress = (_153.geometry_warp * 0.01600000075995922088623046875) * (((cy * cy) * cy) - (0.25 * cy));
     float s_correction = (_153.geometry_warp * 0.034000001847743988037109375) * (((cx * cx) * cx) - (0.3499999940395355224609375 * cx));
@@ -270,7 +281,7 @@ kernel void main0(constant Params& _153 [[buffer(0)]], device DeflectionX& _1182
     }
     if (_153.focus_breathing > 0.001000000047497451305389404296875)
     {
-        focus_scale *= (1.0 + (_153.focus_breathing * sin(float(_153.frame_counter) * 0.07999999821186065673828125)));
+        focus_scale *= (1.0 + (_153.focus_breathing * picture_load));
     }
     float dx_dcx = (((1.0 + (_153.geometry_warp * ((((0.1019999980926513671875 * cx) * cx) - 0.011900000274181365966796875) + ((0.0240000002086162567138671875 * cy) * cy)))) + (_153.geometry_warp * (((-0.01200000010430812835693359375) * exp((-fast::max(raster.x, 0.0)) / 0.0599999986588954925537109375)) - (0.00999999977648258209228515625 * exp((-fast::max(1.0 - raster.x, 0.0)) / 0.0500000007450580596923828125))))) + ((_153.scanline_wobble * 0.047123901546001434326171875) * cos(((x_uv * 6.28318500518798828125) + (float(sy_nom) * 0.62999999523162841796875)) + (frame_t * 0.89999997615814208984375)))) - (((((2.0 / fw) * _153.top_edge_skew) * band_window) * top_edge_env) / edge_width);
     float dwell = 1.0;
@@ -286,12 +297,12 @@ kernel void main0(constant Params& _153 [[buffer(0)]], device DeflectionX& _1182
     dwell *= (1.0 + ((0.0599999986588954925537109375 * edge_drive) * right_retrace));
     dwell *= visibility;
     uint idx = ((oy * _153.out_w) + ox) * 4u;
-    _1182.out_x[idx + 0u] = r_x;
-    _1182.out_x[idx + 1u] = g_x;
-    _1182.out_x[idx + 2u] = b_x;
-    _1182.out_x[idx + 3u] = fast::clamp(dwell, 0.0, 1.10000002384185791015625);
-    _1206.out_y[idx + 0u] = r_y;
-    _1206.out_y[idx + 1u] = g_y;
-    _1206.out_y[idx + 2u] = b_y;
-    _1206.out_y[idx + 3u] = fast::clamp(focus_scale, 1.0, 3.5);
+    _1216.out_x[idx + 0u] = r_x;
+    _1216.out_x[idx + 1u] = g_x;
+    _1216.out_x[idx + 2u] = b_x;
+    _1216.out_x[idx + 3u] = fast::clamp(dwell, 0.0, 1.10000002384185791015625);
+    _1240.out_y[idx + 0u] = r_y;
+    _1240.out_y[idx + 1u] = g_y;
+    _1240.out_y[idx + 2u] = b_y;
+    _1240.out_y[idx + 3u] = fast::clamp(focus_scale, 1.0, 3.5);
 }

@@ -185,7 +185,7 @@ static int test_tv_params_physical(void) {
         CHECK_RANGE(p, t->mask_strength,   0.0,   1.0,    "tv.mask_strength");
         CHECK_RANGE(p, t->persistence_ms,  0.1,   50.0,   "tv.persistence_ms");
         CHECK_RANGE(p, t->beam_sharpness,  0.0,   2.0,    "tv.beam_sharpness");
-        CHECK_RANGE(p, t->beam_height_max, 0.1,   3.0,    "tv.beam_height_max");
+        CHECK_RANGE(p, video_beam_sigma(t, true)*2.354820045f, 0.12f, 2.36f, "tv.white_beam_fwhm");
         CHECK_RANGE(p, t->barrel,          0.0,   0.2,    "tv.barrel");
         CHECK_RANGE(p, t->barrel_v,        0.0,   0.2,    "tv.barrel_v");
         CHECK_RANGE(p, t->halation,        0.0,   0.5,    "tv.halation");
@@ -199,8 +199,10 @@ static int test_tv_params_physical(void) {
         CHECK_RANGE(p, t->rotation,       -0.1,   0.1,    "tv.rotation");
         CHECK_RANGE(p, t->skew_x,         -0.15,  0.15,   "tv.skew_x");
         CHECK_RANGE(p, t->skew_y,         -0.15,  0.15,   "tv.skew_y");
-        CHECK_RANGE(p, t->hv_sag,          0.0,   0.5,    "tv.hv_sag");
+        CHECK_RANGE(p, t->hv_sag,         -0.5,   0.5,    "tv.hv_sag");
         CHECK_RANGE(p, t->focus_breathing, 0.0,   0.3,    "tv.focus_breathing");
+        CHECK_RANGE(p, t->video_black_droop, 0.0, 0.5,   "tv.video_black_droop");
+        CHECK_RANGE(p, t->video_recovery_us, 0.0, 100.0, "tv.video_recovery_us");
         CHECK_RANGE(p, t->scanline_wobble, 0.0,   1.0,    "tv.scanline_wobble");
         CHECK_RANGE(p, t->top_band_shift, -20.0, 20.0,    "tv.top_band_shift");
         CHECK_RANGE(p, t->top_edge_skew,  -20.0, 20.0,    "tv.top_edge_skew");

@@ -17,12 +17,10 @@ struct Params
     uint phase_field_adv;
     uint frame_field;
     uint use_alt_table;
-    uint separate_yc;
-};
-
-struct SignalTableAlt
-{
-    float signal_table_alt[1];
+    uint source_mode;
+    float4 rgb_row_r;
+    float4 rgb_row_g;
+    float4 rgb_row_b;
 };
 
 struct SignalTable
@@ -30,19 +28,24 @@ struct SignalTable
     float signal_table[1];
 };
 
-struct LumaBuf
-{
-    float source_y[1];
-};
-
 struct WaveformBuf
 {
     float waveform[1];
 };
 
+struct SignalTableAlt
+{
+    float signal_table_alt[1];
+};
+
+struct LumaBuf
+{
+    float source_y[1];
+};
+
 constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
 
-kernel void main0(device IndexBuf& _41 [[buffer(1)]], constant Params& _72 [[buffer(0)]], device SignalTableAlt& _146 [[buffer(3)]], device SignalTable& _158 [[buffer(2)]], device LumaBuf& _190 [[buffer(5)]], device WaveformBuf& _199 [[buffer(4)]], uint3 gl_LocalInvocationID [[thread_position_in_threadgroup]], uint3 gl_WorkGroupID [[threadgroup_position_in_grid]])
+kernel void main0(device IndexBuf& _41 [[buffer(1)]], constant Params& _73 [[buffer(0)]], device SignalTable& _107 [[buffer(2)]], device WaveformBuf& _193 [[buffer(4)]], device SignalTableAlt& _286 [[buffer(3)]], device LumaBuf& _324 [[buffer(5)]], uint3 gl_LocalInvocationID [[thread_position_in_threadgroup]], uint3 gl_WorkGroupID [[threadgroup_position_in_grid]])
 {
     uint px = gl_LocalInvocationID.x;
     uint sy = gl_WorkGroupID.y;
@@ -63,53 +66,74 @@ kernel void main0(device IndexBuf& _41 [[buffer(1)]], constant Params& _72 [[buf
     }
     uint pixel_val = _54;
     uint entry = pixel_val & 511u;
-    uint line_phase = (_72.phase_base + (sy * _72.phase_line_adv)) % 12u;
-    uint pixel_phase = (line_phase + (px * _72.samples_per_pixel)) % 12u;
-    uint table_base = (entry * 24u) + pixel_phase;
-    uint wave_base = (sy * _72.samples_per_line) + (px * _72.samples_per_pixel);
-    bool _114 = _72.use_alt_table != 0u;
-    bool _120;
-    if (_114)
+    if (_73.source_mode == 2u)
     {
-        _120 = (sy & 1u) == 1u;
+        float3 yiq = float3(0.0);
+        float rotate = (_73.use_alt_table != 0u) ? 3.0 : 4.0;
+        for (uint p = 0u; p < 12u; p++)
+        {
+            float v = _107.signal_table[(entry * 24u) + p];
+            float phase = ((float(p) + rotate) * 6.283185482025146484375) / 12.0;
+            yiq += ((float3(1.0, 2.0 * cos(phase), 2.0 * sin(phase)) * v) / float3(12.0));
+        }
+        float4 source = float4(yiq, 1.0);
+        float3 rgb = float3(dot(_73.rgb_row_r, source), dot(_73.rgb_row_g, source), dot(_73.rgb_row_b, source));
+        uint base = ((sy * _73.samples_per_line) + (px * _73.samples_per_pixel)) * 3u;
+        for (uint s = 0u; s < _73.samples_per_pixel; s++)
+        {
+            _193.waveform[base + (s * 3u)] = rgb.x;
+            _193.waveform[(base + (s * 3u)) + 1u] = rgb.y;
+            _193.waveform[(base + (s * 3u)) + 2u] = rgb.z;
+        }
+        return;
+    }
+    uint line_phase = (_73.phase_base + (sy * _73.phase_line_adv)) % 12u;
+    uint pixel_phase = (line_phase + (px * _73.samples_per_pixel)) % 12u;
+    uint table_base = (entry * 24u) + pixel_phase;
+    uint wave_base = (sy * _73.samples_per_line) + (px * _73.samples_per_pixel);
+    bool _258 = _73.use_alt_table != 0u;
+    bool _264;
+    if (_258)
+    {
+        _264 = (sy & 1u) == 1u;
     }
     else
     {
-        _120 = _114;
+        _264 = _258;
     }
-    bool alt = _120;
+    bool alt = _264;
     float dc = 0.0;
-    if (_72.separate_yc != 0u)
+    if (_73.source_mode == 1u)
     {
-        float _140;
-        for (uint p = 0u; p < 12u; p++)
+        float _280;
+        for (uint p_1 = 0u; p_1 < 12u; p_1++)
         {
             if (alt)
             {
-                _140 = _146.signal_table_alt[(entry * 24u) + p];
+                _280 = _286.signal_table_alt[(entry * 24u) + p_1];
             }
             else
             {
-                _140 = _158.signal_table[(entry * 24u) + p];
+                _280 = _107.signal_table[(entry * 24u) + p_1];
             }
-            dc += (_140 / 12.0);
+            dc += (_280 / 12.0);
         }
     }
-    float _204;
-    for (uint s = 0u; s < _72.samples_per_pixel; s++)
+    float _334;
+    for (uint s_1 = 0u; s_1 < _73.samples_per_pixel; s_1++)
     {
-        if (_72.separate_yc != 0u)
+        if (_73.source_mode == 1u)
         {
-            _190.source_y[wave_base + s] = dc;
+            _324.source_y[wave_base + s_1] = dc;
         }
         if (alt)
         {
-            _204 = _146.signal_table_alt[table_base + s];
+            _334 = _286.signal_table_alt[table_base + s_1];
         }
         else
         {
-            _204 = _158.signal_table[table_base + s];
+            _334 = _107.signal_table[table_base + s_1];
         }
-        _199.waveform[wave_base + s] = _204;
+        _193.waveform[wave_base + s_1] = _334;
     }
 }

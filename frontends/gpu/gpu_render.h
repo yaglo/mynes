@@ -8,6 +8,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "gpu_display.h"
+#include "gpu_output.h"
 #include "video_chain.h"
 
 typedef struct {
@@ -18,6 +19,10 @@ typedef struct {
     GPUDisplay     *gpu_disp;
     bool            gpu_display_enabled;
     bool            crt_shader_enabled;
+    int             mask_alignment;      /* 0 = panel pixels, 1 = physical CRT pitch */
+    GPUOutputGeometry output_geometry;
+    int             drawable_w, drawable_h;
+    float           effective_mask_triads;
     bool            hdr_enabled;         /* RGBA16F textures + HDR swapchain */
     bool            owns_display_tex;    /* false when using external beam texture */
     float           frame_brightness;    /* instantaneous avg luma of current PPU frame */
@@ -35,6 +40,16 @@ typedef struct {
      * each frame for the raster-wobble uniform. */
     float           audio_bass_rms;
     uint64_t        frame_counter;
+    const char     *capture_path;
+    bool            capture_complete;
+    uint64_t        swap_wait_ns, submit_ns, capture_ns; /* diagnostics; not photon timestamps */
+    SDL_GPUCommandBuffer *present_cmd;
+    SDL_GPUTexture *present_texture;
+    Uint32 present_w, present_h;
+    int offscreen_w, offscreen_h;
+    float offscreen_headroom;
+    SDL_GPUTexture *offscreen_target;
+    SDL_GPUFence *offscreen_fence;
     bool            split_mode;          /* Shift+C: split view (left CRT, right raw palette) */
     SDL_GPUTexture *raw_tex;             /* 256x240 RGBA8 raw PPU frame, used in split mode */
     const uint8_t  *raw_ppu_rgb;         /* pointer to PPU RGB framebuffer for upload */
@@ -61,6 +76,11 @@ void gpu_render_upload_rgba(GPURenderCtx *ctx, const uint8_t *rgba, int w, int h
  * caller refreshes frame_brightness/raw_ppu_rgb/audio_bass_rms for the
  * current frame and before any stage that consumes those values. */
 void gpu_render_update_dynamic_state(GPURenderCtx *ctx);
+
+/* Wait for display capacity before taking a picture from the playback
+ * mailbox. Keeping this wait after encoding used to present stale pictures. */
+bool gpu_render_prepare(GPURenderCtx *ctx);
+void gpu_render_release_pending(GPURenderCtx *ctx);
 
 /* Render the display texture to the swapchain (CRT shader or passthrough blit). */
 void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain);

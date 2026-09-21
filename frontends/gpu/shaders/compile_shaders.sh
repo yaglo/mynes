@@ -25,6 +25,7 @@ get_resources() {
         audio_stream)   echo "1 1 1" ;;
         raster_encode)  echo "1 2 2" ;;
         receiver_lock)  echo "1 1 1" ;;
+        receiver_pll)   echo "1 1 1" ;;
         receiver_demod) echo "1 2 2" ;;
         yc_route)       echo "1 2 2" ;;
         agc)            echo "1 0 2" ;;
@@ -36,9 +37,11 @@ get_resources() {
         dac_2c02)       echo "1 3 2" ;;
         matrix_decode)  echo "1 4 1" ;;
         pal_chroma)     echo "1 2 2" ;;
-        deflection)     echo "1 0 2" ;;
+        deflection)     echo "1 1 2" ;;
+        crt_load)       echo "1 0 2" ;;
+        gun_current)    echo "1 1 1" ;;
         beam_profile)   echo "1 3 1" ;;
-        comb_filter)    echo "1 1 2" ;;
+        comb_filter)    echo "1 2 2" ;;
         rf_mod_demod)   echo "1 0 1" ;;
         video_amp)      echo "1 1 1" ;;
         h_blur_rgb)     echo "1 0 2" ;;
@@ -57,6 +60,15 @@ compile_shader() {
     base=$(basename "$glsl")
 
     printf "  %s\n" "$base"
+    # Aliased descriptors can silently turn unrelated Metal buffers into one
+    # argument. Reject them before cross-compiling or repairing indices.
+    python3 - "$glsl" <<'PY'
+import re, sys
+source = re.sub(r'/\*.*?\*/|//[^\n]*', '', open(sys.argv[1]).read(), flags=re.S)
+bindings = re.findall(r'layout\s*\(\s*set\s*=\s*(\d+)\s*,\s*binding\s*=\s*(\d+)', source)
+if len(bindings) != len(set(bindings)):
+    sys.exit('Duplicate descriptor binding: ' + sys.argv[1])
+PY
     if ! glslc -fshader-stage="$stage" "$glsl" -o "$spv" 2>&1; then
         echo "    ERROR: glslc failed"
         ERRORS=$((ERRORS + 1))
@@ -93,8 +105,8 @@ fix_msl_buffers() {
     local res
     res=$(get_resources "$kernel_name")
     if [ -z "$res" ]; then
-        echo "    buffers: no resource map (skipped)"
-        return 0
+        echo "ERROR: missing SDL Metal resource map for $kernel_name" >&2
+        exit 1
     fi
 
     local U R W
@@ -264,6 +276,13 @@ for glsl in "$SCRIPT_DIR"/compute/*.comp.glsl; do
     kernel_name=$(basename "$glsl" .comp.glsl)
     msl="${glsl%.glsl}.msl"
     fix_msl_buffers "$msl" "$glsl" "$kernel_name"
+    python3 - "$msl" <<'PY'
+import re, sys
+signature = next(line for line in open(sys.argv[1]) if 'kernel void main0(' in line)
+indices = re.findall(r'\[\[buffer\((\d+)\)\]\]', signature)
+if len(indices) != len(set(indices)):
+    sys.exit('Duplicate Metal buffer binding: ' + sys.argv[1])
+PY
 done
 
 echo ""
@@ -278,6 +297,20 @@ echo "=== Render Shaders (fragment) ==="
 for glsl in "$SCRIPT_DIR"/render/*.frag.glsl; do
     [ -f "$glsl" ] || continue
     compile_shader "$glsl" fragment
+    # SPIRV-Cross can assign Metal textures in first-use order. SDL binds
+    # by declared slot, so preserve each sampler's GLSL binding explicitly.
+    python3 - "$glsl" "${glsl%.glsl}.msl" <<'PYRENDER'
+import re, sys
+from pathlib import Path
+source=Path(sys.argv[1]).read_text()
+path=Path(sys.argv[2]); metal=path.read_text()
+for slot,name in re.findall(r'layout\(set = 2, binding = (\d+)\) uniform sampler2D (\w+)',source):
+    for resource,kind in [(name,'texture'),(name+'Smplr','sampler')]:
+        pattern=r'(\b'+resource+r' \[\['+kind+r'\()\d+(\)\]\])'
+        metal,n=re.subn(pattern,lambda m:m[1]+slot+m[2],metal)
+        if n!=1: sys.exit('Missing Metal resource binding: '+resource)
+path.write_text(metal)
+PYRENDER
 done
 
 # spirv-cross adds a trailing empty line; keep generated assets stable.
