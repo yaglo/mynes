@@ -4,7 +4,7 @@ Start with the [game showcase](nes-visual-showcase.md): Darkwing Duck gameplay,
 Kirby's Adventure, Little Samson, Super Mario Bros. 3 and Mega Man 2, recorded
 through MyNES's GPU signal path with individual NTSC phases intact.
 
-[![Darkwing Duck through the PVM model](images/showcase/4k/darkwing-pvm-gameplay.png)](images/showcase/4k/darkwing-pvm-gameplay.png)
+[![Castlevania through the PVM model](images/showcase/4k/castlevania-pvm-gameplay.png)](images/showcase/4k/castlevania-pvm-gameplay.png)
 
 The linked image contains a complete **3840×2880 game viewport**. The page preview
 is scaled to fit; open the original to inspect its pixels.

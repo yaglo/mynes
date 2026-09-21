@@ -1,8 +1,22 @@
 # Gameplay and beam height at native 4K pixels
 
-The Darkwing gameplay capture is 3840×2880: the complete 4:3 game image is 3840 pixels wide, without side bars. The older comparison and controlled measurements below use 3840×2160 canvases with a 2880×2160 game viewport. Close-ups are cropped **without resizing**. Open the PNG at 100% to inspect the mask; fitting the image to a browser window can change its apparent pattern. They show one NTSC phase, not a blended exposure.
+The Castlevania and Darkwing gameplay captures are 3840×2880: the complete 4:3 game image is 3840 pixels wide, without side bars. The older comparison and controlled measurements below use 3840×2160 canvases with a 2880×2160 game viewport. Close-ups are cropped **without resizing**. Open the PNG at 100% to inspect the mask; fitting the image to a browser window can change its apparent pattern. They show one NTSC phase, not a blended exposure.
 
-## PVM during gameplay
+## Castlevania: full screen and close-up
+
+[![Castlevania castle hall, 3840×2880](images/showcase/4k/castlevania-pvm-gameplay.png)](images/showcase/4k/castlevania-pvm-gameplay.png)
+
+[![Native close-up of the same Castlevania frame](images/showcase/4k/castlevania-pvm-detail.png)](images/showcase/4k/castlevania-pvm-detail.png)
+
+Sony PVM-14L2 preset, composite, emulated frame 2500. The crop is 1280×1120 at x=1360, y=1584, copied without resizing. The full beam and image are rendered at 3840×2880. Exposure is 0.7; this is one NTSC phase. Simon, window tracery and damaged masonry retain their game context while showing the spot and grille.
+
+## Studio aperture grille: face and platform
+
+[![Studio aperture grille, native face and platform details](images/contra-gallery/studio-pvm-beam-detail.png)](contra-preset-gallery.md#group-5)
+
+These details come unchanged from the [Contra preset gallery](contra-preset-gallery.md): 2560×1920, two consecutive phases averaged in linear light. The two crops are from different vertical positions and are separated and labelled. They show scanline structure, but this comparison alone does not isolate brightness-dependent spot growth. Studio aperture grille is a generic Y/C monitor preset, distinct from the nominal Sony PVM-14L2.
+
+## Darkwing Duck during gameplay
 
 [![Darkwing Duck bridge gameplay, 3840×2880](images/showcase/4k/darkwing-pvm-gameplay.png)](images/showcase/4k/darkwing-pvm-gameplay.png)
 

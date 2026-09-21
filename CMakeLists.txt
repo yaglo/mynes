@@ -290,9 +290,9 @@ endif()
 # GPU Frontend (SDL3 + SDL_GPU — Vulkan/Metal/D3D12)
 # =============================================================================
 
-option(NES_BUILD_GPU_FRONTEND "Build the GPU frontend (requires SDL3)" OFF)
+option(NES_BUILD_GPU_FRONTEND "Build the GPU frontend (requires SDL3)" ON)
 
-if(NES_BUILD_GPU_FRONTEND)
+if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
     find_package(SDL3 CONFIG QUIET)
     if(TARGET SDL3::SDL3)
         set(MYNES_SDL3_TARGET SDL3::SDL3)
@@ -494,7 +494,7 @@ if(NES_BUILD_GPU_FRONTEND)
         target_link_libraries(gpu_process PRIVATE nes_static ${MYNES_SDL3_TARGET} m)
         add_dependencies(gpu_process gpu_shaders)
     else()
-        message(STATUS "SDL3 not found - skipping GPU frontend (install with: brew install sdl3)")
+        message(WARNING "SDL3 not found - GPU frontend unavailable. On macOS: brew install sdl3 shaderc spirv-cross. Use -DNES_BUILD_GPU_FRONTEND=OFF to explicitly disable it.")
     endif()
 endif()
 

@@ -7,9 +7,9 @@ RF set. MyNES builds the NES waveform from PPU colour codes, passes it through
 a receiver, and renders the beam, phosphors and glass. Change the connection,
 turn a control, or switch televisions while the game keeps running.
 
-[![Darkwing Duck gameplay on the PVM, 3840×2880](docs/images/showcase/4k/darkwing-pvm-gameplay.png)](docs/images/showcase/4k/darkwing-pvm-gameplay.png)
+[![Castlevania castle hall on the PVM, 3840×2880](docs/images/showcase/4k/castlevania-pvm-gameplay.png)](docs/images/showcase/4k/castlevania-pvm-gameplay.png)
 
-*Darkwing Duck in play · Sony PVM-14L2 · click for the full 3840×2880 capture.*
+*Castlevania in play · Sony PVM-14L2 · click for the full 3840×2880 capture.*
 
 [Get started](#quick-start) · [All 20 CRT presets](docs/contra-preset-gallery.md) ·
 [Signal Studio](tools/visualiser/README.md) · [How the model works](docs/gpu-pipeline-reference.md)
@@ -28,7 +28,7 @@ turn a control, or switch televisions while the game keeps running.
 
 *Actual MyNES output, with alternating NTSC phases kept separate. GIFs run at
 50 fps for compatibility; click any image for its **60.1 fps video**. No temporal
-averaging or added flicker. [Scene selection and visual references](docs/nes-visual-showcase.md).*
+averaging or added flicker. [More images and videos](docs/nes-visual-showcase.md).*
 
 The colour fringes and fine patterns change from one frame to the next.
 This native-pixel, lossless detail keeps the near-60 Hz cadence so you can
@@ -38,6 +38,10 @@ see what a merged screenshot hides:
 
 ## Look closer
 
+[![Castlevania: native-pixel close-up of Simon, the window and masonry](docs/images/showcase/4k/castlevania-pvm-detail.png)](docs/images/showcase/4k/castlevania-pvm-detail.png)
+
+*The same frame, cropped to 1280×1120 without enlargement. Open at 100% to inspect the beam and grille.*
+
 **[Four CRTs at 4K: native close-ups and measured beam height](docs/gpu-beam-closeups.md).**
 The complete gameplay image is **3840 pixels wide**, with no side bars.
 Dim strokes stay narrow; bright details spread and fill more of the gap
@@ -45,6 +49,14 @@ between scanlines. Detail crops are not enlarged. The behavior is modeled;
 individual tube beam profiles remain uncalibrated.
 
 ## Choose your television
+
+**[Compare all 20 presets on the same Contra scene →](docs/contra-preset-gallery.md)**
+
+[![Contra through four CRT presets](docs/images/contra-gallery/overview-4.png)](docs/contra-preset-gallery.md#group-4)
+
+[![Studio aperture grille: native face and bright-platform details](docs/images/contra-gallery/studio-pvm-beam-detail.png)](docs/contra-preset-gallery.md#group-5)
+
+*Studio aperture grille (Y/C): two separate native crops of the face and platform, with a visible divider. From the gallery’s 2560×1920, two-phase exposure; the generic Studio preset is separate from the nominal 14L2.*
 
 | Start here | What it brings to the picture |
 |---|---|
@@ -118,12 +130,23 @@ Required for the core and tests:
 - Chicken Scheme (`csi`) if you want to regenerate CPU code from the DSL
   locally. Pre-generated CPU code is committed as a fallback.
 
-Optional frontends/tools:
+The GPU frontend is enabled by default and requires SDL3, `glslc` (provided
+by **shaderc**), `spirv-cross`, and Python 3 for shader compilation.
+On macOS:
 
-- SDL2 development headers for `mynes`
-- SDL3 development headers for `mynes_gpu`
-- `glslc` for GLSL to SPIR-V shader compilation
-- `spirv-cross` for SPIR-V to Metal Shading Language on macOS
+```bash
+brew install cmake sdl3 shaderc spirv-cross python
+command -v glslc spirv-cross python3
+glslc --version
+```
+
+If a build reports **`glslc: command not found`**, install `shaderc`—the Homebrew
+package is not named `glslc`—and ensure Homebrew's `bin` directory is on your
+shell's `PATH`. Then rerun the build. Package references:
+[shaderc](https://formulae.brew.sh/formula/shaderc),
+[spirv-cross](https://formulae.brew.sh/formula/spirv-cross).
+
+SDL2 is optional for the separate legacy `mynes` frontend.
 
 ### Build
 
@@ -146,7 +169,7 @@ The main build options are:
 ```bash
 cmake .. -DNES_BUILD_TESTS=ON        # default: ON
 cmake .. -DNES_BUILD_FRONTENDS=ON    # default: ON
-cmake .. -DNES_BUILD_GPU_FRONTEND=ON # default: OFF, requires SDL3
+cmake .. -DNES_BUILD_GPU_FRONTEND=ON # default: ON, requires SDL3
 ```
 
 ### Run
@@ -154,8 +177,8 @@ cmake .. -DNES_BUILD_GPU_FRONTEND=ON # default: OFF, requires SDL3
 From the build directory:
 
 ```bash
-./bin/mynes                  # open the fullscreen ROM browser
-./bin/mynes path/to/game.nes # run a ROM directly
+./bin/mynes_gpu                  # open the GPU frontend ROM browser
+./bin/mynes_gpu path/to/game.nes # run a ROM directly
 ```
 
 The repository does not include commercial ROMs. Keep local ROMs in
@@ -163,19 +186,17 @@ The repository does not include commercial ROMs. Keep local ROMs in
 
 ### GPU Frontend
 
-Build with SDL3 support enabled:
+New build directories enable the GPU frontend automatically. If an existing
+build cached the old OFF default, enable it explicitly:
 
 ```bash
 cmake .. -DNES_BUILD_GPU_FRONTEND=ON
 cmake --build . -j
 ```
 
-Run it the same way:
-
-```bash
-./bin/mynes_gpu
-./bin/mynes_gpu path/to/game.nes
-```
+To opt out, configure with `-DNES_BUILD_GPU_FRONTEND=OFF`.
+`-DNES_BUILD_FRONTENDS=OFF` disables both graphical frontends. The optional
+SDL2 frontend remains available as `./bin/mynes`.
 
 Shaders are built automatically into the build tree. To rebuild them
 manually from the repository root:

@@ -10,6 +10,16 @@
 # Usage: ./compile_shaders.sh [output-directory]
 
 set -euo pipefail
+# Fail once, before touching outputs, with the package name that supplies glslc.
+for tool in glslc spirv-cross python3; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+        printf 'Missing shader build tool: %s\n' "$tool" >&2
+        printf 'On macOS: brew install shaderc spirv-cross python\n' >&2
+        printf 'glslc is supplied by shaderc. Ensure these tools are on PATH, then rebuild.\n' >&2
+        exit 1
+    fi
+done
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # CMake passes its build tree; standalone invocation retains the default.

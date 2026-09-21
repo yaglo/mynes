@@ -18,6 +18,8 @@ The renders have recognizable CRT structure, but a still cannot establish phosph
 
 ## Every preset
 
+Each detail panel contains two separate crops: face on the left, platform on the right. Labels and a gutter separate these distant parts of the screen; they are not one contiguous image.
+
 Click a preset name for the complete **2560×1920** render. View native crops at 100%: browser resizing can change fine mask appearance.
 
 ### Group 1

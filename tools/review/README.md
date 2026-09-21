@@ -18,6 +18,7 @@ source frames; `--screenshot-frames 240` records a four-second motion segment.
 Use `--offscreen 3840x2880 --mask-alignment pixels` for a 4:3 game image
 3840 pixels wide. A 3840×2160 canvas contains a narrower 2880×2160 viewport.
 `darkwing-bridge.input` reproduces the bridge gameplay at frame 8000.
+`castlevania-hall.input` reproduces the castle hall at frame 2500.
 
 ## Beam measurements
 
