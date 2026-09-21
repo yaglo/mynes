@@ -619,9 +619,8 @@ int main(int argc, char **argv) {
                  dp, fsc/1e6, fsample/1e6);
         }
 
-        /* Configure beam profile (GPU scanline structure).
-         * 4 output rows per NES scanline -> 240*4 = 960 output height.
-         * Output width matches signal resolution for now (blit scales). */
+        /* Render beam deposition at the final 4:3 viewport resolution.
+         * Offscreen captures use their requested pixel dimensions too. */
         {
             /* Pixel-perfect: match beam to window's physical pixel size.
              * 4:3 viewport within the window — no stretching needed. */

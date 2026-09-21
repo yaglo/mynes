@@ -13,7 +13,7 @@ These GIFs preserve 24 individual rendered frames with one fixed 256-colour pale
 Watch the actual frame cadence:
 
 - [Synchronized Sony-versus-RF comparison, four seconds](images/showcase/sony-vs-rf.mp4).
-- [Six-game showcase reel, 24 seconds](images/showcase/showcase-reel.mp4).
+- [Five-game showcase reel, 20 seconds](images/showcase/showcase-reel.mp4).
 - Individual Contra phase clips: [Sony, four seconds](images/motion/boss-sony_pvm_14l2.mp4), [Stas RF, four seconds](images/motion/boss-stass_favourite.mp4), [JVC, two seconds](images/motion/boss-jvc_d_series_2000.mp4), [Toshiba, two seconds](images/motion/boss-toshiba_14af43.mp4). All run at 60.0988 fps.
 
 MP4 uses H.264, CRF 16, 4:2:0 for common-player compatibility; it can soften fine chroma. These **lossless RGB animated details** avoid that conversion and preserve near-native cadence through cumulative 16/17 ms WebP durations:

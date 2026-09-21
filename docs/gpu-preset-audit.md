@@ -1,5 +1,7 @@
 # CRT preset audit
 
+[Gameplay showcase](nes-visual-showcase.md) · [4K gameplay and beam-height measurements](gpu-beam-closeups.md)
+
 The curated, visually polished group is **Sony PVM-14L2, JVC D-Series, Toshiba 14AF, and Stas's Favourite**, listed first in the preset menu. The other profiles remain available and have had their settings audited, but are not equally researched commercial-model matches. See [hardware evidence](gpu-hardware-research.md) and [current captures](gpu-visual-review.md).
 
 

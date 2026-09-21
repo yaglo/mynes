@@ -1,5 +1,7 @@
 # GPU signal, receiver, and CRT model
 
+[Gameplay showcase](nes-visual-showcase.md) · [4K gameplay and beam-height measurements](gpu-beam-closeups.md)
+
 This describes the SDL3 `mynes_gpu` frontend. The SDL2 composite renderer is a separate implementation. Frontend work is isolated from CPU/PPU accuracy changes.
 
 ## Signal source and calibration

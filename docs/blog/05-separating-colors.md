@@ -119,12 +119,12 @@ if (conn <= VIDEO_CONN_COMPOSITE) {
 
 The subcarrier phase does not just invert between scanlines -- it also shifts between frames. Over a 2-frame (or 3-frame, depending on the specific phase relationship) cycle, the cross-color pattern at any given pixel rotates through different phases. On a static image, this manifests as a crawling rainbow pattern along sharp luma transitions.
 
-Real TVs cancel dot crawl through temporal averaging -- the phosphor persistence blends the current frame with the previous one. Stage 12 (phosphor screen) implements this with per-channel persistence weights. The crawl pattern, which alternates phase each frame, averages to zero. This is why dot crawl is prominent in screenshots (single frozen frames) but much less visible on actual CRT screens (continuous temporal blend).
+Phosphor decay and visual integration can soften the apparent frame-to-frame structure, but real CRTs do not universally cancel dot crawl. The result depends on source timing, decoder separation, phosphor response, scene motion and viewing conditions. Temporal comb filtering is a separate receiver operation; it should not be attributed to phosphor persistence.
 
-The temporal blend shader reads two packed float16x4 buffers -- current and previous beam output -- and blends with per-channel weights modeling P22 phosphor decay: green persists longer than blue (`persistence_g = 1.0`, `persistence_b = 0.65-0.82`). No CPU roundtrip. The cancellation happens entirely on the GPU.
+The current renderer preserves phase alternation and models per-channel afterglow in linear light. Its frame-sampled decay is an approximation, not a measured P22 impulse response. Two-frame averages are used for some diagnostic stills, while the [showcase videos](../nes-visual-showcase.md) retain consecutive individual phases. See the [current model reference](../gpu-pipeline-reference.md) for the implemented stages and limits.
 
 ## The same math as radio
 
 None of this is exotic. Quadrature amplitude modulation, comb filtering, FIR bandwidth limiting -- these are the same techniques used in AM/FM radio, telecommunications, and radar signal processing. NTSC is just AM radio with pictures. The 3.579545 MHz subcarrier is a carrier frequency. The I/Q channels are quadrature components. The comb filter is a spatial FIR exploiting known phase relationships.
 
-The NES PPU does not output colors. It outputs a modulated RF waveform. Everything that happens between that waveform and the colors on screen is signal processing, and every imperfection in that processing is an artifact that defined a generation's visual memory.
+The NES PPU does not output colors. Its composite output is a baseband video waveform; the RF modulator subsequently places that signal on a radio-frequency carrier. Everything that happens between that waveform and the colors on screen is signal processing, and every imperfection in that processing is an artifact that defined a generation's visual memory.

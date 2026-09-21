@@ -2,6 +2,8 @@
 
 Native macOS editor for the SDL3 GPU frontend. The graph follows five physical sections: connection, decoder, beam, phosphor, and glass. Controls change the live emulator through the same update functions as its OSD. The separate Audio controls button opens amplifier, mains-hum and noise controls; these values participate in preset save/load and dirty-state tracking.
 
+[See the rendered results](../../docs/nes-visual-showcase.md) · [Four CRT references and native close-ups](../../docs/gpu-beam-closeups.md)
+
 ## Run
 
 From the repository root:

@@ -19,6 +19,8 @@ struct Playback {
     PlaybackFrame frame;
     unsigned number, limit, capture_from;
     unsigned review_start_frame;
+    struct { unsigned frame, buttons; } review_events[128];
+    unsigned review_event_count, review_event_index, review_buttons;
     float input[AUDIO_BLOCK_CAPACITY], output[AUDIO_BLOCK_CAPACITY];
     int count, fade;
     float energy;
@@ -26,6 +28,29 @@ struct Playback {
     AudioRateCtrl rate;
     FILE *capture, *trace;
 };
+
+/* Deterministic controller replay for offscreen visual reviews. Each row is
+ * an emulated frame number and a hexadecimal controller mask, held until the
+ * next row. Parse before the worker starts; ordinary playback reads no file. */
+static bool load_review_input(Playback *p, const char *path) {
+    FILE *file = fopen(path, "r");
+    if (!file) return SDL_SetError("Cannot open review input: %s", path);
+    unsigned frame, buttons, previous = 0;
+    int fields;
+    while ((fields = fscanf(file, "%u %x", &frame, &buttons)) == 2) {
+        if (frame <= previous || buttons > 255 || p->review_event_count == 128) {
+            fclose(file);
+            return SDL_SetError("Review input requires ascending frames and 8-bit masks (max 128 rows)");
+        }
+        unsigned index = p->review_event_count++;
+        p->review_events[index].frame = frame;
+        p->review_events[index].buttons = buttons;
+        previous = frame;
+    }
+    bool valid = fields == EOF && !ferror(file) && p->review_event_count != 0;
+    fclose(file);
+    return valid || SDL_SetError("Malformed or empty review input: %s", path);
+}
 
 static void sample(void *user, float value) {
     Playback *p = user;
@@ -123,7 +148,11 @@ static int run(void *user) {
             apu_set_region(&p->nes->apu, c.region);
             last_region = c.region;
         }
-        p->nes->controller[0] = c.controller;
+        while (p->review_event_index < p->review_event_count &&
+               p->review_events[p->review_event_index].frame <= p->number + 1) {
+            p->review_buttons = p->review_events[p->review_event_index++].buttons;
+        }
+        p->nes->controller[0] = p->review_event_count ? p->review_buttons : c.controller;
         if (p->review_start_frame && p->number+1 >= p->review_start_frame
             && p->number+1 < p->review_start_frame+2) p->nes->controller[0] |= 0x08;
         bool dac_changed = p->nes->apu.analog.dac_nonlinearity != c.analog.dac_nonlinearity;
@@ -190,6 +219,8 @@ Playback *playback_create(NES *nes, SDL_GPUDevice *gpu, AudioGPUChain *audio,
     p->nes = nes; p->gpu = gpu; p->audio = audio; p->stream = stream; p->limit = frame_limit; p->capture_from = capture_from;
     const char *start_frame=getenv("MYNES_REVIEW_START_FRAME");
     if(start_frame) p->review_start_frame=(unsigned)strtoul(start_frame,NULL,10);
+    const char *review_input = getenv("MYNES_REVIEW_INPUT_SCRIPT");
+    if (review_input && !load_review_input(p, review_input)) { free(p); return NULL; }
     p->mutex = SDL_CreateMutex();
     p->condition = SDL_CreateCondition();
     const char *capture = getenv("MYNES_AUDIO_CAPTURE"), *trace = getenv("MYNES_AUDIO_TRACE");

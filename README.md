@@ -7,22 +7,24 @@ RF set. MyNES builds the NES waveform from PPU colour codes, passes it through
 a receiver, and renders the beam, phosphors and glass. Change the connection,
 turn a control, or switch televisions while the game keeps running.
 
+[![Darkwing Duck gameplay on the PVM, 3840×2880](docs/images/showcase/4k/darkwing-pvm-gameplay.png)](docs/images/showcase/4k/darkwing-pvm-gameplay.png)
+
+*Darkwing Duck in play · Sony PVM-14L2 · click for the full 3840×2880 capture.*
+
 [Get started](#quick-start) · [All 20 CRT presets](docs/contra-preset-gallery.md) ·
 [Signal Studio](tools/visualiser/README.md) · [How the model works](docs/gpu-pipeline-reference.md)
 
 ## See the signal move
 
-**[▶ Watch the six-game showcase — 24 seconds at 60.1 fps](docs/images/showcase/showcase-reel.mp4)**
-
-[Watch Sony composite and Stas RF side by side](docs/images/showcase/sony-vs-rf.mp4).
+**[▶ Watch the five-game showcase — 20 seconds at 60.1 fps](docs/images/showcase/showcase-reel.mp4)**
 
 | Kirby’s Adventure · JVC D-Series | Little Samson · JVC D-Series |
 |---|---|
 | [![Kirby title with unaveraged NTSC phases](docs/images/showcase/kirby-jvc_d_series_2000.gif)](docs/images/showcase/kirby-jvc_d_series_2000.mp4) | [![Little Samson palace opening](docs/images/showcase/little-samson-jvc_d_series_2000.gif)](docs/images/showcase/little-samson-jvc_d_series_2000.mp4) |
 | **Darkwing Duck · Stas’s Favourite RF** | **Super Mario Bros. 3 · Toshiba 14AF** |
-| [![Darkwing Duck silhouette title](docs/images/showcase/darkwing-stass_favourite.gif)](docs/images/showcase/darkwing-stass_favourite.mp4) | [![Super Mario Bros. 3 animated stage title](docs/images/showcase/mario-3-toshiba_14af43.gif)](docs/images/showcase/mario-3-toshiba_14af43.mp4) |
-| **Mega Man 2 · Sony PVM-14L2** | **Contra · Sony PVM-14L2** |
-| [![Mega Man 2 rooftop title](docs/images/showcase/mega-man-2-sony_pvm_14l2.gif)](docs/images/showcase/mega-man-2-sony_pvm_14l2.mp4) | [![Contra Waterfall boss](docs/images/showcase/boss-sony_pvm_14l2.gif)](docs/images/motion/boss-sony_pvm_14l2.mp4) |
+| [![Darkwing Duck bridge gameplay](docs/images/showcase/darkwing-stass_favourite.gif)](docs/images/showcase/darkwing-stass_favourite.mp4) | [![Super Mario Bros. 3 animated stage title](docs/images/showcase/mario-3-toshiba_14af43.gif)](docs/images/showcase/mario-3-toshiba_14af43.mp4) |
+
+[▶ Mega Man 2 rooftop title on the PVM](docs/images/showcase/mega-man-2-sony_pvm_14l2.mp4)
 
 *Actual MyNES output, with alternating NTSC phases kept separate. GIFs run at
 50 fps for compatibility; click any image for its **60.1 fps video**. No temporal
@@ -33,6 +35,14 @@ This native-pixel, lossless detail keeps the near-60 Hz cadence so you can
 see what a merged screenshot hides:
 
 ![Kirby title phase detail at native pixels](docs/images/showcase/kirby-phase-detail.webp)
+
+## Look closer
+
+**[Four CRTs at 4K: native close-ups and measured beam height](docs/gpu-beam-closeups.md).**
+The complete gameplay image is **3840 pixels wide**, with no side bars.
+Dim strokes stay narrow; bright details spread and fill more of the gap
+between scanlines. Detail crops are not enlarged. The behavior is modeled;
+individual tube beam profiles remain uncalibrated.
 
 ## Choose your television
 

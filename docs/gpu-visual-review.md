@@ -1,5 +1,7 @@
 # CRT visual review — 21 September 2026
 
+For the current presentation, see the [game showcase](nes-visual-showcase.md) and [full-resolution gameplay / beam close-ups](gpu-beam-closeups.md). This page retains controlled diagnostic comparisons at their stated capture resolutions.
+
 Current Contra images come from the actual SDL3 GPU pipeline at **2560×1664**, offscreen, with fixed **1.6×** output headroom. Frames 60 and 61 are averaged in **linear light**. The SDR previews use a common 0.7 exposure to retain bright phosphor detail; they do not establish actual screen luminance. Native crops are not resized.
 
 ## Same Contra boss, four displays

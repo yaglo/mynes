@@ -1,5 +1,7 @@
 # Contra: all 20 CRT presets
 
+For the current presentation, see the [game showcase](nes-visual-showcase.md) and [full-resolution gameplay / beam close-ups](gpu-beam-closeups.md). This page retains controlled diagnostic comparisons at their stated capture resolutions.
+
 Actual output from the GPU renderer at commit `e02fc71`, captured offscreen at **2560×1920**. Every preset receives the same frozen 256×240 Contra boss PPU-code frame, with its own default connection and controls. Host mask alignment is Panel-pixels at 1:1 offscreen scale. This target is larger than the MacBook panel; it is a controlled 4:3 comparison, not a claim about fullscreen panel mapping.
 
 Frames 60 and 61 are averaged in **linear light** before sRGB conversion, at a common 0.7 exposure to preserve more highlight detail in SDR. Full-resolution images are lossless WebP. Overview reductions are also made in linear light. The two-frame still average is a review exposure, not an extra emulator filter. These PNG/WebP previews do not reproduce live HDR headroom.

@@ -1,5 +1,7 @@
 /* Exercise exclusive core ownership, mailbox bounds, and ROM replacement. */
+#define _POSIX_C_SOURCE 200809L
 #include "playback.h"
+#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -52,6 +54,37 @@ int main(void) {
         CHECK(nes->ppu.region==PPU_REGION_PAL);
         CHECK(SDL_GetAudioStreamQueued(stream)==0);
         playback_destroy(p);
+    }
+    /* Replay must hold buttons across frames and release at the exact event. */
+    char path[] = "/tmp/mynes-playback-XXXXXX";
+    int fd = mkstemp(path);
+    CHECK(fd >= 0);
+    if (fd >= 0) {
+        FILE *file = fdopen(fd, "w");
+        fputs("1 80\n3 00\n", file); fclose(file);
+        SDL_setenv_unsafe("MYNES_REVIEW_INPUT_SCRIPT", path, 1);
+        for (unsigned limit = 2; limit <= 3; limit++) {
+            p = playback_create(nes, NULL, NULL, stream, limit, 1);
+            CHECK(p != NULL);
+            if (!p) continue;
+            PlaybackControls controls = {.analog = nes->apu.analog};
+            audio_chain_init_preset(&controls.audio, 0, 0, 0);
+            playback_controls(p, &controls); playback_resume(p);
+            PlaybackFrame frame;
+            for (unsigned n = 1; n <= limit; n++) {
+                CHECK(next(p, &frame)); CHECK(frame.number == n);
+            }
+            playback_pause(p);
+            CHECK(nes->controller[0] == (limit == 2 ? 0x80 : 0));
+            playback_destroy(p);
+        }
+        file = fopen(path, "w");
+        fputs("3 01\n2 00\n", file); fclose(file);
+        p = playback_create(nes, NULL, NULL, stream, 3, 1);
+        CHECK(p == NULL);
+        if (p) playback_destroy(p);
+        SDL_unsetenv_unsafe("MYNES_REVIEW_INPUT_SCRIPT");
+        unlink(path);
     }
     SDL_DestroyAudioStream(stream); free(nes); free(prg); free(chr); SDL_Quit();
     printf("Playback ownership regressions: %d failures\n",failures);
