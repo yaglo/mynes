@@ -61,6 +61,9 @@ typedef struct {
     float hdr_headroom;            /* current display peak / SDR white */
     float sdr_white_level;         /* scRGB white scale */
     int output_hdr;
+    bool pulse_enabled;            /* host BFI, not a television parameter */
+    float pulse_gain;              /* zero is a genuinely dark refresh */
+    bool reuse_halation;           /* same source texture as previous presentation */
     float hdr_gain;                 /* output multiplier (1.0=normal) */
     int   subpixel_layout;          /* 0=none, 1=RGB, 2=BGR */
     float overscan;                 /* bezel crop fraction per edge (0-0.08) */

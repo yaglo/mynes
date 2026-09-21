@@ -9,6 +9,8 @@
 #include <stdint.h>
 #include "gpu_display.h"
 #include "gpu_output.h"
+#include "gpu_presentation.h"
+#include <stdio.h>
 #include "frame_capture.h"
 #include "video_chain.h"
 
@@ -20,6 +22,15 @@ typedef struct {
     GPUDisplay     *gpu_disp;
     bool            gpu_display_enabled;
     bool            crt_shader_enabled;
+    int             presentation_mode;   /* 0 hold, 1 BFI; host preference only */
+    float           dark_frame_level;
+    int             presentation_slots, presentation_slot;
+    int             presentation_last_mode, cadence_samples, frames_in_flight;
+    SDL_DisplayID   presentation_display;
+    float           presentation_hz, presentation_source_hz;
+    bool            presentation_blocked;
+    uint64_t        cadence_start_ns;
+    FILE           *presentation_trace;
     int             mask_alignment;      /* 0 = panel pixels, 1 = physical CRT pitch */
     GPUOutputGeometry output_geometry;
     int             drawable_w, drawable_h;
@@ -86,6 +97,8 @@ float gpu_render_headroom(const GPURenderCtx *ctx);
 /* Wait for display capacity before taking a picture from the playback
  * mailbox. Keeping this wait after encoding used to present stale pictures. */
 bool gpu_render_prepare(GPURenderCtx *ctx);
+/* Refresh capability and reset cadence when the monitor or source changes. */
+void gpu_render_presentation_update(GPURenderCtx *ctx, float source_hz);
 /* Drains the writer before shutdown; reports any deferred write failure. */
 bool gpu_render_release_pending(GPURenderCtx *ctx);
 

@@ -1,6 +1,7 @@
 /* Read the actual render target: test light units, output transfer, and mask energy. */
 #include "gpu_display.h"
 #include "gpu_half.h"
+#include "gpu_presentation.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -159,6 +160,22 @@ int test_display_fidelity(SDL_GPUDevice *gpu) {
     render_region(gpu,&d,input,target,&p,&viewport,avg,&peak);
     CHECK(fabsf(avg[0]-(0.015f+0.5f*0.5f))<0.001f);
     CHECK(fabsf(center_row[0][0]-.015f)<.001f);
+    // Pulse energy and ambient invariance, through the real HDR fragment shader.
+    // Keep enough headroom so the peak shoulder does not confound integration.
+    p.pulse_enabled=true; p.halation_strength=.3f;
+    for (int slots=2; slots<=4; slots++) for (int dim=0; dim<=2; dim++) {
+        float integrated=0;
+        for (int slot=0; slot<slots; slot++) {
+            p.pulse_gain=gpu_presentation_gain(slots,slot,dim*.25f);
+            p.reuse_halation=slot>0;
+            render_region(gpu,&d,input,target,&p,&viewport,avg,&peak);
+            integrated+=avg[0]/slots;
+            CHECK(fabsf(center_row[0][0]-.015f)<.001f);
+            if (slot>0 && dim==0) CHECK(fabsf(avg[0]-.015f)<.001f);
+        }
+        CHECK(fabsf(integrated-.265f)<.002f);
+    }
+    p.pulse_enabled=false; p.reuse_halation=false; p.halation_strength=0;
     p.ambient_light=0;p.mask_strength=1;p.mask_type=1;
     for(int pitch=1;pitch<=4;pitch*=2) {
         p.mask_pitch_px=(float)pitch;

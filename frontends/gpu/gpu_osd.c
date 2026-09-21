@@ -50,6 +50,13 @@ void gpu_osd_render(uint8_t *rgb, uint16_t *codes, const uint8_t (*palette)[3],
     snprintf(text,sizeof(text),"%s",render->offscreen_w ? "OFFSCREEN DRAWABLE PIXELS" : render->output_geometry.native_known
         ? (render->output_geometry.resampled ? "SCALED DESKTOP / F NATIVE FULLSCREEN" : "NATIVE PANEL PIXELS")
         : "DRAWABLE PIXELS / PANEL UNKNOWN");
+    if (render->presentation_mode) {
+        if (render->presentation_slots>1)
+            snprintf(text,sizeof(text),"BFI %DX / %.1f HZ / DIM %.2f",render->presentation_slots,
+                render->presentation_hz,render->dark_frame_level);
+        else
+            snprintf(text,sizeof(text),"BFI INACTIVE / %s",render->presentation_blocked ? "CADENCE TOO SLOW" : "NEEDS MATCHED HIGH HZ");
+    }
     osd_nesfb_text(&fb,x+8,y+51,text,0x00,1);
     for(int row=0;row<rows;row++) {
         int i=first+row, ry=y+65+row*12;

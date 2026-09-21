@@ -441,7 +441,7 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
     float scatter_step=0.006f/6.4f;
 
     /* Skip halation blur passes when strength is 0. */
-    if (params->halation_strength > 0.001f)
+    if (params->halation_strength > 0.001f && !params->reuse_halation)
     {
         memset(&blur_params, 0, sizeof(blur_params));
         blur_params.dir_x = scatter_step * picture_h / fmaxf(picture_w,1);
@@ -473,7 +473,7 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
     }
 
     /* Pass 2: Vertical blur (halation_a → halation_b). */
-    if (params->halation_strength > 0.001f) {
+    if (params->halation_strength > 0.001f && !params->reuse_halation) {
         memset(&blur_params, 0, sizeof(blur_params));
         blur_params.dir_x = 0.0f;
         blur_params.dir_y = scatter_step;
@@ -600,8 +600,11 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
             float mask_origin_x, mask_origin_y; /* vec2, offset 272 */
             float _color_pad[2];
             float phosphor_to_display[3][4];
+            float pulse_gain, _pulse_pad[3];
         } crt_ubo;
 
+        crt_ubo.pulse_gain = params->pulse_enabled ? params->pulse_gain : 1;
+        memset(crt_ubo._pulse_pad, 0, sizeof(crt_ubo._pulse_pad));
         float phosphor_matrix[3][3];
         crt_phosphor_matrix(params->phosphor_gamut,phosphor_matrix);
         for(int i=0;i<3;i++) {
@@ -691,7 +694,8 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
         float surround = params->ambient_light * 0.15f;
         if (params->apl_black_lift > 0.001f)
             surround += params->apl_black_lift * (params->apl_smoothed - 0.5f) * 0.15f
-                * (params->hdr_gain > 0.0f ? params->hdr_gain : 1.0f);
+                * (params->hdr_gain > 0.0f ? params->hdr_gain : 1.0f)
+                * (params->pulse_enabled ? params->pulse_gain : 1);
         surround = fminf(fmaxf(surround, 0.0f), fmaxf(params->hdr_headroom, 1.0f));
         if (params->output_hdr)
             surround *= params->sdr_white_level;

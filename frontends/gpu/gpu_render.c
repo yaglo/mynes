@@ -236,6 +236,37 @@ float gpu_render_headroom(const GPURenderCtx *ctx) {
         SDL_PROP_WINDOW_HDR_HEADROOM_FLOAT, 1));
 }
 
+void gpu_render_presentation_update(GPURenderCtx *ctx, float source_hz) {
+    SDL_DisplayID display = SDL_GetDisplayForWindow(ctx->window);
+    const SDL_DisplayMode *mode = SDL_GetCurrentDisplayMode(display);
+    float hz = mode ? mode->refresh_rate : 0;
+    if (ctx->presentation_last_mode != ctx->presentation_mode ||
+        ctx->presentation_display != display || ctx->presentation_hz != hz ||
+        ctx->presentation_source_hz != source_hz) {
+        ctx->presentation_blocked = false;
+        ctx->presentation_slot = ctx->cadence_samples = 0;
+        ctx->cadence_start_ns = 0;
+        ctx->presentation_last_mode = ctx->presentation_mode;
+        ctx->presentation_display = display;
+        ctx->presentation_hz = hz;
+        ctx->presentation_source_hz = source_hz;
+        if (ctx->presentation_mode)
+            fprintf(stderr, "BFI: display %.3f Hz, source %.4f Hz, %d refreshes/frame%s\n",
+                hz, source_hz, gpu_presentation_slots(hz, source_hz),
+                ctx->offscreen_w ? " (disabled offscreen)" : "");
+    }
+    ctx->presentation_slots = ctx->presentation_mode && !ctx->offscreen_w &&
+        !ctx->presentation_blocked && ctx->gpu_display_enabled && ctx->crt_shader_enabled &&
+        !ctx->split_mode ? gpu_presentation_slots(hz, source_hz) : 1;
+    if (ctx->presentation_slots == 1) ctx->presentation_slot = 0;
+    /* SDL flushes the queue here: never reconfigure while holding an acquired
+     * drawable waiting for a source picture. Apply at the next free boundary. */
+    int in_flight = ctx->presentation_slots > 1 ? 1 : 2;
+    if (!ctx->present_cmd && ctx->frames_in_flight != in_flight &&
+        SDL_SetGPUAllowedFramesInFlight(ctx->gpu, in_flight))
+        ctx->frames_in_flight = in_flight;
+}
+
 bool gpu_render_prepare(GPURenderCtx *ctx) {
     if(ctx->present_cmd) return true;
     ctx->swap_wait_ns=0;
@@ -355,6 +386,10 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
             disp_params.glass_tint = 1;
             disp_params.hdr_gain = 1;
         }
+        disp_params.pulse_enabled = ctx->presentation_slots > 1;
+        disp_params.pulse_gain = gpu_presentation_gain(ctx->presentation_slots,
+            ctx->presentation_slot, ctx->dark_frame_level);
+        disp_params.reuse_halation = ctx->presentation_slot > 0;
         disp_params.frame_brightness = ctx->hv_sag_state;
         disp_params.apl_smoothed = ctx->apl_slow_state;
         disp_params.thermal_r = ctx->thermal_r_state;
@@ -434,6 +469,26 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
         ctx->offscreen_fence=SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
         if(ctx->offscreen_fence) ctx->submit_ns=SDL_GetTicksNS();
     } else if(SDL_SubmitGPUCommandBuffer(cmd)) ctx->submit_ns=SDL_GetTicksNS();
+    if (ctx->submit_ns && ctx->presentation_trace)
+        fprintf(ctx->presentation_trace, "%llu,%llu,%d,%d,%.3f\n",
+            (unsigned long long)ctx->submit_ns, (unsigned long long)ctx->frame_counter,
+            ctx->presentation_slot, ctx->presentation_slots, ctx->presentation_hz);
+    if (ctx->submit_ns && ctx->presentation_slots > 1) {
+        if (!ctx->cadence_start_ns) ctx->cadence_start_ns = ctx->submit_ns;
+        else if (++ctx->cadence_samples >= 60) {
+            double elapsed = (ctx->submit_ns - ctx->cadence_start_ns) * 1e-9;
+            double measured = ctx->cadence_samples / elapsed;
+            /* Mode metadata is not evidence of actual ProMotion cadence.
+             * Submission timing can reject slow pacing, not prove scanout. */
+            if (measured < ctx->presentation_hz * .85) {
+                ctx->presentation_blocked = true;
+                fprintf(stderr, "BFI suspended: %.1f submissions/s below %.1f Hz display; using hold\n",
+                    measured, ctx->presentation_hz);
+            }
+            ctx->cadence_samples = 0;
+            ctx->cadence_start_ns = ctx->submit_ns;
+        }
+    }
     const char *capture_path = ctx->capture_path ? ctx->capture_path : SDL_getenv("MYNES_CAPTURE_PATH");
     const char *capture_frame_env = SDL_getenv("MYNES_CAPTURE_FRAME");
     unsigned capture_frame = capture_frame_env ? (unsigned)atoi(capture_frame_env) : 180;

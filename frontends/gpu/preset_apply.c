@@ -923,7 +923,7 @@ static OSDMenuItem menu_audio_chain[9];
  * declared near the top of this file so the save action can reach them. */
 static OSDMenuItem menu_audio_top[3];
 static OSDMenuItem menu_picture[8], menu_tube[5];
-static OSDMenuItem menu_diagnostics[1],menu_display[2];
+static OSDMenuItem menu_diagnostics[1],menu_display[4];
 int         preset_menu_root_count = 7;
 
 /* Helper to populate an OSDMenuItem. */
@@ -1309,7 +1309,9 @@ void preset_ctx_init(PresetCtx *ctx) {
     preset_menu_root[5] = MI_SUB("Diagnostics", menu_diagnostics, 1);
     menu_display[0] = MI_CYCLIC("Mask sampling",&ctx->render_ctx->mask_alignment,0,1,gpu_cb_mask_alignment,"Panel pixels|CRT pitch");
     menu_display[1] = make_item("Native fullscreen",OSD_MI_ACTION,NULL,0,0,0,NULL,NULL,0,gpu_cb_fullscreen,NULL);
-    preset_menu_root[6] = MI_SUB("Host display",menu_display,2);
+    menu_display[2] = MI_CYCLIC("Presentation",&ctx->render_ctx->presentation_mode,0,1,NULL,"Hold|BFI (high Hz)");
+    menu_display[3] = MI_FLOAT("Dark refresh",&ctx->render_ctx->dark_frame_level,.05f,0,1,NULL,"%.2f");
+    preset_menu_root[6] = MI_SUB("Host display",menu_display,4);
 }
 
 /* ============================================================================

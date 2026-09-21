@@ -74,6 +74,7 @@ struct DisplayParams
     float2 mask_scale;
     float2 mask_origin;
     float4 phosphor_to_display[3];
+    float4 presentation;
 };
 
 struct main0_out
@@ -349,20 +350,20 @@ fragment main0_out main0(main0_in in [[stage_in]], constant DisplayParams& _75 [
     {
         _886 = 1.0;
     }
-    color *= _886;
+    color *= (_886 * _75.presentation.x);
     color += float3(_75.ambient_light * 0.1500000059604644775390625);
     if (_75.apl_black_lift > 0.001000000047497451305389404296875)
     {
-        float _921;
+        float _925;
         if (_75.hdr_gain > 0.0)
         {
-            _921 = _75.hdr_gain;
+            _925 = _75.hdr_gain;
         }
         else
         {
-            _921 = 1.0;
+            _925 = 1.0;
         }
-        color += (float3((_75.apl_black_lift * (_75.apl_smoothed - 0.5)) * 0.1500000059604644775390625) * _921);
+        color += ((float3((_75.apl_black_lift * (_75.apl_smoothed - 0.5)) * 0.1500000059604644775390625) * _925) * _75.presentation.x);
     }
     if (_75.glass_glare > 0.001000000047497451305389404296875)
     {
@@ -375,16 +376,16 @@ fragment main0_out main0(main0_in in [[stage_in]], constant DisplayParams& _75 [
             {
                 warm.x = 1.0;
                 warm.y = fast::clamp((0.38999998569488525390625 * log(t)) - 0.630999982357025146484375, 0.0, 1.0);
-                float _970;
+                float _977;
                 if (_75.glass_glare_temp_k < 1900.0)
                 {
-                    _970 = 0.0;
+                    _977 = 0.0;
                 }
                 else
                 {
-                    _970 = fast::clamp((0.5429999828338623046875 * log(t - 10.0)) - 1.19599997997283935546875, 0.0, 1.0);
+                    _977 = fast::clamp((0.5429999828338623046875 * log(t - 10.0)) - 1.19599997997283935546875, 0.0, 1.0);
                 }
-                warm.z = _970;
+                warm.z = _977;
             }
             else
             {
@@ -425,17 +426,17 @@ fragment main0_out main0(main0_in in [[stage_in]], constant DisplayParams& _75 [
         float mapped = knee + (((limit - knee) * (peak - knee)) / (((peak - knee) + limit) - knee));
         color *= (mapped / peak);
     }
-    float3 _1196;
+    float3 _1203;
     if (_75.output_hdr != 0)
     {
-        _1196 = color * _75.sdr_white_level;
+        _1203 = color * _75.sdr_white_level;
     }
     else
     {
         float3 param_9 = color;
-        _1196 = srgb_encode(param_9);
+        _1203 = srgb_encode(param_9);
     }
-    color = _1196;
+    color = _1203;
     out.frag_color = float4(color, 1.0);
     return out;
 }

@@ -92,6 +92,7 @@ layout(set = 3, binding = 0) uniform DisplayParams {
     float mask_row_pitch;
     vec2 mask_scale, mask_origin;
     vec4 phosphor_to_display[3];
+    vec4 presentation; // x: host-refresh emission multiplier
 };
 
 /* Mask coordinates are local to the CRT viewport. Each stripe is one
@@ -341,7 +342,7 @@ void main() {
 
     // Linear emission gain uses HDR headroom for phosphor peaks. Reflected
     // room light is independent of tube drive and must not rise with it.
-    color *= hdr_gain > 0.0 ? hdr_gain : 1.0;
+    color *= (hdr_gain > 0.0 ? hdr_gain : 1.0) * presentation.x;
 
     /* (h) Black floor already applied in beam shader — don't double it.
      *     Only add ambient light reflection on the glass surface. */
@@ -353,7 +354,7 @@ void main() {
      * lower. Sign is: (apl_smoothed - 0.5) > 0 → lift. */
     if (apl_black_lift > 0.001) {
         color += vec3(apl_black_lift * (apl_smoothed - 0.5) * 0.15)
-               * (hdr_gain > 0.0 ? hdr_gain : 1.0);
+               * (hdr_gain > 0.0 ? hdr_gain : 1.0) * presentation.x;
     }
 
     /* §6.3 Glass-face glare — external reflection of the viewer's

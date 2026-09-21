@@ -399,6 +399,11 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
             target_link_libraries(test_gpu_kernels PRIVATE m)
             add_test(NAME gpu_kernel_tests COMMAND test_gpu_kernels)
 
+            add_executable(test_presentation frontends/gpu/tests/test_presentation.c)
+            target_include_directories(test_presentation PRIVATE frontends/gpu)
+            target_link_libraries(test_presentation PRIVATE m)
+            add_test(NAME gpu_presentation_tests COMMAND test_presentation)
+
             # Signal precompute tests (DAC model, FIR design, windows)
             add_executable(test_signal_precompute frontends/gpu/tests/test_signal_precompute.c)
             target_include_directories(test_signal_precompute PRIVATE frontends/gpu)

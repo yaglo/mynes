@@ -56,3 +56,44 @@ These are linear framebuffer measurements, not nits measured on a MacBook.
 Regression tests also check RGB balance, unresolved-mask averaging, ambient
 independence, highlight slopes and output limits. Real panel peak brightness,
 local dimming, viewing distance and ambient reflections remain external factors.
+
+## High-refresh presentation
+
+Host display → Presentation → BFI enables optional dark-frame insertion.
+`--presentation bfi --dark-frame-level 0.15` gives each dark refresh 15% of
+its paired bright refresh's phosphor light. This is linear-light dimming, not
+window transparency. Hold remains the default. The preference is session-only
+and deliberately absent from television presets.
+
+The current display must report approximately 2–8 refreshes per source frame:
+120/240 Hz for NTSC, 100/200 Hz for PAL, for example. 60 Hz, unknown refresh and
+144/60 combinations use Hold. The OSD shows when BFI is inactive. If submission
+cadence falls below 85% of the reported rate over 60 intervals, BFI suspends;
+toggle it off/on after resolving the cause. Moving to another display or
+changing its reported mode restarts the check. Submission times can detect
+slow pacing but cannot certify physical scanout, especially under variable
+refresh/compositing.
+
+Only the first refresh runs the NES signal/beam pipeline. Additional refreshes
+reuse its output and glass-scatter textures; the final phosphor/glass pass runs
+again. Audio, PPU timing, carrier phase, phosphor history and supply state advance
+once per emulated frame. Blank/dim refreshes affect emission (including its
+pedestal), not room reflections. Bright-refresh gain compensates the duty cycle
+before the HDR shoulder; insufficient peak headroom still reduces average
+brightness. BFI and a strong grille compete for the same available headroom.
+
+This reduces display hold time when the host presents the requested cadence;
+it is **not a simulation of a continuously moving CRT beam**. At 120 Hz a lit
+refresh still lasts about 8.3 ms, with the LCD's own response on top. A rolling
+exposure model would need source history and time-integrated phosphor decay;
+a black horizontal band alone would not reproduce that behavior.
+
+`MYNES_PRESENT_TRACE=/tmp/presents.csv` records every submission with source
+frame number, refresh slot and reported display Hz. Ordinary playback traces
+continue to count source pictures only. Offscreen captures use Hold, so a still
+capture remains comparable across machines.
+
+Validation: CPU tests cover rate eligibility and pulse-energy integration;
+actual HDR render-target tests verify emitted-light integration and unchanged
+ambient margins. The available desktop reported 60 Hz and correctly remained
+in Hold (~60.10 submissions/s); 120 Hz optical motion benefit is not yet verified.

@@ -223,6 +223,8 @@ int main(int argc, char **argv) {
     char manual_screenshot_path[256];
     int exit_status = 0;
     int offscreen_w=0,offscreen_h=0;
+    int presentation_mode=0;
+    float dark_frame_level=0;
     FILE *playback_trace=NULL;
     const char *trace_path=getenv("MYNES_PLAYBACK_TRACE"), *limit_env=getenv("MYNES_PLAYBACK_FRAMES");
     const char *bench_capture=getenv("MYNES_PLAYBACK_READBACK_PATH");
@@ -278,6 +280,17 @@ int main(int argc, char **argv) {
             if(sscanf(argv[++i],"%dx%d",&window_width,&window_height)!=2 || window_width<64 || window_height<64 || window_width>8192 || window_height>8192) {
                 fprintf(stderr,"Window size must be WIDTHxHEIGHT in window coordinates\n");return 1;
             }
+        } else if (strcmp(argv[i], "--presentation") == 0 && i+1<argc) {
+            const char *mode=argv[++i];
+            if (!strcmp(mode,"hold")) presentation_mode=0;
+            else if (!strcmp(mode,"bfi")) presentation_mode=1;
+            else { fprintf(stderr,"Presentation must be hold or bfi\n"); return 1; }
+        } else if (strcmp(argv[i], "--dark-frame-level") == 0 && i+1<argc) {
+            char *end;
+            dark_frame_level=strtof(argv[++i],&end);
+            if (*end || !*argv[i] || !isfinite(dark_frame_level) || dark_frame_level<0 || dark_frame_level>1) {
+                fprintf(stderr,"Dark frame level must be 0..1\n"); return 1;
+            }
         } else if (strcmp(argv[i], "--sdr") == 0) {
             force_sdr = true;
         } else if (strcmp(argv[i], "--simulate-frame") == 0 && i + 1 < argc) {
@@ -317,6 +330,8 @@ int main(int argc, char **argv) {
                    "  --screenshot-frames N Capture 1..240 consecutive frames\n"
                    "  --benchmark           Fence complete preset chain at four resolutions\n"
                    "  --offscreen WxH       Hidden, silent playback into a pixel-sized target\n"
+                   "  --presentation M     hold (default) or bfi at integer refresh multiples\n"
+                   "  --dark-frame-level F  Dark-refresh emission, 0..1 (default 0)\n"
                    "  --sdr                 Use SDR output for display comparisons\n"
                    "  --native-fullscreen   Enter native panel mode (F toggles back)\n"
                    "  --mask-alignment M    pixels (default) or physical CRT pitch\n"
@@ -767,6 +782,14 @@ int main(int argc, char **argv) {
     }
 
     /* --- Debug server (for SwiftUI visualiser, --debug-server only) --- */
+    render_ctx.presentation_mode=presentation_mode;
+    render_ctx.dark_frame_level=dark_frame_level;
+    const char *present_trace=getenv("MYNES_PRESENT_TRACE");
+    if (present_trace) {
+        render_ctx.presentation_trace=fopen(present_trace,"w");
+        if (render_ctx.presentation_trace)
+            fprintf(render_ctx.presentation_trace,"submit_ns,source_frame,slot,slots,reported_hz\n");
+    }
     render_ctx.offscreen_w=offscreen_w;render_ctx.offscreen_h=offscreen_h;
     const char *headroom_env=getenv("MYNES_OFFSCREEN_HEADROOM");
     render_ctx.offscreen_headroom=headroom_env ? fmaxf(1,atof(headroom_env)) : 1.6f;
@@ -1092,6 +1115,16 @@ int main(int argc, char **argv) {
             if (live) playback_resume(playback); else playback_pause(playback);
             playback_active = live;
         }
+        gpu_render_presentation_update(&render_ctx, 1000.0f / signal_region_frame_ms(preset_ctx.region));
+        if (render_ctx.presentation_slot > 0) {
+            /* Re-present phosphor light only. Do not advance the PPU, audio,
+             * signal phase, beam history, CRT load or diagnostic frame count. */
+            gpu_render_frame(&render_ctx, &video_chain);
+            if (render_ctx.submit_ns)
+                render_ctx.presentation_slot = (render_ctx.presentation_slot + 1) % render_ctx.presentation_slots;
+            else SDL_Delay(1);
+            continue;
+        }
         Uint64 t_emu0 = 0, t_emu1 = 0;
         sig_state.frame_phase_override = -1;
         if (live) {
@@ -1389,6 +1422,8 @@ int main(int argc, char **argv) {
         Uint64 t_render0 = SDL_GetPerformanceCounter();
         gpu_render_frame(&render_ctx, &video_chain);
         Uint64 t_render1 = SDL_GetPerformanceCounter();
+        if (render_ctx.submit_ns && render_ctx.presentation_slots > 1)
+            render_ctx.presentation_slot = 1;
         if(live && playback_trace && render_ctx.submit_ns) {
             double ms=1000.0/SDL_GetPerformanceFrequency();
             fprintf(playback_trace,"%u,%u,%llu,%llu,%llu,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%d,%d\n",
@@ -1452,6 +1487,7 @@ int main(int argc, char **argv) {
 
 cleanup:
     if(playback_trace) fclose(playback_trace);
+    if(render_ctx.presentation_trace) fclose(render_ctx.presentation_trace);
     playback_destroy(playback);
     if (!gpu_render_release_pending(&render_ctx)) exit_status=1;
     if (debug_srv) debug_server_destroy(debug_srv);
