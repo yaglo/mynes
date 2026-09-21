@@ -154,6 +154,25 @@ int test_display_fidelity(SDL_GPUDevice *gpu) {
     SDL_GPUViewport viewport={.x=W/4,.y=0,.w=W/2,.h=H,.min_depth=0,.max_depth=1};
     render_region(gpu,&d,input,target,&p,&viewport,avg,&peak);
     CHECK(fabsf(avg[0]-(0.015f+0.25f*0.5f))<0.001f);
+    // Emission gain must not amplify reflected room light or the surround.
+    p.hdr_gain=2; p.hdr_headroom=8;
+    render_region(gpu,&d,input,target,&p,&viewport,avg,&peak);
+    CHECK(fabsf(avg[0]-(0.015f+0.5f*0.5f))<0.001f);
+    CHECK(fabsf(center_row[0][0]-.015f)<.001f);
+    p.ambient_light=0;p.mask_strength=1;p.mask_type=1;
+    for(int pitch=1;pitch<=4;pitch*=2) {
+        p.mask_pitch_px=(float)pitch;
+        p.hdr_headroom=1;
+        render(gpu,&d,input,target,&p,avg,&peak);
+        float sdr_mean=avg[0],sdr_peak=peak;
+        p.hdr_headroom=4;
+        render(gpu,&d,input,target,&p,avg,&peak);
+        printf("Grille period %d px: SDR mean/peak %.4f/%.4f, EDR %.4f/%.4f\n",
+               3*pitch,sdr_mean,sdr_peak,avg[0],peak);
+        CHECK(avg[0]>sdr_mean && peak>sdr_peak);
+        CHECK(fabsf(avg[0]-.5f)<.002f);
+        CHECK(fabsf(avg[0]-avg[2])<.002f);
+    }
     // Limited host headroom must preserve RGB ratios and a nonzero
     // highlight slope, rather than clip each channel into white.
     p.ambient_light=0;p.mask_strength=0;p.hdr_headroom=1.25f;p.hdr_gain=4;

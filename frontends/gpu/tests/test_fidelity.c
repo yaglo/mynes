@@ -531,6 +531,38 @@ static void comb_separation(SDL_GPUDevice *gpu) {
             }
         }
     }
+    /* Fine monochrome detail correlated across the actual 1H delay must
+     * not be classified as chroma merely because its band energy is high.
+     * Shift the chart by two samples/line to isolate the classifier from
+     * the NES/broadcast line-length mismatch. */
+    cp.mode=2; chain_update_params(&sc,ci,&cp,sizeof(cp));
+    for(int i=0;i<COUNT;i++)
+        input[i]=.5f+.2f*cosf((float)((i%WIDTH)-2*(i/WIDTH))*6.28318530718f/12);
+    CHECK(chain_upload_input(&sc,gpu,input,COUNT*sizeof(float))); CHECK(chain_run(&sc,gpu));
+    CHECK(gpu_buffer_download(gpu,sc.aux[0],c,COUNT*sizeof(float)));
+    double false_color=0;
+    for(int x=60;x<WIDTH-60;x++) false_color+=c[3*WIDTH+x]*c[3*WIDTH+x];
+    false_color=sqrt(false_color/(WIDTH-120));
+    printf("Adaptive comb monochrome false-color RMS: %.6f\n",false_color);
+    CHECK(false_color<.002);
+    /* An isoluminant hue boundary is not monochrome correlation. With
+     * neither neighbor matching, retain the current line's chroma band. */
+    for(int i=0;i<COUNT;i++) {
+        float phase=(i/WIDTH==3 ? 1.57079632679f : 0);
+        input[i]=.5f+.2f*cosf((float)(i%12)*6.28318530718f/12+phase);
+    }
+    CHECK(chain_upload_input(&sc,gpu,input,COUNT*sizeof(float))); CHECK(chain_run(&sc,gpu));
+    CHECK(gpu_buffer_download(gpu,sc.aux[0],c,COUNT*sizeof(float)));
+    double color_error=0;
+    for(int x=60;x<WIDTH-60;x++) {
+        int i=3*WIDTH+x;
+        double error=c[i]-(input[i]-.5f);
+        color_error+=error*error;
+    }
+    color_error=sqrt(color_error/(WIDTH-120));
+    printf("Adaptive comb hue-boundary error RMS: %.6f\n",color_error);
+    CHECK(color_error<.002);
+    cp.mode=3; chain_update_params(&sc,ci,&cp,sizeof(cp));
     // A chroma impulse in the centre line reaches only its immediate neighbours.
     for(int i=0;i<COUNT;i++) input[i]=.5f+(i/WIDTH==3 ? .2f*cosf((float)(i%12)*6.28318530718f/12) : 0);
     CHECK(chain_upload_input(&sc,gpu,input,COUNT*sizeof(float))); CHECK(chain_run(&sc,gpu));

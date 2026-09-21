@@ -129,7 +129,7 @@ typedef struct {
     float length_meters;        /* physical cable length */
     float resistance_per_m;     /* series resistance (Ω/m), typically 0.1-2.0 */
     float capacitance_per_m;    /* shunt capacitance (F/m), typically 50-100 pF/m */
-    int   num_sections;         /* RC ladder approximation order (2-8) */
+    int   num_sections;         /* legacy file metadata; GPU uses a single equivalent pole */
     float connector_resistance; /* total contact R at both ends (Ω) */
     float impedance;            /* characteristic impedance (Ω), typically 75 */
     float shield_effectiveness; /* 0=none, 1=perfect */
@@ -143,7 +143,7 @@ typedef struct {
 
 typedef struct {
     bool  enabled;              /* only true for RF connection */
-    float carrier_freq;         /* Ch 3 = 61.25 MHz, Ch 4 = 67.25 MHz */
+    float carrier_freq;         /* channel metadata; baseband-equivalent RF does not tune it */
     float carrier_level_dbm;    /* sync-tip carrier power; 0 legacy -> -20 dBm */
     float mod_bandwidth;        /* equivalent detected-video lowpass edge, Hz */
     float noise_floor_dbm;      /* total additive channel noise before video filtering */
@@ -178,11 +178,10 @@ typedef struct {
     float decoder_blue_gain;    /* B-Y gain offset; independent of white balance */
     float fir_ringing;          /* FIR window blend: 0=Hamming, 1=rect (Gibbs ringing) */
     float luma_peaking;         /* TV sharpness: 0=off, 0.3=moderate, 0.8=aggressive edge boost */
-    /* Subcarrier notch depth in Y FIR. 0.95 = -26 dB (clean, default,
-     * kills dot crawl + cross-color). 0.0 = notch disabled (subcarrier
-     * passes into Y → consumer-TV rainbow fringes + dot crawl).
-     * Only effective with fir_y_n ≥ 23 (shorter FIRs can't host a
-     * clean notch and the notch is skipped). */
+    /* Fraction of residual carrier rejected in the Y FIR. 0.95 adds
+     * 26 dB rejection at the carrier; 0 disables the horizontal trap.
+     * Controls cross-luma, not cross-color in the separate chroma path.
+     * Requires fir_y_n >= 23. */
     float luma_notch_depth;
     float rf_interference;      /* RF interference jitter in signal samples (0=none) */
     float geometry_warp;        /* horizontal geometry distortion (0=perfect, 3=visible) */
@@ -334,7 +333,7 @@ typedef struct {
     float top_band_end;
     float top_edge_width;
 
-    /* Motion-adaptive 3D comb filter. */
+    /* Optional motion-adaptive display-frame smoothing; not a 3D Y/C comb. */
     float motion_threshold;     /* luma delta for static/moving classification (0.05-0.15) */
 
     /* Halation bloom per-channel tint — biases the phosphor halo colour.

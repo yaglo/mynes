@@ -230,8 +230,8 @@ int main(int argc, char **argv) {
     unsigned last_trace_frame=0, next_bench_capture=120;
     const char *debug_socket = getenv("MYNES_DEBUG_SOCKET");
     if (!debug_socket) debug_socket = "/tmp/mynes_gpu_debug.sock";
-    const char *static_frame_path = NULL;  /* --simulate-frame <file.bin>: bypass emulation */
-    const char *preset_path = NULL;        /* --preset <path.json>: apply on startup */
+    const char *static_frame_path = getenv("MYNES_REVIEW_FRAME");  /* --simulate-frame overrides */
+    const char *preset_path = getenv("MYNES_REVIEW_PRESET"); /* --preset overrides */
     int screenshot_count = 1, screenshots_taken = 0;
     char next_screenshot_path[4096];
     bool review_no_input = getenv("MYNES_REVIEW_NO_INPUT") != NULL;
@@ -363,8 +363,9 @@ int main(int argc, char **argv) {
     SDL_WindowFlags window_flags=SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
     if (benchmark || offscreen_w) window_flags |= SDL_WINDOW_HIDDEN;
     else if (screenshot_after > 0 || review_no_input) window_flags |= SDL_WINDOW_NOT_FOCUSABLE;
+    const char *review_title = getenv("MYNES_REVIEW_TITLE");
     window = SDL_CreateWindow(
-        "MyNES (GPU)",
+        review_title && *review_title ? review_title : "MyNES (GPU)",
         window_width, window_height,
         window_flags
     );
@@ -373,6 +374,22 @@ int main(int argc, char **argv) {
         SDL_DestroyGPUDevice(gpu);
         SDL_Quit();
         return 1;
+    }
+
+    /* Optional native side-by-side review, sized in UI coordinates while
+     * the renderer still resolves the mask in actual drawable pixels. */
+    const char *review_side = getenv("MYNES_REVIEW_SIDE");
+    if (!offscreen_w && review_side &&
+        (!strcmp(review_side,"left") || !strcmp(review_side,"right"))) {
+        SDL_Rect bounds;
+        if (SDL_GetDisplayUsableBounds(SDL_GetPrimaryDisplay(), &bounds)) {
+            int width = (bounds.w - 48) / 2;
+            int height = width * 3 / 4;
+            if (height > bounds.h - 80) height = bounds.h - 80;
+            SDL_SetWindowSize(window, width, height);
+            SDL_SetWindowPosition(window, bounds.x + 16 +
+                (!strcmp(review_side,"right") ? width + 16 : 0), bounds.y + 40);
+        }
     }
 
     if (!SDL_ClaimWindowForGPUDevice(gpu, window)) {

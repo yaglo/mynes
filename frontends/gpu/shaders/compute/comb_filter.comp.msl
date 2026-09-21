@@ -34,7 +34,7 @@ struct Y
 
 constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
 
-kernel void main0(constant Params& _20 [[buffer(0)]], device Band& _80 [[buffer(2)]], device Signal& _129 [[buffer(1)]], device C& _230 [[buffer(4)]], device Y& _237 [[buffer(3)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+kernel void main0(constant Params& _20 [[buffer(0)]], device Band& _80 [[buffer(2)]], device Signal& _217 [[buffer(1)]], device C& _333 [[buffer(4)]], device Y& _340 [[buffer(3)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
     uint t = gl_GlobalInvocationID.x;
     if (t >= _20.count)
@@ -83,11 +83,44 @@ kernel void main0(constant Params& _20 [[buffer(0)]], device Band& _80 [[buffer(
     }
     if (_20.mode == 2u)
     {
-        float low = _129.signal_in[t] - b;
-        float ep = abs(low - (_129.signal_in[before] - _80.band[before])) + abs(b + _80.band[before]);
-        float en = abs(low - (_129.signal_in[after] - _80.band[after])) + abs(b + _80.band[after]);
-        float wp = 1.0 - smoothstep(0.02999999932944774627685546875, 0.180000007152557373046875, ep);
-        float wn = 1.0 - smoothstep(0.02999999932944774627685546875, 0.180000007152557373046875, en);
+        float2 low_error = float2(0.0);
+        float2 same_error = float2(0.0);
+        float2 opposite_error = float2(0.0);
+        int start = int((t / _20.samples_per_line) * _20.samples_per_line);
+        int end = min((start + int(_20.samples_per_line)), int(_20.count)) - 1;
+        uint _176;
+        uint _192;
+        for (int k = 0; k < 4; k++)
+        {
+            uint q = uint(clamp((int(t) + (3 * k)) - 4, start, end));
+            if (q >= delay)
+            {
+                _176 = q - delay;
+            }
+            else
+            {
+                _176 = q;
+            }
+            uint p = _176;
+            if ((q + delay) < _20.count)
+            {
+                _192 = q + delay;
+            }
+            else
+            {
+                _192 = q;
+            }
+            uint n = _192;
+            float band_q = _80.band[q];
+            float2 bands = float2(_80.band[p], _80.band[n]);
+            float2 low_delta = float2(_217.signal_in[q] - band_q) - (float2(_217.signal_in[p], _217.signal_in[n]) - bands);
+            low_error += (low_delta * low_delta);
+            same_error += ((float2(band_q) - bands) * (float2(band_q) - bands));
+            opposite_error += ((float2(band_q) + bands) * (float2(band_q) + bands));
+        }
+        float2 error = sqrt(low_error * 0.25) + sqrt(fast::min(same_error, opposite_error) * 0.25);
+        float wp = 1.0 - smoothstep(0.02999999932944774627685546875, 0.180000007152557373046875, error.x);
+        float wn = 1.0 - smoothstep(0.02999999932944774627685546875, 0.180000007152557373046875, error.y);
         if (before == t)
         {
             wp = 0.0;
@@ -101,6 +134,6 @@ kernel void main0(constant Params& _20 [[buffer(0)]], device Band& _80 [[buffer(
         c = mix(b, comb, fast::min(sum, 1.0));
     }
     c *= _20.blend;
-    _230.c_out[t] = c;
-    _237.y_out[t] = _129.signal_in[t] - c;
+    _333.c_out[t] = c;
+    _340.y_out[t] = _217.signal_in[t] - c;
 }

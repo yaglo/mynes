@@ -670,7 +670,7 @@ const STAGES = [
       ['ambient_light', 'float', '0 .. 0.3', '0.05', '--', 'Simulated room light reflecting off the screen surface'],
       ['hdr_gain', 'float', '0 .. 2', '1.0', '--', 'Output multiplier to compensate mask darkening; >1 for HDR/EDR displays'],
     ],
-    whatYouSee: 'Vignette darkens the corners and edges, simulating both the natural brightness falloff of a CRT and the shadow from the bezel. Ambient light washes out the blacks slightly -- set higher for a brightly lit living room, lower for a dark gaming den. HDR gain boosts the final output to compensate for the darkening effect of the phosphor mask, especially useful on EDR displays.',
+    whatYouSee: 'Vignette darkens the corners and edges, simulating both the natural brightness falloff of a CRT and the shadow from the bezel. Ambient light washes out the blacks slightly -- set higher for a brightly lit living room, lower for a dark gaming den. Emission gain boosts phosphor light before room reflections are added. Available EDR headroom preserves resolved mask peaks; limited headroom compresses them.',
     signalFlow: ['Glass Output', 'Vignette + Ambient + HDR Gain + Tone Map', 'Final Display Output'],
   },
 ];

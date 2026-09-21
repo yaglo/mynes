@@ -23,14 +23,30 @@ void main() {
     if(mode==1u) c=0.5*(b-band[before]); // two scanlines / one delay
     if(mode==3u) c=0.5*b-0.25*(band[before]+band[after]); // three / two delays
     if(mode==2u) {
-        // Use the vertically correlated side at a boundary; fall back to
-        // horizontal separation if neither side matches. Low-band luma
-        // and opposite-phase chroma both contribute to the decision.
-        float low=signal_in[t]-b;
-        float ep=abs(low-(signal_in[before]-band[before]))+abs(b+band[before]);
-        float en=abs(low-(signal_in[after]-band[after]))+abs(b+band[after]);
-        float wp=1.0-smoothstep(0.03,0.18,ep);
-        float wn=1.0-smoothstep(0.03,0.18,en);
+        // Correlation can be same-phase (fine luma) OR opposite-phase
+        // (chroma). Rejecting the former sends white detail into C.
+        // Compare energy over a carrier cycle so the decision does not
+        // switch at each carrier zero crossing. This is a generic
+        // adaptive separator, not the proprietary MC141627 algorithm.
+        vec2 low_error=vec2(0), same_error=vec2(0), opposite_error=vec2(0);
+        int start=int(t/samples_per_line*samples_per_line);
+        int end=min(start+int(samples_per_line),int(count))-1;
+        for(int k=0;k<4;k++) {
+            uint q=uint(clamp(int(t)+3*k-4,start,end));
+            uint p=q>=delay ? q-delay : q;
+            uint n=q+delay<count ? q+delay : q;
+            float band_q=band[q];
+            vec2 bands=vec2(band[p],band[n]);
+            vec2 low_delta=vec2(signal_in[q]-band_q)
+                -(vec2(signal_in[p],signal_in[n])-bands);
+            low_error+=low_delta*low_delta;
+            same_error+=(vec2(band_q)-bands)*(vec2(band_q)-bands);
+            opposite_error+=(vec2(band_q)+bands)*(vec2(band_q)+bands);
+        }
+        vec2 error=sqrt(low_error*.25)
+            +sqrt(min(same_error,opposite_error)*.25);
+        float wp=1.0-smoothstep(0.03,0.18,error.x);
+        float wn=1.0-smoothstep(0.03,0.18,error.y);
         if(before==t) wp=0.0;
         if(after==t) wn=0.0;
         float sum=wp+wn;

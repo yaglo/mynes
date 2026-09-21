@@ -35,6 +35,15 @@ preset, which sets horizontal notch depth to zero, is unchanged. This is a filte
 correctness fix, not a claim of hardware calibration or a complete solution to
 excessive rainbowing.
 
+The adaptive separator now recognizes both same-phase high-band detail
+(luminance) and opposite-phase detail (chroma), using correlation energy over a
+carrier cycle. Previously its decision rejected correlated monochrome detail
+and fell back to horizontal band separation, creating false color. An actual GPU
+regression chart changes from 0.141421 chroma RMS to below 0.002, while a separate
+isoluminant hue-boundary test retains the current line's chroma. This does not
+eliminate the ambiguity of all composite patterns or reproduce the proprietary
+MC141627 algorithm. See [control semantics and HDR measurements](gpu-controls.md).
+
 ## Decoder research that changed the implementation
 
 The PVM service manual identifies **MC141627** Y/C separation, **CXA2163AQ** chroma decoding and **CXA1739S** drive/cutoff control. It also describes distinct picture/brightness ABL circuits. The previous notch-only preset omitted the comb. It now selects a generic adaptive line comb; it does not claim the IC's internal algorithm or ABL calibration. [Sony service manual, theory of operation and parts list](https://consolemods.org/wiki/images/f/fc/PVM-L2_Service_Manual.pdf).

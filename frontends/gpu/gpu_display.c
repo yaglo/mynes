@@ -690,8 +690,8 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
          * Beam emission, mask and spatial reflections remain inside the CRT. */
         float surround = params->ambient_light * 0.15f;
         if (params->apl_black_lift > 0.001f)
-            surround += params->apl_black_lift * (params->apl_smoothed - 0.5f) * 0.15f;
-        surround *= params->hdr_gain > 0.0f ? params->hdr_gain : 1.0f;
+            surround += params->apl_black_lift * (params->apl_smoothed - 0.5f) * 0.15f
+                * (params->hdr_gain > 0.0f ? params->hdr_gain : 1.0f);
         surround = fminf(fmaxf(surround, 0.0f), fmaxf(params->hdr_headroom, 1.0f));
         if (params->output_hdr)
             surround *= params->sdr_white_level;

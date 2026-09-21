@@ -340,10 +340,29 @@ fragment main0_out main0(main0_in in [[stage_in]], constant DisplayParams& _75 [
     float2 param_7 = in.uv;
     float param_8 = _75.vignette_strength;
     color *= vignette_factor(param_7, param_8);
+    float _886;
+    if (_75.hdr_gain > 0.0)
+    {
+        _886 = _75.hdr_gain;
+    }
+    else
+    {
+        _886 = 1.0;
+    }
+    color *= _886;
     color += float3(_75.ambient_light * 0.1500000059604644775390625);
     if (_75.apl_black_lift > 0.001000000047497451305389404296875)
     {
-        color += float3((_75.apl_black_lift * (_75.apl_smoothed - 0.5)) * 0.1500000059604644775390625);
+        float _921;
+        if (_75.hdr_gain > 0.0)
+        {
+            _921 = _75.hdr_gain;
+        }
+        else
+        {
+            _921 = 1.0;
+        }
+        color += (float3((_75.apl_black_lift * (_75.apl_smoothed - 0.5)) * 0.1500000059604644775390625) * _921);
     }
     if (_75.glass_glare > 0.001000000047497451305389404296875)
     {
@@ -356,16 +375,16 @@ fragment main0_out main0(main0_in in [[stage_in]], constant DisplayParams& _75 [
             {
                 warm.x = 1.0;
                 warm.y = fast::clamp((0.38999998569488525390625 * log(t)) - 0.630999982357025146484375, 0.0, 1.0);
-                float _946;
+                float _970;
                 if (_75.glass_glare_temp_k < 1900.0)
                 {
-                    _946 = 0.0;
+                    _970 = 0.0;
                 }
                 else
                 {
-                    _946 = fast::clamp((0.5429999828338623046875 * log(t - 10.0)) - 1.19599997997283935546875, 0.0, 1.0);
+                    _970 = fast::clamp((0.5429999828338623046875 * log(t - 10.0)) - 1.19599997997283935546875, 0.0, 1.0);
                 }
-                warm.z = _946;
+                warm.z = _970;
             }
             else
             {
@@ -397,16 +416,6 @@ fragment main0_out main0(main0_in in [[stage_in]], constant DisplayParams& _75 [
         float corner_fade = smoothstep(0.0, 0.039999999105930328369140625, sqrt(edge_vec.x * edge_vec.y));
         color += ((((env * edge_boost) * corner_fade) * _75.glass_glare) * 1.60000002384185791015625);
     }
-    float _1124;
-    if (_75.hdr_gain > 0.0)
-    {
-        _1124 = _75.hdr_gain;
-    }
-    else
-    {
-        _1124 = 1.0;
-    }
-    color *= _1124;
     color = fast::max(color, float3(0.0));
     float peak = fast::max(fast::max(color.x, color.y), color.z);
     float limit = fast::max(_75.hdr_headroom, 1.0);
@@ -416,17 +425,17 @@ fragment main0_out main0(main0_in in [[stage_in]], constant DisplayParams& _75 [
         float mapped = knee + (((limit - knee) * (peak - knee)) / (((peak - knee) + limit) - knee));
         color *= (mapped / peak);
     }
-    float3 _1185;
+    float3 _1196;
     if (_75.output_hdr != 0)
     {
-        _1185 = color * _75.sdr_white_level;
+        _1196 = color * _75.sdr_white_level;
     }
     else
     {
         float3 param_9 = color;
-        _1185 = srgb_encode(param_9);
+        _1196 = srgb_encode(param_9);
     }
-    color = _1185;
+    color = _1196;
     out.frag_color = float4(color, 1.0);
     return out;
 }

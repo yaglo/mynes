@@ -339,6 +339,10 @@ void main() {
     /* (f) Vignette. */
     color *= vignette_factor(uv, vignette_strength);
 
+    // Linear emission gain uses HDR headroom for phosphor peaks. Reflected
+    // room light is independent of tube drive and must not rise with it.
+    color *= hdr_gain > 0.0 ? hdr_gain : 1.0;
+
     /* (h) Black floor already applied in beam shader — don't double it.
      *     Only add ambient light reflection on the glass surface. */
     color += vec3(ambient_light * 0.15);
@@ -348,7 +352,8 @@ void main() {
      * lift shadows (washed-out blacks), dark scenes push them
      * lower. Sign is: (apl_smoothed - 0.5) > 0 → lift. */
     if (apl_black_lift > 0.001) {
-        color += vec3(apl_black_lift * (apl_smoothed - 0.5) * 0.15);
+        color += vec3(apl_black_lift * (apl_smoothed - 0.5) * 0.15)
+               * (hdr_gain > 0.0 ? hdr_gain : 1.0);
     }
 
     /* §6.3 Glass-face glare — external reflection of the viewer's
@@ -457,9 +462,6 @@ void main() {
         color += env * edge_boost * corner_fade * glass_glare * 1.6;
     }
 
-    // Gain is a LINEAR luminance multiplier. SDR and EDR share the same
-    // phosphor/glass model and differ only in their final output encoding.
-    color *= hdr_gain > 0.0 ? hdr_gain : 1.0;
     color = max(color,vec3(0.0));
     // Output adaptation, not tube physics. A continuous shoulder preserves
     // highlight gradients and RGB ratios when the host lacks phosphor peak
