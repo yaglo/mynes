@@ -3,6 +3,7 @@
  */
 
 #include "mapper_ops.h"
+#include "../nes.h"
 
 static void mapper4_update_banks(Mapper *m) {
     uint16_t total_prg_8k = m->prg_banks * 2;
@@ -54,6 +55,10 @@ static void mapper4_init(Mapper *m) {
     m->mmc3_irq_counter = 0;
     m->mmc3_irq_enabled = false;
     m->mmc3_irq_reload = false;
+    m->mmc3_a12_high = false;
+    m->mmc3_a12_low_cycles = 8;
+    m->mmc3_a12_last_low_cpu_cycle = 0;
+    m->mmc3_a12_low_cpu_cycles = 3;
     m->prg_mode = 0;
     m->prg_ram_enabled = true;
     mapper4_update_banks(m);
@@ -195,7 +200,7 @@ static void mapper4_ppu_write(Mapper *m, uint16_t addr, uint8_t val) {
     }
 }
 
-static void mapper4_scanline(Mapper *m) {
+static void mapper4_clock_irq(Mapper *m) {
     if (m->mmc3_irq_reload || m->mmc3_irq_counter == 0) {
         m->mmc3_irq_counter = m->mmc3_irq_latch;
         m->mmc3_irq_reload = false;
@@ -208,11 +213,37 @@ static void mapper4_scanline(Mapper *m) {
     }
 }
 
+static void mapper4_ppu_address(Mapper *m, uint16_t addr) {
+    bool a12 = (addr & 0x1000) != 0;
+
+    if (!a12) {
+        if (m->mmc3_a12_low_cycles < UINT16_MAX)
+            m->mmc3_a12_low_cycles++;
+        if (m->nes && (!m->mmc3_a12_low_cpu_cycles ||
+                       m->nes->cpu.cycles != m->mmc3_a12_last_low_cpu_cycle)) {
+            if (m->mmc3_a12_low_cpu_cycles < UINT8_MAX)
+                m->mmc3_a12_low_cpu_cycles++;
+            m->mmc3_a12_last_low_cpu_cycle = m->nes->cpu.cycles;
+        }
+    } else if (!m->mmc3_a12_high) {
+        /* The MMC3 clocks only after A12 has remained low across three
+         * falling M2 edges. Use CPU-cycle observations when attached to a
+         * running NES, with an eight-PPU-cycle fallback for mapper tests. */
+        if ((m->nes && m->mmc3_a12_low_cpu_cycles >= 3) ||
+            (!m->nes && m->mmc3_a12_low_cycles >= 8))
+            mapper4_clock_irq(m);
+        m->mmc3_a12_low_cycles = 0;
+        m->mmc3_a12_low_cpu_cycles = 0;
+    }
+
+    m->mmc3_a12_high = a12;
+}
+
 const MapperOps mapper4_ops = {
     .init = mapper4_init,
     .cpu_read = mapper4_cpu_read,
     .cpu_write = mapper4_cpu_write,
     .ppu_read = mapper4_ppu_read,
     .ppu_write = mapper4_ppu_write,
-    .scanline = mapper4_scanline,
+    .ppu_address = mapper4_ppu_address,
 };

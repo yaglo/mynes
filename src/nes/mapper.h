@@ -58,6 +58,10 @@ typedef struct Mapper {
     uint8_t mmc3_irq_counter;
     bool mmc3_irq_enabled;
     bool mmc3_irq_reload;
+    bool mmc3_a12_high;
+    uint16_t mmc3_a12_low_cycles;
+    uint64_t mmc3_a12_last_low_cpu_cycle;
+    uint8_t mmc3_a12_low_cpu_cycles;
 
     /* MMC4 specific */
     uint8_t mmc4_prg_bank;
@@ -92,6 +96,7 @@ uint8_t mapper_cpu_read(Mapper *m, uint16_t addr);
 void mapper_cpu_write(Mapper *m, uint16_t addr, uint8_t val);
 uint8_t mapper_ppu_read(Mapper *m, uint16_t addr);
 void mapper_ppu_write(Mapper *m, uint16_t addr, uint8_t val);
+void mapper_ppu_address(Mapper *m, uint16_t addr);
 
 /* Scanline notification (called by PPU at end of each visible scanline) */
 void mapper_notify_scanline(Mapper *m);

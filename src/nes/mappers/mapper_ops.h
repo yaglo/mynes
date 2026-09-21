@@ -13,6 +13,7 @@ typedef struct MapperOps {
     void (*cpu_write)(Mapper *m, uint16_t addr, uint8_t val);
     uint8_t (*ppu_read)(Mapper *m, uint16_t addr);
     void (*ppu_write)(Mapper *m, uint16_t addr, uint8_t val);
+    void (*ppu_address)(Mapper *m, uint16_t addr);
     void (*scanline)(Mapper *m);   /* Called at end of each visible scanline */
 } MapperOps;
 

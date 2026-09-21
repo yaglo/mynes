@@ -80,6 +80,13 @@ void mapper_ppu_write(Mapper *m, uint16_t addr, uint8_t val) {
     }
 }
 
+void mapper_ppu_address(Mapper *m, uint16_t addr) {
+    if (!m) return;
+    const MapperOps *ops = mapper_ops_for(m->number);
+    if (ops && ops->ppu_address)
+        ops->ppu_address(m, addr);
+}
+
 void mapper_notify_scanline(Mapper *m) {
     if (!m) return;
     const MapperOps *ops = mapper_ops_for(m->number);
