@@ -1,0 +1,730 @@
+(kicad_sch (version 20250114) (generator "eeschema") (uuid "9ce5cc66-bc94-43ce-b65f-e9ca0512ba4e") (paper "A4")
+(title_block (title "NES-001 video buffer sensitivity") (rev "1") (company "Topology: N. Schenk, 2020; simulation adaptation: MyNES") (comment 1 "Generic Q1; assumed FC2, source resistance and load"))
+(lib_symbols (symbol "Device:R"
+		(pin_numbers
+			(hide yes)
+		)
+		(pin_names
+			(offset 0)
+		)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(duplicate_pin_numbers_are_jumpers no)
+		(property "Reference" "R"
+			(at 2.032 0 90)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "R"
+			(at 0 0 90)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at -1.778 0 90)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 0 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Resistor"
+			(at 0 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "ki_keywords" "R res resistor"
+			(at 0 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "ki_fp_filters" "R_*"
+			(at 0 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(symbol "R_0_1"
+			(rectangle
+				(start -1.016 -2.54)
+				(end 1.016 2.54)
+				(stroke
+					(width 0.254)
+					(type default)
+				)
+				(fill
+					(type none)
+				)
+			)
+		)
+		(symbol "R_1_1"
+			(pin passive line
+				(at 0 3.81 270)
+				(length 1.27)
+				(name ""
+					(effects
+						(font
+							(size 1.27 1.27)
+						)
+					)
+				)
+				(number "1"
+					(effects
+						(font
+							(size 1.27 1.27)
+						)
+					)
+				)
+			)
+			(pin passive line
+				(at 0 -3.81 90)
+				(length 1.27)
+				(name ""
+					(effects
+						(font
+							(size 1.27 1.27)
+						)
+					)
+				)
+				(number "2"
+					(effects
+						(font
+							(size 1.27 1.27)
+						)
+					)
+				)
+			)
+		)
+		(embedded_fonts no)
+	)(symbol "Device:C"
+		(pin_numbers
+			(hide yes)
+		)
+		(pin_names
+			(offset 0.254)
+		)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(duplicate_pin_numbers_are_jumpers no)
+		(property "Reference" "C"
+			(at 0.635 2.54 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "C"
+			(at 0.635 -2.54 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" ""
+			(at 0.9652 -3.81 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 0 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Unpolarized capacitor"
+			(at 0 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "ki_keywords" "cap capacitor"
+			(at 0 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "ki_fp_filters" "C_*"
+			(at 0 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(symbol "C_0_1"
+			(polyline
+				(pts
+					(xy -2.032 0.762) (xy 2.032 0.762)
+				)
+				(stroke
+					(width 0.508)
+					(type default)
+				)
+				(fill
+					(type none)
+				)
+			)
+			(polyline
+				(pts
+					(xy -2.032 -0.762) (xy 2.032 -0.762)
+				)
+				(stroke
+					(width 0.508)
+					(type default)
+				)
+				(fill
+					(type none)
+				)
+			)
+		)
+		(symbol "C_1_1"
+			(pin passive line
+				(at 0 3.81 270)
+				(length 2.794)
+				(name ""
+					(effects
+						(font
+							(size 1.27 1.27)
+						)
+					)
+				)
+				(number "1"
+					(effects
+						(font
+							(size 1.27 1.27)
+						)
+					)
+				)
+			)
+			(pin passive line
+				(at 0 -3.81 90)
+				(length 2.794)
+				(name ""
+					(effects
+						(font
+							(size 1.27 1.27)
+						)
+					)
+				)
+				(number "2"
+					(effects
+						(font
+							(size 1.27 1.27)
+						)
+					)
+				)
+			)
+		)
+		(embedded_fonts no)
+	)(symbol "Device:L"
+		(pin_numbers
+			(hide yes)
+		)
+		(pin_names
+			(offset 1.016)
+			(hide yes)
+		)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(duplicate_pin_numbers_are_jumpers no)
+		(property "Reference" "L"
+			(at -1.27 0 90)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "L"
+			(at 1.905 0 90)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 0 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 0 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Inductor"
+			(at 0 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "ki_keywords" "inductor choke coil reactor magnetic"
+			(at 0 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "ki_fp_filters" "Choke_* *Coil* Inductor_* L_*"
+			(at 0 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(symbol "L_0_1"
+			(arc
+				(start 0 2.54)
+				(mid 0.6323 1.905)
+				(end 0 1.27)
+				(stroke
+					(width 0)
+					(type default)
+				)
+				(fill
+					(type none)
+				)
+			)
+			(arc
+				(start 0 1.27)
+				(mid 0.6323 0.635)
+				(end 0 0)
+				(stroke
+					(width 0)
+					(type default)
+				)
+				(fill
+					(type none)
+				)
+			)
+			(arc
+				(start 0 0)
+				(mid 0.6323 -0.635)
+				(end 0 -1.27)
+				(stroke
+					(width 0)
+					(type default)
+				)
+				(fill
+					(type none)
+				)
+			)
+			(arc
+				(start 0 -1.27)
+				(mid 0.6323 -1.905)
+				(end 0 -2.54)
+				(stroke
+					(width 0)
+					(type default)
+				)
+				(fill
+					(type none)
+				)
+			)
+		)
+		(symbol "L_1_1"
+			(pin passive line
+				(at 0 3.81 270)
+				(length 1.27)
+				(name "1"
+					(effects
+						(font
+							(size 1.27 1.27)
+						)
+					)
+				)
+				(number "1"
+					(effects
+						(font
+							(size 1.27 1.27)
+						)
+					)
+				)
+			)
+			(pin passive line
+				(at 0 -3.81 90)
+				(length 1.27)
+				(name "2"
+					(effects
+						(font
+							(size 1.27 1.27)
+						)
+					)
+				)
+				(number "2"
+					(effects
+						(font
+							(size 1.27 1.27)
+						)
+					)
+				)
+			)
+		)
+		(embedded_fonts no)
+	)(symbol "Transistor_BJT:Q_PNP_BCE"
+		(pin_names
+			(offset 0)
+			(hide yes)
+		)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(duplicate_pin_numbers_are_jumpers no)
+		(property "Reference" "Q"
+			(at 5.08 1.27 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "Q_PNP_BCE"
+			(at 5.08 -1.27 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" ""
+			(at 5.08 2.54 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 0 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "PNP transistor, base/collector/emitter"
+			(at 0 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Sim.Device" "PNP"
+			(at 0 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Sim.Pins" "1=B 2=C 3=E"
+			(at 0 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "ki_keywords" "BJT"
+			(at 0 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(symbol "Q_PNP_BCE_0_1"
+			(polyline
+				(pts
+					(xy -2.54 0) (xy 0.635 0)
+				)
+				(stroke
+					(width 0)
+					(type default)
+				)
+				(fill
+					(type none)
+				)
+			)
+			(polyline
+				(pts
+					(xy 0.635 1.905) (xy 0.635 -1.905)
+				)
+				(stroke
+					(width 0.508)
+					(type default)
+				)
+				(fill
+					(type none)
+				)
+			)
+			(polyline
+				(pts
+					(xy 0.635 0.635) (xy 2.54 2.54)
+				)
+				(stroke
+					(width 0)
+					(type default)
+				)
+				(fill
+					(type none)
+				)
+			)
+			(polyline
+				(pts
+					(xy 0.635 -0.635) (xy 2.54 -2.54)
+				)
+				(stroke
+					(width 0)
+					(type default)
+				)
+				(fill
+					(type none)
+				)
+			)
+			(circle
+				(center 1.27 0)
+				(radius 2.8194)
+				(stroke
+					(width 0.254)
+					(type default)
+				)
+				(fill
+					(type none)
+				)
+			)
+			(polyline
+				(pts
+					(xy 2.286 -1.778) (xy 1.778 -2.286) (xy 1.27 -1.27) (xy 2.286 -1.778)
+				)
+				(stroke
+					(width 0)
+					(type default)
+				)
+				(fill
+					(type outline)
+				)
+			)
+		)
+		(symbol "Q_PNP_BCE_1_1"
+			(pin input line
+				(at -5.08 0 0)
+				(length 2.54)
+				(name "B"
+					(effects
+						(font
+							(size 1.27 1.27)
+						)
+					)
+				)
+				(number "1"
+					(effects
+						(font
+							(size 1.27 1.27)
+						)
+					)
+				)
+			)
+			(pin passive line
+				(at 2.54 5.08 270)
+				(length 2.54)
+				(name "C"
+					(effects
+						(font
+							(size 1.27 1.27)
+						)
+					)
+				)
+				(number "2"
+					(effects
+						(font
+							(size 1.27 1.27)
+						)
+					)
+				)
+			)
+			(pin passive line
+				(at 2.54 -5.08 90)
+				(length 2.54)
+				(name "E"
+					(effects
+						(font
+							(size 1.27 1.27)
+						)
+					)
+				)
+				(number "3"
+					(effects
+						(font
+							(size 1.27 1.27)
+						)
+					)
+				)
+			)
+		)
+		(embedded_fonts no)
+	))
+(symbol (lib_id "Device:R") (at 40 55 0) (unit 1) (in_bom yes) (on_board yes) (dnp no) (uuid "d9d96ec8-6364-4f67-9ee2-ff68839313a9") (property "Reference" "R101" (at 46 53.5 0) (effects (font (size 1.27 1.27)) (justify left))) (property "Value" "100 (assumed)" (at 46 56.5 0) (effects (font (size 1.27 1.27)) (justify left))) (pin "1" (uuid "35125d84-ec97-412c-a36f-3321f49f506f"))(pin "2" (uuid "1fd207c1-27bd-4ede-bf20-e8e728f408a2"))(instances (project "nes_output_buffer" (path "/9ce5cc66-bc94-43ce-b65f-e9ca0512ba4e" (reference "R101") (unit 1)))))
+(label "PPU_DRIVE" (at 40 51.19 0) (effects (font (size 1.27 1.27)) (justify left bottom)) (uuid "f4263e8e-9b70-4e89-a619-f21362275d85"))
+(label "BASE" (at 40 58.81 0) (effects (font (size 1.27 1.27)) (justify left bottom)) (uuid "0664ab35-942f-478c-bd43-453a3814ff57"))
+(symbol (lib_id "Transistor_BJT:Q_PNP_BCE") (at 80 55 0) (unit 1) (in_bom yes) (on_board yes) (dnp no) (uuid "e9989111-f60e-49bd-b580-d180fa9e853b") (property "Reference" "Q1" (at 86 53.5 0) (effects (font (size 1.27 1.27)) (justify left))) (property "Value" "2SA937*" (at 86 56.5 0) (effects (font (size 1.27 1.27)) (justify left))) (pin "1" (uuid "f4783b37-051f-41e1-9f9d-833bf7de6e28"))(pin "2" (uuid "c6be27d9-076d-4a1f-a8ca-994b0831ff45"))(pin "3" (uuid "f2772c9d-3660-4b67-9fc6-06a77c083f1e"))(instances (project "nes_output_buffer" (path "/9ce5cc66-bc94-43ce-b65f-e9ca0512ba4e" (reference "Q1") (unit 1)))))
+(label "BASE" (at 74.92 55 0) (effects (font (size 1.27 1.27)) (justify left bottom)) (uuid "fd74923d-e3af-4b7b-b02d-51ea1edee084"))
+(label "0" (at 82.54 49.92 0) (effects (font (size 1.27 1.27)) (justify left bottom)) (uuid "9c7e5be1-3a0c-46ab-99e4-d5c9eb377067"))
+(label "EMITTER" (at 82.54 60.08 0) (effects (font (size 1.27 1.27)) (justify left bottom)) (uuid "fffcd437-33a6-4048-981e-80491e887878"))
+(symbol (lib_id "Device:R") (at 130 55 0) (unit 1) (in_bom yes) (on_board yes) (dnp no) (uuid "471d3fbe-3d63-4fbf-bb79-a8fc4d0b0954") (property "Reference" "R2" (at 136 53.5 0) (effects (font (size 1.27 1.27)) (justify left))) (property "Value" "510" (at 136 56.5 0) (effects (font (size 1.27 1.27)) (justify left))) (pin "1" (uuid "6a6d5f0b-fffc-478c-bac6-f7b010d7f3a7"))(pin "2" (uuid "87aef4ab-8360-4817-955b-08b723209323"))(instances (project "nes_output_buffer" (path "/9ce5cc66-bc94-43ce-b65f-e9ca0512ba4e" (reference "R2") (unit 1)))))
+(label "VCC_5V" (at 130 51.19 0) (effects (font (size 1.27 1.27)) (justify left bottom)) (uuid "bc87c8ed-08ba-407b-9581-5c25c2ff2a0c"))
+(label "EMITTER" (at 130 58.81 0) (effects (font (size 1.27 1.27)) (justify left bottom)) (uuid "2b8934c4-827e-4103-b85b-60c4f9e5b885"))
+(symbol (lib_id "Device:R") (at 40 90 0) (unit 1) (in_bom yes) (on_board yes) (dnp no) (uuid "63aad21d-6798-46ef-92ee-5ca56e6b1bc8") (property "Reference" "R102" (at 46 88.5 0) (effects (font (size 1.27 1.27)) (justify left))) (property "Value" "10 (assumed loss)" (at 46 91.5 0) (effects (font (size 1.27 1.27)) (justify left))) (pin "1" (uuid "b2bd39ea-0bc4-49c8-8a96-31a5d93d146a"))(pin "2" (uuid "01627038-bdc6-4c10-b048-67a4ebc7d210"))(instances (project "nes_output_buffer" (path "/9ce5cc66-bc94-43ce-b65f-e9ca0512ba4e" (reference "R102") (unit 1)))))
+(label "EMITTER" (at 40 86.19 0) (effects (font (size 1.27 1.27)) (justify left bottom)) (uuid "97b1a9c5-01d4-4bbf-b322-85908ab4fdbe"))
+(label "BEAD" (at 40 93.81 0) (effects (font (size 1.27 1.27)) (justify left bottom)) (uuid "99030ef6-771a-4616-9df0-9d031f4296b6"))
+(symbol (lib_id "Device:L") (at 90 90 0) (unit 1) (in_bom yes) (on_board yes) (dnp no) (uuid "beee0a18-34da-46d1-b5b6-9734e87199bc") (property "Reference" "L101" (at 96 88.5 0) (effects (font (size 1.27 1.27)) (justify left))) (property "Value" "100n (assumed FC2)" (at 96 91.5 0) (effects (font (size 1.27 1.27)) (justify left))) (pin "1" (uuid "6c3befd4-d4e0-4199-90bb-9be8a2b3af83"))(pin "2" (uuid "0d0b0230-8aa5-4245-af3f-a0dd7cd9025d"))(instances (project "nes_output_buffer" (path "/9ce5cc66-bc94-43ce-b65f-e9ca0512ba4e" (reference "L101") (unit 1)))))
+(label "BEAD" (at 90 86.19 0) (effects (font (size 1.27 1.27)) (justify left bottom)) (uuid "cae6c61a-ccdc-43a5-b629-8acf1b107216"))
+(label "VIDEO" (at 90 93.81 0) (effects (font (size 1.27 1.27)) (justify left bottom)) (uuid "1c5366ea-82b3-4687-899e-05cecd131cdd"))
+(symbol (lib_id "Device:C") (at 140 90 0) (unit 1) (in_bom yes) (on_board yes) (dnp no) (uuid "43f8f776-422e-4872-8ff0-427aa816ed41") (property "Reference" "C5" (at 146 88.5 0) (effects (font (size 1.27 1.27)) (justify left))) (property "Value" "330p" (at 146 91.5 0) (effects (font (size 1.27 1.27)) (justify left))) (pin "1" (uuid "df2da9ed-3211-4b25-9fc4-bb178ebec64f"))(pin "2" (uuid "a3282b5a-090d-4cb6-9489-d12a4f2ca51c"))(instances (project "nes_output_buffer" (path "/9ce5cc66-bc94-43ce-b65f-e9ca0512ba4e" (reference "C5") (unit 1)))))
+(label "VIDEO" (at 140 86.19 0) (effects (font (size 1.27 1.27)) (justify left bottom)) (uuid "6446bd8a-1c01-4cc7-adee-f776e85ca5fa"))
+(label "0" (at 140 93.81 0) (effects (font (size 1.27 1.27)) (justify left bottom)) (uuid "21c85064-5054-48e6-a1ba-9083ecca0cb1"))
+(symbol (lib_id "Device:R") (at 190 90 0) (unit 1) (in_bom yes) (on_board yes) (dnp no) (uuid "17a48da4-9b85-4d76-9411-9b2f5c4acb7c") (property "Reference" "R103" (at 196 88.5 0) (effects (font (size 1.27 1.27)) (justify left))) (property "Value" "1k (assumed RF input)" (at 196 91.5 0) (effects (font (size 1.27 1.27)) (justify left))) (pin "1" (uuid "c1294501-f23c-42f3-9539-85499f2a9142"))(pin "2" (uuid "a385fe41-84ef-4b90-b785-d26478e26832"))(instances (project "nes_output_buffer" (path "/9ce5cc66-bc94-43ce-b65f-e9ca0512ba4e" (reference "R103") (unit 1)))))
+(label "VIDEO" (at 190 86.19 0) (effects (font (size 1.27 1.27)) (justify left bottom)) (uuid "315c347a-b689-49f3-b9b5-d4fa061f9986"))
+(label "0" (at 190 93.81 0) (effects (font (size 1.27 1.27)) (justify left bottom)) (uuid "5928bc54-a870-4f94-932d-d8e702dc132d"))
+(text "Motherboard buffer only: VIDEO is NOT the terminated RCA output." (at 30 120 0) (effects (font (size 1.27 1.27)) (justify left)) (uuid "e82e367e-376b-4b02-89c3-be618705d759"))
+(text "* Q1 uses a generic PNP model. R2, C5 and Q1 identity follow the hardware-checked NES-001 schematic." (at 30 126 0) (effects (font (size 1.27 1.27)) (justify left)) (uuid "15e7d947-b5f0-40ba-a81f-b698b2083d1d"))
+(text "FC2 is an unknown ferrite: Rfc + Lfc are a sensitivity model, not measured values." (at 30 132 0) (effects (font (size 1.27 1.27)) (justify left)) (uuid "9fd8bb9d-8178-48a3-bcc7-f14a3dda04f3"))
+(text "External SPICE sources: PPU_DRIVE = 2 V DC + 1 V AC; VCC_5V = 5 V; ground = 0." (at 30 138 0) (effects (font (size 1.27 1.27)) (justify left)) (uuid "0e90952e-800a-4269-8ee9-ecc196baf8c6"))
+(text "See nes_output_buffer.cir and sweep_nes_output.py for the executable model." (at 30 144 0) (effects (font (size 1.27 1.27)) (justify left)) (uuid "accc1624-02b0-4a0f-b1f9-1b22f7c8a9c6"))
+(text "Derived schematic: CC BY-SA 4.0; https://github.com/schenkzoola/NES" (at 30 150 0) (effects (font (size 1.27 1.27)) (justify left)) (uuid "076c06a1-b434-4261-b224-5cab35aeedc2"))
+(sheet_instances (path "/" (page "1"))) (embedded_fonts no))

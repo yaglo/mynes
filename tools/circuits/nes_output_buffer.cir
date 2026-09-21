@@ -1,0 +1,26 @@
+* NES-001 motherboard output buffer sensitivity model (NOT the RCA jack).
+* Topology: N. Schenk, NES-001 schematic rev 1.0, 2020-06-05,
+* https://github.com/schenkzoola/NES, commit 56e5018491fcc8e0cd591d16a97c8a7b1d723983
+* Q1=2SA937, R2=510 ohm, C5=330 pF. FC2 impedance is undocumented.
+* Generic PNP below is NOT a measured 2SA937 model. Sweep the unknowns.
+.param bias=2 rb=100 bead_l=100n bead_r=10 load_r=1000
+Vcc vcc 0 5
+Vppu ideal 0 dc {bias} ac 1
+Rppu ideal base {rb}
+Q1 0 base emitter PNP_APPROX
+R2 vcc emitter 510
+Rfc emitter bead {bead_r}
+Lfc bead video {bead_l}
+C5 video 0 330p
+Rload video 0 {load_r}
+.model PNP_APPROX PNP(IS=1e-14 BF=150 VAF=50 CJE=10p CJC=4p TF=1n)
+.control
+set wr_singlescale
+set wr_vecnames
+ac dec 80 10k 100meg
+wrdata ac.txt vdb(video) vp(video)
+op
+print v(base) v(emitter) v(video) @q1[ic]
+quit
+.endc
+.end

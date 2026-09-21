@@ -106,3 +106,17 @@ The four-profile colour defaults, RF assumptions and response ranges are listed 
 The slot-mask model keeps vertical phosphor stripes and staggers only the bridges between adjacent triads, consistent with the [inline slit-mask construction](https://patents.google.com/patent/US3973965A/en). An ablation on the same Contra codes showed that Stas's previous coarse delta-dot pattern generated the dominant diagonal weave. Its replacement retains visible RGB separation with a less intrusive inline pattern. Composite dot crawl can still produce phase-dependent diagonals; it is distinct from random RF noise.
 
 Additional direct owner photographs include [JVC Mario and Adventure Island closeups](https://sector.sunthar.com/guides/crt-rgb-mod/jvc-av-27d201.html). These show an RGB-modified set and inform spot/mask structure, not composite decoder calibration. Analog Devices describes [differential gain and phase](https://www.analog.com/en/resources/technical-articles/2022/07/21/08/24/visual-impact-of-video-parameters-in-video-systems.html); the current model includes the measured source's level-dependent phase estimate but not chip-specific receiver differential gain/phase curves or any unsupported universal “chroma latching” effect.
+
+## Reproducible circuit investigation
+
+The [KiCad sheet and ngspice sweep](../tools/circuits/README.md) isolate the
+NES-001 motherboard PNP output buffer using a hardware-checked schematic.
+They sweep unknown device/load assumptions instead of presenting a generic
+transistor as a measured 2SA937. The output feeds an additional RF/power module;
+connecting a 75 Ω jack load directly to this partial model is not valid.
+
+No renderer coefficients have been calibrated from this incomplete circuit.
+The existing DAC table is already based on terminated-output measurements;
+adding another output buffer without defining that measurement boundary risks
+double-counting the console path. The experiment records this limitation and
+provides reproducible curves for extending the model with the missing module.
