@@ -606,7 +606,9 @@ int main(int argc, char **argv) {
     /* GPU and CPU backends consume the same band-limited APU samples. */
     gpu_audio_enabled = audio_gpu_init(&audio_gpu, gpu, &audio_chain, shader_dir);
     if (!gpu_audio_enabled) fprintf(stderr, "GPU audio unavailable; CPU chain remains active\n");
-    use_gpu_audio = gpu_audio_enabled && getenv("MYNES_GPU_AUDIO") != NULL;
+    const char *audio_override = getenv("MYNES_GPU_AUDIO");
+    use_gpu_audio = gpu_audio_enabled &&
+                    (!audio_override || strcmp(audio_override, "0") != 0);
     /* --- GPU video signal chain --- */
     if (video_gpu_init(&video_gpu_chain, gpu, &video_chain, shader_dir,
                        sig_state.fir_y, sig_state.fir_y_n,

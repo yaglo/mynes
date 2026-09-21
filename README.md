@@ -95,7 +95,7 @@ PPU colour codes → NES DAC waveform → cable / RF receiver → Y/C separation
 - **Light and sound through the set.** Phosphor decay, glass scatter, ambient
   black and available HDR headroom shape the output. The audio path models
   console filtering, cable, amplifier and generic speaker responses, with
-  CPU and GPU processing options.
+  GPU processing by default, with CPU fallback to keep audio flowing when GPU work is late.
 - **A live editor.** The in-game OSD and native macOS Signal Studio expose the
   chain's controls. Switch presets, save your own, rename them, and see which
   preset is active without restarting the game.

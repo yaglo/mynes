@@ -45,7 +45,7 @@ for preset in presets:
             env=dict(os.environ,XDG_CONFIG_HOME=config,MYNES_REVIEW_NO_INPUT='1',MYNES_REVIEW_START_FRAME='90',
                 MYNES_PLAYBACK_FRAMES=str(a.frames),MYNES_PLAYBACK_TRACE=str(trace),MYNES_AUDIO_TRACE=str(audio))
             for key in ['MYNES_GPU_VALIDATION','MYNES_GPU_AUDIO','MYNES_PRESENT_STALL_MS','MYNES_PLAYBACK_READBACK_PATH']:env.pop(key,None)
-            if mode.startswith('gpu'):env['MYNES_GPU_AUDIO']='1'
+            env['MYNES_GPU_AUDIO']='1' if mode.startswith('gpu') else '0'
             if mode.endswith('readback'):env['MYNES_PLAYBACK_READBACK_PATH']=str(a.output/(slug+'.ppm'))
             args=[str(a.binary),str(a.rom),'--preset','presets/'+preset+'.json','--mask-alignment','pixels']
             if not a.onscreen:args+=['--offscreen',a.size]

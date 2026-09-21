@@ -6,6 +6,11 @@ adjustment immediately. The menu then collapses to a bottom strip with only the
 parameter, value and range bar; the rest of the game stays visible. Enter or
 Escape returns to the same row. M closes either view.
 
+Audio starts in **GPU + fallback** mode. Use **M → Audio → Processing** or **A**
+to switch to CPU processing for the session. `MYNES_GPU_AUDIO=0` selects CPU
+at startup. A late GPU block falls back to CPU without delaying playback;
+unavailable GPU audio also falls back automatically.
+
 ![TV-style parameter adjustment](images/gpu-osd-adjustment.png)
 
 The menu and preset notice are mixed as RGB after the receiver, before the gun

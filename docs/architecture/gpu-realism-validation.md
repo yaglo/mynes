@@ -131,3 +131,12 @@ view. GPU checks cover alpha mixing, unaffected pixels and removal of stale
 OSD data; navigation checks cover entering without changing a value and returning
 to the same row. The pass is disabled when no menu or notice is present. The
 original PPU codes remain unchanged. Documentation includes both menu views.
+
+GPU audio now starts by default, retaining the deadline-based CPU fallback.
+An offscreen 600-frame Mario capture exercised the default with no environment
+override: 591 GPU-processed blocks, 440,216 samples, maximum CPU/GPU difference
+0.00000801, maximum queued audio 53.6 ms. Both backends kept supplying samples
+through a forced 250 ms presentation stall. All 12 GPU tests passed after
+integrating the independent mapper updates. `MYNES_GPU_AUDIO=0` remains an
+explicit CPU override; benchmark CPU modes now set it rather than relying on
+the previous default.

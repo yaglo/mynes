@@ -28,8 +28,9 @@ for backend in ["cpu", "gpu"]:
                    MYNES_AUDIO_CAPTURE=str(raw), MYNES_AUDIO_TRACE=str(trace),
                    MYNES_PRESENT_STALL_MS="250")
         env.pop("MYNES_GPU_AUDIO", None)
-        if backend == "gpu":
-            env["MYNES_GPU_AUDIO"] = "1"
+        # Exercise the default GPU selection without an environment override.
+        if backend == "cpu":
+            env["MYNES_GPU_AUDIO"] = "0"
         if len(sys.argv)>4:
             env["MYNES_REVIEW_START_FRAME"]=sys.argv[4]
         with (output / (backend + ".log")).open("w") as log:
