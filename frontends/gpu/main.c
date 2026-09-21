@@ -226,7 +226,7 @@ int main(int argc, char **argv) {
     int exit_status = 0;
     int offscreen_w=0,offscreen_h=0;
     int presentation_mode=0;
-    float dark_frame_level=0;
+    float dark_frame_level=0.15f;
     FILE *playback_trace=NULL;
     const char *trace_path=getenv("MYNES_PLAYBACK_TRACE"), *limit_env=getenv("MYNES_PLAYBACK_FRAMES");
     const char *bench_capture=getenv("MYNES_PLAYBACK_READBACK_PATH");
@@ -334,7 +334,7 @@ int main(int argc, char **argv) {
                    "  --benchmark           Fence complete preset chain at four resolutions\n"
                    "  --offscreen WxH       Hidden, silent playback into a pixel-sized target\n"
                    "  --presentation M     hold (default), bfi, or 60hz (paced hold)\n"
-                   "  --dark-frame-level F  Dark-refresh emission, 0..1 (default 0)\n"
+                   "  --dark-frame-level F  Dark-refresh emission, 0..1 (default 0.15)\n"
                    "  --sdr                 Use SDR output for display comparisons\n"
                    "  --native-fullscreen   Enter native panel mode (F toggles back)\n"
                    "  --mask-alignment M    pixels (default) or physical CRT pitch\n"

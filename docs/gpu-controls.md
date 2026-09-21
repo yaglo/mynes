@@ -144,8 +144,10 @@ audio review and reports visible intervals. Keep its window visible; a zero
 Metal presentation timestamp is not a successful displayed frame.
 
 Host display → Presentation → BFI enables optional dark-frame insertion.
-`--presentation bfi --dark-frame-level 0.15` gives each dark refresh 15% of
-its paired bright refresh's phosphor light. This is linear-light dimming, not
+Dark refresh defaults to 0.15, so switching to BFI gives each dark refresh 15%
+of its paired bright refresh's phosphor light. Override it with
+`--dark-frame-level F` (0–1); 0 gives fully black refreshes.
+This is linear-light dimming, not
 window transparency. The preference is session-only
 and deliberately absent from television presets.
 
