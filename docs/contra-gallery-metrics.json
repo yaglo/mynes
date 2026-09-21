@@ -1,0 +1,182 @@
+{
+  "arcade_cabinet": {
+    "linear_frame_difference_rms": 6.282813410507515e-05,
+    "linear_peak": 1.546875,
+    "linear_mean": [
+      0.07878244668245316,
+      0.0840369388461113,
+      0.06418783962726593
+    ]
+  },
+  "basement_tv": {
+    "linear_frame_difference_rms": 0.02379503659904003,
+    "linear_peak": 1.0888671875,
+    "linear_mean": [
+      0.040134601294994354,
+      0.036154262721538544,
+      0.029333801940083504
+    ]
+  },
+  "bedroom_rf_1990": {
+    "linear_frame_difference_rms": 0.04919499158859253,
+    "linear_peak": 1.4892578125,
+    "linear_mean": [
+      0.05873929336667061,
+      0.061818961054086685,
+      0.052789390087127686
+    ]
+  },
+  "commodore_1702": {
+    "linear_frame_difference_rms": 0.003976813517510891,
+    "linear_peak": 1.3994140625,
+    "linear_mean": [
+      0.06791471689939499,
+      0.07480771094560623,
+      0.058784566819667816
+    ]
+  },
+  "dying_crt": {
+    "linear_frame_difference_rms": 0.028631003573536873,
+    "linear_peak": 1.39794921875,
+    "linear_mean": [
+      0.05137365683913231,
+      0.04681391268968582,
+      0.0327499620616436
+    ]
+  },
+  "famicom_kitchen": {
+    "linear_frame_difference_rms": 0.04325820878148079,
+    "linear_peak": 1.47216796875,
+    "linear_mean": [
+      0.04324284568428993,
+      0.05303950980305672,
+      0.057565536350011826
+    ]
+  },
+  "jvc_d_series_2000": {
+    "linear_frame_difference_rms": 0.04479891434311867,
+    "linear_peak": 1.5234375,
+    "linear_mean": [
+      0.06037120148539543,
+      0.07198851555585861,
+      0.07538390159606934
+    ]
+  },
+  "late_crt_wega": {
+    "linear_frame_difference_rms": 0.062676802277565,
+    "linear_peak": 1.37255859375,
+    "linear_mean": [
+      0.07410498708486557,
+      0.07524258643388748,
+      0.06586038321256638
+    ]
+  },
+  "living_room_1988": {
+    "linear_frame_difference_rms": 0.05260222405195236,
+    "linear_peak": 1.5009765625,
+    "linear_mean": [
+      0.06821874529123306,
+      0.06807079166173935,
+      0.0555729940533638
+    ]
+  },
+  "nec_xm29_arcade": {
+    "linear_frame_difference_rms": 4.6788612962700427e-05,
+    "linear_peak": 1.5185546875,
+    "linear_mean": [
+      0.07567498832941055,
+      0.0825253576040268,
+      0.06496073305606842
+    ]
+  },
+  "rca_colortrak_1986": {
+    "linear_frame_difference_rms": 0.04530983790755272,
+    "linear_peak": 1.49609375,
+    "linear_mean": [
+      0.06527005881071091,
+      0.06524959951639175,
+      0.05126022547483444
+    ]
+  },
+  "reference_composite": {
+    "linear_frame_difference_rms": 0.08389611542224884,
+    "linear_peak": 1.4658203125,
+    "linear_mean": [
+      0.07180536538362503,
+      0.07262655347585678,
+      0.06265585124492645
+    ]
+  },
+  "retro_gaming_setup": {
+    "linear_frame_difference_rms": 0.006301082205027342,
+    "linear_peak": 1.427734375,
+    "linear_mean": [
+      0.0802997425198555,
+      0.08847366273403168,
+      0.06796523183584213
+    ]
+  },
+  "sony_pvm_14l2": {
+    "linear_frame_difference_rms": 0.049917079508304596,
+    "linear_peak": 1.42041015625,
+    "linear_mean": [
+      0.06795119494199753,
+      0.06941019743680954,
+      0.05919794738292694
+    ]
+  },
+  "sony_pvm_20m4u": {
+    "linear_frame_difference_rms": 0.007416232023388147,
+    "linear_peak": 1.5234375,
+    "linear_mean": [
+      0.06870193034410477,
+      0.07541513442993164,
+      0.05824054032564163
+    ]
+  },
+  "stass_favourite": {
+    "linear_frame_difference_rms": 0.052544306963682175,
+    "linear_peak": 1.51416015625,
+    "linear_mean": [
+      0.053278498351573944,
+      0.059441208839416504,
+      0.054748039692640305
+    ]
+  },
+  "studio_pvm": {
+    "linear_frame_difference_rms": 0.0069129811599850655,
+    "linear_peak": 1.5078125,
+    "linear_mean": [
+      0.07037919759750366,
+      0.0771082416176796,
+      0.05983028933405876
+    ]
+  },
+  "toshiba_14af43": {
+    "linear_frame_difference_rms": 0.034964993596076965,
+    "linear_peak": 1.5263671875,
+    "linear_mean": [
+      0.06423861533403397,
+      0.0710715502500534,
+      0.07113993167877197
+    ]
+  },
+  "vivid_living_room": {
+    "linear_frame_difference_rms": 0.06564522534608841,
+    "linear_peak": 1.44091796875,
+    "linear_mean": [
+      0.09775916486978531,
+      0.08552239835262299,
+      0.08798059076070786
+    ]
+  },
+  "warm_desktop_monitor": {
+    "linear_frame_difference_rms": 0.00554400309920311,
+    "linear_peak": 1.4111328125,
+    "linear_mean": [
+      0.09411770850419998,
+      0.08710527420043945,
+      0.04814944788813591
+    ]
+  }
+}
