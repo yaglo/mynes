@@ -1,6 +1,7 @@
 #include "playback.h"
 #include "audio_sync.h"
 #include "signal_format.h"
+#include "gpu_presentation.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -133,7 +134,8 @@ static int run(void *user) {
         }
         PlaybackControls c = p->controls;
         Uint64 now = SDL_GetTicksNS();
-        Uint64 period = (Uint64)(signal_region_frame_ms(c.region) * 1000000.0);
+        Uint64 native_period = (Uint64)(signal_region_frame_ms(c.region) * 1000000.0);
+        Uint64 period = gpu_presentation_period_ns(c.presentation_mode, native_period);
         if (!deadline || now > deadline + 3 * period) deadline = now;
         if (now < deadline) {
             Sint32 remaining_ms=(Sint32)((deadline-now+999999)/1000000);
@@ -163,7 +165,8 @@ static int run(void *user) {
         if (p->stream) {
             int queued = SDL_GetAudioStreamQueued(p->stream);
             if (queued >= 0) SDL_SetAudioStreamFrequencyRatio(p->stream,
-                audio_sync_ratio(&p->rate, queued / (int)sizeof(float), period / 1e9));
+                audio_sync_ratio(&p->rate, queued / (int)sizeof(float), period / 1e9)
+                * (float)((double)native_period / period));
         }
         p->count = 0;
         Uint64 start_ns = SDL_GetTicksNS(), start = SDL_GetPerformanceCounter();

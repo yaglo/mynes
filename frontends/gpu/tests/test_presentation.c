@@ -13,6 +13,17 @@ int main(void) {
     CHECK(gpu_presentation_slots(NAN,60)==1);
     CHECK(gpu_presentation_slots(120,0)==1);
     CHECK(gpu_presentation_slots(120,NAN)==1);
+    const uint64_t last = 1000000000, period = 16666667, ntsc = 16639268;
+    CHECK(gpu_presentation_period_ns(GPU_PRESENT_60HZ,ntsc)==period);
+    CHECK(gpu_presentation_period_ns(GPU_PRESENT_60HZ,19997200)==19997200);
+    CHECK(gpu_presentation_period_ns(GPU_PRESENT_HOLD,ntsc)==ntsc);
+    CHECK(gpu_presentation_period_ns(GPU_PRESENT_BFI,ntsc)==ntsc);
+    CHECK(gpu_presentation_next_ns(0,last)==last+period);
+    CHECK(gpu_presentation_next_ns(last,last+50000)==last+period);
+    CHECK(gpu_presentation_next_ns(last,last+period*5)==last+period*6);
+    uint64_t deadline=last;
+    for (int i=0;i<600;i++) deadline=gpu_presentation_next_ns(deadline,deadline+50000);
+    CHECK(deadline==last+600*period); /* 50 us timer overshoot does not accumulate. */
     for (int n=2;n<=8;n++) for (int d=0;d<=20;d++) {
         float floor=d/20.0f,sum=0;
         for (int i=0;i<n;i++) {

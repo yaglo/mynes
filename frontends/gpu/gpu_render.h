@@ -22,7 +22,7 @@ typedef struct {
     GPUDisplay     *gpu_disp;
     bool            gpu_display_enabled;
     bool            crt_shader_enabled;
-    int             presentation_mode;   /* 0 hold, 1 BFI; host preference only */
+    int             presentation_mode;   /* GPU_PRESENT_*; host preference only */
     float           dark_frame_level;
     int             presentation_slots, presentation_slot;
     int             presentation_last_mode, cadence_samples, frames_in_flight;
@@ -30,6 +30,8 @@ typedef struct {
     float           presentation_hz, presentation_source_hz;
     bool            presentation_blocked;
     uint64_t        cadence_start_ns;
+    uint64_t        pacing_deadline_ns;
+    int             source_phase;
     FILE           *presentation_trace;
     int             mask_alignment;      /* 0 = panel pixels, 1 = physical CRT pitch */
     GPUOutputGeometry output_geometry;

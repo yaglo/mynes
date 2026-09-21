@@ -105,10 +105,38 @@ The companion PFM capture preserves signed HDR values; PPM clips to SDR white.
 
 ## High-refresh presentation
 
+**Host display → Presentation → 60 Hz hold** paces picture submissions at
+60 per second, without dark-frame insertion. The command-line equivalent is
+`--presentation 60hz`. Each picture remains visible until its replacement,
+including across additional panel refreshes. This is a session preference,
+independent of CRT presets; Hold remains the default.
+
+This mode preserves emulated PPU/APU cycles and genuine NTSC phase alternation.
+It does not freeze or average the composite pattern. The frontend paces NTSC
+frames at 60 instead of about 60.0988 frames/s (about 0.16% slower wall-clock
+playback), with matching audio resampling. This avoids periodic frame drops
+from running a faster source against a 60 Hz presentation clock. Absolute
+presentation deadlines prevent timer overshoot from accumulating. PAL remains
+about 50 frames/s. Audio continues independently if rendering stalls.
+The mode adds one frame of presentation margin and limits frames in flight to
+one, trading about 16.7 ms of initial video latency for resistance to preparation
+jitter. It cannot hide a sustained rendering overload or OS scheduling stall.
+The option controls application timing; it does not change the monitor's
+refresh rate. A fixed 144 Hz panel still cannot show 60 evenly spaced updates
+without a matching display mode or variable refresh.
+
+The serrated colored edges in composite video are consistent with cross-luma
+(dot crawl): see the [AD723 encoder datasheet](https://www.analog.com/media/en/technical-documentation/data-sheets/AD723.pdf).
+Irregularly holding or skipping phases can turn that regular pattern into
+intermittent shimmer. `MYNES_PRESENT_TRACE=/tmp/presentation.csv` records each
+submission's source frame, carrier phase, presentation mode and refresh slot.
+This helps distinguish missed pictures from normal phase changes; submission
+timestamps alone cannot establish what the panel actually displayed.
+
 Host display → Presentation → BFI enables optional dark-frame insertion.
 `--presentation bfi --dark-frame-level 0.15` gives each dark refresh 15% of
 its paired bright refresh's phosphor light. This is linear-light dimming, not
-window transparency. Hold remains the default. The preference is session-only
+window transparency. The preference is session-only
 and deliberately absent from television presets.
 
 The current display must report approximately 2–8 refreshes per source frame:

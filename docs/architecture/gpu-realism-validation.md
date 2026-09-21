@@ -140,3 +140,30 @@ through a forced 250 ms presentation stall. All 12 GPU tests passed after
 integrating the independent mapper updates. `MYNES_GPU_AUDIO=0` remains an
 explicit CPU override; benchmark CPU modes now set it rather than relying on
 the previous default.
+
+## Optional 60 Hz presentation
+
+`--presentation 60hz` / Host display → Presentation → 60 Hz hold uses absolute
+deadlines, one frame of preparation margin, and one frame in flight. NTSC
+frontend pacing changes from 60.0988 to 60 frames/s (0.16% slower wall time);
+audio resampling applies the same ratio. Emulated cycles and carrier phases
+are unchanged. PAL keeps its native slower cadence. Neither frame averaging
+nor phase freezing is involved.
+
+The final 900-frame offscreen Mario comparison at 1280×960, with the complete
+PVM chain and default GPU audio, measured:
+
+| Mode | Submissions/s | Median interval | p95 interval | Longest interval | Skipped pictures |
+|---|---:|---:|---:|---:|---:|
+| Native Hold | 60.079 | 16.507 ms | 20.917 ms | 25.516 ms | 0 |
+| 60 Hz hold | 60.000 | 16.667 ms | 16.727 ms | 17.922 ms | 0 |
+
+All 900 source-frame phases matched. Maximum queued audio was 50.3 ms in the
+60 Hz run, with 886 GPU-processed blocks and deadline fallback for the others.
+Earlier runs without preparation margin showed p95 intervals around 20 ms and
+up to four missed pictures; those observations motivated the extra margin.
+This is a submission measurement under the observed load, not a physical
+120 Hz scanout measurement or a guarantee against scheduling stalls. The local
+live-preview display reported 60 Hz. Repeat with
+`frontends/gpu/tests/test_presentation_playback.py`; presentation traces now
+include actual source phase and selected mode for on-device diagnosis.

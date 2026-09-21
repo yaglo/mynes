@@ -284,9 +284,10 @@ int main(int argc, char **argv) {
             }
         } else if (strcmp(argv[i], "--presentation") == 0 && i+1<argc) {
             const char *mode=argv[++i];
-            if (!strcmp(mode,"hold")) presentation_mode=0;
-            else if (!strcmp(mode,"bfi")) presentation_mode=1;
-            else { fprintf(stderr,"Presentation must be hold or bfi\n"); return 1; }
+            if (!strcmp(mode,"hold")) presentation_mode=GPU_PRESENT_HOLD;
+            else if (!strcmp(mode,"bfi")) presentation_mode=GPU_PRESENT_BFI;
+            else if (!strcmp(mode,"60hz")) presentation_mode=GPU_PRESENT_60HZ;
+            else { fprintf(stderr,"Presentation must be hold, bfi or 60hz\n"); return 1; }
         } else if (strcmp(argv[i], "--dark-frame-level") == 0 && i+1<argc) {
             char *end;
             dark_frame_level=strtof(argv[++i],&end);
@@ -332,7 +333,7 @@ int main(int argc, char **argv) {
                    "  --screenshot-frames N Capture 1..240 consecutive frames\n"
                    "  --benchmark           Fence complete preset chain at four resolutions\n"
                    "  --offscreen WxH       Hidden, silent playback into a pixel-sized target\n"
-                   "  --presentation M     hold (default) or bfi at integer refresh multiples\n"
+                   "  --presentation M     hold (default), bfi, or 60hz (paced hold)\n"
                    "  --dark-frame-level F  Dark-refresh emission, 0..1 (default 0)\n"
                    "  --sdr                 Use SDR output for display comparisons\n"
                    "  --native-fullscreen   Enter native panel mode (F toggles back)\n"
@@ -796,7 +797,7 @@ int main(int argc, char **argv) {
     if (present_trace) {
         render_ctx.presentation_trace=fopen(present_trace,"w");
         if (render_ctx.presentation_trace)
-            fprintf(render_ctx.presentation_trace,"submit_ns,source_frame,slot,slots,reported_hz\n");
+            fprintf(render_ctx.presentation_trace,"submit_ns,source_frame,slot,slots,reported_hz,source_phase,mode\n");
     }
     render_ctx.offscreen_w=offscreen_w;render_ctx.offscreen_h=offscreen_h;
     const char *headroom_env=getenv("MYNES_OFFSCREEN_HEADROOM");
@@ -1116,6 +1117,7 @@ int main(int argc, char **argv) {
         bool live = rom_loaded && !browser_active && !static_frame_buf;
         PlaybackControls controls = { .audio = audio_chain, .analog = analog_controls,
             .region = preset_ctx.region, .gpu_audio = use_gpu_audio != 0,
+            .presentation_mode = render_ctx.presentation_mode,
             .controller = controller_state };
         playback_controls(playback, &controls);
         if (live != playback_active) {
@@ -1155,6 +1157,7 @@ int main(int argc, char **argv) {
         } else {
             Uint64 now = SDL_GetTicksNS();
             Uint64 period = (Uint64)(signal_region_frame_ms(preset_ctx.region) * 1000000.0);
+            period = gpu_presentation_period_ns(render_ctx.presentation_mode, period);
             if (!frame_deadline || now > frame_deadline + period * 3) frame_deadline = now;
             if (now < frame_deadline) SDL_DelayPrecise(frame_deadline - now);
             frame_deadline += period;
@@ -1431,6 +1434,7 @@ int main(int argc, char **argv) {
         // owned pixels in the background and are drained before shutdown.
         render_ctx.capture_async = screenshot_after <= 0;
         Uint64 t_render0 = SDL_GetPerformanceCounter();
+        render_ctx.source_phase = signal_frame_phase(&sig_state, frame_count - 1);
         gpu_render_frame(&render_ctx, &video_chain);
         Uint64 t_render1 = SDL_GetPerformanceCounter();
         if (render_ctx.submit_ns && render_ctx.presentation_slots > 1)

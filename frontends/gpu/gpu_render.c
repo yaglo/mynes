@@ -246,22 +246,23 @@ void gpu_render_presentation_update(GPURenderCtx *ctx, float source_hz) {
         ctx->presentation_blocked = false;
         ctx->presentation_slot = ctx->cadence_samples = 0;
         ctx->cadence_start_ns = 0;
+        ctx->pacing_deadline_ns = 0;
         ctx->presentation_last_mode = ctx->presentation_mode;
         ctx->presentation_display = display;
         ctx->presentation_hz = hz;
         ctx->presentation_source_hz = source_hz;
-        if (ctx->presentation_mode)
+        if (ctx->presentation_mode == GPU_PRESENT_BFI)
             fprintf(stderr, "BFI: display %.3f Hz, source %.4f Hz, %d refreshes/frame%s\n",
                 hz, source_hz, gpu_presentation_slots(hz, source_hz),
                 ctx->offscreen_w ? " (disabled offscreen)" : "");
     }
-    ctx->presentation_slots = ctx->presentation_mode && !ctx->offscreen_w &&
+    ctx->presentation_slots = ctx->presentation_mode == GPU_PRESENT_BFI && !ctx->offscreen_w &&
         !ctx->presentation_blocked && ctx->gpu_display_enabled && ctx->crt_shader_enabled &&
         !ctx->split_mode ? gpu_presentation_slots(hz, source_hz) : 1;
     if (ctx->presentation_slots == 1) ctx->presentation_slot = 0;
     /* SDL flushes the queue here: never reconfigure while holding an acquired
      * drawable waiting for a source picture. Apply at the next free boundary. */
-    int in_flight = ctx->presentation_slots > 1 ? 1 : 2;
+    int in_flight = ctx->presentation_slots > 1 || ctx->presentation_mode == GPU_PRESENT_60HZ ? 1 : 2;
     if (!ctx->present_cmd && ctx->frames_in_flight != in_flight &&
         SDL_SetGPUAllowedFramesInFlight(ctx->gpu, in_flight))
         ctx->frames_in_flight = in_flight;
@@ -464,14 +465,27 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
         SDL_BlitGPUTexture(cmd, &split);
     }
 
+    if (ctx->presentation_mode == GPU_PRESENT_60HZ) {
+        uint64_t now = SDL_GetTicksNS();
+        /* Start one interval ahead so source wakeup/processing jitter does not
+         * immediately move the presentation deadline. Only this mode pays
+         * the extra frame of startup latency. */
+        if (!ctx->pacing_deadline_ns || now > ctx->pacing_deadline_ns + 3 * GPU_PRESENT_60HZ_PERIOD_NS)
+            ctx->pacing_deadline_ns = gpu_presentation_next_ns(0, now);
+        if (ctx->pacing_deadline_ns > now)
+            SDL_DelayPrecise(ctx->pacing_deadline_ns - now);
+    }
     if(ctx->offscreen_w) {
         ctx->offscreen_fence=SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
         if(ctx->offscreen_fence) ctx->submit_ns=SDL_GetTicksNS();
     } else if(SDL_SubmitGPUCommandBuffer(cmd)) ctx->submit_ns=SDL_GetTicksNS();
+    if (ctx->submit_ns && ctx->presentation_mode == GPU_PRESENT_60HZ)
+        ctx->pacing_deadline_ns = gpu_presentation_next_ns(ctx->pacing_deadline_ns, ctx->submit_ns);
     if (ctx->submit_ns && ctx->presentation_trace)
-        fprintf(ctx->presentation_trace, "%llu,%llu,%d,%d,%.3f\n",
+        fprintf(ctx->presentation_trace, "%llu,%llu,%d,%d,%.3f,%d,%d\n",
             (unsigned long long)ctx->submit_ns, (unsigned long long)ctx->frame_counter,
-            ctx->presentation_slot, ctx->presentation_slots, ctx->presentation_hz);
+            ctx->presentation_slot, ctx->presentation_slots, ctx->presentation_hz,
+            ctx->source_phase, ctx->presentation_mode);
     if (ctx->submit_ns && ctx->presentation_slots > 1) {
         if (!ctx->cadence_start_ns) ctx->cadence_start_ns = ctx->submit_ns;
         else if (++ctx->cadence_samples >= 60) {

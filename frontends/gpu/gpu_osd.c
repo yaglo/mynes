@@ -115,12 +115,14 @@ void gpu_osd_render(uint32_t *rgba, const OSDMenuLevel *level, bool editing,
     snprintf(line,sizeof(line),"%s",render->offscreen_w ? "OFFSCREEN DRAWABLE PIXELS" : render->output_geometry.native_known
         ? (render->output_geometry.resampled ? "SCALED DESKTOP / F NATIVE FULLSCREEN" : "NATIVE PANEL PIXELS")
         : "DRAWABLE PIXELS / PANEL UNKNOWN");
-    if (render->presentation_mode) {
+    if (render->presentation_mode == GPU_PRESENT_BFI) {
         if (render->presentation_slots>1)
             snprintf(line,sizeof(line),"BFI %DX / %.1f HZ / DIM %.2f",render->presentation_slots,
                 render->presentation_hz,render->dark_frame_level);
         else
             snprintf(line,sizeof(line),"BFI INACTIVE / %s",render->presentation_blocked ? "CADENCE TOO SLOW" : "NEEDS MATCHED HIGH HZ");
+    } else if (render->presentation_mode == GPU_PRESENT_60HZ) {
+        snprintf(line,sizeof(line),"60 HZ HOLD / NO DARK REFRESH");
     }
     text(rgba,x+8,y+51,line,0x00,1);
     for(int row=0;row<rows;row++) {

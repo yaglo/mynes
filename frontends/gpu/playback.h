@@ -11,6 +11,7 @@ typedef struct {
     APUAnalog analog;
     int region;
     bool gpu_audio;
+    int presentation_mode;
     uint8_t controller;
 } PlaybackControls;
 typedef struct {

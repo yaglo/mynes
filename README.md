@@ -198,6 +198,10 @@ cmake --build . -j
 ```
 
 To opt out, configure with `-DNES_BUILD_GPU_FRONTEND=OFF`.
+
+On a high-refresh screen, **M → Host display → Presentation → 60 Hz hold**
+limits presentation to 60 updates/s without dark frames (`--presentation 60hz`).
+GPU audio starts by default; **M → Audio → Processing** selects the backend.
 `-DNES_BUILD_FRONTENDS=OFF` disables both graphical frontends. The optional
 SDL2 frontend remains available as `./bin/mynes`.
 
