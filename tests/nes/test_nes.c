@@ -340,6 +340,115 @@ int test_vblank_flag_read(void) {
     }
 }
 
+int test_dmc_load_alignment(void) {
+    bool pass = true;
+    for (unsigned put = 0; put < 2; put++) {
+        setup();
+        nes.apu.put_cycle = put;
+        nes.apu.dmc.sample_address = 0x8000;
+        nes.apu.dmc.sample_length = 1;
+        apu_write(&nes.apu, 0x4015, 0x10);
+        unsigned delay = put ? 3 : 4;
+        for (unsigned cycle = 1; cycle <= delay; cycle++) {
+            apu_step(&nes.apu);
+            pass &= apu_dmc_needs_sample(&nes.apu) == (cycle == delay);
+        }
+        pass &= !nes.apu.put_cycle; /* Load halts on a get. */
+    }
+    printf("TEST dmc_load_alignment: %s\n", pass ? "PASS" : "FAIL");
+    return pass;
+}
+
+int test_dmc_aborted_halt(void) {
+    setup();
+    nes.cpu.reset_pending = false;
+    nes.cpu.PC = 0x8000;
+    nes.apu.dmc.bytes_remaining = 1;
+    nes.apu.dmc.sample_buffer_empty = false;
+    nes.apu.dmc.bits_remaining = 1;
+    nes.apu.dmc.timer = 2;
+    apu_write(&nes.apu, 0x4015, 0);
+    unsigned halted = 0;
+    for (unsigned cycle = 0; cycle < 5; cycle++) {
+        apu_step(&nes.apu);
+        halted += nes_dma_step(&nes);
+    }
+    bool pass = halted == 1 && !nes.dma.dmc_active;
+
+    /* A write cannot be halted; this pulse expires instead of retrying. */
+    uint8_t prog[] = { 0x85, 0x10 }; /* STA $10 */
+    write_program(0x8000, prog, sizeof(prog));
+    nes.cpu.rdy = true;
+    cpu_step(&nes.cpu);
+    cpu_step(&nes.cpu);
+    pass &= cpu_next_is_write(&nes.cpu);
+    nes.apu.dmc_abort_pending = true;
+    pass &= !nes_dma_step(&nes) && !nes.apu.dmc_abort_pending;
+    printf("TEST dmc_aborted_halt: %s\n", pass ? "PASS" : "FAIL");
+    return pass;
+}
+
+int test_dmc_stop_during_request(void) {
+    setup();
+    nes.cpu.reset_pending = false;
+    nes.cpu.PC = 0x8000;
+    nes.apu.put_cycle = false;
+    nes.apu.dmc.current_address = 0x8010;
+    nes.apu.dmc.bytes_remaining = 1;
+    nes.apu.dmc.sample_length = 1;
+    nes.apu.dmc.loop_flag = true;
+    test_rom[0x10] = 0xA5;
+    apu_write(&nes.apu, 0x4015, 0);
+    unsigned halted = 0;
+    for (unsigned cycle = 0; cycle < 5; cycle++) {
+        apu_step(&nes.apu);
+        halted += nes_dma_step(&nes);
+    }
+    /* The pending fetch survives, but cannot restart a stopped loop. */
+    bool pass = halted == 4 && nes.apu.dmc.sample_buffer == 0xA5 &&
+                nes.apu.dmc.bytes_remaining == 0 && !apu_dmc_needs_sample(&nes.apu);
+    printf("TEST dmc_stop_during_request: %s\n", pass ? "PASS" : "FAIL");
+    return pass;
+}
+
+static unsigned traced_instructions;
+static bool trace_matches;
+static uint64_t last_trace_cycle;
+
+static void check_instruction_trace(uint16_t pc, uint8_t opcode, uint64_t cycles) {
+    trace_matches &= pc >= 0x8000 && pc <= 0x8003;
+    trace_matches &= opcode == test_rom[pc & 0x7FFF];
+    trace_matches &= cycles > last_trace_cycle;
+    last_trace_cycle = cycles;
+    traced_instructions++;
+}
+
+int test_trace_callback_toggle(void) {
+    setup();
+    uint8_t program[] = {0xEA, 0x4C, 0x00, 0x80}; /* NOP; JMP $8000 */
+    write_program(0x8000, program, sizeof(program));
+    set_reset_vector(0x8000);
+    nes_reset(&nes);
+    traced_instructions = 0;
+    last_trace_cycle = 0;
+    trace_matches = true;
+    debug_hooks.on_cpu_step = NULL;
+    run_cycles(31);
+    debug_hooks.on_cpu_step = check_instruction_trace;
+    run_cycles(50);
+    bool pass = traced_instructions > 0 && trace_matches;
+    unsigned count = traced_instructions;
+    debug_hooks.on_cpu_step = NULL;
+    run_cycles(31);
+    pass &= traced_instructions == count;
+    debug_hooks.on_cpu_step = check_instruction_trace;
+    run_cycles(50);
+    pass &= traced_instructions > count && trace_matches;
+    debug_hooks.on_cpu_step = NULL;
+    printf("TEST trace_callback_toggle: %s\n", pass ? "PASS" : "FAIL");
+    return pass;
+}
+
 /* ============================================================================
  * Main
  * ============================================================================ */
@@ -350,6 +459,9 @@ int main(void) {
     int passed = 0;
     int total = 0;
 
+    total++; passed += test_dmc_load_alignment();
+    total++; passed += test_dmc_aborted_halt();
+    total++; passed += test_dmc_stop_during_request();
     total++; passed += test_ram_access();
     total++; passed += test_ppu_register_access();
     total++; passed += test_ppu_scroll_write();
@@ -359,6 +471,7 @@ int main(void) {
     total++; passed += test_oam_dma();
     total++; passed += test_full_frame();
     total++; passed += test_vblank_flag_read();
+    total++; passed += test_trace_callback_toggle();
 
     printf("\n=== Results: %d/%d tests passed ===\n", passed, total);
 

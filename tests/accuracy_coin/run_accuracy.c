@@ -85,7 +85,7 @@ static void press(uint8_t button) {
 }
 
 int main(int argc, char **argv) {
-    unsigned page = 0, phase = 8;
+    unsigned page = 0, phase = 12, align = 3;
     const char *path = argc > 1 ? argv[1] : "tests/accuracy_coin/AccuracyCoin.nes";
     if (argc > 3 || (argc > 2 && (!number(argv[2], PAGE_COUNT, &page) || !page))) {
         fprintf(stderr, "Usage: %s [AccuracyCoin.nes [page 1-22]]\n", argv[0]);
@@ -95,9 +95,7 @@ int main(int argc, char **argv) {
     if (env) {
         if (!number(env, 11, &phase)) { fprintf(stderr, "Invalid NES_CPU_PHASE\n"); return 2; }
     } else if ((env = getenv("NES_ALIGN"))) {
-        unsigned align;
         if (!number(env, 2, &align)) { fprintf(stderr, "Invalid NES_ALIGN\n"); return 2; }
-        phase = align * 4;
     }
     int err = nes_rom_load(&rom, path);
     if (err != ROM_OK) {
@@ -110,7 +108,9 @@ int main(int argc, char **argv) {
         return 1;
     }
     nes_init(&nes);
-    nes_set_cpu_phase_offset(&nes, (uint8_t)phase);
+    if (phase < 12) nes_set_cpu_phase_offset(&nes, (uint8_t)phase);
+    else if (align < 3) nes_set_cpu_align(&nes, (uint8_t)align);
+    phase = nes.cpu_phase_offset;
     nes_load_mapper(&nes, rom.mapper, rom.prg_rom, rom.prg_size,
                     rom.chr_rom, rom.chr_size, rom.mirroring);
     nes_reset(&nes);

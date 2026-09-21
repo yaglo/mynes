@@ -1,0 +1,9 @@
+[
+  {"name": "nes15-ntsc", "args": ["tests/nes-test-roms/nes15-1.0.0/nes15-NTSC.nes", "2000", "--start", "--input", "tools/profiles/nes15.inputs"]},
+  {"name": "nes15-pal", "args": ["tests/nes-test-roms/nes15-1.0.0/nes15-PAL.nes", "2000", "--pal", "--start", "--input", "tools/profiles/nes15.inputs"]},
+  {"name": "mmc1-demo", "args": ["tests/nes-test-roms/other/8bitpeoples_-_deadline_console_invitro.nes", "2000"]},
+  {"name": "uxrom-pcm", "args": ["tests/nes-test-roms/other/PCM.demo.wgraphics.nes", "2000"]},
+  {"name": "mmc3-demo", "args": ["tests/nes-test-roms/other/high-hopes.nes", "2000"]},
+  {"name": "nestress", "args": ["tests/nes-test-roms/stress/NEStress.NES", "2000", "--start"]},
+  {"name": "accuracycoin", "args": ["tests/accuracy_coin/AccuracyCoin.nes", "2000", "--start"]}
+]

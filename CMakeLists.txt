@@ -179,6 +179,10 @@ add_dependencies(nes_static generate_cpu)
 add_library(NES::nes ALIAS nes)
 add_library(NES::nes_static ALIAS nes_static)
 
+# Opt-in benchmark: built explicitly with --target bench_core.
+add_executable(bench_core EXCLUDE_FROM_ALL tools/bench_core.c)
+target_link_libraries(bench_core PRIVATE nes_static)
+
 # =============================================================================
 # Tests
 # =============================================================================
@@ -356,11 +360,12 @@ if(NES_BUILD_GPU_FRONTEND)
         set(SHADER_STAMP ${CMAKE_BINARY_DIR}/shaders/.compile_stamp)
         add_custom_command(
             OUTPUT ${SHADER_STAMP}
-            COMMAND ${SHADER_SRC_DIR}/compile_shaders.sh
+            COMMAND ${SHADER_SRC_DIR}/compile_shaders.sh ${SHADER_OUT_DIR}
             COMMAND ${CMAKE_COMMAND} -E touch ${SHADER_STAMP}
             DEPENDS ${ALL_GLSL_SOURCES} ${SHADER_SRC_DIR}/compile_shaders.sh
             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
             COMMENT "Compiling GPU shaders (GLSL -> SPIR-V -> MSL)"
+            VERBATIM
         )
         add_custom_target(gpu_shaders DEPENDS ${SHADER_STAMP})
         add_dependencies(mynes_gpu gpu_shaders)

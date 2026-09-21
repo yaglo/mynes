@@ -7,13 +7,13 @@
 #   readwrite storage buffers: buffer(U+R) .. buffer(U+R+W-1)
 #
 # Requires: glslc (shaderc), spirv-cross
-# Usage: ./compile_shaders.sh
+# Usage: ./compile_shaders.sh [output-directory]
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Build output directory (relative to repo root).
-BUILD_SHADER_DIR="$SCRIPT_DIR/../../../build/shaders"
+# CMake passes its build tree; standalone invocation retains the default.
+BUILD_SHADER_DIR="${1:-$SCRIPT_DIR/../../../build/shaders}"
 
 ERRORS=0
 COMPILED=0
