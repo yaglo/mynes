@@ -105,7 +105,7 @@ The companion PFM capture preserves signed HDR values; PPM clips to SDR white.
 
 ## High-refresh presentation
 
-**Host display → Presentation → 60 Hz hold** targets picture presentation at
+**Host display → Presentation → 60 Hz hold** is the default and targets picture presentation at
 60 per second, without dark-frame insertion. The command-line equivalent is
 `--presentation 60hz`. Each picture remains visible until its replacement,
 including across additional panel refreshes. This is a session preference,

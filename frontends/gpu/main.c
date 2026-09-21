@@ -225,7 +225,7 @@ int main(int argc, char **argv) {
     char manual_screenshot_path[256];
     int exit_status = 0;
     int offscreen_w=0,offscreen_h=0;
-    int presentation_mode=0;
+    int presentation_mode=GPU_PRESENT_60HZ;
     float dark_frame_level=0.15f;
     FILE *playback_trace=NULL;
     const char *trace_path=getenv("MYNES_PLAYBACK_TRACE"), *limit_env=getenv("MYNES_PLAYBACK_FRAMES");
@@ -333,7 +333,7 @@ int main(int argc, char **argv) {
                    "  --screenshot-frames N Capture 1..240 consecutive frames\n"
                    "  --benchmark           Fence complete preset chain at four resolutions\n"
                    "  --offscreen WxH       Hidden, silent playback into a pixel-sized target\n"
-                   "  --presentation M     hold (default), bfi, or 60hz (paced hold)\n"
+                   "  --presentation M     hold, bfi, or 60hz (default, paced hold)\n"
                    "  --dark-frame-level F  Dark-refresh emission, 0..1 (default 0.15)\n"
                    "  --sdr                 Use SDR output for display comparisons\n"
                    "  --native-fullscreen   Enter native panel mode (F toggles back)\n"
