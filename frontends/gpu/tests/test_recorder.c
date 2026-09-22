@@ -61,6 +61,15 @@ static bool probe(const char *path, const char *stream, const char *entries, cha
 
 static bool file_exists(const char *path) { return access(path, F_OK) == 0; }
 
+/* The whole of a small text file, or "" when it cannot be read. */
+static const char *read_text(const char *path, char *text, size_t n) {
+    FILE *f = fopen(path, "rb");
+    size_t got = f ? fread(text, 1, n - 1, f) : 0;
+    if (f) fclose(f);
+    text[got] = 0;
+    return text;
+}
+
 static bool tool_available(const char *tool) {
     char command[256];
     snprintf(command, sizeof(command), "%s -version >/dev/null 2>&1", tool);
@@ -106,6 +115,11 @@ static void test_paths_and_commands(void) {
     CHECK(!recorder_temp_paths("demo", video, audio, log, sizeof(video)));
     CHECK(!recorder_temp_paths("dir.mov/demo", video, audio, log, sizeof(video)));
     CHECK(!recorder_temp_paths("demo.mov", video, audio, log, 8));
+    char json[256];
+    CHECK(recorder_json_path("clips/demo.mov", json, sizeof(json)) && !strcmp(json, "clips/demo.json"));
+    CHECK(recorder_json_path("v1.2/Demo.MP4", json, sizeof(json)) && !strcmp(json, "v1.2/Demo.json"));
+    CHECK(!recorder_json_path("demo.avi", json, sizeof(json)));
+    CHECK(!recorder_json_path("demo.mov", json, 9));
 
     RecorderOptions options = { .output = "out/clip.mov", .ffmpeg = "ffmpeg-test",
         .codec_args = RECORDER_DEFAULT_CODEC_ARGS, .region = 0, .width = 3840, .height = 2880 };
@@ -245,6 +259,12 @@ static void test_end_to_end(const char *directory) {
     recorder_destroy(r);
     CHECK(!file_exists(video) && !file_exists(audio) && !file_exists(log));
     CHECK(file_exists(output));
+    /* The sidecar of an SDR clip: no light levels, the render's headroom. */
+    char json[600], text[1024];
+    snprintf(json, sizeof(json), "%s/clip.json", directory);
+    CHECK(!strcmp(read_text(json, text, sizeof(text)),
+        "{\n  \"frames\": 30,\n  \"rate\": 60.0988,\n  \"width\": 64,\n  \"height\": 48,\n"
+        "  \"hdr\": false,\n  \"white_nits\": 100,\n  \"headroom\": 1\n}\n"));
     char info[2048], value[128];
     CHECK(probe(output, "v:0", "codec_name,pix_fmt,nb_frames,r_frame_rate,width,height,duration", info, sizeof(info)));
     CHECK(probe_value(info, "codec_name", value, sizeof(value)) && !strcmp(value, "rawvideo"));
@@ -279,6 +299,7 @@ static void test_end_to_end(const char *directory) {
     /* The default codec arguments produce the documented master format. */
     snprintf(output, sizeof(output), "%s/master.mp4", directory);
     options.output = output; options.codec_args = NULL; options.seconds = 0.1;
+    options.headroom = 1.6f;   /* an EDR target, tone-mapped into the SDR file */
     r = recorder_create(&options, error, sizeof(error));
     CHECK(r != NULL);
     if (r) {
@@ -297,6 +318,9 @@ static void test_end_to_end(const char *directory) {
         CHECK(probe_value(info, "codec_name", value, sizeof(value)) && !strcmp(value, "h264"));
         CHECK(probe_value(info, "pix_fmt", value, sizeof(value)) && !strcmp(value, "yuv444p"));
         CHECK(probe_value(info, "nb_frames", value, sizeof(value)) && atoi(value) == 6);
+        snprintf(json, sizeof(json), "%s/master.json", directory);
+        CHECK(strstr(read_text(json, text, sizeof(text)), "\"frames\": 6,") != NULL);
+        CHECK(strstr(text, "\"headroom\": 1.6\n}") != NULL && !strstr(text, "max_cll"));
     } else fprintf(stderr, "  %s\n", error);
 
     /* Failures: too few frames, a broken encoder, a mismatched size, no ffmpeg. */
@@ -327,6 +351,8 @@ static void test_end_to_end(const char *directory) {
         CHECK(strstr(error, "only 2 of 6") != NULL);
         recorder_destroy(r);
         CHECK(!file_exists(video) && !file_exists(audio) && !file_exists(log));
+        snprintf(json, sizeof(json), "%s/short.json", directory);
+        CHECK(!file_exists(json));   /* no sidecar without a clip */
     }
     options.codec_args = "-c:v no_such_encoder_xyz";
     r = recorder_create(&options, error, sizeof(error));

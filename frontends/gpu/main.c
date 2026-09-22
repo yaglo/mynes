@@ -1462,7 +1462,8 @@ int main(int argc, char **argv) {
     if (record_path) {
         RecorderOptions options = { .output = record_path, .seconds = record_seconds,
             .after = (unsigned)record_after, .region = preset_ctx.region,
-            .width = offscreen_w, .height = offscreen_h };
+            .width = offscreen_w, .height = offscreen_h,
+            .headroom = gpu_render_headroom(&render_ctx) };
         char error[2048];
         recorder = recorder_create(&options, error, sizeof(error));
         if (!recorder) { fprintf(stderr, "Recording: %s\n", error); exit_status = 1; goto cleanup; }

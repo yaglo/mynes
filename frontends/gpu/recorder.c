@@ -59,6 +59,13 @@ bool recorder_temp_paths(const char *output, char *video, char *audio, char *log
     return v > 0 && (size_t)v < n && a > 0 && (size_t)a < n && l > 0 && (size_t)l < n;
 }
 
+bool recorder_json_path(const char *output, char *json, size_t n) {
+    const char *ext = container_extension(output);
+    if (!ext) return false;
+    int len = snprintf(json, n, "%.*s.json", (int)(ext - output), output);
+    return len > 0 && (size_t)len < n;
+}
+
 bool recorder_command_add(RecorderCommand *cmd, const char *arg) {
     size_t len = strlen(arg) + 1;
     if (cmd->argc >= RECORDER_ARGV_MAX || cmd->used + len > sizeof(cmd->storage)) return false;
@@ -238,13 +245,29 @@ static bool write_all(int fd, const uint8_t *data, size_t size) {
 struct Recorder {
     RecorderOptions options;
     char     output[1024], ffmpeg[512], codec_args[1024];
-    char     video_path[1100], audio_path[1100], log_path[1100];
+    char     video_path[1100], audio_path[1100], log_path[1100], json_path[1100];
     unsigned first, last, frames, written;
     Child    encoder;
     FILE    *audio;
     uint8_t *rgb;
     char     error[512];
 };
+
+/* What a later stage needs to know about the clip without probing it. The
+ * headroom is the one the CRT shader rendered with; an SDR file clips at
+ * its white, which is display-relative (100 nits is the BT.709 studio
+ * reference). */
+static bool write_json(const Recorder *r, char *error, size_t error_size) {
+    FILE *f = fopen(r->json_path, "w");
+    bool ok = f && fprintf(f,
+        "{\n  \"frames\": %u,\n  \"rate\": %s,\n  \"width\": %d,\n  \"height\": %d,\n"
+        "  \"hdr\": false,\n  \"white_nits\": 100,\n  \"headroom\": %.6g\n}\n",
+        r->written, recorder_rate_string(r->options.region), r->options.width, r->options.height,
+        r->options.headroom > 0 ? r->options.headroom : 1) > 0;
+    if (f && fclose(f)) ok = false;
+    if (!ok) snprintf(error, error_size, "cannot write %s: %s", r->json_path, strerror(errno));
+    return ok;
+}
 
 static void remove_temps(const Recorder *r) {
     unlink(r->video_path);
@@ -268,7 +291,8 @@ Recorder *recorder_create(const RecorderOptions *options, char *error, size_t er
     r->first = options->after + 1;
     r->last = options->after + r->frames;
     if (!r->output[0] || !recorder_temp_paths(r->output, r->video_path, r->audio_path,
-                                              r->log_path, sizeof(r->video_path))) {
+                                              r->log_path, sizeof(r->video_path)) ||
+        !recorder_json_path(r->output, r->json_path, sizeof(r->json_path))) {
         snprintf(error, error_size, "the recording must be a .mov or .mp4 file");
         goto fail;
     }
@@ -382,6 +406,7 @@ bool recorder_finish(Recorder *r, char *error, size_t error_size) {
             ok = recorder_run(&cmd, r->log_path, error, error_size);
         }
     }
+    if (ok) ok = write_json(r, error, error_size);
     if (ok)
         fprintf(stderr, "Recorded %u frames (%.3f s) to %s\n", r->written,
                 r->written / recorder_rate(r->options.region), r->output);

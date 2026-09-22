@@ -2,8 +2,9 @@
  * emulated frame becomes one rgb24 rawvideo frame on an ffmpeg child's
  * stdin, the worker writes the audio of the same frames to a temporary
  * file, and a second ffmpeg run muxes both into the requested .mov/.mp4.
- * The ffmpeg command lines, the frame arithmetic and the input recorder are
- * plain functions so they can be tested without a GPU. */
+ * OUT.json beside the clip records its frame count, rate, size and light
+ * levels. The ffmpeg command lines, the frame arithmetic and the input
+ * recorder are plain functions so they can be tested without a GPU. */
 #ifndef GPU_RECORDER_H
 #define GPU_RECORDER_H
 
@@ -26,6 +27,7 @@ typedef struct {
     int         width, height;   /* the offscreen target, hence every video frame */
     const char *ffmpeg;      /* executable; NULL means MYNES_FFMPEG, else "ffmpeg" from PATH */
     const char *codec_args;  /* NULL means MYNES_RECORD_CODEC_ARGS, else the default */
+    double      headroom;    /* the render's headroom (1.0 on an SDR target), for OUT.json */
 } RecorderOptions;
 
 /* One ffmpeg argv with the storage its entries point into. */
@@ -53,6 +55,9 @@ void recorder_options_from_env(RecorderOptions *options);
 /* Temporary files beside the output: <out>.video.<ext>, <out>.audio.f32le
  * and <out>.ffmpeg.log. False when the output is not .mov or .mp4. */
 bool recorder_temp_paths(const char *output, char *video, char *audio, char *log, size_t n);
+/* The sidecar: OUT.mov or OUT.mp4 gives OUT.json. False when the output is
+ * not .mov or .mp4. */
+bool recorder_json_path(const char *output, char *json, size_t n);
 bool recorder_command_add(RecorderCommand *cmd, const char *arg);
 /* Append a whitespace-separated argument string; false when it is empty. */
 bool recorder_command_add_split(RecorderCommand *cmd, const char *args);
@@ -91,9 +96,9 @@ bool      recorder_want_frame(const Recorder *r, unsigned number);
  * writes it to the encoder. user is the Recorder. */
 bool      recorder_push_frame(void *user, const FrameCaptureImage *image);
 bool      recorder_complete(const Recorder *r);
-/* Ends the encoder, muxes with the audio and removes the temporary files.
- * Call after the worker has stopped writing audio. Fails when a frame is
- * missing, a write failed or either ffmpeg run did. */
+/* Ends the encoder, muxes with the audio, writes OUT.json and removes the
+ * temporary files. Call after the worker has stopped writing audio. Fails
+ * when a frame is missing, a write failed or either ffmpeg run did. */
 bool      recorder_finish(Recorder *r, char *error, size_t error_size);
 /* Releases everything; kills a still-running encoder and removes leftovers. */
 void      recorder_destroy(Recorder *r);
