@@ -260,7 +260,11 @@ static char             perf_text[128] = "";
  * Any feature can post one (gamepad hot-plug, room reflections, ...). */
 static char             notice_title[40], notice_value[96];
 static Uint64           notice_until;
+/* Batch runs record or compare the final picture; a notice timed in wall
+ * clock would sit on a slower-than-real-time recording for many frames. */
+static bool             notices_muted;
 static void show_notice(const char *title, const char *value) {
+    if (notices_muted) return;
     snprintf(notice_title, sizeof(notice_title), "%s", title);
     snprintf(notice_value, sizeof(notice_value), "%s", value);
     notice_until = SDL_GetTicks() + 2000;
@@ -966,6 +970,7 @@ int main(int argc, char **argv) {
 
     /* --- SDL3 init --- */
     if (offscreen_w || screenshot_after > 0 || benchmark || record_path) {
+        notices_muted = true;
         /* An offscreen run shows nothing: no Dock icon, no activation. */
         if (offscreen_w) SDL_SetHint(SDL_HINT_MAC_BACKGROUND_APP, "1");
         batch_lock_wait();
