@@ -2,8 +2,8 @@
  * rgb24 conversion against the PPM writer, the rawvideo/audio muxing helper
  * end to end (frames piped through ffmpeg and read back with ffmpeg and
  * ffprobe), an HDR clip through ProRes and back with its colour tags, the
- * OUT.json sidecar, the worker's capture window with a replay offset, and
- * input recording. The ffmpeg parts are skipped, not failed, when ffmpeg or
+ * OUT.json sidecar, the HDR flags, the worker's capture window with a
+ * replay offset, and input recording. The ffmpeg parts are skipped, not failed, when ffmpeg or
  * ffprobe is missing from PATH. */
 #define _POSIX_C_SOURCE 200809L
 #define _DARWIN_C_SOURCE
@@ -196,6 +196,46 @@ static void test_paths_and_commands(void) {
     if (!argv_equals(&cmd, encode_hdr)) { CHECK(!"HDR encode argv"); print_argv(&cmd); }
     CHECK(recorder_mux_command(&cmd, &options, "v.mov", "a.f32le"));
     if (!argv_equals(&cmd, mux)) { CHECK(!"HDR mux argv"); print_argv(&cmd); }
+}
+
+/* --record-hdr, --record-headroom and --record-hdr-white as main checks them. */
+static void test_flags(void) {
+    double v = 0;
+    CHECK(recorder_parse_number("4", 1, 10000, &v) && v == 4);
+    CHECK(recorder_parse_number("1.6", 1, 10000, &v) && fabs(v - 1.6) < 1e-12);
+    CHECK(recorder_parse_number("10000", 1, 10000, &v) && v == 10000);
+    v = 7;
+    CHECK(!recorder_parse_number("0.5", 1, 10000, &v) && v == 7);
+    CHECK(!recorder_parse_number("10001", 1, 10000, &v));
+    CHECK(!recorder_parse_number("", 1, 10000, &v) && !recorder_parse_number("4x", 1, 10000, &v));
+    CHECK(!recorder_parse_number("nan", 1, 10000, &v) && !recorder_parse_number("inf", 1, 10000, &v));
+
+    CHECK(recorder_flags_error(true, true, false, 0, 0, NULL) == NULL);
+    CHECK(recorder_flags_error(true, true, false, 4, 203, NULL) == NULL);
+    CHECK(recorder_flags_error(true, false, false, 2, 0, NULL) == NULL);   /* SDR from an EDR render */
+    CHECK(recorder_flags_error(true, false, true, 0, 0, NULL) == NULL);
+    CHECK(recorder_flags_error(false, false, false, 0, 0, NULL) == NULL);
+    const char *e;
+    CHECK((e = recorder_flags_error(false, true, false, 0, 0, NULL)) && !strcmp(e, "--record-hdr requires --record"));
+    CHECK((e = recorder_flags_error(true, true, true, 0, 0, NULL)) && strstr(e, "--sdr"));
+    CHECK((e = recorder_flags_error(false, false, false, 4, 0, NULL)) && !strcmp(e, "--record-headroom requires --record"));
+    CHECK((e = recorder_flags_error(true, false, true, 4, 0, NULL)) && strstr(e, "no effect with --sdr"));
+    CHECK((e = recorder_flags_error(true, false, false, 0, 203, NULL)) && strstr(e, "requires --record-hdr"));
+    /* The PQ peak, with the flag, the environment or the defaults. */
+    CHECK(recorder_flags_error(true, true, false, 49.2, 0, NULL) == NULL);
+    CHECK((e = recorder_flags_error(true, true, false, 49.3, 0, NULL)) && strstr(e, "10008 nits"));
+    CHECK((e = recorder_flags_error(true, true, false, 0, 0, "60")) && strstr(e, "12180 nits"));
+    CHECK(recorder_flags_error(true, true, false, 4, 0, "60") == NULL);   /* the flag wins */
+    CHECK((e = recorder_flags_error(true, true, false, 0, 5000, NULL)) && strstr(e, "20000 nits"));
+    CHECK(recorder_flags_error(true, false, false, 0, 0, "60") == NULL);  /* SDR has no PQ peak */
+
+    /* Flag, then MYNES_OFFSCREEN_HEADROOM, then 4.0 for HDR and 1.6. */
+    CHECK(recorder_offscreen_headroom(0, false, NULL) == 1.6f);
+    CHECK(recorder_offscreen_headroom(0, true, NULL) == 4.0f);
+    CHECK(recorder_offscreen_headroom(0, true, "2.5") == 2.5f);
+    CHECK(recorder_offscreen_headroom(0, false, "0.5") == 1.0f);
+    CHECK(recorder_offscreen_headroom(3, true, "2.5") == 3.0f);
+    CHECK(recorder_offscreen_headroom(1.25, false, NULL) == 1.25f);
 }
 
 /* Options an HDR recording refuses before it starts ffmpeg. */
@@ -705,6 +745,7 @@ int main(void) {
     test_arithmetic();
     test_paths_and_commands();
     test_rgb24(directory);
+    test_flags();
     test_hdr_options(directory);
     if (tool_available("ffmpeg") && tool_available("ffprobe")) {
         test_end_to_end(directory);

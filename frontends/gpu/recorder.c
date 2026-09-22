@@ -33,6 +33,46 @@ unsigned recorder_frame_count(double seconds, int region) {
     return frames > 1e9 ? 0 : (unsigned)frames;
 }
 
+/* --- Command-line flags --- */
+
+bool recorder_parse_number(const char *text, double min, double max, double *value) {
+    char *end;
+    double v = strtod(text, &end);
+    if (!*text || *end || !isfinite(v) || v < min || v > max) return false;
+    *value = v;
+    return true;
+}
+
+float recorder_offscreen_headroom(double headroom, bool hdr, const char *env) {
+    if (headroom > 0) return (float)headroom;
+    if (env) return fmaxf(1, (float)atof(env));
+    return hdr ? 4.0f : 1.6f;
+}
+
+/* recorder_create checks the peak too; this reports it before the GPU and
+ * the ROM are set up. */
+static bool peak_error(double headroom, double white, char *error, size_t n) {
+    if (headroom * white <= FRAME_PQ_PEAK_NITS) return false;
+    snprintf(error, n, "headroom %.4g at %.4g nits white reaches %.0f nits, above the 10000-nit PQ peak",
+             headroom, white, headroom * white);
+    return true;
+}
+
+const char *recorder_flags_error(bool record, bool hdr, bool sdr, double headroom, double white_nits,
+                                 const char *headroom_env) {
+    static char peak[160];
+    if (hdr && !record) return "--record-hdr requires --record";
+    if (hdr && sdr) return "--record-hdr cannot be combined with --sdr";
+    if (headroom > 0 && !record) return "--record-headroom requires --record";
+    /* An SDR target renders without headroom whatever the value. */
+    if (headroom > 0 && sdr) return "--record-headroom has no effect with --sdr";
+    if (white_nits > 0 && !hdr) return "--record-hdr-white requires --record-hdr";
+    if (hdr && peak_error(recorder_offscreen_headroom(headroom, hdr, headroom_env),
+                          white_nits > 0 ? white_nits : RECORDER_HDR_WHITE_NITS, peak, sizeof(peak)))
+        return peak;
+    return NULL;
+}
+
 /* --- Command construction --- */
 
 void recorder_options_from_env(RecorderOptions *options) {
@@ -342,11 +382,7 @@ Recorder *recorder_create(const RecorderOptions *options, char *error, size_t er
             snprintf(error, error_size, "the HDR white level must be above 0 and at most 10000 nits");
             goto fail;
         }
-        if (headroom * white > FRAME_PQ_PEAK_NITS) {
-            snprintf(error, error_size, "headroom %.4g at %.4g nits white reaches %.0f nits, "
-                     "above the 10000-nit PQ peak", headroom, white, headroom * white);
-            goto fail;
-        }
+        if (peak_error(headroom, white, error, error_size)) goto fail;
         if (!strcmp(r->codec_args, RECORDER_HDR_CODEC_ARGS) &&
             strcasecmp(container_extension(r->output), ".mov")) {
             snprintf(error, error_size, "the default HDR master is ProRes, which needs a .mov output");

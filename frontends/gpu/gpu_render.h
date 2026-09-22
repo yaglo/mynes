@@ -80,6 +80,7 @@ typedef struct {
     SDL_GPUTexture *present_texture;
     Uint32 present_w, present_h;
     int offscreen_w, offscreen_h;
+    SDL_GPUTextureFormat offscreen_format;   /* INVALID: the swapchain's */
     float offscreen_headroom;
     SDL_GPUTexture *offscreen_target;
     SDL_GPUFence *offscreen_fence;

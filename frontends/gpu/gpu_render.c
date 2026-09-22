@@ -175,6 +175,14 @@ void gpu_render_update_dynamic_state(GPURenderCtx *ctx) {
     ctx->frame_counter++;
 }
 
+/* Hidden playback renders into a target of its own, in the swapchain's
+ * format unless main chose one (an HDR recording needs half floats). */
+static SDL_GPUTextureFormat final_format(const GPURenderCtx *ctx) {
+    if (ctx->offscreen_w && ctx->offscreen_format != SDL_GPU_TEXTUREFORMAT_INVALID)
+        return ctx->offscreen_format;
+    return SDL_GetGPUSwapchainTextureFormat(ctx->gpu, ctx->window);
+}
+
 /* Opt-in capture of our final CRT render, independent of OS screen-recording
  * permissions. PPM is an SDR preview: EDR values above reference white clip.
  * A NULL path hands the image to the capture sink only. */
@@ -186,7 +194,7 @@ static bool capture_display(GPURenderCtx *ctx, const GPUDisplayParams *params,
     bool saved = false;
     SDL_GPUTextureCreateInfo ci = {0};
     ci.type=SDL_GPU_TEXTURETYPE_2D;
-    ci.format=SDL_GetGPUSwapchainTextureFormat(ctx->gpu,ctx->window);
+    ci.format=final_format(ctx);
     ci.usage=SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
     ci.width=w; ci.height=h; ci.layer_count_or_depth=1; ci.num_levels=1;
     /* Hidden playback already owns its final target. Read that exact frame
@@ -323,7 +331,7 @@ bool gpu_render_prepare(GPURenderCtx *ctx) {
         ctx->swap_wait_ns=SDL_GetTicksNS()-start;
         if(!ctx->offscreen_target) {
             SDL_GPUTextureCreateInfo ti={.type=SDL_GPU_TEXTURETYPE_2D,
-                .format=SDL_GetGPUSwapchainTextureFormat(ctx->gpu,ctx->window),
+                .format=final_format(ctx),
                 .usage=SDL_GPU_TEXTUREUSAGE_COLOR_TARGET,.width=ctx->offscreen_w,
                 .height=ctx->offscreen_h,.layer_count_or_depth=1,.num_levels=1};
             ctx->offscreen_target=SDL_CreateGPUTexture(ctx->gpu,&ti);

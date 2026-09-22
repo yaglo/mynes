@@ -57,6 +57,22 @@ double      recorder_rate(int region);
 /* round(seconds * rate); zero for a duration that is not positive. */
 unsigned    recorder_frame_count(double seconds, int region);
 
+/* --- Command-line flags --- */
+
+/* A --record-headroom or --record-hdr-white value: the whole text is a
+ * finite number from min to max. */
+bool        recorder_parse_number(const char *text, double min, double max, double *value);
+/* The HDR recording flags against --record, --sdr and the 10000-nit PQ
+ * peak: NULL when they can be used together, else the message. headroom and
+ * white_nits are 0 when the flag was not given; headroom_env is
+ * MYNES_OFFSCREEN_HEADROOM. */
+const char *recorder_flags_error(bool record, bool hdr, bool sdr, double headroom, double white_nits,
+                                 const char *headroom_env);
+/* The hidden render's headroom: --record-headroom when given (above 0),
+ * else MYNES_OFFSCREEN_HEADROOM (at least 1), else 4.0 for an HDR
+ * recording and 1.6 otherwise. */
+float       recorder_offscreen_headroom(double headroom, bool hdr, const char *env);
+
 /* --- Command construction --- */
 
 /* Fill the ffmpeg, codec_args and white_nits fields that are still unset

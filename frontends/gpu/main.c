@@ -729,6 +729,8 @@ int main(int argc, char **argv) {
     const char *input_replay_path = NULL, *input_record_path = NULL;
     double record_seconds = 0;
     int record_after = 2;
+    bool record_hdr = false;
+    double record_headroom = 0, record_white = 0;   /* 0: not given */
     Recorder *recorder = NULL;
     for (int i = 1; i < argc; i++) {
         if (strncmp(argv[i], "--debug-dump", 12) == 0
@@ -825,6 +827,16 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "Record-after must be a number of frames\n"); return 1;
             }
             record_after = (int)after;
+        } else if (strcmp(argv[i], "--record-hdr") == 0) {
+            record_hdr = true;
+        } else if (strcmp(argv[i], "--record-headroom") == 0 && i + 1 < argc) {
+            if (!recorder_parse_number(argv[++i], 1, 10000, &record_headroom)) {
+                fprintf(stderr, "Record headroom must be a number from 1 to 10000\n"); return 1;
+            }
+        } else if (strcmp(argv[i], "--record-hdr-white") == 0 && i + 1 < argc) {
+            if (!recorder_parse_number(argv[++i], 1, 10000, &record_white)) {
+                fprintf(stderr, "Record HDR white must be 1 to 10000 nits\n"); return 1;
+            }
         } else if (strcmp(argv[i], "--load-state") == 0 && i + 1 < argc) {
             load_state_path = argv[++i];
         } else if (strcmp(argv[i], "--save-state") == 0 && i + 1 < argc) {
@@ -874,6 +886,13 @@ int main(int argc, char **argv) {
                    "  --record-seconds N    Clip length; frames = round(N x region rate)\n"
                    "  --record-after F      Emulated frames run before the first recorded\n"
                    "                        one (default 2)\n"
+                   "  --record-hdr          Record BT.2020 PQ from the half-float target\n"
+                   "                        (ProRes 4444 .mov unless MYNES_RECORD_HDR_CODEC_ARGS\n"
+                   "                        is set); not with --sdr\n"
+                   "  --record-headroom H   Highlight headroom over SDR white for the recorded\n"
+                   "                        render (default 1.6, 4.0 with --record-hdr;\n"
+                   "                        overrides MYNES_OFFSCREEN_HEADROOM)\n"
+                   "  --record-hdr-white N  Nits of SDR white in an HDR recording (default 203)\n"
                    "  --load-state FILE     Load a save-state file once the ROM is running\n"
                    "  --save-state FILE     With --screenshot-after N: save the console state\n"
                    "                        after frame N (input from --input-replay counts\n"
@@ -924,6 +943,10 @@ int main(int argc, char **argv) {
     if (input_record_path && (offscreen_w || record_path || review_no_input)) {
         fprintf(stderr, "--input-record needs windowed play with live input\n"); return 1;
     }
+    const char *record_flags = recorder_flags_error(record_path != NULL, record_hdr, force_sdr,
+                                                    record_headroom, record_white,
+                                                    getenv("MYNES_OFFSCREEN_HEADROOM"));
+    if (record_flags) { fprintf(stderr, "%s\n", record_flags); return 1; }
 
     /* rom_path may be NULL — in that case the startup ROM browser runs
      * after the SDL/GPU init below, then sets rom_path before continuing. */
@@ -1031,6 +1054,14 @@ int main(int argc, char **argv) {
             SDL_GPU_SWAPCHAINCOMPOSITION_SDR,
             SDL_GPU_PRESENTMODE_VSYNC);
         LOGV("HDR: not available, using SDR\n");
+    }
+    /* An HDR recording reads back a half-float extended-linear target of
+     * its own, whatever the hidden window's swapchain was given; the
+     * swapchain is never presented offscreen. */
+    SDL_GPUTextureFormat offscreen_format = SDL_GPU_TEXTUREFORMAT_INVALID;
+    if (record_hdr) {
+        hdr_available = true;
+        offscreen_format = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
     }
 
     /* --- Audio --- */
@@ -1338,7 +1369,8 @@ int main(int argc, char **argv) {
                      "frontends/gpu/shaders/render");
         }
         bool display_ready=offscreen_w
-            ? gpu_display_init_target(&gpu_disp,gpu,SDL_GetGPUSwapchainTextureFormat(gpu,window),
+            ? gpu_display_init_target(&gpu_disp,gpu,offscreen_format!=SDL_GPU_TEXTUREFORMAT_INVALID
+                                      ? offscreen_format : SDL_GetGPUSwapchainTextureFormat(gpu,window),
                                       offscreen_w,offscreen_h,render_shader_dir)
             : gpu_display_init(&gpu_disp,gpu,window,render_shader_dir);
         if (display_ready) {
@@ -1421,8 +1453,9 @@ int main(int argc, char **argv) {
             fprintf(render_ctx.presentation_trace,"submit_ns,source_frame,slot,slots,reported_hz,source_phase,mode\n");
     }
     render_ctx.offscreen_w=offscreen_w;render_ctx.offscreen_h=offscreen_h;
-    const char *headroom_env=getenv("MYNES_OFFSCREEN_HEADROOM");
-    render_ctx.offscreen_headroom=headroom_env ? fmaxf(1,atof(headroom_env)) : 1.6f;
+    render_ctx.offscreen_format=offscreen_format;
+    render_ctx.offscreen_headroom=recorder_offscreen_headroom(record_headroom,record_hdr,
+                                                              getenv("MYNES_OFFSCREEN_HEADROOM"));
     if (debug_server_enabled) {
         debug_srv = debug_server_create(debug_socket);
         if (!debug_srv) {
@@ -1463,7 +1496,8 @@ int main(int argc, char **argv) {
         RecorderOptions options = { .output = record_path, .seconds = record_seconds,
             .after = (unsigned)record_after, .region = preset_ctx.region,
             .width = offscreen_w, .height = offscreen_h,
-            .headroom = gpu_render_headroom(&render_ctx) };
+            .headroom = gpu_render_headroom(&render_ctx),
+            .hdr = record_hdr, .white_nits = record_white };
         char error[2048];
         recorder = recorder_create(&options, error, sizeof(error));
         if (!recorder) { fprintf(stderr, "Recording: %s\n", error); exit_status = 1; goto cleanup; }
