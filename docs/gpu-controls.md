@@ -197,7 +197,8 @@ no save-state keys.
 `--record OUT` turns a hidden playback run into a video file: one video frame
 per emulated frame, with the APU audio of exactly those frames. It needs
 `--offscreen WxH` (every frame is the final display target, mask and glass
-included, read back as RGB8 the way `--screenshot-after` captures it) and
+included, read back the way `--screenshot-after` captures it: 8-bit from an
+SDR target, RGBA16F from an EDR target and with `--record-hdr`) and
 `--record-seconds N`. `--sdr` keeps the target 8-bit sRGB like the file; an
 EDR target is tone-mapped the way the PPM screenshot is. `--record-hdr` keeps
 the EDR highlights instead and records BT.2020 PQ (see
@@ -224,14 +225,15 @@ The playback worker produces one picture at a time and waits until the
 renderer has taken it (the backpressure `--screenshot-pair` uses), so nothing
 is dropped or duplicated however slow the render is; the emulation itself
 still runs in real time, so a clip takes at least its own length to record.
-Each final frame is read back and piped as rgb24 rawvideo into an `ffmpeg`
-child that encodes it beside the output (`OUT.video.<ext>`), while the worker
-writes the same frames' audio as float32 mono 44100 Hz (`OUT.audio.f32le`).
-When the frame count is reached, a second `ffmpeg` run muxes both into OUT
-with AAC at 256 kb/s, cut at the video's length, and the temporary files are
-removed. Progress is printed every 60 frames and a final line gives the frame
-count, seconds and path. Any ffmpeg failure exits non-zero and prints the
-tail of ffmpeg's messages.
+Each final frame is read back and piped as rawvideo into an `ffmpeg` child,
+rgb24 or, with `--record-hdr`, 16-bit PQ Y'CbCr (yuv444p16le). The child
+encodes it beside the output (`OUT.video.<ext>`), while the worker writes the
+same frames' audio as float32 mono 44100 Hz (`OUT.audio.f32le`). When the
+frame count is reached, a second `ffmpeg` run muxes both into OUT with AAC at
+256 kb/s, cut at the video's length, and the temporary files are removed.
+Progress is printed every 60 frames and a final line gives the frame count,
+seconds and path. Any ffmpeg failure exits non-zero and prints the tail of
+ffmpeg's messages.
 
 `ffmpeg` is taken from `MYNES_FFMPEG` or found on `PATH`. The video codec
 arguments default to a portable near-lossless master:
@@ -275,8 +277,10 @@ starts, so the file only ever sits beside a clip whose recording finished:
 }
 ```
 
-`headroom` is what the CRT shader rendered with: 1 with `--sdr`, otherwise
-the offscreen headroom, whose highlights the SDR file clips at white.
+`headroom` is what the CRT shader rendered with: 1 on an SDR target (with
+`--sdr`, or where the hidden window's swapchain offers no HDR format, as on
+some Vulkan systems), otherwise the offscreen headroom, whose highlights the
+SDR file clips at white.
 `white_nits` of an SDR clip is the BT.709 studio reference of 100 nits; the
 file itself is display-relative. An HDR clip adds `max_cll` and `max_fall`.
 
