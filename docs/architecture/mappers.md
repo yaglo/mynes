@@ -3,8 +3,9 @@
 ## Overview
 
 NES cartridges use mapper chips to extend the console's 32KB PRG ROM and 8KB
-CHR ROM address spaces via bank switching. The emulator implements 7 mappers
-covering the majority of commercially released games.
+CHR ROM address spaces via bank switching. The dispatcher supports mapper
+numbers 0, 1, 2, 3, 4, 5, 7, 10, 69 and 227. Support depth varies; in
+particular, MMC5 still has unimplemented features listed below.
 
 ## Mapper Interface
 
@@ -18,6 +19,10 @@ typedef struct MapperOps {
     void (*cpu_write)(Mapper *m, uint16_t addr, uint8_t val);
     uint8_t (*ppu_read)(Mapper *m, uint16_t addr);
     void (*ppu_write)(Mapper *m, uint16_t addr, uint8_t val);
+    void (*ppu_address)(Mapper *m, uint16_t addr);
+    void (*ppu_bus_read)(Mapper *m, uint16_t addr);
+    void (*cpu_clock)(Mapper *m);
+    void (*scanline)(Mapper *m);
 } MapperOps;
 ```
 
@@ -81,6 +86,19 @@ and flexible PRG/CHR banking modes.
 
 **Games**: Super Mario Bros 3, Kirby's Adventure, Mega Man 3-6
 
+### Mapper 5: MMC5 (`mapper_mmc5.c`)
+
+PRG/CHR banking, fetch-dependent CHR set selection, independently selected
+CIRAM/ExRAM/fill nametable quadrants, multiply registers and scanline IRQ.
+The IRQ observes actual PPU reads and CPU-idle gaps rather than counting
+frontend scanline callbacks. Tests cover 8×8/8×16 CHR selection, all CHR bank
+sizes, fill/ExRAM routing, and odd/even frame IRQ boundaries. Castlevania III
+USA/PAL replays progress through title and gameplay.
+
+Extended attributes, vertical split, PCM and full banked PRG-RAM behavior
+above $8000 remain incomplete. Working Castlevania III is not proof of complete
+MMC5 compatibility.
+
 ### Mapper 7: AxROM (`mapper_axrom.c`)
 
 32KB PRG bank switching with single-screen mirroring control.
@@ -99,6 +117,16 @@ reads of specific tile addresses ($FD/$FE) automatically switch CHR banks.
 - Mirroring: horizontal or vertical
 
 **Games**: Fire Emblem, Fire Emblem Gaiden
+
+### Mapper 69: FME-7 (`mapper_fme7.c`)
+
+Command/parameter registers select 1KB CHR and 8KB PRG banks, mirroring and
+the IRQ counter. Sunsoft 5B expansion audio is not implemented.
+
+### Mapper 227: multicart (`mapper_227.c`)
+
+Address-latched PRG banking and mirroring: the CPU write address selects
+the bank/mode and the written value is ignored. Includes 1200-in-1 layouts.
 
 ## Shared Mapper State
 

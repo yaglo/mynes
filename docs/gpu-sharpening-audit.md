@@ -63,7 +63,7 @@ shortcut and also bypasses receiver sharpening. That is a fidelity gap for the
   [User manual](https://manuzoid.com/manuals/0OL5G-Commodore%201702%20User%20manual),
   [1701/1702 service manual](https://www.valoroso.it/file-share/documenti-manuali/Commodore-1701-1702-service-manual.pdf).
 
-## All 21 looks: identity and next target
+## All 23 looks: identity and next target
 
 Specific targets below are research/implementation targets, **not a claim that
 the existing JSON values are already calibrated to them**. Generic wear/room
@@ -81,6 +81,8 @@ setup compatibility.
 | `jvc_d_series_2000` | Composite | AV-27D201; implement GR2 detail response and input-specific controls. |
 | `late_crt_wega` | Composite | Keep generic until a specific WEGA chassis and its SVM path are implemented. |
 | `living_room_1988` | Composite | Generic period consumer receiver. |
+| `measured_glare_experiment` | Composite | Lab glass-scatter comparison; inherits the neutral receiver, not a separate sharpening circuit. |
+| `sony_gdm_fw900` | Composite + scaler | Generic external decoder, then measured spatial/tonal PC-monitor path; not a 240-line TV aperture circuit. |
 | `nec_xm29_arcade` | RGB | Current large-monitor look remains generic; no fabricated NEC calibration. |
 | `rca_colortrak_1986` | Composite | Current large shadow-mask look remains generic; no specific RCA circuit claimed. |
 | `reference_composite` | Composite | Deliberately generic neutral receiver, not a commercial TV. |
@@ -96,12 +98,12 @@ setup compatibility.
 
 ## Basement TV check
 
-The shipped profile has a 2.8 MHz luma corner, a 4 MHz RF channel corner,
+The earlier sharpness comparison used a 2.8 MHz luma corner, a 4 MHz RF channel corner,
 4.2–4.8 MHz RGB amplifiers, horizontal beam sigma 5.5 signal samples, plus
 convergence error and focus growth. Peaking cannot undo those later losses.
 A 1024×960 real-GPU synthetic grayscale-edge capture at Sharpness 0 and 1
 confirmed a nonzero but smaller final-light change than Reference composite.
-This verifies that the control works; it is not a measured old-TV comparison.
+This verified that the control worked; it was not a measured old-TV comparison. The current preset uses horizontal sigma 3.2 and FWHM 0.48–1.10 lines after the consumer-raster retune; the historical RMS results below do not measure that newer tuning.
 After the ordering fix, the central grayscale patch's linear RGB RMS change
 was 0.00357 for Basement TV and 0.01626 for Reference composite. These values
 depend on this synthetic pattern and capture setup, not just the receiver.

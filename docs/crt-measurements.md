@@ -46,7 +46,7 @@ Positive widths use a normalized 33-tap separable Gaussian with four-sigma
 support. Zero retains the existing kernel and width, preserving older presets.
 The implementation reuses the three existing halo passes and scratch textures.
 
-**Measured glare experiment** is a generic composite receiver with this fitted
+**Lab: measured glass scatter** is a generic composite receiver with this fitted
 effective scatter. Its physical picture height is explicitly assumed to be
 270 mm, giving `halation_sigma = 0.03016526`. It is not a reproduction of the
 Hitachi receiver, scanning system, phosphor, mask or beam. Those parts retain

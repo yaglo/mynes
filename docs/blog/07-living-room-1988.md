@@ -4,6 +4,11 @@
 
 *Part 7 of "Building a NES Emulator That Thinks Like Hardware"*
 
+**Historical development chapter.** The numerical tuning and preset names below
+belong to an earlier prototype. The current Living Room preset is generic, not
+a datasheet-calibrated Zenith. Its JSON, reflection settings and evidence limits
+are documented in the [current 4K preset audit](../gpu-preset-audit.md).
+
 ---
 
 What did the NES actually look like?

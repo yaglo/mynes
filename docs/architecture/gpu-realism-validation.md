@@ -86,9 +86,12 @@ playback defects; magnetic recording, FM threshold/demodulation, tracking servos
 tape speed and VHS audio remain outside the model. No particular deck's noise
 spectrum or transport constants are claimed as measured.
 
-The SP preset uses 0.008 luma and 0.004 chroma RMS, 180 ms transport correlation,
-100 ns switching displacement, and 0.15 dropouts/second at 65% peak loss.
-Its existing 140 ns chroma delay is retained. The noise is upstream of receiver
+After the September 22 4K review, the SP preset uses 0.018 luma and 0.004
+chroma RMS, 180 ms transport correlation, 100 ns switching displacement,
+and 0.15 dropouts/second at 65% peak loss. Chroma delay is 250 ns. Receiver
+brightness 0.08 and luma contrast 0.94 make ordinary black grain visible while
+keeping the white patch within 1% of its previous output. These are authored
+preset choices; see the [before/after audit](../gpu-preset-audit.md). The noise is upstream of receiver
 clamping, bandwidth limits, and the tube's gun cutoff: below-black NES colours
 can remain visually quiet. A mandatory 10–15/255 black pedestal or 1–2 NES-pixel
 chroma displacement would not be a format-wide physical calibration.
@@ -130,7 +133,7 @@ forcing it sharp would introduce aliasing rather than improve fidelity.
 
 ## Controls and calibration
 
-All 116 saved TV fields (including conditional legacy focus controls) are
+All 121 saved TV fields (including conditional legacy focus controls) are
 represented in the OSD. RF and VHS have their own signal-chain submenus.
 The live editor inherits remaining float controls from the OSD; its transport
 now accepts up to 192 controls. Enums/toggles remain available in the OSD.
@@ -192,9 +195,12 @@ integrating the independent mapper updates. `MYNES_GPU_AUDIO=0` remains an
 explicit CPU override; benchmark CPU modes now set it rather than relying on
 the previous default.
 
-## Optional 60 Hz presentation
+## Initial 60 Hz presentation validation (historical)
 
-`--presentation 60hz` / Host display → Presentation → 60 Hz hold uses absolute
+This section records the initial implementation; the 2026-09-22 matched-refresh
+update below supersedes its pacing description on 60 Hz panels.
+
+`--presentation 60hz` / Host display → Presentation → 60 Hz hold used absolute
 deadlines, one frame of preparation margin, and one frame in flight. NTSC
 frontend pacing changes from 60.0988 to 60 frames/s (0.16% slower wall time);
 audio resampling applies the same ratio. Emulated cycles and carrier phases

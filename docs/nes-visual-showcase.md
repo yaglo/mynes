@@ -4,7 +4,7 @@ NES games rendered through MyNES's GPU signal and CRT pipeline.
 
 [![Castlevania on the Sony PVM-14L2, 3840×2880](images/showcase/4k/castlevania-pvm-gameplay.png)](images/showcase/4k/castlevania-pvm-gameplay.png)
 
-[Close-up of the same frame](images/showcase/4k/castlevania-pvm-detail.png) · [All 21 presets on Contra](contra-preset-gallery.md)
+[Close-up of the same frame](images/showcase/4k/castlevania-pvm-detail.png) · [Current 23-preset audit](gpu-preset-audit.md)
 
 ## Watch
 
@@ -28,11 +28,14 @@ This lossless animated detail retains the changing NTSC phases. The videos run a
 
 ## VHS playback
 
+The clips below predate the September 22 shadow-grain and chroma-delay tuning.
+See the [current feature tour](crt-feature-tour.md) for the updated noise comparison.
+
 [![Contra boss through VHS SP recording and a consumer CRT, 3840×2880](images/showcase/4k/contra-vhs-sp.png)](images/showcase/4k/contra-vhs-sp.png)
 
 *Actual GPU output · one unaveraged frame · SDR · click for the full 3840×2880 image.*
 
-Select **VHS SP — NES recording on a consumer CRT** in **OSD → Presets**.
+Select **VHS SP playback** in **OSD → Presets**.
 The composite recording/playback stage softens horizontal detail and spreads
 color before the picture reaches the consumer CRT. Adjust it under
 **Signal chain → VHS recording / playback**.

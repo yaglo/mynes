@@ -11,7 +11,9 @@ this clock differently:
 | CPU | /12 | 1,789,773 Hz | 1:3 PPU |
 | APU | /12 | 1,789,773 Hz | Same as CPU |
 
-This means for every CPU cycle, the PPU advances 3 dots.
+This means for every NTSC CPU cycle, the PPU advances 3 dots. PAL divides
+its master clock by 16 for the CPU and by 5 for the PPU, averaging 3.2 dots
+per CPU cycle. The master-tick scheduler retains the fractional alignment.
 
 ## NTSC vs PAL
 
@@ -19,6 +21,7 @@ This means for every CPU cycle, the PPU advances 3 dots.
 |-----------|------|-----|
 | Master clock | 21,477,272 Hz | 26,601,712 Hz |
 | CPU clock | 1,789,773 Hz | 1,662,607 Hz |
+| CPU / PPU master dividers | 12 / 4 | 16 / 5 |
 | PPU dots/line | 341 | 341 |
 | Scanlines/frame | 262 | 312 |
 | Pre-render line | 261 | 311 |
@@ -35,27 +38,22 @@ Each call to `nes_step()` represents one CPU cycle. The execution order
 within a single step is carefully chosen for timing accuracy:
 
 ```
-1. Check for pending OAM DMA request
-2. Step APU (IRQ must be visible to CPU this cycle)
-3. Check DMC DMA (steals 3-4 cycles if sample buffer empty)
-4. Process OAM DMA cycle (if active)
-5. Propagate APU IRQ to CPU
-6. Step PPU (1 of 3 dots)
-7. Step CPU (1 microcode cycle)
-8. Detect CPU instruction boundary (hook dispatch)
-9. Step PPU (2 of 3 dots)
-10. Step PPU (3 of 3 dots)
-11. Sync mapper mirroring
-12. NMI suppression check
-13. NMI edge detection
-14. Transfer NMI to CPU (if mid-instruction)
-15. Increment master clock
-16. Check frame completion
+1. Step APU; update controller strobe and CPU IRQ levels
+2. Advance PPU to the configured CPU bus master tick
+3. Refresh IRQ after PPU mapper activity; clock MMC5 CPU-idle detection
+4. Arbitrate DMA and CPU RDY; execute the CPU microcycle and tracing
+5. Advance master_tick by 12 (NTSC) or 16 (PAL)
+6. Advance PPU to that tick using its regional dot divider
+7. Notify legacy scanline mappers and synchronize mirroring
+8. Process NMI suppression and edge transfer
+9. Increment the legacy CPU-cycle counter; check frame completion
 ```
 
-The PPU is split 1+2 around the CPU step. This interleaving lets the CPU
-see PPU state changes (like VBlank flag) with correct timing relative to
-register reads.
+The default NTSC alignment corresponds to one dot before and two after the
+CPU bus access. PAL uses the same master-tick mechanism without rounding its
+16:5 ratio to three dots. Selected PPU register reads synchronize to their
+later bus-sampling phase. `master_tick` counts master ticks; the legacy
+`master_clock` field counts CPU cycles and remains for hook compatibility.
 
 ## DMA Cycle Stealing
 

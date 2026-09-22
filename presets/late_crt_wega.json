@@ -1,6 +1,6 @@
 {
     "name": "Late consumer aperture grille",
-    "description": "Late consumer aperture grille: composite input, aperture grille tube. A tuned display profile; not a measurement of a particular TV.",
+    "description": "Consumer aperture-grille look with firm detail, broad bright scanlines, little horizontal bow and visible composite edge colour. Generic receiver, not a specific WEGA chassis.",
     "connection": "composite",
     "comb_type": "none",
     "console_variant": 1,

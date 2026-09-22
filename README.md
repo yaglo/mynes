@@ -11,7 +11,7 @@ turn a control, or switch televisions while the game keeps running.
 
 *Castlevania in play · Sony PVM-14L2 · click for the full 3840×2880 capture.*
 
-[Get started](#quick-start) · [All 21 CRT presets](docs/contra-preset-gallery.md) ·
+[Get started](#quick-start) · [23 CRT looks](docs/gpu-preset-audit.md) ·
 [Signal Studio](tools/visualiser/README.md) · [How the model works](docs/gpu-pipeline-reference.md)
 
 ## See the signal move
@@ -50,13 +50,11 @@ individual tube beam profiles remain uncalibrated.
 
 ## Choose your television
 
-**[Compare all 21 presets on the same Contra scene →](docs/contra-preset-gallery.md)**
+**[Explore all 23 looks, reviewed at 4K →](docs/gpu-preset-audit.md)**
 
-[![Contra through four CRT presets](docs/images/contra-gallery/overview-4.png)](docs/contra-preset-gallery.md#group-4)
-
-[![Studio aperture grille: native face and bright-platform details](docs/images/contra-gallery/studio-pvm-beam-detail.png)](docs/contra-preset-gallery.md#group-5)
-
-*Studio aperture grille (Y/C): two separate native crops of the face and platform, with a visible divider. From the gallery’s 3840×2880, unaveraged frame; the generic Studio preset is separate from the nominal 14L2.*
+Focused monitors, household RF, a clean RGB cabinet, a worn tube, tape playback
+and a glass-scatter lab. Some have hardware references; others are deliberately
+personal. A good generic look earns its place by having a coherent character.
 
 | Start here | What it brings to the picture |
 |---|---|
@@ -70,11 +68,51 @@ monitors, older household sets, worn tubes, and two curated personal looks.
 Commercial names identify nominal references: individual tube condition and
 many circuit responses remain estimates. [Preset settings and evidence](docs/gpu-preset-audit.md).
 
-[Compare all 21 presets on the same Contra frame](docs/contra-preset-gallery.md),
-or inspect the [phase and scrolling review](docs/gpu-motion-review.md).
+The [earlier Contra gallery](docs/contra-preset-gallery.md) preserves the previous
+tuning. For current spatial comparisons use the [23-preset audit](docs/gpu-preset-audit.md);
+for timing, see the [presentation validation](docs/architecture/gpu-realism-validation.md).
 
 **[See VHS playback on a consumer CRT →](docs/nes-visual-showcase.md#vhs-playback)**
 Contra through the separate VHS SP recording/playback preset, captured at 3840×2880.
+
+## Inside the glow
+
+These are **actual 3840×2160 renders**, built from repeatable test patterns and
+the same game framebuffer. Open an image at full size to inspect it. Enlarged
+crops use nearest pixels and say how much; full-raster views are reduced.
+
+**Beam size follows the picture.** Dim strokes stay narrow. Bright strokes
+spread into the gaps. A focused monitor and a household set respond differently.
+
+[![Beam growth: identical source lines at three drive levels, PVM versus Bedroom RF](docs/images/feature-tour/beam.png)](docs/images/feature-tour/beam.png)
+
+**The tube gives the light its texture.** Shadow masks, slots and vertical
+grilles have different structures. Physical pitch stays tied to the tube;
+very fine patterns become less resolved as the host resolution runs out.
+
+[![Three phosphor structures in the same grey field](docs/images/feature-tour/masks.png)](docs/images/feature-tour/masks.png)
+
+**The centre and the corners are different.** Deflection shapes the raster.
+Focus can soften towards the edges. The cross comparison deliberately increases
+edge focus loss to show the control in isolation; it is not a measured TV.
+
+[![Near-flat and rounded rasters, followed by a controlled centre-to-corner focus comparison](docs/images/feature-tour/geometry-focus.png)](docs/images/feature-tour/geometry-focus.png)
+
+**Glass carries the room as well as the picture.** Kitchen, evening and desk
+lighting now give three generic looks their own subtle reflection. This is an
+authored environment; internal phosphor scatter is a separate effect.
+
+[![Three lighting moods, with black-signal and gameplay comparisons](docs/images/feature-tour/room-light.png)](docs/images/feature-tour/room-light.png)
+
+**Noise belongs upstream.** RF reception and VHS playback disturb the signal
+before decoding and tube response. Tape grain now survives into the shadows;
+its delayed colour and horizontal streaks remain distinct from RF reception.
+The loop is slowed fourfold for inspection, not a host-cadence demonstration.
+
+[![Animated comparison of RF and VHS grain in mid-grey and near black, from 48 consecutive 4K frames](docs/images/feature-tour/noise.webp)](docs/images/feature-tour/noise.webp)
+
+[Reproduce these examples](docs/crt-feature-tour.md) ·
+[Read the preset audit and remaining model limits](docs/gpu-preset-audit.md)
 
 ## Follow the signal
 
@@ -111,7 +149,7 @@ about 60 fps at 2560×1664 across the four main profiles. See the
 GPU timings and periodic capture overhead.
 
 Still images cannot reproduce CRT motion on an LCD, and these presets are not
-measurements of twenty individual televisions. RF is an equivalent baseband
+measurements of twenty-three individual televisions. RF is an equivalent baseband
 model, not a complete tuner simulation. The [model reference](docs/gpu-pipeline-reference.md)
 records those boundaries alongside the implemented stages.
 

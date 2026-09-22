@@ -1,6 +1,6 @@
 {
-    "name": "Measured glare experiment",
-    "description": "Reference composite optics experiment: Hitachi 751 two-point glare fit, assumed picture height 270 mm. Receiver and tube remain generic; not a Hitachi monitor emulation.",
+    "name": "Lab: measured glass scatter",
+    "description": "Optics comparison, not a complete TV: Reference composite with a Hitachi 751 two-point veiling-glare fit and assumed 270 mm picture height. Compare with Reference composite to inspect light spill into dark backgrounds; receiver and tube remain generic.",
     "connection": "composite",
     "comb_type": "none",
     "console_variant": 1,

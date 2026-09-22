@@ -29,7 +29,8 @@ apu_clock_sweep(&apu->pulse[1], false);  // negate_correction = false
 
 Produces a 4-bit triangle wave (values 0-15-0) using a 32-step sequence.
 Controlled by a linear counter (quarter-frame) and length counter (half-frame).
-Has no volume control -- output is either on or off.
+Has no volume control. Stopping the counters holds the last DAC value;
+it does not force the output to zero.
 
 ### Noise ($400C-$400F)
 
@@ -54,7 +55,7 @@ Key fields:
 The frame counter ($4017) clocks envelopes, length counters, sweep units,
 and linear counters at specific cycle counts:
 
-### 4-Step Mode (mode bit = 0)
+### NTSC 4-Step Mode (mode bit = 0)
 
 | Step | CPU Cycle | Quarter | Half | IRQ |
 |------|-----------|---------|------|-----|
@@ -65,7 +66,7 @@ and linear counters at specific cycle counts:
 | 5 | 29828 | Yes | Yes | Yes |
 | 6 | 29829 | No | No | Yes (reset) |
 
-### 5-Step Mode (mode bit = 1)
+### NTSC 5-Step Mode (mode bit = 1)
 
 | Step | CPU Cycle | Quarter | Half | IRQ |
 |------|-----------|---------|------|-----|
@@ -76,6 +77,20 @@ and linear counters at specific cycle counts:
 
 5-step mode never generates IRQ. Writing to $4017 with a pending write
 delay resets the frame counter after 3-4 CPU cycles.
+
+PAL uses separate sequencer positions: 8312, 16626, 24938, 33251,
+33252 and 33253 in four-step mode; the final quarter/half clock in five-step
+mode is 41564. These are internal counter positions, not elapsed-cycle
+counts from an arbitrary `$4017` write. PAL also selects regional noise
+and DMC period tables.
+
+Length halt/reload writes take effect after the coincident half-frame clock.
+A reload coinciding with a length clock is accepted when the old length was
+zero and suppressed when it was nonzero. Volume/loop writes do not restart
+envelopes. Triangle high-period writes preserve timer and sequencer phase;
+stopping its length/linear counter holds the DAC output instead of forcing
+zero. Direct APU checks, AccuracyCoin and all ten bundled hardware-tested
+PAL APU ROMs cover these paths.
 
 ## Mixing Formula
 
@@ -94,56 +109,42 @@ raw_sample = pulse_out + tnd_out;
 
 ## Filter Chain
 
-The raw mixed output passes through three filters simulating the NES
-analog output path:
-
-1. **High-pass 90 Hz** -- removes DC offset
-2. **High-pass 440 Hz** -- shapes bass response
-3. **Low-pass 14 kHz** -- removes aliasing/high-frequency noise
-
-```c
-#define HP_ALPHA_90HZ   0.996863
-#define HP_ALPHA_440HZ  0.937419
-#define LP_ALPHA_14KHZ  0.815687
-```
-
-These coefficients are pre-computed for a 44.1 kHz sample rate. The filters
-are implemented as single-pole IIR filters:
+The core has a configurable single-pole high-pass → high-pass → low-pass
+cascade, followed by optional analog character. Its legacy defaults are
+`hp1_alpha = 0.996863`, `hp2_alpha = 0.937419`, `lp_alpha = 0.815687` at
+44.1 kHz. These constants are not the previously documented 90 Hz / 440 Hz /
+14 kHz triplet. `apu_filter_config_from_corners()` computes coefficients
+from explicit corner frequencies and sample rate when a profile supplies them.
 
 ```c
-// Highpass: y[n] = alpha * (y[n-1] + x[n] - x[n-1])
-// Lowpass:  y[n] += alpha * (x[n] - y[n])
+// High-pass: y[n] = alpha * (y[n-1] + x[n] - x[n-1])
+// Low-pass:  y[n] += alpha * (x[n] - y[n])
 ```
+
+The GPU frontend sets this core cascade to passthrough and applies its separate
+console/cable/amplifier/speaker chain to the resampled DAC output. Its CPU
+fallback uses the same audio-chain parameters. This avoids applying the console
+response twice.
 
 ## Sample Generation
 
-The APU generates one audio sample every `CPU_CLOCK / SAMPLE_RATE` CPU
-cycles (~40.6 cycles at 44.1 kHz NTSC). When a sample is ready, it calls
-the audio callback:
-
-```c
-if (apu->audio_callback) {
-    float sample = apu_mix_sample(apu);
-    apu->audio_callback(apu->audio_user_data, sample);
-}
-```
+The nonlinear mixer produces a raw DAC value at CPU rate. A 129-tap
+Kaiser-windowed sinc FIR reads a 512-sample ring when the fractional accumulator
+reaches the next output sample. The accumulator uses the regional CPU clock and
+configured sample rate; at 44.1 kHz the average spacing is about 40.6 CPU cycles
+for NTSC and 37.7 for PAL. This is filtered decimation, not a point sample of the
+current channel levels. The filter/analog stages then feed `audio_callback`.
 
 ## DMC DMA Integration
 
-When the DMC sample buffer empties and bytes remain, `apu_dmc_needs_sample()`
-returns true. The NES system (`nes.h`) responds by halting the CPU and
-performing a DMA read:
+`apu_dmc_needs_sample(&nes->apu)` requests a refill. `nes_dma_step()` arbitrates
+it against CPU writes and OAM DMA, halts the CPU on a readable cycle, and
+performs the DMC read on a get cycle after the halt/dummy phases. The fetched
+byte is passed to `apu_dmc_load_sample(&nes->apu, sample)`.
 
-```c
-if (apu_dmc_needs_sample(nes->apu)) {
-    nes->cpu->rdy = false;
-    // ... 3-4 cycle DMA sequence ...
-    uint8_t sample = nes_cpu_read(nes->cpu, nes->apu->dmc_current_addr);
-    apu_dmc_load_sample(nes->apu, sample);
-}
-```
-
-The DMC address wraps within $8000-$FFFF (bit 15 always set).
+The DMC address wraps within $8000–$FFFF. OAM overlap, aborted requests and
+controller/PPU register read side effects are handled in the shared DMA path;
+a bare read followed by a fixed CPU delay would not describe the implementation.
 
 ## Clock Rates
 

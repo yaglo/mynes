@@ -1,6 +1,11 @@
 # From Palette Index to Phosphor Glow
 
-A GPU compute pipeline that models the complete NTSC signal path from the 2C02 DAC to the CRT glass.
+**Historical design proposal.** This describes early intended stages and presets,
+not the current implementation. In particular, its distributed cable ladder,
+coupling-capacitor path, preset identities and claims of complete physical
+modeling are superseded. Use the [current pipeline reference](gpu-pipeline-reference.md),
+[model validation](architecture/gpu-realism-validation.md) and
+[23-preset audit](gpu-preset-audit.md) for implemented behavior and evidence.
 
 ## The Problem
 

@@ -1,6 +1,6 @@
 {
     "name": "Warm Desktop Monitor",
-    "description": "Personal warm Y/C desktop monitor, curated from a saved compact-monitor setup. Warm whites and rich colour, fine shadow mask, restrained supply loading. Generic preference profile, not a measured Commodore tube.",
+    "description": "Personal warm Y/C desktop monitor: warm whites and rich colour, fine shadow mask, restrained supply loading and a soft amber desk-light reflection. Generic preference profile, not a measured Commodore tube.",
     "connection": "svideo",
     "comb_type": "none",
     "console_variant": 1,
@@ -103,7 +103,12 @@
         "scanline_wobble": 0,
         "beam_spot_growth": 0.35,
         "hv_sag": 0.035,
-        "phosphor_gamut": 1
+        "phosphor_gamut": 1,
+        "glass_glare": 0.003,
+        "glass_glare_temp_k": 3000,
+        "glass_glare_light_x": 0.15,
+        "glass_glare_light_y": 0.7,
+        "glass_glare_size": 0.075
     },
     "console_coupling_R": 75.0,
     "console_amp_bw": 6000000,

@@ -1,6 +1,6 @@
 {
     "name": "Famicom Kitchen",
-    "description": "Small Japanese RF television with a cool white point, coarse shadow-mask dots, restricted chroma and modest supply recovery. Generic household set.",
+    "description": "Small, cool RF television under a soft kitchen light. Coarse shadow-mask texture, soft focus, grey tracking and a restrained broad reflection on the glass. Generic household character, not a measured tube or room.",
     "connection": "rf",
     "comb_type": "none",
     "console_variant": 0,
@@ -105,7 +105,12 @@
         "beam_fwhm_min": 0.6,
         "beam_fwhm_max": 1.3,
         "video_black_droop": 0.04,
-        "video_recovery_us": 16
+        "video_recovery_us": 16,
+        "glass_glare": 0.005,
+        "glass_glare_temp_k": 6000,
+        "glass_glare_light_x": 0.25,
+        "glass_glare_light_y": 0.8,
+        "glass_glare_size": 0.12
     },
     "console_coupling_R": 75.0,
     "console_amp_bw": 6000000,

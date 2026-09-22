@@ -1,6 +1,6 @@
 {
     "name": "Living Room 1988",
-    "description": "Living Room 1988: composite input, shadow tube. A tuned display profile; not a measurement of a particular TV.",
+    "description": "Rounded household composite TV in warm evening light: neutral picture, softer dot-mask raster, moderate beam growth and a faint off-centre lamp reflection. Generic living-room character, not a specific chassis.",
     "connection": "composite",
     "comb_type": "none",
     "console_variant": 1,
@@ -105,7 +105,12 @@
         "beam_fwhm_min": 0.58,
         "beam_fwhm_max": 1.22,
         "video_black_droop": 0.04,
-        "video_recovery_us": 18
+        "video_recovery_us": 18,
+        "glass_glare": 0.0025,
+        "glass_glare_temp_k": 3200,
+        "glass_glare_light_x": 0.8,
+        "glass_glare_light_y": 0.75,
+        "glass_glare_size": 0.1
     },
     "console_coupling_R": 75.0,
     "console_amp_bw": 6000000,

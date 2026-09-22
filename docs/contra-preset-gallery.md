@@ -1,8 +1,10 @@
-# Contra: all 21 CRT presets
+# Contra: historical 21-preset gallery
 
-For the current presentation, see the [game showcase](nes-visual-showcase.md) and [full-resolution gameplay / beam close-ups](gpu-beam-closeups.md). This page retains controlled diagnostic comparisons at their stated capture resolutions.
+This is an archived 21-preset snapshot. Bedroom, Basement, Compact and Arcade were subsequently retuned, and FW900 plus the optics lab brought the library to 23. For the current 4K assessment, see [the preset audit](gpu-preset-audit.md).
 
-Actual output from the GPU renderer, captured offscreen at **3840×2880**. All captures use the current complex-IF, beam and optical renderer, with fixed 1.6× offscreen headroom. Every preset receives the same frozen 256×240 Contra boss PPU-code frame, with its own default connection and controls. Host mask alignment is Panel-pixels at 1:1 offscreen scale. This target is larger than the MacBook panel; it is a controlled 4:3 comparison, not a claim about fullscreen panel mapping.
+For the gameplay presentation, see the [game showcase](nes-visual-showcase.md) and [full-resolution gameplay / beam close-ups](gpu-beam-closeups.md). This page retains controlled diagnostic comparisons at their stated capture resolutions.
+
+Actual output from the GPU renderer, captured offscreen at **3840×2880**. These captures use the then-current complex-IF, beam and optical renderer, with fixed 1.6× offscreen headroom. Every preset receives the same frozen 256×240 Contra boss PPU-code frame, with its own default connection and controls. Host mask alignment is Panel-pixels at 1:1 offscreen scale. This target is larger than the MacBook panel; it is a controlled 4:3 comparison, not a claim about fullscreen panel mapping.
 
 Every still shows **frame 60 without phase averaging**, at a common 0.6 linear exposure before sRGB conversion. Frame 61 is captured separately for phase-difference measurements. Full-resolution images are lossless WebP. Overview reductions are also made in linear light. Native crops retain the actual single-frame beam shape. These PNG/WebP previews do not reproduce live HDR headroom.
 

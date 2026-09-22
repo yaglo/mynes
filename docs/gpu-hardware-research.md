@@ -5,7 +5,7 @@
 Reviewed 21 September 2026. The curated targets are Sony PVM-14L2, JVC AV-27D201, Toshiba 14AF43, and the generic worn set **Stas's Favourite**. These are nominal behavioural profiles. A manufacturer's bandwidth specification, an owner's photograph and a measurement of a particular tube are different kinds of evidence.
 
 The [receiver/sharpening audit](gpu-sharpening-audit.md) records the remaining
-model-specific circuit work, covers all 21 looks and tracks the console
+model-specific circuit work, covers all 23 looks and tracks the console
 power-related squiggly-lines investigation. It also distinguishes fixed
 peaking, user aperture controls and true scan-velocity modulation.
 
@@ -240,7 +240,7 @@ demonstrates sensitivity to an unknown IC port; it is not calibration data.
 
 The [measurement record](crt-measurements.md) adds a sourced Hitachi 751 glare
 dataset, reproducible two-parameter fit and actual GPU dark-disk checks. The
-selectable Measured glare experiment uses that effective scatter with an
+selectable Lab: measured glass scatter uses that effective scatter with an
 explicit physical-size assumption. It is a generic receiver/CRT experiment,
 not a full Hitachi emulation. The same record audits the more extensive NIDL
 FW900 report and identifies ambiguities that prevent blindly fitting its tables.
