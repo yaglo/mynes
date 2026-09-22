@@ -7,6 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from pipeline import recipes, shots
+
 SHOWCASE = Path(__file__).resolve().parents[1]
 SCRIPT = SHOWCASE / "showcase.py"
 ROOT = SHOWCASE.parents[1]
@@ -68,31 +70,73 @@ class Cli(unittest.TestCase):
         self.assertIn(str(self.states / "metroid.s1"), out)
 
     def test_record_refuses_without_states(self):
-        rc, out = self.run_cli("--dry-run", "--shots", "batman", "record")
+        rc, out = self.run_cli("--shots", "batman", "record")
         self.assertEqual(rc, 1)
         self.assertIn("refusing to record", out)
+        self.assertIn("Press F5", out)
+        # A dry run says so and still prints the commands.
+        rc, out = self.run_cli("--dry-run", "--shots", "batman", "--presets", "sony_pvm_14l2", "record")
+        self.assertEqual(rc, 0, out[-2000:])
+        self.assertIn("save states missing for batman", out)
+        self.assertIn("--record-hdr", out)
 
     def test_all_dry_run(self):
         states = Path(self.tmp.name) / "states-complete"
         states.mkdir()
-        for shot in ("super-mario-bros", "legend-of-zelda", "punch-out", "journey-to-silius", "castlevania-3",
-                     "blaster-master", "ninja-gaiden", "mega-man-2", "metroid", "batman"):
-            (states / f"{shot}.s1").write_bytes(b"state")
+        sl = shots.load()
+        for shot in sl.shots:
+            (states / f"{shot.id}.s1").write_bytes(b"state")
         rc, out = self.run_cli("--dry-run", "all", "--site", str(self.site), states=states)
         self.assertEqual(rc, 0, out[-3000:])
-        self.assertIn("dry-run $ ", out)
+        lines = out.splitlines()
+        recorder = "dry-run $ " + str(ROOT / "build" / "bin" / "mynes_gpu")
+        clips = sum(len(s.presets) for s in sl.shots)
+        readme = sum(len(s.readme) for s in sl.shots)
+        lens = sum(len(s.lens) for s in sl.shots)
+        stage = len(sl.defaults.stage_sizes)
+        # Every clip at each stage size and the full size, README clips also at
+        # 1600x1200, each size recorded twice (SDR and HDR).
+        self.assertEqual(out.count(recorder), (clips * (stage + 1) + readme) * 2)
+        self.assertEqual(out.count("--offscreen 1600x1200"), readme * 2)
+        self.assertEqual(out.count("--record-hdr --record-headroom 4 --record-hdr-white 203"), clips * (stage + 1) + readme)
         self.assertIn("--record-seconds 6 --record-after 2", out)
         self.assertIn("--record-seconds 15", out)
         self.assertIn("--input-replay", out)
-        self.assertIn("-c:v libx264 -crf 20 -preset slow", out)
-        self.assertIn("zoompan=", out)
+
+        def full_size(shot, preset):
+            return [l for l in lines if recorder in l and f"{shot}/{preset}/3840x2880/" in l]
+
+        # The full-size render stops after the still unless a lens clip, a
+        # feature or the README flicker crop needs more frames.
+        self.assertIn(f"--record-seconds {recipes.seconds_for_frames(1)} ",
+                      full_size("legend-of-zelda", "jvc_d_series_2000")[0])
+        self.assertIn(f"--record-seconds {recipes.seconds_for_frames(8)} ", full_size("punch-out", "sony_pvm_14l2")[0])
+        self.assertIn("--record-seconds 15 ", full_size("mega-man-2", "jvc_d_series_2000")[0])  # a feature
+        for s in sl.shots:
+            for p in s.lens:
+                self.assertIn(f"--record-seconds {s.seconds:g} ", full_size(s.id, p)[0])
+        self.assertEqual(out.count("-c:v libx265 -preset slow -crf 18 -profile:v main10"), clips * stage)
+        self.assertEqual(out.count("-c:v libsvtav1 -preset 6 -crf 24"), clips * stage)
+        self.assertEqual(out.count("-c:v libx264 -profile:v high -preset slow -crf 18"), clips * stage)
+        self.assertEqual(out.count("-crf 14 -profile:v main10"), lens)
+        self.assertEqual(out.count("-crf 14 -profile:v main "), lens)
+        self.assertEqual(out.count("--cicp 9/16/9 --depth 10 --yuv 444"), clips * 3)
+        self.assertEqual(out.count("-c:v libwebp_anim"), readme * 2)  # readme.webp and flicker.webp
         self.assertIn("hstack=inputs=3", out)
         self.assertIn("concat=n=5", out)
-        self.assertIn("manifest:", out)
-        self.assertEqual(out.count("dry-run $ " + str(ROOT / "build" / "bin" / "mynes_gpu")), 60)  # 10 shots x 6 presets
+        self.assertIn(f"would merge {clips} clip(s)", out)
+        self.assertNotIn("zoompan", out)
+        self.assertNotIn("flags=lanczos", out)
         self.assertFalse(self.out.exists())  # a dry run writes nothing
         manifest = json.loads((self.site / "assets" / "hero" / "manifest.json").read_text())
         self.assertEqual(manifest["games"], [])  # and installs nothing
+
+    def test_all_for_one_shot_and_preset(self):
+        rc, out = self.run_cli("--dry-run", "--shots", "legend-of-zelda", "--presets", "sony_pvm_14l2",
+                               "all", "--site", str(self.site))
+        self.assertEqual(rc, 0, out[-3000:])
+        self.assertNotIn("== features", out)  # no feature uses this selection
+        self.assertEqual(out.count("dry-run copy"), 10)  # 6 stage files, 2 posters, 2 stills
 
     def test_bad_shot_selection(self):
         rc, out = self.run_cli("--dry-run", "--shots", "nope", "encode")

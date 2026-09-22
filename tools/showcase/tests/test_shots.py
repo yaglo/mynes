@@ -24,7 +24,11 @@ class RealShotList(unittest.TestCase):
         for expected in ("super-mario-bros", "legend-of-zelda", "punch-out", "journey-to-silius",
                          "castlevania-3", "blaster-master", "ninja-gaiden", "mega-man-2", "metroid", "batman"):
             self.assertIn(expected, ids)
-        self.assertEqual([f.id for f in sl.features], ["five-televisions", "raw-vs-pvm-vs-rf", "push-in"])
+        self.assertEqual([f.id for f in sl.features], ["five-televisions", "raw-vs-pvm-vs-rf"])
+        d = sl.defaults
+        self.assertEqual((d.lens_size, d.stage_sizes, d.readme_size),
+                         ((3840, 2880), [(1920, 1440), (960, 720)], (1600, 1200)))
+        self.assertEqual((d.hdr_headroom, d.hdr_white_nits), (4.0, 203))
         for s in sl.shots:
             self.assertEqual(s.seconds, 6 if s.kind == "hero" else 15)
             self.assertEqual(s.presets, shots.DEFAULT_PRESETS)
@@ -37,9 +41,8 @@ class RealShotList(unittest.TestCase):
         five = sl.feature("five-televisions")
         self.assertEqual(len(five.presets), 5)
         self.assertEqual(shots.feature_frames(five, sl.shot(five.shot)), 900)
-        push = sl.feature("push-in")
-        self.assertEqual(push.preset, "sony_pvm_14l2")
-        self.assertEqual(shots.feature_frames(push, sl.shot(push.shot)), 721)
+        side = sl.feature("raw-vs-pvm-vs-rf")
+        self.assertEqual(shots.feature_frames(side, sl.shot(side.shot)), 901)
 
     def test_presets_have_metadata(self):
         sl = shots.load()
@@ -83,6 +86,18 @@ class Validation(unittest.TestCase):
         self.assertEqual(s.default_preset, "alpha")
         self.assertEqual(s.flicker_crop, shots.DEFAULT_FLICKER_CROP)
         self.assertEqual(s.readme_frames, 361)
+        self.assertEqual(s.lens, [])
+        self.assertEqual(sl.defaults.stage_sizes, [(1920, 1440), (960, 720)])
+
+    def test_lens_and_sizes(self):
+        self.assertEqual(self.load(self.base(lens=True)).shots[0].lens, ["alpha", "beta"])
+        self.assertEqual(self.load(self.base(lens=["beta"])).shots[0].lens, ["beta"])
+        data = self.base()
+        data["defaults"].update(sizes={"lens": "512x384", "stage": ["256x192", "128x96"], "readme": "320x240"},
+                                hdr={"headroom": 2.5, "white_nits": 100})
+        d = self.load(data).defaults
+        self.assertEqual((d.lens_size, d.stage_sizes, d.readme_size), ((512, 384), [(256, 192), (128, 96)], (320, 240)))
+        self.assertEqual((d.hdr_headroom, d.hdr_white_nits), (2.5, 100))
 
     def test_feature_kind_default_seconds(self):
         self.assertEqual(self.load(self.base(kind="feature")).shots[0].seconds, 15)
@@ -100,6 +115,8 @@ class Validation(unittest.TestCase):
             self.base(state="../x.s1"),
             self.base(region="secam"),
             self.base(flicker_frame=358),
+            self.base(lens=["gamma"]),
+            self.base(lens="yes"),
         ]
         for data in cases:
             with self.assertRaises(ShotListError, msg=json.dumps(data)):
@@ -108,6 +125,13 @@ class Validation(unittest.TestCase):
         dup["shots"].append(dict(dup["shots"][0]))
         with self.assertRaises(ShotListError):
             self.load(dup)
+        for defaults in ({"offscreen": "3840x2880"}, {"sizes": {"lens": "3841x2880"}}, {"sizes": {"stage": []}},
+                         {"sizes": {"stage": ["960x720", "960x720"]}}, {"sizes": {"thumb": "64x64"}},
+                         {"hdr": {"headroom": 0.5}}, {"hdr": {"peak": 1000}}, {"flicker_crop": [0, 0, 300, 10]}):
+            data = self.base()
+            data["defaults"].update(defaults)
+            with self.assertRaises(ShotListError, msg=json.dumps(defaults)):
+                self.load(data)
 
     def test_feature_validation(self):
         data = self.base(kind="feature", presets=["alpha", "beta", "gamma"])
@@ -121,13 +145,11 @@ class Validation(unittest.TestCase):
         data["features"] = [{"id": "sbs", "type": "side-by-side", "shot": "one", "presets": ["alpha", "beta"]}]
         with self.assertRaises(ShotListError):
             self.load(data)
-        data["features"] = [{"id": "push", "type": "push-in", "shot": "one", "seconds": 20}]
+        data["features"] = [{"id": "push", "type": "push-in", "shot": "one", "preset": "beta"}]  # resampled: gone
         with self.assertRaises(ShotListError):
             self.load(data)
-        data["features"] = [{"id": "push", "type": "push-in", "shot": "one", "seconds": 12, "preset": "beta"}]
-        sl = self.load(data)
-        self.assertEqual(sl.features[0].preset, "beta")
-        data["features"] = [{"id": "one", "type": "push-in", "shot": "one"}]  # id clashes with a shot
+        data["features"] = [{"id": "one", "type": "side-by-side", "shot": "one",  # id clashes with a shot
+                             "presets": ["alpha", "beta", "gamma"]}]
         with self.assertRaises(ShotListError):
             self.load(data)
         data["features"] = [{"id": "x", "type": "wipe", "shot": "one"}]

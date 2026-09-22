@@ -1,12 +1,13 @@
 {
-  "version": 1,
+  "version": 2,
   "defaults": {
     "seconds": {"hero": 6, "feature": 15},
     "presets": ["sony_pvm_14l2", "jvc_d_series_2000", "toshiba_14af43",
                 "stass_favourite", "vhs_sp_consumer", "reference_composite"],
     "flicker_crop": [64, 72, 128, 96],
     "record_after": 2,
-    "offscreen": "3840x2880",
+    "sizes": {"lens": "3840x2880", "stage": ["1920x1440", "960x720"], "readme": "1600x1200"},
+    "hdr": {"headroom": 4.0, "white_nits": 203},
     "thumbnail_frame": 0,
     "region": "ntsc",
     "readme_seconds": 6,
@@ -154,14 +155,6 @@
       "presets": ["reference_composite", "sony_pvm_14l2", "stass_favourite"],
       "labels": ["Reference composite", "Sony PVM-14L2", "Channel-3 RF"],
       "caption": "Left to right: neutral composite, a studio monitor, a worn RF set."
-    },
-    {
-      "id": "push-in",
-      "type": "push-in",
-      "shot": "punch-out",
-      "preset": "sony_pvm_14l2",
-      "seconds": 12,
-      "caption": "From the whole 4K frame into the crowd, one master pixel per pixel."
     }
   ]
 }

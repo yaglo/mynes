@@ -24,6 +24,11 @@ class PipelineError(RuntimeError):
     pass
 
 
+def _resampling_problem(cmd: Sequence[str]) -> str | None:
+    from .recipes import resampling_problem
+    return resampling_problem(cmd)
+
+
 class Runner:
     def __init__(self, *, dry_run: bool = False, force: bool = False,
                  log_path: Path | None = None, quiet: bool = False):
@@ -58,6 +63,11 @@ class Runner:
             timeout: float | None = 3600, log_file: Path | None = None,
             what: str = "") -> None:
         cmd = [str(c) for c in cmd]
+        if cmd[0] == "ffmpeg":
+            problem = _resampling_problem(cmd)
+            if problem:
+                raise PipelineError(f"refusing to run {what or 'ffmpeg'}: {problem}; renders are "
+                                    f"never resampled (tools/showcase/pipeline/recipes.py)")
         cmd[0] = tool(cmd[0])
         prefix = "dry-run $ " if self.dry_run else "$ "
         self.say(prefix + shlex.join(cmd) + (f"   # {what}" if what else ""))
@@ -121,6 +131,11 @@ class Runner:
     def write_json(self, path: Path, data) -> None:
         self.write_text(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
 
+    def step(self, description: str, fn: Callable[[], object]):
+        """A Python step (crop, average, PNG write): logged, skipped in a dry run."""
+        self.say(("dry-run: would " if self.dry_run else "") + description)
+        return None if self.dry_run else fn()
+
     def copy(self, src: Path, dst: Path) -> None:
         self.say(f"{'dry-run ' if self.dry_run else ''}copy {src} -> {dst}")
         if self.dry_run:
@@ -152,10 +167,26 @@ class VideoInfo:
     audio_rate: int | None
     colour: dict = field(default_factory=dict)
     duration: float = 0.0
+    pix_fmt: str = ""
+    profile: str = ""
+    codec_tag: str = ""
+    stream: dict = field(default_factory=dict, repr=False)
+
+    @property
+    def codecs(self) -> str:
+        """The browser codecs string of the video stream (codecs.py)."""
+        from .codecs import CodecStringError, stream_codec_string
+        try:
+            return stream_codec_string(self.stream)
+        except CodecStringError as e:
+            raise PipelineError(f"{self.path}: {e}") from e
 
 
 def ffprobe_json(path: Path, ffprobe: str | None = None) -> dict:
-    cmd = [ffprobe or tool("ffprobe"), "-v", "error", "-show_streams", "-show_format", "-of", "json", str(path)]
+    """Streams and format, with -show_data so each stream carries its
+    decoder configuration record (extradata) for the codecs string."""
+    cmd = [ffprobe or tool("ffprobe"), "-v", "error", "-show_streams", "-show_format", "-show_data",
+           "-of", "json", str(path)]
     result = subprocess.run(cmd, capture_output=True, timeout=600)
     if result.returncode != 0:
         raise PipelineError(f"ffprobe failed on {path}: {result.stderr.decode('utf-8', 'replace')[-2000:]}")
@@ -180,13 +211,15 @@ def probe_video(path: Path, *, count_frames: bool = False, ffprobe: str | None =
         frames = count_video_frames(path, ffprobe)
     rate = Fraction(video.get("r_frame_rate") or video.get("avg_frame_rate") or "0/1")
     colour = {k: video.get(k) for k in ("color_space", "color_primaries", "color_transfer", "color_range")
-              if video.get(k)}
+              if video.get(k) and video.get(k) != "unknown"}
     return VideoInfo(
         path=path, codec=video.get("codec_name", ""), width=int(video.get("width", 0)),
         height=int(video.get("height", 0)), rate=rate, frames=frames,
         audio_codec=audio.get("codec_name") if audio else None,
         audio_rate=int(audio["sample_rate"]) if audio and audio.get("sample_rate") else None,
-        colour=colour, duration=float(data.get("format", {}).get("duration") or 0.0))
+        colour=colour, duration=float(data.get("format", {}).get("duration") or 0.0),
+        pix_fmt=video.get("pix_fmt", ""), profile=video.get("profile", ""),
+        codec_tag=video.get("codec_tag_string", ""), stream=video)
 
 
 def count_video_frames(path: Path, ffprobe: str | None = None) -> int:
@@ -214,9 +247,19 @@ def image_info(path: Path) -> tuple[int, tuple[int, int]]:
 
 def verify_video(path: Path, *, frames: int | None = None, size: Sequence[int] | None = None,
                  rate: Fraction | None = None, audio: bool | None = None,
-                 count_frames: bool = False) -> VideoInfo:
+                 count_frames: bool = False, codec: str | None = None, pix_fmt: str | None = None,
+                 colour: dict | None = None) -> VideoInfo:
+    """Probe ``path`` and fail loudly on any difference from what was asked for.
+    ``colour`` maps ffprobe keys (color_transfer, ...) to the tags expected."""
     info = probe_video(path, count_frames=count_frames)
     problems = []
+    if codec is not None and info.codec != codec:
+        problems.append(f"codec {info.codec}, expected {codec}")
+    if pix_fmt is not None and info.pix_fmt != pix_fmt:
+        problems.append(f"pixel format {info.pix_fmt}, expected {pix_fmt}")
+    for key, want in (colour or {}).items():
+        if info.colour.get(key) != want:
+            problems.append(f"{key} {info.colour.get(key) or 'untagged'}, expected {want}")
     if frames is not None and info.frames != frames:
         problems.append(f"{info.frames} frames, expected {frames}")
     if size is not None and (info.width, info.height) != tuple(size):
@@ -248,6 +291,16 @@ def verify_image(path: Path, *, frames: int | None = None, size: Sequence[int] |
     if problems:
         raise PipelineError(f"{path}: " + "; ".join(problems))
     return n, dims, bytes_
+
+
+def verify_animation(path: Path, *, frames: int, size: Sequence[int], limit: int | None = None) -> int:
+    """An animated WebP of up to ``frames`` frames. libwebp's animation encoder
+    stores a run of identical frames as one longer frame, so a still stretch
+    of picture gives fewer frames, never more."""
+    n, _dims, _bytes = verify_image(path, size=size, limit=limit)
+    if not 1 <= n <= frames:
+        raise PipelineError(f"{path}: {n} frames, expected at most {frames}")
+    return n
 
 
 # ---------------------------------------------------------------------------
@@ -357,13 +410,15 @@ def have_tool(name: str) -> bool:
     return shutil.which(tool(name)) is not None
 
 
-def tool_version(name: str) -> str | None:
-    """First line of ``tool -version``; None when the tool is missing."""
+def tool_version(name: str, flag: str | None = None) -> str | None:
+    """First line of ``tool -version`` (``--version`` for avifenc); None when
+    the tool is missing."""
     path = shutil.which(tool(name))
     if not path:
         return None
+    flag = flag or ("--version" if name == "avifenc" else "-version")
     try:
-        out = subprocess.run([path, "-version"], capture_output=True, timeout=30)
+        out = subprocess.run([path, flag], capture_output=True, timeout=30)
     except (OSError, subprocess.TimeoutExpired):
         return None
     return out.stdout.decode("utf-8", "replace").splitlines()[0] if out.stdout else path

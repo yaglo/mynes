@@ -1,10 +1,21 @@
-"""Pure recipes: frame counts, crop geometry and ffmpeg argument lists.
+"""Pure recipes: frame counts, crop geometry and command lines.
 
 Nothing here touches the file system or runs a process, so every function is
 unit-testable and every command the pipeline runs can be printed by --dry-run.
-All ffmpeg invocations keep the recorder's frame count and timebase:
-outputs derived from a master use ``-fps_mode passthrough`` so ffmpeg neither
-drops nor duplicates a frame, and the runner verifies the count afterwards.
+
+Two rules hold for every command built here:
+
+- No filter changes the picture size. The emulator aligns the aperture grille
+  and shadow mask to output pixels, so each delivery size is recorded by the
+  emulator at that size, and resampling anywhere would blur the mask. Filters
+  only convert pixel format and colour (``format``, ``scale`` without a size,
+  ``setparams``), select frames or cut whole-pixel crops. resampling_problem()
+  enforces this for every ffmpeg command the runner starts. The one reduction
+  is the exact 2x2 box average for the @1x crop variants, done on pixels in
+  images.py.
+- Frame count and timebase come from the render: ``-fps_mode passthrough`` and
+  no ``-r``, so ffmpeg neither drops nor duplicates a frame, and the runner
+  verifies the count afterwards.
 """
 from __future__ import annotations
 
@@ -19,36 +30,93 @@ NTSC_FPS = 60.0988
 PAL_FPS = 50.007
 FPS_BY_REGION = {"ntsc": NTSC_FPS, "pal": PAL_FPS}
 
-# Exact NES frame rates, used as the output timebase when a master carries
-# none: NTSC 12 fsc / (8 samples * (341*262-0.5) dots) = 39375000/655171,
-# PAL 5320342.5 / (341*312) = 322445/6448.
+# Exact NES frame rates: NTSC 12 fsc / (8 samples * (341*262-0.5) dots) =
+# 39375000/655171, PAL 5320342.5 / (341*312) = 322445/6448. The recorder
+# passes its decimal constant to ffmpeg, which stores 60.0988 as 150247/2500;
+# outputs keep whatever rate the render has.
 NTSC_RATE = Fraction(39375000, 655171)
 PAL_RATE = Fraction(322445, 6448)
 RATE_BY_REGION = {"ntsc": NTSC_RATE, "pal": PAL_RATE}
 
 NES_SIZE = (256, 240)
-MASTER_SIZE = (3840, 2880)
-HERO_SIZE = (1440, 1080)
-README_SIZE = (960, 720)
-GIF_SIZE = (640, 480)
+LENS_SIZE = (3840, 2880)                  # lens clips, stills, detail and flicker crops
+STAGE_SIZES = ((1920, 1440), (960, 720))  # the switcher's stage on 2x and 1x displays
+README_SIZE = (1600, 1200)                # README media, embedded at width="800"
 FLICKER_FRAMES = 8
 FLICKER_FPS = 8
 README_FPS = 30
-AUDIO_RATE = 44100
+
+# HDR renders: diffuse white at 203 nits (ITU-R BT.2408), highlights up to
+# the headroom times that. HDR10 static metadata declares a P3-D65 mastering
+# display with a 1000-nit peak and a 0.0001-nit minimum.
+HDR_WHITE_NITS = 203
+HDR_HEADROOM = 4.0
+X265_MASTER_DISPLAY = "G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1)"
+SVT_MASTER_DISPLAY = "G(0.265,0.690)B(0.150,0.060)R(0.680,0.320)WP(0.3127,0.3290)L(1000,0.0001)"
 
 MB = 1024 * 1024
-LIMITS = {"readme_webp": 5 * MB, "flicker_webp": 3 * MB, "readme_gif": 8 * MB}
+LIMITS = {"readme_webp": 10 * MB, "flicker_webp": 5 * MB}
 README_QUALITIES = (90, 85, 80, 75, 70, 65, 60, 50, 40, 30)
 FLICKER_QUALITIES = ("lossless", 95, 90, 85, 80)
-GIF_COLOURS = (256, 192, 128, 96, 64)
+POSTER_QUALITY = 85
+AVIF_QUALITY = 90
+AVIF_SPEED = 6
+GAINMAP_QUALITY = 0.9
 
 FFMPEG_BASE = ("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-nostdin")
 PASSTHROUGH = ("-fps_mode", "passthrough")
-COPYABLE_VIDEO = ("h264", "hevc")
+FASTSTART = ("-movflags", "+faststart")
+STAGE_AUDIO = ("-c:a", "aac", "-b:a", "128k")
+FEATURE_AUDIO = ("-c:a", "aac", "-b:a", "192k")
+
+HDR_TAGS = ("-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc",
+            "-color_range", "tv")
+SDR_TAGS = ("-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709",
+            "-color_range", "tv")
+HDR_PARAMS = "setparams=color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc:range=tv"
+SDR_PARAMS = "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv"
+
+# swscale matrix names for the colour-space tags a render may carry. The
+# recorder's SDR path converts rgb24 to yuv444p with swscale's default,
+# BT.601, and leaves the file untagged, so an untagged SDR render is BT.601.
+SWS_MATRIX = {"bt709": "bt709", "smpte170m": "bt601", "bt470bg": "bt601", "bt2020nc": "bt2020",
+              "bt2020c": "bt2020", "fcc": "fcc", "smpte240m": "smpte240m"}
+SDR_DEFAULT_MATRIX = "bt601"
+HDR_DEFAULT_MATRIX = "bt2020"
 
 
 class RecipeError(ValueError):
     pass
+
+
+@dataclass(frozen=True)
+class VideoOutput:
+    """One encoded file of a clip: file stem, codec, HDR or SDR source, CRF
+    (x264, x265 or SVT-AV1 scale), hevc_videotoolbox -q:v for --fast, audio."""
+    name: str
+    codec: str
+    hdr: bool
+    crf: int
+    fast_quality: int
+    audio: bool
+
+    @property
+    def file(self) -> str:
+        return f"{self.name}.mp4"
+
+
+STAGE_OUTPUTS = (
+    VideoOutput("stage-hdr-hevc", "hevc", True, 18, 70, True),
+    VideoOutput("stage-hdr-av1", "av1", True, 24, 0, True),
+    VideoOutput("stage-sdr", "h264", False, 18, 0, True),
+)
+LENS_OUTPUTS = (
+    VideoOutput("lens-hdr-hevc", "hevc", True, 14, 80, False),
+    VideoOutput("lens-hdr-av1", "av1", True, 20, 0, False),
+    VideoOutput("lens-sdr-hevc", "hevc", False, 14, 80, False),
+)
+X265_PRESET, X264_PRESET, SVT_PRESET = "slow", "slow", 6
+FAST_X264_PRESET, FAST_SVT_PRESET = "veryfast", 10
 
 
 def frame_count(seconds: float, region: str = "ntsc") -> int:
@@ -57,6 +125,16 @@ def frame_count(seconds: float, region: str = "ntsc") -> int:
         raise RecipeError(f"seconds must be positive, got {seconds}")
     fps = FPS_BY_REGION[region.lower()]
     return int(math.floor(seconds * fps + 0.5))
+
+
+def seconds_for_frames(frames: int, region: str = "ntsc") -> str:
+    """A --record-seconds value that makes the recorder write exactly ``frames``."""
+    if frames <= 0:
+        raise RecipeError(f"frames must be positive, got {frames}")
+    text = f"{frames / FPS_BY_REGION[region.lower()]:.9f}"
+    if frame_count(float(text), region) != frames:  # pragma: no cover - nine decimals suffice
+        raise RecipeError(f"no --record-seconds value gives {frames} frames")
+    return text
 
 
 def rate_for(region: str = "ntsc") -> Fraction:
@@ -75,12 +153,14 @@ def seconds_of(frames: int, rate: Fraction) -> float:
 
 def parse_size(text: str) -> tuple[int, int]:
     try:
-        w, h = text.lower().split("x")
+        w, h = str(text).lower().split("x")
         w, h = int(w), int(h)
     except ValueError as e:
         raise RecipeError(f"size must be WIDTHxHEIGHT, got {text!r}") from e
     if w < 64 or h < 64:
         raise RecipeError(f"size too small: {text}")
+    if w % 2 or h % 2:
+        raise RecipeError(f"size must be even for 4:2:0 video: {text}")
     return w, h
 
 
@@ -90,6 +170,10 @@ def size_string(size: Sequence[int]) -> str:
 
 def even(n: int) -> int:
     return n - (n % 2)
+
+
+def _round(v: float) -> int:
+    return int(math.floor(v + 0.5))
 
 
 # ---------------------------------------------------------------------------
@@ -110,18 +194,20 @@ class Rect:
         return Rect(x, y, w, h)
 
     @property
-    def centre(self) -> tuple[float, float]:
-        return self.x + self.w / 2, self.y + self.h / 2
+    def box(self) -> tuple[int, int, int, int]:
+        """Pillow's (left, top, right, bottom)."""
+        return self.x, self.y, self.x + self.w, self.y + self.h
 
     def crop_filter(self) -> str:
         return f"crop={self.w}:{self.h}:{self.x}:{self.y}"
 
 
-def nes_scale(master_size: Sequence[int], override: str | None = None) -> tuple[float, float]:
-    """Pixels per NES pixel on the master, horizontally and vertically.
+def nes_scale(size: Sequence[int], override: str | None = None) -> tuple[float, float]:
+    """Render pixels per NES pixel, horizontally and vertically.
 
-    A 3840x2880 master maps 256x240 NES pixels at 15 x 12 (NES pixels are 8:7,
-    not square). ``override`` is "15" (both axes) or "15x12"."""
+    The picture fills the 4:3 render, so a 3840x2880 render maps the 256x240
+    NES frame at 15 x 12 (NES pixels are 8:7, not square). ``override`` is
+    "15" (both axes) or "15x12"."""
     if override:
         parts = override.lower().split("x")
         try:
@@ -133,44 +219,34 @@ def nes_scale(master_size: Sequence[int], override: str | None = None) -> tuple[
         if len(values) == 2:
             return values[0], values[1]
         raise RecipeError(f"--flicker-scale must be S or SXxSY, got {override!r}")
-    return master_size[0] / NES_SIZE[0], master_size[1] / NES_SIZE[1]
+    return size[0] / NES_SIZE[0], size[1] / NES_SIZE[1]
 
 
-def validate_nes_rect(crop: Sequence[int]) -> Rect:
+def validate_nes_rect(crop: Sequence[float]) -> tuple[float, float, float, float]:
+    """[x, y, w, h] in NES pixels; fractions are allowed (93.75 lines x 12 = 1125 rows)."""
     if len(crop) != 4:
         raise RecipeError(f"flicker_crop must be [x, y, w, h], got {list(crop)}")
-    x, y, w, h = (int(v) for v in crop)
+    try:
+        x, y, w, h = (float(v) for v in crop)
+    except (TypeError, ValueError) as e:
+        raise RecipeError(f"flicker_crop must be numbers, got {list(crop)}") from e
     if w <= 0 or h <= 0:
         raise RecipeError(f"flicker_crop needs a positive size, got {list(crop)}")
     if x < 0 or y < 0 or x + w > NES_SIZE[0] or y + h > NES_SIZE[1]:
         raise RecipeError(f"flicker_crop {list(crop)} leaves the 256x240 NES frame")
-    return Rect(x, y, w, h)
+    return x, y, w, h
 
 
-def flicker_geometry(crop: Sequence[int], master_size: Sequence[int] = MASTER_SIZE,
-                     scale: str | None = None) -> Rect:
-    """The flicker crop in master pixels, 1:1 (no resampling), even-sized."""
-    r = validate_nes_rect(crop)
-    sx, sy = nes_scale(master_size, scale)
-    rect = Rect(int(round(r.x * sx)), int(round(r.y * sy)),
-                even(int(round(r.w * sx))), even(int(round(r.h * sy))))
-    return rect.clamp(master_size)
-
-
-def push_in_window(crop: Sequence[int], master_size: Sequence[int] = MASTER_SIZE,
-                   scale: str | None = None, aspect: Sequence[int] = (4, 3)) -> Rect:
-    """A 4:3 window around the flicker crop, at 1:1 master pixels.
-
-    The push-in ends on this window, so the last frame shows master pixels
-    unscaled; the window is the smallest 4:3 rectangle that covers the crop."""
-    inner = flicker_geometry(crop, master_size, scale)
-    aw, ah = aspect
-    w = max(inner.w, int(math.ceil(inner.h * aw / ah)))
-    h = int(round(w * ah / aw))
-    w, h = even(w), even(h)
-    cx, cy = inner.centre
-    rect = Rect(int(round(cx - w / 2)), int(round(cy - h / 2)), w, h)
-    return rect.clamp(master_size)
+def flicker_geometry(crop: Sequence[float], size: Sequence[int] = LENS_SIZE,
+                     scale: str | None = None, *, even_size: bool = False) -> Rect:
+    """The crop in render pixels, 1:1. ``even_size`` drops a trailing row or
+    column so that the 2x2 average of the @1x variant covers every pixel."""
+    x, y, w, h = validate_nes_rect(crop)
+    sx, sy = nes_scale(size, scale)
+    rw, rh = _round(w * sx), _round(h * sy)
+    if even_size:
+        rw, rh = even(rw), even(rh)
+    return Rect(_round(x * sx), _round(y * sy), rw, rh).clamp(size)
 
 
 def third_bands(width: int, count: int = 3) -> list[tuple[int, int]]:
@@ -180,7 +256,7 @@ def third_bands(width: int, count: int = 3) -> list[tuple[int, int]]:
 
 
 # ---------------------------------------------------------------------------
-# Filter-graph helpers
+# Filters (format and colour only)
 
 def filter_escape(text: str) -> str:
     """Escape a value inside a filter option (paths, expressions)."""
@@ -207,29 +283,63 @@ def drawtext(textfile: Path | str, height: int, *, x: str | None = None,
     return "drawtext=" + ":".join(parts)
 
 
-def scale_filter(size: Sequence[int]) -> str:
-    return f"scale={size[0]}:{size[1]}:flags=lanczos"
-
-
 def select_frame(frame: int) -> str:
     return f"select='eq(n\\,{frame})'"
+
+
+def sws_matrix(colour: dict | None, hdr: bool) -> str:
+    """The swscale matrix a render was written with (see SWS_MATRIX)."""
+    tag = (colour or {}).get("color_space")
+    if tag in SWS_MATRIX:
+        return SWS_MATRIX[tag]
+    return HDR_DEFAULT_MATRIX if hdr else SDR_DEFAULT_MATRIX
+
+
+def sws_range(colour: dict | None) -> str:
+    return "pc" if (colour or {}).get("color_range") in ("pc", "jpeg") else "tv"
+
+
+def to_rgb(matrix: str, range_: str, pix_fmt: str) -> str:
+    """YCbCr to RGB with the render's own matrix and range; no size change."""
+    return f"scale=in_color_matrix={matrix}:in_range={range_},format={pix_fmt}"
+
+
+def sdr_video_filter(matrix: str = SDR_DEFAULT_MATRIX, range_: str = "tv", pix_fmt: str = "yuv420p") -> str:
+    """SDR render to tagged BT.709 4:2:0. The matrix change goes through
+    16-bit RGB, which every swscale version converts correctly."""
+    return (f"scale=in_color_matrix={matrix}:in_range={range_},format=gbrp16le,"
+            f"scale=out_color_matrix=bt709:out_range=tv,format={pix_fmt},{SDR_PARAMS}")
+
+
+def hdr_video_filter(pix_fmt: str = "yuv420p10le") -> str:
+    """HDR render (BT.2020 PQ, 4:4:4) to 10-bit 4:2:0: chroma subsampling only.
+    setparams puts the colour on the frames, which libsvtav1 reads."""
+    return f"format={pix_fmt},{HDR_PARAMS}"
 
 
 # ---------------------------------------------------------------------------
 # Recorder
 
 def record_command(binary: Path | str, rom: Path | str, preset_file: Path | str,
-                   state: Path | str, output: Path | str, seconds: float, *,
+                   state: Path | str, output: Path | str, seconds: float | str, *,
                    replay: Path | str | None = None, record_after: int = 2,
-                   offscreen: Sequence[int] = MASTER_SIZE,
+                   size: Sequence[int] = LENS_SIZE, hdr: bool = False,
+                   headroom: float = HDR_HEADROOM, white_nits: float = HDR_WHITE_NITS,
                    extra_args: Iterable[str] = ()) -> list[str]:
-    """mynes_gpu --offscreen ... --record OUT.mov ROM (see README, recorder)."""
-    cmd = [str(binary), "--offscreen", size_string(offscreen), "--sdr",
-           "--mask-alignment", "pixels", "--preset", str(preset_file),
-           "--load-state", str(state)]
+    """mynes_gpu --offscreen WxH ... --record OUT.mov ROM (README, "The recorder").
+
+    The SDR pass renders with --sdr. The HDR pass renders to the EDR target
+    and asks the recorder for BT.2020 PQ with the given headroom and white."""
+    cmd = [str(binary), "--offscreen", size_string(size)]
+    if not hdr:
+        cmd.append("--sdr")
+    cmd += ["--mask-alignment", "pixels", "--preset", str(preset_file), "--load-state", str(state)]
     if replay:
         cmd += ["--input-replay", str(replay)]
-    cmd += ["--record", str(output), "--record-seconds", _num(seconds),
+    cmd += ["--record", str(output)]
+    if hdr:
+        cmd += ["--record-hdr", "--record-headroom", _num(headroom), "--record-hdr-white", _num(white_nits)]
+    cmd += ["--record-seconds", seconds if isinstance(seconds, str) else _num(seconds),
             "--record-after", str(int(record_after))]
     cmd += list(extra_args)
     cmd.append(str(rom))
@@ -241,77 +351,113 @@ def _num(value: float) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Per-(shot, preset) derived outputs
+# Stage and lens clips
 
-def _colour_tags(tags: dict | None) -> list[str]:
-    """Copy the master's colour tags so a re-encode never relabels them."""
-    if not tags:
-        return []
-    out = []
-    for key, opt in (("color_space", "-colorspace"), ("color_primaries", "-color_primaries"),
-                     ("color_transfer", "-color_trc"), ("color_range", "-color_range")):
-        v = tags.get(key)
-        if v and v != "unknown":
-            out += [opt, v]
-    return out
+def _cll(cll: Sequence | None) -> tuple:
+    if not cll:
+        raise RecipeError("an HDR encode needs max_cll and max_fall from the render's sidecar")
+    return cll[0], cll[1]
 
 
-def hero_args(master: Path | str, output: Path | str, *, size: Sequence[int] = HERO_SIZE,
-              crf: int = 20, preset: str = "slow", audio: bool = True,
-              audio_bitrate: str = "128k", colour: dict | None = None) -> list[str]:
-    """1440x1080 H.264 site clip, exact frame count, loop friendly."""
-    cmd = [*FFMPEG_BASE, "-i", str(master), "-map", "0:v:0"]
-    cmd += ["-map", "0:a:0"] if audio else ["-an"]
-    cmd += ["-vf", scale_filter(size) + ",format=yuv420p",
-            "-c:v", "libx264", "-crf", str(crf), "-preset", preset, "-pix_fmt", "yuv420p",
-            *_colour_tags(colour), *PASSTHROUGH]
-    if audio:
-        cmd += ["-c:a", "aac", "-b:a", audio_bitrate]
-    cmd += ["-movflags", "+faststart", str(output)]
-    return cmd
+def video_args(src: Path | str, out: Path | str, spec: VideoOutput, *, cll: Sequence | None = None,
+               matrix: str = SDR_DEFAULT_MATRIX, range_: str = "tv", fast: bool = False) -> list[str]:
+    """One stage or lens file from the render of the same size.
 
-
-def reddit_args(master, output, *, size=HERO_SIZE, crf: int = 18, preset: str = "slow",
-                audio: bool = True, colour: dict | None = None) -> list[str]:
-    return hero_args(master, output, size=size, crf=crf, preset=preset, audio=audio,
-                     audio_bitrate="192k", colour=colour)
-
-
-def youtube_args(master: Path | str, output: Path | str, *, video_codec: str | None,
-                 audio_codec: str | None, crf: int = 14, preset: str = "slow") -> list[str]:
-    """4K master rewrapped to .mp4; video copied when the codec allows."""
-    cmd = [*FFMPEG_BASE, "-i", str(master), "-map", "0:v:0"]
-    cmd += ["-map", "0:a:0"] if audio_codec else ["-an"]
-    if video_codec in COPYABLE_VIDEO:
-        cmd += ["-c:v", "copy"]
+    HDR: HEVC Main10 (libx265 with HDR10 SEI) or AV1 10-bit (SVT-AV1), both
+    tagged BT.2020 PQ with the mastering display and the render's
+    MaxCLL/MaxFALL. SDR: H.264 High or HEVC Main tagged BT.709. --fast swaps
+    libx265 for hevc_videotoolbox (which writes no HDR10 SEI) and uses faster
+    x264 and SVT-AV1 presets."""
+    cmd = [*FFMPEG_BASE, "-i", str(src), "-map", "0:v:0"]
+    cmd += ["-map", "0:a:0"] if spec.audio else ["-an"]
+    if spec.codec == "hevc":
+        cmd += _hevc(spec, cll, matrix, range_, fast)
+    elif spec.codec == "av1":
+        if not spec.hdr:
+            raise RecipeError("AV1 is encoded from the HDR render only")
+        c, f = _cll(cll)
+        cmd += ["-vf", hdr_video_filter(), "-c:v", "libsvtav1",
+                "-preset", str(FAST_SVT_PRESET if fast else SVT_PRESET), "-crf", str(spec.crf),
+                "-pix_fmt", "yuv420p10le",
+                "-svtav1-params", f"enable-hdr=1:mastering-display={SVT_MASTER_DISPLAY}:content-light={c},{f}",
+                *HDR_TAGS]
+    elif spec.codec == "h264":
+        if spec.hdr:
+            raise RecipeError("H.264 is encoded from the SDR render only")
+        cmd += ["-vf", sdr_video_filter(matrix, range_), "-c:v", "libx264", "-profile:v", "high",
+                "-preset", FAST_X264_PRESET if fast else X264_PRESET, "-crf", str(spec.crf),
+                "-pix_fmt", "yuv420p", *SDR_TAGS]
     else:
-        cmd += ["-c:v", "libx264", "-crf", str(crf), "-preset", preset,
-                "-pix_fmt", "yuv420p", *PASSTHROUGH]
-    if audio_codec == "aac":
-        cmd += ["-c:a", "copy"]
-    elif audio_codec:
-        cmd += ["-c:a", "aac", "-b:a", "256k"]
-    cmd += ["-movflags", "+faststart", str(output)]
+        raise RecipeError(f"unknown codec {spec.codec}")
+    cmd += [*PASSTHROUGH]
+    if spec.audio:
+        cmd += STAGE_AUDIO
+    cmd += [*FASTSTART, str(out)]
     return cmd
 
 
-def poster_args(video: Path | str, output: Path | str, frame: int = 0,
-                quality: int = 85) -> list[str]:
-    """Lossy WebP poster of one frame at the clip's own size."""
-    return [*FFMPEG_BASE, "-i", str(video), "-an", "-vf", select_frame(frame),
-            "-frames:v", "1", "-c:v", "libwebp", "-lossless", "0",
-            "-quality", str(quality), str(output)]
+def _hevc(spec: VideoOutput, cll, matrix: str, range_: str, fast: bool) -> list[str]:
+    if fast:
+        vf = hdr_video_filter("p010le") if spec.hdr else sdr_video_filter(matrix, range_, "nv12")
+        return ["-vf", vf, "-c:v", "hevc_videotoolbox", "-profile:v", "main10" if spec.hdr else "main",
+                "-q:v", str(spec.fast_quality), "-tag:v", "hvc1", *(HDR_TAGS if spec.hdr else SDR_TAGS)]
+    if spec.hdr:
+        c, f = _cll(cll)
+        params = ("hdr10=1:repeat-headers=1:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc"
+                  f":range=limited:max-cll={c},{f}:master-display={X265_MASTER_DISPLAY}:log-level=error")
+        return ["-vf", hdr_video_filter(), "-c:v", "libx265", "-preset", X265_PRESET, "-crf", str(spec.crf),
+                "-profile:v", "main10", "-pix_fmt", "yuv420p10le", "-tag:v", "hvc1",
+                "-x265-params", params, *HDR_TAGS]
+    params = "repeat-headers=1:colorprim=bt709:transfer=bt709:colormatrix=bt709:range=limited:log-level=error"
+    return ["-vf", sdr_video_filter(matrix, range_), "-c:v", "libx265", "-preset", X265_PRESET,
+            "-crf", str(spec.crf), "-profile:v", "main", "-pix_fmt", "yuv420p", "-tag:v", "hvc1",
+            "-x265-params", params, *SDR_TAGS]
 
 
-def still_png_args(master, output, frame: int = 0) -> list[str]:
-    return [*FFMPEG_BASE, "-i", str(master), "-an", "-vf", select_frame(frame),
-            "-frames:v", "1", "-c:v", "png", str(output)]
+# ---------------------------------------------------------------------------
+# Stills, posters and README media
+
+def poster_args(src: Path | str, out: Path | str, frame: int = 0, *, matrix: str = SDR_DEFAULT_MATRIX,
+                range_: str = "tv", quality: int = POSTER_QUALITY) -> list[str]:
+    """Lossy WebP of one frame of the SDR render, at the render's own size."""
+    return [*FFMPEG_BASE, "-i", str(src), "-an", "-vf", f"{select_frame(frame)},{to_rgb(matrix, range_, 'bgra')}",
+            "-frames:v", "1", "-c:v", "libwebp", "-lossless", "0", "-quality", str(quality), str(out)]
 
 
-def still_webp_args(master, output, frame: int = 0, quality: int = 90) -> list[str]:
-    return [*FFMPEG_BASE, "-i", str(master), "-an", "-vf", select_frame(frame),
-            "-frames:v", "1", "-c:v", "libwebp", "-lossless", "0",
-            "-quality", str(quality), str(output)]
+def sdr_png_args(src: Path | str, out: Path | str, frame: int = 0, *, matrix: str = SDR_DEFAULT_MATRIX,
+                 range_: str = "tv", rect: Rect | None = None) -> list[str]:
+    """Lossless 8-bit PNG of one frame of the SDR render, optionally a 1:1 crop."""
+    chain = select_frame(frame) + (f",{rect.crop_filter()}" if rect else "")
+    return [*FFMPEG_BASE, "-i", str(src), "-an", "-vf", f"{chain},{to_rgb(matrix, range_, 'rgb24')}",
+            "-frames:v", "1", "-c:v", "png", str(out)]
+
+
+def hdr_raw_args(src: Path | str, out: Path | str, frame: int = 0, *,
+                 matrix: str = HDR_DEFAULT_MATRIX, range_: str = "tv") -> list[str]:
+    """One frame of the HDR render as raw rgb48le, still PQ-coded BT.2020.
+    images.py cuts the crops, averages the @1x variants and writes the PNGs."""
+    return [*FFMPEG_BASE, "-i", str(src), "-an",
+            "-vf", f"{select_frame(frame)},{to_rgb(matrix, range_, 'rgb48le')}",
+            "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb48le", str(out)]
+
+
+def avifenc_args(png: Path | str, out: Path | str, *, quality: int = AVIF_QUALITY,
+                 speed: int = AVIF_SPEED, clli: Sequence[int] | None = None) -> list[str]:
+    """HDR AVIF from a 16-bit PQ PNG: BT.2020 primaries, PQ, BT.2020 matrix,
+    10-bit 4:4:4, full range. The PNG carries no colour profile, so avifenc
+    is given the code points and told to ignore any metadata."""
+    cmd = ["avifenc", "--cicp", "9/16/9", "--depth", "10", "--yuv", "444", "--range", "full",
+           "--ignore-icc", "--ignore-exif", "--ignore-xmp", "-q", str(quality), "--speed", str(speed),
+           "--jobs", "all"]
+    if clli:
+        cmd += ["--clli", f"{int(clli[0])},{int(clli[1])}"]
+    return cmd + [str(png), str(out)]
+
+
+def gainmap_args(script: Path | str, sdr_png: Path | str, hdr_png: Path | str, out: Path | str,
+                 quality: float = GAINMAP_QUALITY) -> list[str]:
+    """gainmap.swift: the SDR render as the JPEG base plus a gain map toward the HDR render."""
+    return ["swift", str(script), str(sdr_png), str(hdr_png), str(out), f"{quality:.2f}"]
 
 
 def readme_frames(source_frames: int) -> int:
@@ -319,82 +465,51 @@ def readme_frames(source_frames: int) -> int:
     return (source_frames + 1) // 2
 
 
-def readme_filter(source_frames: int, size=README_SIZE, fps: int = README_FPS) -> str:
-    return (f"trim=end_frame={source_frames},select='not(mod(n\\,2))',"
-            f"setpts=N/({fps}*TB),{scale_filter(size)}")
-
-
-def readme_webp_args(master, output, source_frames: int, quality: int, *,
-                     size=README_SIZE, fps: int = README_FPS) -> list[str]:
-    """960x720 animated WebP at 30 fps from every second frame."""
-    return [*FFMPEG_BASE, "-i", str(master), "-an",
-            "-vf", readme_filter(source_frames, size, fps),
+def readme_webp_args(src: Path | str, out: Path | str, source_frames: int, quality: int, *,
+                     matrix: str = SDR_DEFAULT_MATRIX, range_: str = "tv", fps: int = README_FPS) -> list[str]:
+    """Animated WebP of the README render at its own size, every second frame at 30 fps."""
+    graph = (f"trim=end_frame={source_frames},select='not(mod(n\\,2))',setpts=N/({fps}*TB),"
+             f"{to_rgb(matrix, range_, 'bgra')}")
+    return [*FFMPEG_BASE, "-i", str(src), "-an", "-vf", graph,
             "-frames:v", str(readme_frames(source_frames)), *PASSTHROUGH,
             "-c:v", "libwebp_anim", "-lossless", "0", "-quality", str(quality),
-            "-compression_level", "6", "-loop", "0", str(output)]
+            "-compression_level", "6", "-loop", "0", str(out)]
 
 
-def gif_palette_args(master, palette, source_frames: int, colours: int, *,
-                     size=GIF_SIZE, fps: int = README_FPS) -> list[str]:
-    return [*FFMPEG_BASE, "-i", str(master), "-an",
-            "-vf", readme_filter(source_frames, size, fps)
-            + f",palettegen=max_colors={colours}:stats_mode=diff",
-            "-frames:v", "1", str(palette)]
-
-
-def gif_args(master, palette, output, source_frames: int, *, size=GIF_SIZE,
-             fps: int = README_FPS, dither: str = "bayer:bayer_scale=5") -> list[str]:
-    graph = (f"[0:v]{readme_filter(source_frames, size, fps)}[v];"
-             f"[v][1:v]paletteuse=dither={dither}:diff_mode=rectangle")
-    return [*FFMPEG_BASE, "-i", str(master), "-i", str(palette), "-an",
-            "-filter_complex", graph, "-frames:v", str(readme_frames(source_frames)),
-            *PASSTHROUGH, "-loop", "0", str(output)]
-
-
-def flicker_webp_args(master, output, rect: Rect, first_frame: int, *,
-                      quality: int | str = "lossless", frames: int = FLICKER_FRAMES,
-                      fps: int = FLICKER_FPS) -> list[str]:
-    """Eight consecutive frames of the crop at 1:1 master pixels, 8 fps loop."""
+def flicker_webp_args(src: Path | str, out: Path | str, rect: Rect, first_frame: int, *,
+                      quality: int | str = "lossless", frames: int = FLICKER_FRAMES, fps: int = FLICKER_FPS,
+                      matrix: str = SDR_DEFAULT_MATRIX, range_: str = "tv") -> list[str]:
+    """Eight consecutive frames of the crop at 1:1 render pixels, 8 fps loop."""
     graph = (f"trim=start_frame={first_frame}:end_frame={first_frame + frames},"
-             f"setpts=N/({fps}*TB),{rect.crop_filter()}")
-    cmd = [*FFMPEG_BASE, "-i", str(master), "-an", "-vf", graph,
+             f"setpts=N/({fps}*TB),{rect.crop_filter()},{to_rgb(matrix, range_, 'bgra')}")
+    cmd = [*FFMPEG_BASE, "-i", str(src), "-an", "-vf", graph,
            "-frames:v", str(frames), *PASSTHROUGH, "-c:v", "libwebp_anim"]
     if quality == "lossless":
-        cmd += ["-lossless", "1", "-pix_fmt", "bgra"]
+        cmd += ["-lossless", "1"]
     else:
         cmd += ["-lossless", "0", "-quality", str(quality)]
-    cmd += ["-compression_level", "6", "-loop", "0", str(output)]
+    cmd += ["-compression_level", "6", "-loop", "0", str(out)]
     return cmd
 
 
-def flicker_png_args(master, output, rect: Rect, frame: int) -> list[str]:
-    return [*FFMPEG_BASE, "-i", str(master), "-an",
-            "-vf", f"{select_frame(frame)},{rect.crop_filter()}",
-            "-frames:v", "1", "-c:v", "png", str(output)]
-
-
 # ---------------------------------------------------------------------------
-# Feature clips (built from masters)
+# Feature clips (built from the full-size SDR renders, never scaled)
 
-def _video_out(size: Sequence[int] | None, crf: int, preset: str) -> list[str]:
-    return ["-c:v", "libx264", "-crf", str(crf), "-preset", preset, "-pix_fmt", "yuv420p",
-            *PASSTHROUGH]
-
-
-def _audio_out(bitrate: str) -> list[str]:
-    return ["-c:a", "aac", "-b:a", bitrate]
+def _feature_video(crf: int, preset: str) -> list[str]:
+    return ["-c:v", "libx264", "-profile:v", "high", "-crf", str(crf), "-preset", preset,
+            "-pix_fmt", "yuv420p", *SDR_TAGS, *PASSTHROUGH]
 
 
 def five_televisions_args(masters: Sequence[Path | str], captions: Sequence[Path | str],
                           output: Path | str, frames_per_preset: int, rate: Fraction | str,
-                          *, size: Sequence[int] | None = None, crf: int = 18,
-                          preset: str = "slow", font: Path | str | None = None,
-                          audio: bool = True, master_height: int = MASTER_SIZE[1]) -> list[str]:
+                          *, crf: int = 14, preset: str = "slow", font: Path | str | None = None,
+                          audio: bool = True, master_height: int = LENS_SIZE[1],
+                          matrix: str = SDR_DEFAULT_MATRIX, range_: str = "tv") -> list[str]:
     """One game, one television after another.
 
-    Segment i shows frames [i*F, (i+1)*F) of master i, so the game keeps
-    running while the set changes; the audio is the first master's, continuous.
-    Every master must hold len(masters) * F frames."""
+    Segment i shows frames [i*F, (i+1)*F) of render i, so the game keeps
+    running while the set changes; the audio is the first render's, continuous.
+    Every render must hold len(masters) * F frames."""
     n = len(masters)
     if n != len(captions):
         raise RecipeError("one caption per master")
@@ -403,10 +518,8 @@ def five_televisions_args(masters: Sequence[Path | str], captions: Sequence[Path
         parts.append(f"[{i}:v]trim=start_frame={i * frames_per_preset}"
                      f":end_frame={(i + 1) * frames_per_preset},setpts=PTS-STARTPTS,"
                      f"{drawtext(captions[i], master_height, font=font)}[v{i}]")
-    chain = "".join(f"[v{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=0,setpts=N/FRAME_RATE/TB"
-    if size:
-        chain += "," + scale_filter(size)
-    parts.append(chain + ",format=yuv420p[v]")
+    parts.append("".join(f"[v{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=0,setpts=N/FRAME_RATE/TB,"
+                 + sdr_video_filter(matrix, range_) + "[v]")
     total = n * frames_per_preset
     cmd = [*FFMPEG_BASE]
     for m in masters:
@@ -415,19 +528,19 @@ def five_televisions_args(masters: Sequence[Path | str], captions: Sequence[Path
         parts.append(f"[0:a]atrim=end={seconds_of(total, Fraction(rate)):.6f},asetpts=PTS-STARTPTS[a]")
     cmd += ["-filter_complex", ";".join(parts), "-map", "[v]"]
     cmd += ["-map", "[a]"] if audio else ["-an"]
-    cmd += ["-frames:v", str(total), *_video_out(size, crf, preset)]
+    cmd += ["-frames:v", str(total), *_feature_video(crf, preset)]
     if audio:
-        cmd += _audio_out("192k")
-    cmd += ["-movflags", "+faststart", str(output)]
+        cmd += FEATURE_AUDIO
+    cmd += [*FASTSTART, str(output)]
     return cmd
 
 
 def side_by_side_args(masters: Sequence[Path | str], captions: Sequence[Path | str],
                       output: Path | str, frames: int, rate: Fraction | str, *,
-                      master_size=MASTER_SIZE, size: Sequence[int] | None = None,
-                      crf: int = 18, preset: str = "slow", font: Path | str | None = None,
-                      audio: bool = True) -> list[str]:
-    """Three televisions side by side, each showing its third of the picture."""
+                      master_size: Sequence[int] = LENS_SIZE, crf: int = 14, preset: str = "slow",
+                      font: Path | str | None = None, audio: bool = True,
+                      matrix: str = SDR_DEFAULT_MATRIX, range_: str = "tv") -> list[str]:
+    """Three televisions side by side, each showing its own third of the picture."""
     n = len(masters)
     if n != len(captions):
         raise RecipeError("one caption per master")
@@ -437,10 +550,8 @@ def side_by_side_args(masters: Sequence[Path | str], captions: Sequence[Path | s
         parts.append(f"[{i}:v]trim=end_frame={frames},setpts=PTS-STARTPTS,"
                      f"crop={w}:{master_size[1]}:{x}:0,"
                      f"{drawtext(captions[i], master_size[1], font=font, y=str(int(master_size[1] * 0.05)))}[v{i}]")
-    chain = "".join(f"[v{i}]" for i in range(n)) + f"hstack=inputs={n},setpts=N/FRAME_RATE/TB"
-    if size:
-        chain += "," + scale_filter(size)
-    parts.append(chain + ",format=yuv420p[v]")
+    parts.append("".join(f"[v{i}]" for i in range(n)) + f"hstack=inputs={n},setpts=N/FRAME_RATE/TB,"
+                 + sdr_video_filter(matrix, range_) + "[v]")
     cmd = [*FFMPEG_BASE]
     for m in masters:
         cmd += ["-i", str(m)]
@@ -448,64 +559,11 @@ def side_by_side_args(masters: Sequence[Path | str], captions: Sequence[Path | s
         parts.append(f"[0:a]atrim=end={seconds_of(frames, Fraction(rate)):.6f},asetpts=PTS-STARTPTS[a]")
     cmd += ["-filter_complex", ";".join(parts), "-map", "[v]"]
     cmd += ["-map", "[a]"] if audio else ["-an"]
-    cmd += ["-frames:v", str(frames), *_video_out(size, crf, preset)]
+    cmd += ["-frames:v", str(frames), *_feature_video(crf, preset)]
     if audio:
-        cmd += _audio_out("192k")
-    cmd += ["-movflags", "+faststart", str(output)]
+        cmd += FEATURE_AUDIO
+    cmd += [*FASTSTART, str(output)]
     return cmd
-
-
-def push_in_expressions(window: Rect, master_size: Sequence[int], frames: int) -> dict[str, str]:
-    """zoompan z/x/y: ease (smoothstep) from the full frame into ``window``.
-
-    zoompan's ``on`` counts output frames from 0; with d=1 each input frame
-    makes one output frame, so t = on/(frames-1) sweeps 0..1 exactly."""
-    zoom = master_size[0] / window.w
-    cx, cy = window.centre
-    t = f"min(on/{max(frames - 1, 1)}\\,1)"
-    ease = f"(({t})*({t})*(3-2*({t})))"
-    return {
-        "z": f"1+({zoom:.6f}-1)*{ease}",
-        "x": f"(iw/2+({cx:.1f}-iw/2)*{ease})-iw/zoom/2",
-        "y": f"(ih/2+({cy:.1f}-ih/2)*{ease})-ih/zoom/2",
-    }
-
-
-def push_in_args(master: Path | str, output: Path | str, window: Rect, frames: int,
-                 rate: Fraction | str, *, master_size=MASTER_SIZE, start_frame: int = 0,
-                 size: Sequence[int] | None = None, crf: int = 14, preset: str = "slow",
-                 audio: bool = True) -> list[str]:
-    """12 s zoompan from the full frame into the window at 1:1 master pixels.
-
-    The native output size is the window's, so the last frame is unscaled
-    master pixels; ``size`` scales that whole animation for the site/reddit."""
-    e = push_in_expressions(window, master_size, frames)
-    graph = (f"[0:v]trim=start_frame={start_frame}:end_frame={start_frame + frames},"
-             f"setpts=PTS-STARTPTS,"
-             f"zoompan=z='{e['z']}':x='{e['x']}':y='{e['y']}':d=1"
-             f":s={window.w}x{window.h}:fps={rate_string(rate)}")
-    if size:
-        graph += "," + scale_filter(size)
-    graph += ",format=yuv420p[v]"
-    parts = [graph]
-    cmd = [*FFMPEG_BASE, "-i", str(master)]
-    if audio:
-        start = seconds_of(start_frame, Fraction(rate))
-        parts.append(f"[0:a]atrim=start={start:.6f}:end={start + seconds_of(frames, Fraction(rate)):.6f},"
-                     f"asetpts=PTS-STARTPTS[a]")
-    cmd += ["-filter_complex", ";".join(parts), "-map", "[v]"]
-    cmd += ["-map", "[a]"] if audio else ["-an"]
-    cmd += ["-frames:v", str(frames), *_video_out(size, crf, preset)]
-    if audio:
-        cmd += _audio_out("192k")
-    cmd += ["-movflags", "+faststart", str(output)]
-    return cmd
-
-
-def feature_variant_args(source: Path | str, output: Path | str, *, size=HERO_SIZE,
-                         crf: int = 20, preset: str = "slow", audio: bool = True) -> list[str]:
-    """A scaled variant of a rendered feature clip (site 1440x1080)."""
-    return hero_args(source, output, size=size, crf=crf, preset=preset, audio=audio)
 
 
 # ---------------------------------------------------------------------------
@@ -525,3 +583,71 @@ def fit(limit: int, settings: Sequence, build) -> tuple[object, int]:
     if last is None:
         raise RecipeError("fit needs at least one setting")
     return last
+
+
+# ---------------------------------------------------------------------------
+# Guard
+
+# Filters the pipeline uses. None of them changes the picture size except
+# crop, which cuts whole pixels; scale appears only as a colour/format
+# converter with the options below.
+ALLOWED_FILTERS = {"select", "setpts", "trim", "crop", "format", "scale", "setparams", "drawtext",
+                   "concat", "hstack", "atrim", "asetpts"}
+SCALE_OPTIONS = {"in_color_matrix", "out_color_matrix", "in_range", "out_range"}
+
+
+def resampling_problem(cmd: Sequence[str]) -> str | None:
+    """Why an ffmpeg command could resample the picture, or None.
+
+    Checks every filter graph against ALLOWED_FILTERS, every scale filter for
+    size options, and output size options (-s, -video_size after the inputs)."""
+    args = [str(a) for a in cmd]
+    last_input = max((i for i, a in enumerate(args) if a == "-i"), default=-1)
+    for i, arg in enumerate(args):
+        if arg in ("-s", "-s:v", "-video_size") and i > last_input:
+            return f"output size option {arg}"
+        if arg not in ("-vf", "-filter:v", "-filter_complex") or i + 1 >= len(args):
+            continue
+        for chain in args[i + 1].split(";"):
+            for item in _split_filters(chain):
+                name, _, options = item.partition("=")
+                if name not in ALLOWED_FILTERS:
+                    return f"filter {name!r} is not one of the non-resampling filters"
+                if name == "scale":
+                    keys = [o.partition("=")[0] for o in options.split(":") if o]
+                    bad = [k for k in keys if k not in SCALE_OPTIONS]
+                    if bad or not keys:
+                        return f"scale={options} sets {', '.join(bad) or 'a size'}"
+    return None
+
+
+def _split_filters(chain: str) -> list[str]:
+    """Filters of one chain, split on unescaped commas outside quotes, with
+    [link] labels removed."""
+    items, current, quote, escape = [], [], False, False
+    for ch in chain:
+        if escape:
+            current.append(ch)
+            escape = False
+        elif ch == "\\":
+            current.append(ch)
+            escape = True
+        elif ch == "'":
+            current.append(ch)
+            quote = not quote
+        elif ch == "," and not quote:
+            items.append("".join(current))
+            current = []
+        else:
+            current.append(ch)
+    items.append("".join(current))
+    out = []
+    for item in items:
+        item = item.strip()
+        while item.startswith("["):
+            item = item[item.index("]") + 1:]
+        while item.endswith("]"):
+            item = item[:item.rindex("[")]
+        if item:
+            out.append(item)
+    return out

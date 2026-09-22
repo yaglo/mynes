@@ -22,9 +22,11 @@ REPLAYS_DIR = SHOWCASE_DIR / "replays"
 DEFAULT_PRESETS = ["sony_pvm_14l2", "jvc_d_series_2000", "toshiba_14af43",
                    "stass_favourite", "vhs_sp_consumer", "reference_composite"]
 SECONDS_BY_KIND = {"hero": 6, "feature": 15}
-DEFAULT_FLICKER_CROP = [64, 72, 128, 96]
+# 100 NES pixels by 93.75 lines is 1500x1125 on a 3840x2880 render (15 x 12
+# render pixels per NES pixel), centred on the 256x240 frame.
+DEFAULT_FLICKER_CROP = [78, 73, 100, 93.75]
 MAX_REPLAY_ROWS = 128
-FEATURE_TYPES = ("five-televisions", "side-by-side", "push-in")
+FEATURE_TYPES = ("five-televisions", "side-by-side")
 
 
 class ShotListError(ValueError):
@@ -41,7 +43,7 @@ class Shot:
     seconds: float
     kind: str
     presets: list[str]
-    flicker_crop: list[int]
+    flicker_crop: list[float]
     caption: str
     thumbnail_frame: int
     default_preset: str
@@ -52,6 +54,7 @@ class Shot:
     region: str = "ntsc"
     record_after: int = 2
     flicker_frame: int | None = None
+    lens: list[str] = field(default_factory=list)
 
     @property
     def frames(self) -> int:
@@ -83,21 +86,19 @@ class Feature:
     caption: str
     labels: list[str]
     seconds_per_preset: float = 3
-    seconds: float = 12
-    start_frame: int = 0
-
-    @property
-    def preset(self) -> str:
-        return self.presets[0]
 
 
 @dataclass
 class Defaults:
     seconds: dict
     presets: list[str]
-    flicker_crop: list[int]
+    flicker_crop: list[float]
     record_after: int
-    offscreen: tuple[int, int]
+    lens_size: tuple[int, int]
+    stage_sizes: list[tuple[int, int]]
+    readme_size: tuple[int, int]
+    hdr_headroom: float
+    hdr_white_nits: float
     thumbnail_frame: int
     region: str
     readme_seconds: float
@@ -190,12 +191,34 @@ def load(path: Path | str = DEFAULT_SHOTS_FILE, presets_dir: Path = PRESETS_DIR)
     if not isinstance(seconds, dict) or set(seconds) - set(SECONDS_BY_KIND):
         raise ShotListError("defaults.seconds must be {hero: N, feature: N}")
     seconds = {**SECONDS_BY_KIND, **seconds}
+    if "offscreen" in d:
+        raise ShotListError("defaults.offscreen is gone: the render sizes are defaults.sizes "
+                            "{lens, stage, readme}")
+    sizes = d.get("sizes", {})
+    hdr = d.get("hdr", {})
+    if not isinstance(sizes, dict) or set(sizes) - {"lens", "stage", "readme"}:
+        raise ShotListError("defaults.sizes must be {lens: WxH, stage: [WxH, ...], readme: WxH}")
+    if not isinstance(hdr, dict) or set(hdr) - {"headroom", "white_nits"}:
+        raise ShotListError("defaults.hdr must be {headroom: N, white_nits: N}")
+    try:
+        lens_size = recipes.parse_size(sizes.get("lens", recipes.size_string(recipes.LENS_SIZE)))
+        stage_sizes = [recipes.parse_size(t) for t in
+                       sizes.get("stage", [recipes.size_string(z) for z in recipes.STAGE_SIZES])]
+        readme_size = recipes.parse_size(sizes.get("readme", recipes.size_string(recipes.README_SIZE)))
+    except recipes.RecipeError as e:
+        raise ShotListError(f"defaults.sizes: {e}") from e
+    if not stage_sizes or len(set(stage_sizes)) != len(stage_sizes):
+        raise ShotListError("defaults.sizes.stage must list distinct sizes")
     defaults = Defaults(
         seconds=seconds,
         presets=list(d.get("presets", DEFAULT_PRESETS)),
         flicker_crop=list(d.get("flicker_crop", DEFAULT_FLICKER_CROP)),
         record_after=int(d.get("record_after", 2)),
-        offscreen=recipes.parse_size(d.get("offscreen", "3840x2880")),
+        lens_size=lens_size,
+        stage_sizes=stage_sizes,
+        readme_size=readme_size,
+        hdr_headroom=float(hdr.get("headroom", recipes.HDR_HEADROOM)),
+        hdr_white_nits=float(hdr.get("white_nits", recipes.HDR_WHITE_NITS)),
         thumbnail_frame=int(d.get("thumbnail_frame", 0)),
         region=str(d.get("region", "ntsc")).lower(),
         readme_seconds=float(d.get("readme_seconds", 6)),
@@ -204,7 +227,12 @@ def load(path: Path | str = DEFAULT_SHOTS_FILE, presets_dir: Path = PRESETS_DIR)
         state_slot=int(d.get("state_slot", 1)),
         font=d.get("font"),
     )
-    recipes.validate_nes_rect(defaults.flicker_crop)
+    try:
+        recipes.validate_nes_rect(defaults.flicker_crop)
+    except recipes.RecipeError as e:
+        raise ShotListError(f"defaults: {e}") from e
+    if defaults.hdr_headroom < 1 or defaults.hdr_white_nits <= 0:
+        raise ShotListError("defaults.hdr: headroom must be at least 1 and white_nits positive")
     if defaults.region not in recipes.FPS_BY_REGION:
         raise ShotListError(f"defaults.region must be ntsc or pal, got {defaults.region!r}")
 
@@ -237,6 +265,13 @@ def load(path: Path | str = DEFAULT_SHOTS_FILE, presets_dir: Path = PRESETS_DIR)
         except recipes.RecipeError as e:
             raise ShotListError(f"{where}: {e}") from e
         readme = list(raw.get("readme", []))
+        lens = raw.get("lens", False)
+        if lens is True:
+            lens = list(presets)
+        elif lens is False:
+            lens = []
+        elif not isinstance(lens, list):
+            raise ShotListError(f"{where}: lens must be true, false or a list of presets")
         default_preset = raw.get("default_preset", presets[0])
         shot = Shot(
             id=sid,
@@ -258,6 +293,7 @@ def load(path: Path | str = DEFAULT_SHOTS_FILE, presets_dir: Path = PRESETS_DIR)
             region=region,
             record_after=int(raw.get("record_after", defaults.record_after)),
             flicker_frame=raw.get("flicker_frame"),
+            lens=lens,
         )
         if shot.seconds <= 0:
             raise ShotListError(f"{where}: seconds must be positive")
@@ -271,6 +307,9 @@ def load(path: Path | str = DEFAULT_SHOTS_FILE, presets_dir: Path = PRESETS_DIR)
         bad = [p for p in readme if p not in presets]
         if bad:
             raise ShotListError(f"{where}: readme presets not in presets: {bad}")
+        bad = [p for p in lens if p not in presets]
+        if bad:
+            raise ShotListError(f"{where}: lens presets not in presets: {bad}")
         if "/" in shot.state or "/" in (shot.replay or ""):
             raise ShotListError(f"{where}: state and replay are file names inside states/ and replays/")
         shots.append(shot)
@@ -292,10 +331,7 @@ def load(path: Path | str = DEFAULT_SHOTS_FILE, presets_dir: Path = PRESETS_DIR)
         if shot_id not in ids:
             raise ShotListError(f"{where}: unknown shot {shot_id!r}")
         shot = next(s for s in shots if s.id == shot_id)
-        if ftype == "push-in":
-            presets = [raw.get("preset", shot.default_preset)]
-        else:
-            presets = list(raw.get("presets", []))
+        presets = list(raw.get("presets", []))
         if not presets:
             raise ShotListError(f"{where}: presets must not be empty")
         missing = [p for p in presets if p not in shot.presets]
@@ -308,8 +344,6 @@ def load(path: Path | str = DEFAULT_SHOTS_FILE, presets_dir: Path = PRESETS_DIR)
             id=fid, type=ftype, shot=shot_id, presets=presets,
             caption=str(raw.get("caption", "")), labels=labels,
             seconds_per_preset=float(raw.get("seconds_per_preset", 3)),
-            seconds=float(raw.get("seconds", 12)),
-            start_frame=int(raw.get("start_frame", 0)),
         )
         if ftype == "five-televisions":
             need = len(presets) * recipes.frame_count(feature.seconds_per_preset, shot.region)
@@ -320,11 +354,6 @@ def load(path: Path | str = DEFAULT_SHOTS_FILE, presets_dir: Path = PRESETS_DIR)
         elif ftype == "side-by-side":
             if len(presets) != 3:
                 raise ShotListError(f"{where}: side-by-side takes exactly three presets")
-        elif ftype == "push-in":
-            need = feature.start_frame + recipes.frame_count(feature.seconds, shot.region)
-            if need > shot.frames:
-                raise ShotListError(f"{where}: needs {need} frames but shot {shot_id!r} "
-                                    f"records {shot.frames}; lengthen the shot")
         features.append(feature)
 
     shot_list = ShotList(path=path, defaults=defaults, preset_meta=preset_meta,
@@ -349,8 +378,6 @@ def preset_name(preset: str, presets_dir: Path = PRESETS_DIR) -> str:
 def feature_frames(feature: Feature, shot: Shot) -> int:
     if feature.type == "five-televisions":
         return len(feature.presets) * recipes.frame_count(feature.seconds_per_preset, shot.region)
-    if feature.type == "push-in":
-        return recipes.frame_count(feature.seconds, shot.region)
     return shot.frames
 
 
