@@ -13,7 +13,6 @@ timebase, codec, colour tags, HDR metadata and pixels. Set
 SHOWCASE_TEST_KEEP=1 to keep the files."""
 import json
 import os
-import re
 import shutil
 import subprocess
 import tempfile

@@ -24,6 +24,7 @@ import json
 import platform
 import shutil
 import sys
+import threading
 from dataclasses import dataclass, field
 from fractions import Fraction
 from pathlib import Path
@@ -33,7 +34,7 @@ from . import manifest as manifest_mod
 from . import recipes
 from . import shots as shots_mod
 from .codecs import mime_type
-from .recipes import Rect, VideoOutput
+from .recipes import VideoOutput
 from .runner import (Job, PipelineError, Runner, env_for_capture, find_font, probe_video, tool,
                      verify_animation, verify_image, verify_video)
 from .shots import Feature, Shot, ShotList
@@ -257,7 +258,7 @@ def record_jobs(ctx: Context, pairs: list[tuple[Shot, str]]) -> list[Job]:
                 tag = f"{recipes.size_string(r.size)}/{_pass(hdr)}"
                 jobs.append(Job(id=f"record:{shot.id}/{preset}/{tag}",
                                 description=f"record {shot.title} on {preset}, {tag}",
-                                run=lambda run, s=shot, p=preset, r=r, h=hdr: record_one(ctx, run, s, p, r, h)))
+                                run=lambda runner, s=shot, p=preset, rr=r, h=hdr: record_one(ctx, runner, s, p, rr, h)))
     return jobs
 
 
@@ -571,10 +572,15 @@ def _gainmap(runner: Runner, sdr_png: Path, hdr_png: Path, out: Path, size) -> s
     return out.name
 
 
+_REPORT_LOCK = threading.Lock()
+
+
 def _update_report(runner: Runner, path: Path, note: dict) -> None:
-    existing = json.loads(path.read_text()) if path.exists() else {}
-    existing.update(note)
-    runner.write_json(path, existing)
+    """Merge ``note`` into readme.json; the readme and flicker jobs may run at once."""
+    with _REPORT_LOCK:
+        existing = json.loads(path.read_text()) if path.exists() else {}
+        existing.update(note)
+        runner.write_json(path, existing)
 
 
 def encode_readme(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dict | None:
