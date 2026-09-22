@@ -526,18 +526,24 @@ static const char hdr_json[] =
     "  \"hdr\": true,\n  \"white_nits\": 203,\n  \"headroom\": 5,\n"
     "  \"max_cll\": 1015,\n  \"max_fall\": 292\n}\n";
 
+static bool write_script(const char *path, const char *body) {
+    FILE *f = fopen(path, "w");
+    if (!f) return false;
+    bool ok = fputs(body, f) >= 0;
+    return !fclose(f) && ok && chmod(path, 0755) == 0;
+}
+
 /* The sidecar needs no real ffmpeg: a stand-in that drains its stdin and
  * creates its last argument, the encode's video or the mux's output, lets
  * a recording run to OUT.json. */
 static void test_sidecar(const char *directory) {
-    char stub[512], output[512], json[512], text[1024], error[2048];
+    char stub[512], failing_mux[512], output[512], json[512], text[1024], error[2048];
     snprintf(stub, sizeof(stub), "%s/ffmpeg-stub", directory);
-    FILE *f = fopen(stub, "w");
-    CHECK(f != NULL);
-    if (!f) return;
-    fputs("#!/bin/sh\ncat >/dev/null\nfor last; do :; done\n: > \"$last\"\n", f);
-    fclose(f);
-    CHECK(chmod(stub, 0755) == 0);
+    snprintf(failing_mux, sizeof(failing_mux), "%s/ffmpeg-mux-fails", directory);
+    const char *body = "#!/bin/sh\ncat >/dev/null\nfor last; do :; done\n: > \"$last\"\n";
+    char failing[256];
+    snprintf(failing, sizeof(failing), "%scase \" $* \" in *\" -nostdin \"*) echo mux failed >&2; exit 1;; esac\n", body);
+    CHECK(write_script(stub, body) && write_script(failing_mux, failing));
 
     snprintf(output, sizeof(output), "%s/stub.mov", directory);
     snprintf(json, sizeof(json), "%s/stub.json", directory);
@@ -578,6 +584,20 @@ static void test_sidecar(const char *directory) {
     recorder_destroy(r);
     CHECK(!strcmp(read_text(json, text, sizeof(text)), hdr_json));
     if (strcmp(text, hdr_json)) fprintf(stderr, "  %s", text);
+
+    /* A recording removes an older OUT.json when it starts, so one that
+     * fails leaves none: here the mux fails after it has created the
+     * output, as a full disk does. */
+    options.ffmpeg = failing_mux;
+    r = recorder_create(&options, error, sizeof(error));
+    CHECK(r != NULL);
+    if (!r) { fprintf(stderr, "  %s\n", error); return; }
+    CHECK(!file_exists(json));
+    push_hdr_clip(r);
+    write_sine(recorder_audio_file(r), 4410);
+    CHECK(!recorder_finish(r, error, sizeof(error)) && strstr(error, "mux exited with status 1"));
+    recorder_destroy(r);
+    CHECK(file_exists(output) && !file_exists(json));
 }
 
 /* BT.2020 non-constant-luminance Y'CbCr of a PQ R'G'B' triple in 10-bit

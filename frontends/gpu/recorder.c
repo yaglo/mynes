@@ -403,6 +403,12 @@ Recorder *recorder_create(const RecorderOptions *options, char *error, size_t er
     } else {
         r->rgb = malloc(pixels * 3);
     }
+    /* OUT.json is written only after a finished mux; an older one would
+     * stay beside the clip a failed run leaves, truncated or not. */
+    if (unlink(r->json_path) && errno != ENOENT) {
+        snprintf(error, error_size, "cannot remove %s: %s", r->json_path, strerror(errno));
+        goto fail;
+    }
     FILE *log = fopen(r->log_path, "w");
     if (log) fclose(log);
     r->audio = fopen(r->audio_path, "wb");

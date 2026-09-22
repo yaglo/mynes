@@ -260,7 +260,8 @@ AAC track ends 0.7 ms before the video, so `-shortest` in its place drops
 the last one to four video frames.
 
 After the mux the recorder writes `OUT.json` beside the clip (`contra.mov`
-gives `contra.json`; a failed run writes none):
+gives `contra.json`). A recording deletes an older `OUT.json` when it
+starts, so the file only ever sits beside a clip whose recording finished:
 
 ```json
 {
