@@ -703,7 +703,7 @@ int main(int argc, char **argv) {
     const char *screenshot_path = "/tmp/gpu_capture.ppm";
     uint8_t *static_frame_buf = NULL;      /* 256*240 palette indices when loaded */
     /* Clip recording and scripted play; docs/gpu-controls.md, Recording clips. */
-    const char *record_path = NULL, *load_state_path = NULL;
+    const char *record_path = NULL, *load_state_path = NULL, *save_state_path = NULL;
     const char *input_replay_path = NULL, *input_record_path = NULL;
     double record_seconds = 0;
     int record_after = 2;
@@ -805,6 +805,8 @@ int main(int argc, char **argv) {
             record_after = (int)after;
         } else if (strcmp(argv[i], "--load-state") == 0 && i + 1 < argc) {
             load_state_path = argv[++i];
+        } else if (strcmp(argv[i], "--save-state") == 0 && i + 1 < argc) {
+            save_state_path = argv[++i];
         } else if (strcmp(argv[i], "--input-replay") == 0 && i + 1 < argc) {
             input_replay_path = argv[++i];
         } else if (strcmp(argv[i], "--input-record") == 0 && i + 1 < argc) {
@@ -851,6 +853,9 @@ int main(int argc, char **argv) {
                    "  --record-after F      Emulated frames run before the first recorded\n"
                    "                        one (default 2)\n"
                    "  --load-state FILE     Load a save-state file once the ROM is running\n"
+                   "  --save-state FILE     With --screenshot-after N: save the console state\n"
+                   "                        after frame N (input from --input-replay counts\n"
+                   "                        frames from power-on)\n"
                    "  --input-replay FILE   Scripted player-1 input, rows \"frame hexmask\";\n"
                    "                        with --record, row 1 is the first recorded frame\n"
                    "  --input-record FILE   Write player-1 input changes in that format during\n"
@@ -887,7 +892,11 @@ int main(int argc, char **argv) {
      * other clip flags need a cartridge to act on before the loop starts. */
     if (record_path && !offscreen_w) { fprintf(stderr, "--record requires --offscreen WxH\n"); return 1; }
     if (record_path && record_seconds <= 0) { fprintf(stderr, "--record requires --record-seconds N\n"); return 1; }
-    if ((record_path || load_state_path || input_replay_path) && !rom_path) {
+    if (save_state_path && screenshot_after <= 0) {
+        fprintf(stderr, "--save-state needs --screenshot-after N: the state is taken at frame N\n");
+        return 1;
+    }
+    if ((record_path || load_state_path || input_replay_path || save_state_path) && !rom_path) {
         fprintf(stderr, "--record, --load-state and --input-replay need a ROM path\n"); return 1;
     }
     if (input_record_path && (offscreen_w || record_path || review_no_input)) {
@@ -2240,6 +2249,20 @@ int main(int argc, char **argv) {
             if (screenshot_after > 0) {
                 ++screenshots_taken;
                 running = render_ctx.capture_accepted && screenshots_taken < screenshot_count;
+                /* The worker stops at the last listed frame, so the console
+                 * holds exactly the state after it; saved the way F5 does. */
+                if (!running && save_state_path) {
+                    StateJob job = { .size = nes_state_size(&nes) };
+                    job.data = malloc(job.size);
+                    if (job.data) with_console(console_save_state, &job);
+                    if (job.ok && mynes_write_file_atomic(save_state_path, job.data, job.size)) {
+                        fprintf(stderr, "State after frame %u saved to %s\n", frame_count, save_state_path);
+                    } else {
+                        fprintf(stderr, "Save state to %s failed\n", save_state_path);
+                        exit_status = 1;
+                    }
+                    free(job.data);
+                }
             }
             screenshot_requested = false;
             render_ctx.capture_path = NULL;
