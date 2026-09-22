@@ -7,9 +7,19 @@ parameter, value and range bar; the rest of the game stays visible. Up/Down
 moves to the previous/next setting while staying in adjustment mode. Enter or
 Escape returns to the same row. M closes either view.
 
-**M → Reset console (F2)** or **F2** restarts the loaded console with its cartridge
+**M → Reset console (R)** or **R** restarts the loaded console with its cartridge
 and RAM retained. **O** opens the ROM browser; selecting another ROM initializes
 a fresh console and clears the old picture history before playback resumes.
+
+**G** or **M → Room reflections (G)** switches simulated ambient reflections
+and glare on/off. They start **off** and the choice is saved as a host setting,
+independent of the preset. Switching off retains each preset's light strengths
+and leaves bloom/internal glass scatter intact. The same toggle is also in
+**CRT / room → Glass / geometry** beside the glare controls. While browsing ROMs, R and G
+are search input, not global shortcuts.
+
+For captures, `--room-reflections` and `--no-room-reflections` override the saved
+choice for that run without changing it.
 
 Region detection follows NES 2.0 timing metadata or the iNES PAL bit. Older
 ROM dumps often leave the PAL bit unset: explicit `(E)`, `(Europe)`, `(PAL)`,
@@ -77,7 +87,7 @@ claim that every combination has been visually calibrated.
 | Mask | Type, triads across, pixel pitch, strength, RGB/BGR order | Positive triad count overrides pixel pitch. Pitch is derived from the actual drawable, filtered when unresolved, and optionally aligned to pixels. RGB/BGR denotes modeled phosphor order, not proof of physical panel-subpixel alignment. |
 | Time | Persistence and RGB lifetime scales, optional frame blend and motion threshold | Motion threshold only affects frame blending. This post-render blend is not a 3D composite comb filter. Zero persistence disables phosphor history. |
 | Tube variation | Cathode gains/nonuniformity, purity tint, grain, thermal doming, chromaticity shift, astigmatism, microphonics | Behavioral approximations, not individually measured tube defects. Avoid increasing every imperfection merely to make a picture “more CRT.” |
-| Glass/room | Halation and tint, glass transmission/reflection, scatter, antiglare, glare position/size/color, ambient light, vignette | Halo tint sets per-primary scatter fractions and needs halation. Internal reflection uses spatial scatter, not a local gray pedestal. Glare geometry needs glare enabled. Reflected room light does not scale with emission gain. |
+| Glass/room | Halation and tint, glass transmission/reflection, scatter, antiglare, glare position/size/color, ambient light, vignette | Halo tint sets per-primary scatter fractions and needs halation. Internal reflection uses spatial scatter, not a local gray pedestal. Glare geometry and ambient light require Room reflections (G) enabled. Reflected room light does not scale with emission gain. |
 | Output | Emission gain, available HDR headroom, SDR white level | Gain controls emitted light; headroom and white level come from the host. The output shoulder preserves RGB ratios while fitting peaks. |
 | Audio | Amplifier drive, hum strength/frequency/harmonics, noise | Shared CPU/GPU audio model controls; independent of picture gain. |
 

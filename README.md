@@ -98,9 +98,15 @@ edge focus loss to show the control in isolation; it is not a measured TV.
 
 [![Near-flat and rounded rasters, followed by a controlled centre-to-corner focus comparison](docs/images/feature-tour/geometry-focus.png)](docs/images/feature-tour/geometry-focus.png)
 
-**Glass carries the room as well as the picture.** Kitchen, evening and desk
-lighting now give three generic looks their own subtle reflection. This is an
-authored environment; internal phosphor scatter is a separate effect.
+**Room reflections are optional.** Your display already lives in a real room,
+so simulated ambient reflections and glare start **off**. Press **G** or use
+**M → Room reflections** to enable them; the choice survives preset changes
+and restarts. Kitchen, evening and desk lighting give these examples their
+own subtle reflection, shown enabled below. Bloom and internal glass scatter
+remain part of the tube model.
+
+**R** resets the console with its cartridge retained. **C** switches between
+filtered and raw video. [All controls →](docs/gpu-controls.md)
 
 [![Three lighting moods, with black-signal and gameplay comparisons](docs/images/feature-tour/room-light.png)](docs/images/feature-tour/room-light.png)
 
@@ -323,10 +329,16 @@ in the OSD and Signal Studio.
 See the [model and its limits](docs/gpu-pipeline-reference.md) and
 [benchmarks](docs/gpu-benchmark-results.md), [hardware research](docs/gpu-hardware-research.md),
 and [visual review](docs/gpu-visual-review.md). The current
-[20-preset gallery](docs/contra-preset-gallery.md) includes the strengths and
+[23-preset 4K audit](docs/gpu-preset-audit.md) includes the strengths and
 remaining weaknesses visible in the renders.
 
 ## Tests
+
+**MyNES passes all 144 AccuracyCoin tests (144/144).** Rechecked on
+22 September 2026 with the [bundled, unmodified test ROM](tests/accuracy_coin/UPSTREAM.md)
+and the default CPU/PPU alignment: **0 failures, 0 unrun tests**. This validates
+that suite's core timing and behavior; it does not certify every game, mapper,
+or CRT preset.
 
 Build with tests enabled, then run:
 

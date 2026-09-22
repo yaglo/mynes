@@ -221,6 +221,7 @@ int main(int argc, char **argv) {
     int debug_dump_count = 0;
     bool debug_server_enabled = false;  /* --debug-server: ChainVisualiser IPC socket */
     bool benchmark = false, force_sdr = false, screenshot_requested = false, native_fullscreen = false;
+    int room_reflections_override=-1;
     int mask_alignment_override=-1,window_width=1280,window_height=960;
     char manual_screenshot_path[256];
     int exit_status = 0;
@@ -294,6 +295,10 @@ int main(int argc, char **argv) {
             if (*end || !*argv[i] || !isfinite(dark_frame_level) || dark_frame_level<0 || dark_frame_level>1) {
                 fprintf(stderr,"Dark frame level must be 0..1\n"); return 1;
             }
+        } else if (strcmp(argv[i], "--room-reflections") == 0) {
+            room_reflections_override = 1;
+        } else if (strcmp(argv[i], "--no-room-reflections") == 0) {
+            room_reflections_override = 0;
         } else if (strcmp(argv[i], "--sdr") == 0) {
             force_sdr = true;
         } else if (strcmp(argv[i], "--simulate-frame") == 0 && i + 1 < argc) {
@@ -335,6 +340,8 @@ int main(int argc, char **argv) {
                    "  --offscreen WxH       Hidden, silent playback into a pixel-sized target\n"
                    "  --presentation M     hold, bfi, or 60hz (default, paced hold)\n"
                    "  --dark-frame-level F  Dark-refresh emission, 0..1 (default 0.15)\n"
+                   "  --room-reflections    Enable simulated room light and glare (G toggles)\n"
+                   "  --no-room-reflections Disable simulated room light (default)\n"
                    "  --sdr                 Use SDR output for display comparisons\n"
                    "  --native-fullscreen   Enter native panel mode (F toggles back)\n"
                    "  --mask-alignment M    pixels (default) or physical CRT pitch\n"
@@ -359,6 +366,8 @@ int main(int argc, char **argv) {
 
     /* Persistent config (recent ROMs, last preset). */
     mynes_config_load(&mynes_config);
+    render_ctx.room_reflections_enabled=room_reflections_override>=0
+        ? room_reflections_override : mynes_config.gpu_room_reflections;
     render_ctx.mask_alignment=mask_alignment_override>=0 ? mask_alignment_override : mynes_config.gpu_mask_alignment;
 
     /* --- SDL3 init --- */
@@ -956,11 +965,17 @@ int main(int argc, char **argv) {
                         SDL_StartTextInput(window);
                         break;
                     }
-                    /* L: toggle chain visualiser. */
-                    if (ev.key.scancode == SDL_SCANCODE_F2) {
+                    /* R: console reset with the cartridge retained. */
+                    if (ev.key.scancode == SDL_SCANCODE_R) {
                         if (!ev.key.repeat) preset_ctx.console_reset_requested = true;
                         break;
                     }
+                    /* G: optional simulated room light; never repeats while held. */
+                    if (ev.key.scancode == SDL_SCANCODE_G) {
+                        if (!ev.key.repeat) preset_toggle_room_reflections();
+                        break;
+                    }
+                    /* L: toggle chain visualiser. */
                     if (ev.key.scancode == SDL_SCANCODE_L) {
                         chain_vis_toggle(chain_vis);
                         break;
@@ -1238,7 +1253,11 @@ int main(int argc, char **argv) {
             osd_visible=true;
         } else {
             const char *notice=preset_cycle_notice();
-            if (notice && *notice) {
+            if (SDL_GetTicks()<render_ctx.room_reflections_notice_until) {
+                gpu_osd_notice(osd_pixels,"ROOM REFLECTIONS (G)",
+                    render_ctx.room_reflections_enabled ? "ON" : "OFF");
+                osd_visible=true;
+            } else if (notice && *notice) {
                 gpu_osd_preset_notice(osd_pixels,notice);
                 osd_visible=true;
             } else if (perf_overlay && perf_text[0]) {

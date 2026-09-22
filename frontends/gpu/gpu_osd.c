@@ -64,6 +64,10 @@ void gpu_osd_blend_rgb(uint8_t *rgb,const uint32_t *rgba) {
 }
 
 void gpu_osd_preset_notice(uint32_t *rgba, const char *name) {
+    gpu_osd_notice(rgba,"PRESET",name);
+}
+
+void gpu_osd_notice(uint32_t *rgba, const char *title, const char *name) {
     if (!name || !*name) return;
 
     char lines[4][37]={{0}};
@@ -81,7 +85,7 @@ void gpu_osd_preset_notice(uint32_t *rgba, const char *name) {
     int height=19+count*9, y=224-height;
     fill(rgba,12,y,232,height,0x0f);
     fill(rgba,12,y,232,1,0x2c);
-    text(rgba,20,y+5,"PRESET",0x2c,1);
+    text(rgba,20,y+5,title,0x2c,1);
     for(int i=0;i<count;i++) text(rgba,20,y+16+i*9,lines[i],0x30,1);
 }
 

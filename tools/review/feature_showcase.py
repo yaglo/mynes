@@ -70,7 +70,7 @@ def capture(binary, out, name, data, preset, frames=1):
         env = dict(os.environ, XDG_CONFIG_HOME=tmp, MYNES_REVIEW_NO_INPUT='1')
         with (directory / 'render.log').open('w') as log:
             subprocess.run([str(binary), '--simulate-frame', str(source), '--preset', str(settings),
-                            '--offscreen', '3840x2160', '--sdr', '--mask-alignment', 'physical',
+                            '--offscreen', '3840x2160', '--sdr', '--room-reflections', '--mask-alignment', 'physical',
                             '--screenshot-after', '30', '--screenshot-frames', str(frames),
                             '--screenshot-path', str(base)], cwd=ROOT, env=env,
                            stdout=log, stderr=log, check=True, timeout=180)

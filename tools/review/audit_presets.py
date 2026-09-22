@@ -111,7 +111,7 @@ def main():
                 capture = dest / (name + '.ppm')
                 with (dest / (name + '.log')).open('w') as log:
                     subprocess.run([str(args.binary.resolve()), '--simulate-frame', str(source),
-                        '--preset', str(preset), '--offscreen', '3840x2160', '--sdr',
+                        '--preset', str(preset), '--offscreen', '3840x2160', '--sdr', '--room-reflections',
                         '--mask-alignment', 'physical', '--screenshot-after', '30',
                         '--screenshot-frames', '3', '--screenshot-path', str(capture)],
                         cwd=ROOT, env=env, stdout=log, stderr=log, check=True, timeout=90)

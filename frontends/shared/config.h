@@ -20,6 +20,7 @@
 typedef struct {
     char recent_roms[MYNES_RECENT_MAX][MYNES_PATH_MAX];  /* most-recent first */
     int  recent_count;
+    int  gpu_room_reflections; /* host setting: simulated room light, off by default */
     int  gpu_mask_alignment; /* host setting: 0=panel pixels, 1=CRT pitch */
     char last_preset[MYNES_PRESET_MAX];                  /* slug or filename */
 } MynesConfig;

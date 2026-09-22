@@ -50,6 +50,10 @@ normal presets. Composite colour remains in both crosses.
 
 ## 4 · Room light
 
+These captures enable the optional simulated room lighting. Normal playback
+starts with it off; **G** toggles ambient reflections and glare together, and
+remembers the choice. The reproduction scripts use `--room-reflections`.
+
 ![Kitchen, evening and desktop reflections](images/feature-tour/room-light.png)
 
 The upper row uses normal NES black `$0f`; the lower row uses the same

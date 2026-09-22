@@ -490,6 +490,17 @@ static void gpu_cb_mask_alignment(void) {
     mynes_config_save(g_ctx->config);
 }
 
+static void gpu_cb_room_reflections(void) {
+    g_ctx->config->gpu_room_reflections=g_ctx->render_ctx->room_reflections_enabled;
+    mynes_config_save(g_ctx->config);
+    g_ctx->render_ctx->room_reflections_notice_until=SDL_GetTicks()+2000;
+}
+
+void preset_toggle_room_reflections(void) {
+    g_ctx->render_ctx->room_reflections_enabled ^= 1;
+    gpu_cb_room_reflections();
+}
+
 static void gpu_cb_console_reset(void) {
     g_ctx->console_reset_requested = true;
 }
@@ -637,7 +648,7 @@ static int menu_presets_video_idx = -1;
 /* Forward declarations — actual storage lives further down. The save
  * action callback (also further down) needs to update these tables. */
 static OSDMenuItem menu_video[15];
-OSDMenuItem preset_menu_root[8];   /* defined below; declared here so the
+OSDMenuItem preset_menu_root[9];   /* defined below; declared here so the
                                     * save callback can update it. */
 
 /* Public entry points used by main.c. */
@@ -943,7 +954,7 @@ static OSDMenuItem menu_rf[7],menu_vhs[15];
 static OSDMenuItem menu_audio_top[3];
 static OSDMenuItem menu_picture[9], menu_tube[5];
 static OSDMenuItem menu_diagnostics[1],menu_display[4];
-int         preset_menu_root_count = 8;
+int         preset_menu_root_count = 9;
 
 /* Helper to populate an OSDMenuItem. */
 static OSDMenuItem make_item(const char *label, OSDMenuItemType type,
@@ -1271,13 +1282,9 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_glass[n++] = MI_FLOAT("V position",    &vc->tv.v_pos,       0.01f, -0.3f, 0.3f, gpu_cb_update_beam_params, "%+.2f");
     menu_glass[n++] = MI_FLOAT("H size",        &vc->tv.h_size,      0.02f, 0.5f, 1.5f, gpu_cb_update_beam_params, "%.2f");
     menu_glass[n++] = MI_FLOAT("V size",        &vc->tv.v_size,      0.02f, 0.5f, 1.5f, gpu_cb_update_beam_params, "%.2f");
-    /* §6.3 Glass glare — external reflection of the viewer's room on
-     * the outer glass face. Amount is zero by default so existing
-     * presets don't gain a reflection they didn't ask for. */
-    /* Glare amount step is deliberately large (0.03) so one press
-     * produces a visible change — the shader's 2.5× Fresnel gain
-     * makes values above ~0.05 clearly visible on any screen. */
-    menu_glass[n++] = MI_FLOAT("Glare amount",  &vc->tv.glass_glare,         0.03f, 0.0f, 1.00f, gpu_cb_update_beam_params, "%.2f");
+    /* External room light is optional; retain the preset's strengths while off. */
+    menu_glass[n++] = MI_TOGGLE("Room reflections (G)", &ctx->render_ctx->room_reflections_enabled, gpu_cb_room_reflections);
+    menu_glass[n++] = MI_FLOAT("Glare amount",  &vc->tv.glass_glare,         0.001f, 0.0f, 1.00f, gpu_cb_update_beam_params, "%.3f");
     menu_glass[n++] = MI_FLOAT("Glare light X", &vc->tv.glass_glare_light_x, 0.05f, 0.0f, 1.00f, gpu_cb_update_beam_params, "%.2f");
     menu_glass[n++] = MI_FLOAT("Glare light Y", &vc->tv.glass_glare_light_y, 0.05f, 0.0f, 1.00f, gpu_cb_update_beam_params, "%.2f");
     menu_glass[n++] = MI_FLOAT("Glare size",    &vc->tv.glass_glare_size,    0.02f, 0.02f, 0.60f, gpu_cb_update_beam_params, "%.2f");
@@ -1399,7 +1406,8 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_display[2] = MI_CYCLIC("Presentation",&ctx->render_ctx->presentation_mode,0,2,NULL,"Hold|BFI (high Hz)|60 Hz hold");
     menu_display[3] = MI_FLOAT("Dark refresh",&ctx->render_ctx->dark_frame_level,.05f,0,1,NULL,"%.2f");
     preset_menu_root[6] = MI_SUB("Host display",menu_display,4);
-    preset_menu_root[7] = make_item("Reset console (F2)",OSD_MI_ACTION,NULL,0,0,0,NULL,NULL,0,gpu_cb_console_reset,NULL);
+    preset_menu_root[8] = MI_TOGGLE("Room reflections (G)", &ctx->render_ctx->room_reflections_enabled, gpu_cb_room_reflections);
+    preset_menu_root[7] = make_item("Reset console (R)",OSD_MI_ACTION,NULL,0,0,0,NULL,NULL,0,gpu_cb_console_reset,NULL);
 }
 
 /* ============================================================================

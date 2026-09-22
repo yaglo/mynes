@@ -107,6 +107,7 @@ uint32_t preset_catalog_revision(void);
 int preset_active_index(void);
 bool preset_is_user(int index);
 bool preset_is_modified(void);
+void preset_toggle_room_reflections(void);
 const char *preset_cycle_notice(void); /* NULL after the brief selection notice */
 bool preset_manage(uint32_t operation, int index, uint32_t revision,
                    const char *name, char *error, size_t error_size);

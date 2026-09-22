@@ -22,6 +22,8 @@ typedef struct {
     GPUDisplay     *gpu_disp;
     bool            gpu_display_enabled;
     bool            crt_shader_enabled;
+    int             room_reflections_enabled; /* host preference, independent of preset */
+    Uint64          room_reflections_notice_until;
     int             presentation_mode;   /* GPU_PRESENT_*; host preference only */
     float           dark_frame_level;
     int             presentation_slots, presentation_slot;

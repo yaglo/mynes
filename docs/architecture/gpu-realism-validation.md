@@ -125,7 +125,15 @@ fixed curved glass aperture with one-pixel coverage antialiasing. Service size,
 position and overscan move the raster inside that aperture. Outside it, the
 same diffuse ambient surround as the render-target clear is retained, independent
 of emission gain. This is a consistent surround treatment, not a measured bezel
-material or full three-dimensional tube face.
+material or full three-dimensional tube face. Simulated ambient reflection and
+specular glare are gated together by the host's Room reflections setting (**G**),
+off by default. It zeroes their final display uniforms without mutating preset
+parameters or suppressing intrinsic bloom/internal glass scatter. The real-render
+regression (`python3 frontends/gpu/tests/test_room_reflections.py build/bin/mynes_gpu`)
+compares six 3840×2160 captures: legacy default-off, explicit on, saved on,
+explicit off overriding saved on, zero room strengths, and zero internal scatter.
+Default-off is byte-identical to enabling reflections with both room strengths
+zero; intrinsic scatter still changes the image.
 
 The existing analytic aperture-grille filtering and mip-filtered slot/dot masks
 remain resolution-aware. An unresolved fine mask is expected to average out;

@@ -399,6 +399,12 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
         gpu_display_params_from_tv(&disp_params, &chain->tv,
                                    ctx->display_tex_w, ctx->display_tex_h,
                                    (int)vp_w, (int)vp_h);
+        /* Gate external room light without changing the preset or the tube's
+         * internal emission/scatter. Also applies to captures and dark slots. */
+        if (!ctx->room_reflections_enabled) {
+            disp_params.glass_glare = 0;
+            disp_params.ambient_light = 0;
+        }
         const GPUOutputGeometry *panel=&ctx->output_geometry;
         gpu_display_fit_mask(&disp_params,ctx->mask_alignment==0,
             panel->scale_x,panel->scale_y,panel->origin_x,panel->origin_y);

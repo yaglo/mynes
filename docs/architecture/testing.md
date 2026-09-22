@@ -53,7 +53,12 @@ test ROM that exercises timing-sensitive behavior:
 ./bin/accuracy_coin
 ```
 
-Reports a pass/fail result per accuracy category with an overall score.
+The bundled unmodified ROM passes **144/144 tests**, with **0 failures and
+0 unrun tests**, at the default CPU/PPU alignment (rechecked 22 September 2026).
+See [fixture revision and SHA-256](../../tests/accuracy_coin/UPSTREAM.md).
+The runner reports each result and returns nonzero for failures, unrun tests,
+invalid fixtures or timeout. This is core conformance coverage, not a guarantee
+of every game's mapper behavior or frontend presentation.
 
 ## Test Runner
 

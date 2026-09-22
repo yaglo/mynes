@@ -11,8 +11,11 @@ assumptions. Reference and lab profiles serve a different purpose again.
 
 Every shipped preset received the same Castlevania III BLK 1-02 framebuffer,
 a grayscale/colour/detail chart, and an isolated-scanline chart at
-**3840×2160**, SDR, physical CRT mask pitch. Three consecutive frames per input
-were captured: **207 initial full-resolution images**. Four tuned presets were then
+**3840×2160**, SDR, physical CRT mask pitch, with simulated room reflections enabled.
+Room reflections now default off in normal playback; **G** restores the room
+lighting shown in this audit. The reproduction script explicitly enables it.
+
+Three consecutive frames per input were captured: **207 initial full-resolution images**. Four tuned presets were then
 re-rendered on all three inputs (36 replacement captures). Separate 4K grid,
 focus, black-signal and 48-frame noise fixtures support the feature tour. Frames 30 and 32 have the same
 carrier phase; frame 31 retains the other phase. No phase averaging, extra

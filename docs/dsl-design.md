@@ -251,7 +251,7 @@ The CPU doesn't know about DMA. The DMA code doesn't encode instruction timing. 
 
 The generated `cpu_gen.c` is ~5300 lines containing 834 switch cases. It compiles to a tight jump table that modern C compilers optimize well.
 
-The accuracy test suite (AccuracyCoin) passes 119 of 138 tests (86%). The remaining failures are in DMC DMA cycle-stealing edge cases and sprite evaluation timing -- areas where the complexity is in the system integration (CPU-PPU-APU interaction), not the CPU timing itself. The DSL approach means CPU timing bugs are almost always a specification error fixable by editing one line of the DSL, rather than a code generation bug in the compiler.
+The bundled AccuracyCoin suite now passes all 144 tests (144/144, no failures or unrun tests), rechecked on 22 September 2026 at the default CPU/PPU alignment. This includes the suite's DMC DMA and sprite-evaluation cases. See the [test fixture and revision](../tests/accuracy_coin/UPSTREAM.md). The DSL approach keeps CPU timing fixes in the specification; system integration still needs independent CPU/PPU/APU and mapper coverage.
 
 ## Applicability Beyond 6502
 

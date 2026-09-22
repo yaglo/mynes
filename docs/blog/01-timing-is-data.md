@@ -213,7 +213,7 @@ The whole thing is simple enough to understand in an afternoon.
 
 1,401 lines of DSL generate 5,300 lines of C containing 834 microcode steps. The generated `cpu_gen.c` compiles to a tight jump table that modern C compilers optimize well.
 
-The accuracy test suite (AccuracyCoin) passes 119 of 138 tests (86%). The remaining failures are not CPU timing bugs -- they are in system integration: DMC DMA cycle-stealing edge cases and sprite evaluation timing, areas where the complexity is in how the CPU, PPU, and APU interact, not in the CPU's own instruction timing.
+**Updated 22 September 2026:** MyNES passes all 144 tests in the current bundled AccuracyCoin ROM, with no failures or unrun tests at the default CPU/PPU alignment. The earlier 119/138 result described an older implementation and fixture. See the [fixture revision](../../tests/accuracy_coin/UPSTREAM.md) and [testing guide](../architecture/testing.md).
 
 When a timing bug is found, the fix is typically a one-line change to the DSL -- adding a missing `(snapshot-i)`, reordering operations within a cycle, or adding a `(when page-cross ...)` block. The C code regenerates automatically. The specification is the single source of truth.
 
