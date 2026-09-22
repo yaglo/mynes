@@ -1,207 +1,324 @@
 # Showcase capture and encoding pipeline
 
-`tools/showcase/showcase.py` records 4K masters of ten games on six
-television presets with the GPU frontend's recorder, encodes every derived
-output (site clips, lens stills, README animations, reddit and YouTube
-variants, three feature clips) and installs the site outputs into the
-[mynes-web](https://github.com/yaglo/mynes-web) checkout, merging
-`assets/hero/manifest.json`. Everything is driven by `shots.json`, every
-command is logged, `--dry-run` prints the commands instead of running them,
-and each output is verified (frame count, size, timebase, byte limits) before
-the pipeline moves on. No ROMs, states or renders are committed:
-`states/` and `out/` are ignored by git.
+`tools/showcase/showcase.py` records ten games on six television presets with
+the GPU frontend's recorder, at every size the picture is shown at and in both
+SDR and HDR, then encodes the site's stage and lens clips, stills and detail
+crops, the README media and two feature clips, and installs the site files
+into the [mynes-web](https://github.com/yaglo/mynes-web) checkout with a
+merged `assets/hero/manifest.json`. Everything is driven by `shots.json`,
+every command is logged, `--dry-run` prints the commands instead of running
+them, and each output is checked (frame count, size, timebase, codec, colour
+tags, byte limits) before the pipeline moves on. No ROMs, states or renders
+are committed: `states/` and `out/` are ignored by git.
 
-Requirements on the Mac: the GPU frontend built with the recorder
-(`build/bin/mynes_gpu --help` must list `--record`), `ffmpeg`/`ffprobe` 5.1
-or newer with libx264, libwebp and libfreetype (`brew install ffmpeg`),
-Python 3.10+ and Pillow (`pip3 install Pillow`), and your own ROMs.
+Requirements on the Mac:
 
-## Workflow in five steps
+- the GPU frontend built with the HDR recorder: `build/bin/mynes_gpu --help`
+  must list `--record`, `--record-hdr`, `--record-headroom` and
+  `--record-hdr-white`;
+- ffmpeg 5.1 or newer with libx264, libx265, libsvtav1, libwebp and
+  drawtext: `brew install ffmpeg-full` (the plain `ffmpeg` formula has no
+  libwebp or drawtext);
+- `avifenc` (`brew install libavif`);
+- Python 3.10 or newer with Pillow and numpy (`pip3 install Pillow numpy`);
+- optionally `swift` on macOS 15 or later, for the gain-map JPEGs (skipped
+  with a note otherwise);
+- your own ROMs.
 
-1. **Build with the recorder** and check the tools:
+ffmpeg and ffprobe are taken from `--ffmpeg`/`--ffprobe`, then
+`MYNES_FFMPEG`/`MYNES_FFPROBE`, then `/opt/homebrew/opt/ffmpeg-full/bin`,
+then `PATH`; an explicit ffmpeg brings the ffprobe beside it. Each run logs
+the pick, and the recorder gets the same ffmpeg through `MYNES_FFMPEG`.
+
+## What the outputs keep
+
+- No resampling. The emulator aligns the aperture grille and the mask to
+  output pixels, so each size is recorded by the emulator at that size.
+  Filters convert pixel format and colour only, and crops cut whole pixels.
+  The runner refuses any ffmpeg command with a filter that could change the
+  picture size (`resampling_problem` in `pipeline/recipes.py`). The one
+  reduction is the `@1x` variant of a detail crop: the exact 2x2 average
+  that Pillow's `Image.reduce(2)` computes.
+- The SDR and HDR renders of a clip come from the same state and replay, so
+  their frames match one for one.
+- Every video keeps the render's frames and timebase: `-fps_mode passthrough`
+  and no `-r`.
+
+## Workflow
+
+Global options go before the subcommand; `install` and `all` take their own
+options after it.
+
+1. Build the frontend with the HDR recorder and check the tools, ROMs and
+   states:
 
    ```sh
    cmake --build build
-   python3 tools/showcase/showcase.py check --roms ~/roms
+   python3 tools/showcase/showcase.py --roms ~/roms check
    ```
 
-   `check` validates `shots.json`, finds each ROM (recursive, case-insensitive
-   globs; it prints what matched and refuses an ambiguous match), lists the
-   save states that exist, checks ffmpeg's encoders and filters, Pillow, a
-   caption font and the recorder flags in `mynes_gpu --help`.
+   `check` validates `shots.json`, finds each ROM (recursive,
+   case-insensitive globs; it prints what matched and refuses an ambiguous
+   match), reads each ROM's TV system the way `src/nes/rom.h` does, lists
+   the save states, and checks ffmpeg's encoders and filters, avifenc,
+   Pillow, numpy, a caption font, swift and the recorder's flags.
 
-2. **Create one save state per shot.** The pipeline never records a shot whose
-   state is missing; `states` tells you exactly what to do:
+2. Create one save state per shot. The pipeline never records a shot whose
+   state is missing; `states` prints what to do:
 
    ```sh
-   python3 tools/showcase/showcase.py states --roms ~/roms
+   python3 tools/showcase/showcase.py --roms ~/roms states
    ```
 
    For each shot: run `build/bin/mynes_gpu <ROM>`, play to the scene, press
    F5 with slot 1 selected, then copy
    `~/.config/mynes/states/<ROM name>-<CRC-32>.s1` to
    `tools/showcase/states/<shot>.s1` (the command prints the exact paths,
-   CRC included). Set `--config-dir` if your config lives elsewhere; the file
-   name pattern is `defaults.state_source` in `shots.json` should the saves
-   module change it.
+   CRC included). Pass `--config-dir` if your config lives elsewhere.
 
-   Shots with a `replay` play scripted input from that state. The starter
-   replays are simple (hold right, walk up, press Start); to record your own,
-   play the scene from the state while the frontend writes the script:
+   Shots with a `replay` play scripted input from that state. To record your
+   own, play the scene from the state while the frontend writes the script:
 
    ```sh
    build/bin/mynes_gpu --load-state tools/showcase/states/<shot>.s1 \
        --input-record tools/showcase/replays/<shot>.replay <ROM>
    ```
 
-3. **Run everything:**
+   and set `"record_after": 0` so the rows land on the frames they were
+   recorded on.
+
+3. Run one clip end to end first, then everything:
 
    ```sh
-   python3 tools/showcase/showcase.py all --roms ~/roms --site ~/src/mynes-web
+   python3 tools/showcase/showcase.py --roms ~/roms --shots super-mario-bros \
+       --presets sony_pvm_14l2 all --site ~/src/mynes-web
+   python3 tools/showcase/showcase.py --roms ~/roms all --site ~/src/mynes-web
    ```
 
-   or stage by stage: `record` (serial, it uses the GPU), `encode --jobs 4`,
-   `features --jobs 2`, `install ~/src/mynes-web`. Use `--shots a,b` and
-   `--presets x,y` to narrow, `--force` to rebuild outputs that are newer than
-   their inputs (otherwise they are skipped), `--dry-run` to see the commands.
-   The log is `out/showcase.log`; each master has `record.log` and
-   `record.json` (command, frame count, rate, SHA-256 of ROM, state, replay
-   and preset) beside it.
+   or stage by stage: `record` (serial, it uses the GPU), `--jobs 4 encode`,
+   `features`, `install ~/src/mynes-web`. `--shots a,b` and `--presets x,y`
+   narrow any stage, `--force` rebuilds outputs that are newer than their
+   inputs (otherwise they are skipped), `--fast` trades quality for speed
+   (see Outputs), `--dry-run` prints the commands. The log is
+   `out/showcase.log`; each render has `sdr.record.log`/`hdr.record.log` and
+   `sdr.record.json`/`hdr.record.json` beside it (command, frames, rate, the
+   recorder's sidecar, SHA-256 of ROM, state, replay and preset).
 
-4. **Install into the site** (part of `all` when `--site` is given):
-   `assets/hero/<shot>/<preset>.{mp4,poster.webp,4k.webp,4k.png}`,
-   `assets/hero/features/<id>.{mp4,poster.webp}` and a merged
-   `assets/hero/manifest.json`. Entries the run did not produce are kept.
+4. Install into the site (part of `all` when `--site` is given). Each
+   complete clip is copied to `assets/hero/<shot>/<preset>/<WxH>/` and merged
+   into `assets/hero/manifest.json`; entries the run did not produce are
+   kept. `install` refuses, listing the 20 largest files, when the site's
+   `assets/` would exceed `--budget-mb` (default 900; GitHub Pages sites must
+   stay under 1 GB). `--with-crops` also copies the detail crops.
 
-5. **Commit both repositories**: `tools/showcase/shots.json` and any replays
-   in `mynes`; `assets/hero/` in `mynes-web`. Masters and derived outputs stay
-   in `tools/showcase/out/`; the README animations (`readme.webp`,
-   `readme.gif`, `flicker.webp`, `flicker.png`) are copied by hand to
-   wherever the README wants them.
+5. Commit both repositories: `tools/showcase/shots.json` and any replays in
+   mynes, `assets/hero/` in mynes-web (check `du -sh assets` first). The
+   README media stay in `out/` and are copied by hand.
 
-## The shot list
+## Render sizes
 
-| Shot | Game and scene | Length | Replay | Flicker crop (NES px) | README |
-|---|---|---|---|---|---|
-| `super-mario-bros` | Super Mario Bros., World 1-1 running right | 6 s | right, jump | 48,104 128x96 | PVM, Stas's |
-| `legend-of-zelda` | The Legend of Zelda, overworld start, walk up | 6 s | up | 64,96 128x96 | |
-| `punch-out` | Punch-Out!!, first fight, crowd visible | 15 s | | 64,8 128x96 | PVM |
-| `journey-to-silius` | Journey to Silius, stage 1 with the dithered sky | 15 s | right | 64,16 128x96 | |
-| `castlevania-3` | Castlevania III, clock tower or the first stage | 6 s | right | 64,64 128x96 | |
-| `blaster-master` | Blaster Master, area 1 driving right | 6 s | right | 64,96 128x96 | |
-| `ninja-gaiden` | Ninja Gaiden, opening cutscene panel then gameplay | 15 s | | 64,64 128x96 | |
-| `mega-man-2` | Mega Man 2, stage select flashing, then a boss intro | 15 s | Start at frame 120 | 64,64 128x96 | |
-| `metroid` | Metroid, Brinstar start, bright shots on black | 6 s | right, fire | 64,96 128x96 | |
-| `batman` | Batman, stage 1 | 6 s | right | 64,96 128x96 | |
+Each clip (shot and preset) is recorded twice at each size, SDR and HDR:
 
-Every shot is recorded on `sony_pvm_14l2`, `jvc_d_series_2000`,
-`toshiba_14af43`, `stass_favourite`, `vhs_sp_consumer` and
-`reference_composite`. Hero loops are 6 s (361 frames), feature clips 15 s
-(901 frames): frames = round(seconds x 60.0988) for NTSC, x 50.007 for PAL.
+| Size | Frames | Built from it |
+|---|---|---|
+| 1920x1440 | the whole shot | stage clips and poster for 2x displays |
+| 960x720 | the whole shot | stage clips and poster for 1x displays |
+| 3840x2880 | the whole shot for lens clips and features; otherwise up to the still frame, or the eight flicker frames for README presets | lens clips, stills, detail crops, flicker crop, feature clips |
+| 1600x1200 | the first `readme_seconds` | README media, presets in `readme` only |
 
-Feature clips, built from the masters rather than recorded:
+Emulation from a state and a replay is deterministic, so a short 3840x2880
+render holds the same first frames as the stage renders. Frames =
+round(seconds x 60.0988) for NTSC, x 50.007 for PAL: 361 for a 6 s hero shot,
+901 for a 15 s feature shot. The sizes, the HDR headroom (4.0) and the SDR
+white inside HDR (203 nits) are `defaults.sizes` and `defaults.hdr` in
+`shots.json`.
+
+## Outputs
+
+In `out/<shot>/<preset>/<WxH>/`:
+
+| File | Size | What it is |
+|---|---|---|
+| `sdr.mov`, `sdr.json` | all | The recorder's SDR render (H.264 4:4:4, BT.601, untagged) and sidecar |
+| `hdr.mov`, `hdr.json` | all | The HDR render (ProRes 4444, BT.2020 PQ) and sidecar with `max_cll` and `max_fall` |
+| `stage-hdr-hevc.mp4` | stage | libx265 Main10, `-tag:v hvc1`, crf 18, preset slow, `hdr10=1:repeat-headers=1:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc`, `max-cll` from `hdr.json`, `master-display` P3-D65 1000 nits; AAC 128k |
+| `stage-hdr-av1.mp4` | stage | libsvtav1 10-bit, crf 24, preset 6, `enable-hdr=1` with the same mastering display and content light; AAC 128k |
+| `stage-sdr.mp4` | stage | libx264 High, crf 18, preset slow, 4:2:0, BT.709; AAC 128k |
+| `poster.webp` | stage | Frame `thumbnail_frame` of the SDR render of this size, WebP quality 85 |
+| `lens-hdr-hevc.mp4` | 3840x2880 | As `stage-hdr-hevc.mp4` at crf 14, no audio; lens shots only |
+| `lens-hdr-av1.mp4` | 3840x2880 | As `stage-hdr-av1.mp4` at crf 20, no audio; lens shots only |
+| `lens-sdr-hevc.mp4` | 3840x2880 | libx265 Main, crf 14, BT.709, no audio; lens shots only |
+| `still-sdr.png` | 3840x2880 | Frame `thumbnail_frame` of the SDR render, lossless |
+| `still-hdr.png` | 3840x2880 | The same frame of the HDR render, 16-bit PQ PNG with a cICP chunk |
+| `still-hdr.avif` | 3840x2880 | `avifenc --cicp 9/16/9 --depth 10 --yuv 444 --range full -q 90 --clli MaxCLL,MaxFALL` from `still-hdr.png` |
+| `crop-sdr.png`, `crop-sdr@1x.png` | crop | 1:1 detail crop of `still-sdr.png`, and its 2x2 average |
+| `crop-hdr.png`, `crop-hdr@1x.png` | crop | The same from the 16-bit HDR frame |
+| `crop-hdr.avif`, `crop-hdr@1x.avif` | crop | AVIF of each, as `still-hdr.avif` |
+| `flicker.webp` | crop | README presets: eight consecutive frames from `flicker_frame` at 1:1, 8 fps, lossless unless over 5 MB, then quality 95 to 80 |
+| `flicker.png` | crop | Frame `flicker_frame` of the crop, lossless |
+| `flicker-hdr.png`, `flicker-hdr.jpg` | crop | The HDR crop, and a JPEG with the SDR crop as base image and a gain map toward the HDR one |
+| `readme.webp` | 1600x1200 | README presets: every second frame of the first `readme_seconds` at 30 fps, quality lowered from 90 to 30 until under 10 MB |
+| `readme.png` | 1600x1200 | Frame `thumbnail_frame`, lossless |
+| `readme-hdr.png`, `readme-hdr.jpg` | 1600x1200 | The HDR frame, and its gain-map JPEG |
+
+`out/<shot>/<preset>/readme.json` records the WebP qualities and sizes and
+the crop in render and NES pixels. In the README, embed `readme.webp` or
+`readme.png` with `width="800"` and the flicker crop with `width="750"`, so
+a 2x display shows render pixels 1:1. libwebp stores a run of identical
+frames as one longer frame, so a still stretch of picture gives an animation
+with fewer frames and the same length.
+
+`--fast` encodes the HEVC files with `hevc_videotoolbox` (`-q:v` 70 for the
+stage, 80 for lens clips; it writes no HDR10 mastering or light-level SEI),
+SVT-AV1 at preset 10 and x264 at `veryfast`. Use it for previews.
+
+The encodes convert only pixel format and colour. HDR files go from the
+render's 4:4:4 to 10-bit 4:2:0 (`format=yuv420p10le`) and carry their colour
+on the frames (`setparams`, which libsvtav1 reads) and in the container. The
+recorder's SDR files are BT.601 without tags (swscale's default when it
+converts rgb24), so SDR outputs go through 16-bit RGB to BT.709 and are
+tagged BT.709.
+
+Feature clips, `out/features/<id>/youtube.mp4`, are built at 3840x2880 from
+the full-size SDR renders (libx264 High, crf 14, BT.709, AAC 192k) and are
+not installed:
 
 | Feature | Built from | What it is |
 |---|---|---|
-| `five-televisions` | `mega-man-2` on five presets | 3 s per television with the preset name as caption, no crossfade. Segment *i* shows seconds 3*i*..3*i*+3 of master *i*, so the game keeps running while the set changes; audio is continuous from the first master. |
+| `five-televisions` | `mega-man-2` on five presets | 3 s per television with the preset name as caption, no crossfade. Segment *i* shows seconds 3*i*..3*i*+3 of render *i*, so the game keeps running while the set changes; audio is continuous from the first render. |
 | `raw-vs-pvm-vs-rf` | `journey-to-silius` on `reference_composite`, `sony_pvm_14l2`, `stass_favourite` | Three vertical thirds of the same picture, each from a different television, labelled. |
-| `push-in` | `punch-out` on `sony_pvm_14l2` | 12 s eased zoom from the whole 4K frame into a 4:3 window around the flicker crop, ending at one master pixel per pixel (1920x1440). |
+
+## manifest.json, version 2
+
+```json
+{"version": 2, "fps": 60.0988, "aspect": [4, 3],
+ "presets": [{"id": "sony_pvm_14l2", "name": "Sony PVM-14L2", "blurb": "Focused beam, fine aperture grille, D65, composite"}],
+ "games": [{"id": "super-mario-bros", "title": "Super Mario Bros.", "scene": "World 1-1, running right past the first blocks",
+            "default_preset": "sony_pvm_14l2"}],
+ "clips": {"super-mario-bros": {"sony_pvm_14l2": {
+   "poster": [{"src": "assets/hero/super-mario-bros/sony_pvm_14l2/1920x1440/poster.webp", "width": 1920, "height": 1440},
+              {"src": "assets/hero/super-mario-bros/sony_pvm_14l2/960x720/poster.webp", "width": 960, "height": 720}],
+   "stage": [{"src": "assets/hero/super-mario-bros/sony_pvm_14l2/1920x1440/stage-hdr-hevc.mp4",
+              "type": "video/mp4; codecs=\"hvc1.2.4.L153.B0\"", "hdr": true,
+              "width": 1920, "height": 1440, "bytes": 18300000}],
+   "lens": [{"src": "assets/hero/super-mario-bros/sony_pvm_14l2/3840x2880/lens-hdr-hevc.mp4",
+             "type": "video/mp4; codecs=\"hvc1.2.4.L183.B0\"", "hdr": true,
+             "width": 3840, "height": 2880, "bytes": 90100000}],
+   "still": {"hdr": "assets/hero/super-mario-bros/sony_pvm_14l2/3840x2880/still-hdr.avif",
+             "sdr": "assets/hero/super-mario-bros/sony_pvm_14l2/3840x2880/still-sdr.png",
+             "width": 3840, "height": 2880, "frame": 0},
+   "hdr": {"white_nits": 203, "headroom": 4.0, "max_cll": 812, "max_fall": 50}}}}}
+```
+
+(The numbers are placeholders.) `stage` lists `stage-hdr-hevc`,
+`stage-hdr-av1` and `stage-sdr` for each stage size, largest size first;
+`lens` appears for lens shots only. `type` carries the video stream's codecs
+string, built from the decoder configuration record that
+`ffprobe -show_data` prints (hvcC, av1C, avcC) and the stream's colour tags,
+so the same string works for `canPlayType` and
+`mediaCapabilities.decodingInfo`; stage files also carry AAC-LC audio.
+`poster` has one entry per stage size because the switcher shows a poster
+only at its own pixel size. `hdr` holds the largest `max_cll` and `max_fall`
+over the clip's HDR renders. Merging keeps presets, games, clips and
+top-level keys the run did not produce, replaces a produced clip's version 1
+keys (`video`, `still_size`, `full`), and merges `stage` and `lens` by `src`.
+
+## The shot list
+
+| Shot | Game and scene | Length | Replay | Crop (NES px) | Lens | README |
+|---|---|---|---|---|---|---|
+| `super-mario-bros` | Super Mario Bros., World 1-1 running right | 6 s | right, jump | 62,105 100x93.75 | yes | PVM, Stas's |
+| `legend-of-zelda` | The Legend of Zelda, overworld start, walk up | 6 s | up | 78,97 100x93.75 | | |
+| `punch-out` | Punch-Out!!, first fight, crowd visible | 15 s | | 78,9 100x93.75 | | PVM |
+| `journey-to-silius` | Journey to Silius, stage 1 with the dithered sky | 15 s | right | 78,17 100x93.75 | | |
+| `castlevania-3` | Castlevania III, clock tower or the first stage | 6 s | right | 78,65 100x93.75 | yes | |
+| `blaster-master` | Blaster Master, area 1 driving right | 6 s | right | 78,97 100x93.75 | | |
+| `ninja-gaiden` | Ninja Gaiden, opening cutscene panel then gameplay | 15 s | | 78,65 100x93.75 | | |
+| `mega-man-2` | Mega Man 2, stage select flashing, then a boss intro | 15 s | Start at frame 120 | 78,65 100x93.75 | | |
+| `metroid` | Metroid, Brinstar start, bright shots on black | 6 s | right, fire | 78,97 100x93.75 | yes | |
+| `batman` | Batman, stage 1 | 6 s | right | 78,97 100x93.75 | | |
+
+Every shot is recorded on `sony_pvm_14l2`, `jvc_d_series_2000`,
+`toshiba_14af43`, `stass_favourite`, `vhs_sp_consumer` and
+`reference_composite`. `"lens": true` gives lens clips on all of a shot's
+presets; a list of presets limits them.
+
+`flicker_crop` is in NES pixel coordinates (256x240) and may be fractional.
+The picture fills the 4:3 render, so on 3840x2880 one NES pixel is 15x12
+render pixels (NES pixels are 8:7): 100 pixels by 93.75 lines is the
+1500x1125 flicker crop, where a 100x75 region would be 1500x900. The detail
+crops use the same region with an even size (1500x1124, `@1x` 750x562).
+`--flicker-scale 15` or `15x12` overrides the scale. `thumbnail_frame` picks
+the poster and still frame; the site freezes clips at frame 0, so leave it
+at 0 for shots on the site.
 
 ### shots.json schema
 
 ```
 defaults      seconds {hero, feature}, presets [], flicker_crop [x,y,w,h], record_after,
-              offscreen "WxH", thumbnail_frame, region, readme_seconds, record_args [],
-              state_source (template), state_slot, font
+              sizes {lens: WxH, stage: [WxH, ...], readme: WxH}, hdr {headroom, white_nits},
+              thumbnail_frame, region, readme_seconds, record_args [], state_source (template),
+              state_slot, font
 presets       {id: {name, blurb}} for the manifest (falls back to the preset file's name)
 shots[]       id, title, scene, rom (glob), rom_exclude [globs], state (file in states/),
               replay (file in replays/), seconds, kind hero|feature, presets [],
-              flicker_crop, caption, thumbnail_frame, flicker_frame, default_preset,
-              readme [presets that get README animations], readme_seconds, region, record_after
-features[]    id, type five-televisions|side-by-side|push-in, shot, presets [] (push-in: preset),
-              labels [], caption, seconds_per_preset (five-televisions), seconds and
-              start_frame (push-in)
+              lens (true, or a list of presets), flicker_crop, caption, thumbnail_frame,
+              flicker_frame, default_preset, readme [presets that get README media],
+              readme_seconds, region, record_after
+features[]    id, type five-televisions|side-by-side, shot, presets [], labels [], caption,
+              seconds_per_preset (five-televisions)
 ```
-
-`flicker_crop` is in NES pixel coordinates (256x240). On the 3840x2880 master
-one NES pixel is 15x12 master pixels, so the default 128x96 region is
-1920x1152 master pixels; `--flicker-scale 15` or `15x12` overrides the scale.
-`thumbnail_frame` picks the poster and lens still; the site freezes clips at
-frame 0, so leave it at 0 for shots that go on the site.
 
 Replays are the frontend's review-input format: rows of `frame hexmask`
 (A=01 B=02 Select=04 Start=08 Up=10 Down=20 Left=40 Right=80), frames
 ascending from 1 and relative to the start of the recording, at most 128
 rows, no comments.
 
-## Outputs
-
-Per (shot, preset) in `out/<shot>/<preset>/`:
-
-| File | Recipe |
-|---|---|
-| `master.mov` | The recorder's 3840x2880 output, every emulated frame, AAC audio. Kept here only. |
-| `hero.mp4` | 1440x1080 H.264 for the site: `-vf scale=1440:1080:flags=lanczos,format=yuv420p -c:v libx264 -crf 20 -preset slow -pix_fmt yuv420p -fps_mode passthrough -c:a aac -b:a 128k -movflags +faststart` |
-| `hero.poster.webp` | Frame `thumbnail_frame` of `hero.mp4`: `-vf select='eq(n\,F)' -frames:v 1 -c:v libwebp -quality 85` |
-| `still.4k.png`, `still.4k.webp` | Frame `thumbnail_frame` of the master, lossless PNG and `libwebp -quality 90` |
-| `reddit.mp4` | As `hero.mp4` with `-crf 18` and `-b:a 192k` |
-| `youtube.mp4` | `-c:v copy -c:a copy -movflags +faststart` when the master is H.264/HEVC with AAC; otherwise `libx264 -crf 14 -preset slow` |
-| `readme.webp` | Presets listed in `readme` only. Every second frame of the first `readme_seconds` at 30 fps, 960x720: `-vf trim=end_frame=N,select='not(mod(n\,2))',setpts=N/(30*TB),scale=960:720:flags=lanczos -c:v libwebp_anim -quality Q -compression_level 6 -loop 0`, Q lowered 90,85,80,...,30 until under 5 MB |
-| `readme.gif` | Same frames at 640x480 with a per-clip palette: `palettegen=max_colors=C:stats_mode=diff`, then `paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle`, C lowered 256,192,128,96,64 until under 8 MB |
-| `flicker.webp` | Eight consecutive frames from `flicker_frame` (default `thumbnail_frame`), cropped 1:1 at master pixels, 8 fps: `-vf trim=start_frame=F:end_frame=F+8,setpts=N/(8*TB),crop=W:H:X:Y -c:v libwebp_anim -lossless 1 -loop 0`, lossy 95,90,85,80 only if lossless exceeds 3 MB |
-| `flicker.png` | The same crop of frame F, lossless |
-| `readme.json` | The chosen WebP quality, GIF colours, flicker setting and sizes |
-
-Per feature in `out/features/<id>/`: `youtube.mp4` (native size, `-crf 14`),
-`reddit.mp4` (1440x1080, `-crf 18`), `site.mp4` (1440x1080, `-crf 20`) and
-`poster.webp`. The graphs:
-
-- five-televisions: `[i:v]trim=start_frame=i*F:end_frame=(i+1)*F,setpts=PTS-STARTPTS,drawtext=textfile=caption-i.txt:...` per input, `concat=n=5:v=1:a=0,setpts=N/FRAME_RATE/TB`, `[0:a]atrim=end=T`.
-- side-by-side: `[i:v]crop=1280:2880:1280*i:0,drawtext=...`, `hstack=inputs=3`.
-- push-in: `zoompan=z='1+(Z-1)*ease(on/(N-1))':x='(iw/2+(cx-iw/2)*ease)-iw/zoom/2':y=...:d=1:s=1920x1440:fps=<master rate>` with a smoothstep ease and Z = 3840 / window width.
-
-Every video output is encoded with `-fps_mode passthrough` and no `-r`, so
-ffmpeg copies the master's timestamps and neither drops nor duplicates a
-frame; the master's own rational rate (`39375000/655171` as reduced by the
-mov muxer) is what the outputs carry. After each encode `ffprobe` must report
-exactly the expected `nb_frames`, size and `r_frame_rate`, and Pillow must
-report the expected frame count for WebP/GIF/PNG, or the job fails loudly.
-
 ## The recorder
 
-The pipeline runs, per (shot, preset):
+Per clip and size the pipeline runs these two commands from the repository
+root, with `XDG_CONFIG_HOME` pointing at a private directory and
+`MYNES_REVIEW_NO_INPUT=1`:
 
 ```
-build/bin/mynes_gpu --offscreen 3840x2880 --sdr --mask-alignment pixels \
+build/bin/mynes_gpu --offscreen WxH --sdr --mask-alignment pixels \
     --preset presets/<preset>.json --load-state states/<shot>.s1 \
     [--input-replay replays/<shot>.replay] \
-    --record out/<shot>/<preset>/master.mov --record-seconds <s> --record-after 2 <ROM>
+    --record out/<shot>/<preset>/WxH/sdr.mov --record-seconds <s> --record-after 2 <ROM>
+build/bin/mynes_gpu --offscreen WxH --mask-alignment pixels \
+    --preset presets/<preset>.json --load-state states/<shot>.s1 \
+    [--input-replay replays/<shot>.replay] \
+    --record out/<shot>/<preset>/WxH/hdr.mov --record-hdr --record-headroom 4 \
+    --record-hdr-white 203 --record-seconds <s> --record-after 2 <ROM>
 ```
 
-with `XDG_CONFIG_HOME` pointing at a private directory and
-`MYNES_REVIEW_NO_INPUT=1`, from the repository root. It relies on:
-`--record` writing every emulated frame as one video frame (no drops) with
-the APU audio muxed as AAC; `--record-seconds N` producing exactly
-round(N x 60.0988) frames (PAL: 50.007); `--record-after F` skipping F frames
-after the state load; `--load-state` taking a file written by F5; and
-`--input-replay` frame numbers counted from the start of recording.
-`defaults.record_args` in `shots.json` appends extra flags (for example
-`--room-reflections`); `MYNES_RECORD_CODEC_ARGS` is the recorder's own
-override for its encoder.
+It relies on: `--record` writing every emulated frame as one video frame
+with the APU audio as AAC; `--record-seconds N` producing exactly
+round(N x 60.0988) frames (a shorter render passes the nine-decimal value
+that gives its frame count); `--record-after F` skipping F frames after the
+state load; `--input-replay` frame numbers counted from the first recorded
+frame; `--record-hdr` writing BT.2020 PQ, tagged in the file; and `OUT.json`
+beside `OUT.mov` with `frames`, `rate`, `width`, `height`, `hdr`,
+`white_nits`, `headroom`, plus `max_cll` and `max_fall` for HDR. After each
+run the pipeline checks the frame count, size, HDR tags and sidecar.
+`defaults.record_args` appends extra flags (for example
+`--room-reflections`).
 
 ## Adding a shot
 
 1. Append an object to `shots` in `shots.json`: `id`, `title`, `scene`, a
    `rom` glob (add `rom_exclude` if the glob also matches sequels), and
-   optionally `seconds` or `kind`, `flicker_crop`, `caption`, `readme`.
-2. `python3 tools/showcase/showcase.py check --roms ~/roms` - it validates the
-   entry and tells you which ROM matched.
-3. `python3 tools/showcase/showcase.py states --shots <id>` and create the
-   state as printed; optionally record a replay with `--input-record`.
-4. `python3 tools/showcase/showcase.py all --roms ~/roms --site ~/src/mynes-web --shots <id>`.
+   optionally `seconds` or `kind`, `flicker_crop`, `lens`, `caption`,
+   `readme`.
+2. `python3 tools/showcase/showcase.py --roms ~/roms check` validates the
+   entry and shows which ROM matched.
+3. `python3 tools/showcase/showcase.py --roms ~/roms --shots <id> states`,
+   then create the state as printed; optionally record a replay with
+   `--input-record`.
+4. `python3 tools/showcase/showcase.py --roms ~/roms --shots <id> all --site ~/src/mynes-web`.
 
-To feature a shot, add an entry to `features` that names it; `check` verifies
-the shot is long enough for the feature.
+To feature a shot, add an entry to `features` that names it; `check`
+verifies the shot is long enough for the feature.
 
 ## Tests
 
@@ -209,9 +326,15 @@ the shot is long enough for the feature.
 python3 -m unittest discover -s tools/showcase/tests -t tools/showcase -v
 ```
 
-`test_recipes`, `test_shots`, `test_manifest` and `test_runner` are pure and
-fast. `test_encode` draws a 3840x2880, 60-frame pattern with Pillow, pipes it
-into ffmpeg at the NES frame rate with a sine track (the shape of a master),
-runs the whole encode and feature job set on it and checks every output,
-including that the push-in starts on the whole frame and ends 1:1 on the
-window; it takes a few minutes and is skipped without ffmpeg and Pillow.
+`test_recipes`, `test_codecs`, `test_shots`, `test_manifest`, `test_runner`,
+`test_images` and `test_cli` need no encoders; one PNG check in
+`test_images` uses ffmpeg when it is there. `test_encode` draws small SDR
+and HDR renders the way the recorder writes them (512x384, 256x192, 128x96
+and 320x240, 60 frames, with sidecars), runs every encode, feature and
+install job on them and checks the outputs: codecs strings, HDR10 metadata,
+one-pixel columns surviving, colours after the BT.601 to BT.709 change,
+highlights above SDR white, 1:1 crops and exact `@1x` averages, the
+manifest and the budget refusal. It takes under a minute and is skipped when
+ffmpeg lacks one of the encoders or avifenc, numpy or Pillow is missing; the
+gain-map and `--fast` checks are skipped without swift on macOS 15 or
+`hevc_videotoolbox`.
