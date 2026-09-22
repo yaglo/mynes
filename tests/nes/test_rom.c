@@ -234,6 +234,70 @@ static int test_mapper_gate(void) {
     return pass;
 }
 
+/* NES 2.0 byte 8 holds mapper bits 8-11 and the submapper. A mapper above
+ * 255 must be rejected under its own number rather than load as the mapper
+ * its low eight bits name (260 would otherwise run as MMC3). */
+static int test_nes2_mapper(void) {
+    static uint8_t data[INES_HEADER_SIZE + INES_PRG_BANK_SIZE + INES_CHR_BANK_SIZE];
+    memcpy(data, "NES\x1A\x01\x01", 6);
+    int pass = 1;
+    ROM rom;
+
+    data[6] = 0x40;   /* mapper bits 0-3 = 4 */
+    data[7] = 0x08;   /* NES 2.0 */
+    data[8] = 0x21;   /* submapper 2, mapper bits 8-11 = 1: mapper 260 */
+    int result = nes_rom_load_data(&rom, data, sizeof(data));
+    const char *msg = nes_rom_error_str(result);
+    if (result != ROM_ERR_MAPPER || rom.mapper != 260 || rom.submapper != 2 ||
+        strcmp(msg, "Unsupported mapper 260") != 0) {
+        printf("TEST nes2_mapper: FAIL (mapper 260: result %d, mapper %u.%u, \"%s\")\n",
+               result, rom.mapper, rom.submapper, msg);
+        if (result == ROM_OK) nes_rom_free(&rom);
+        pass = 0;
+    }
+
+    data[8] = 0x10;   /* submapper 1 of mapper 4 loads */
+    result = nes_rom_load_data(&rom, data, sizeof(data));
+    if (result != ROM_OK || rom.mapper != 4 || rom.submapper != 1 || !rom.is_nes2) {
+        printf("TEST nes2_mapper: FAIL (mapper 4.1: result %d, mapper %u.%u)\n",
+               result, rom.mapper, rom.submapper);
+        pass = 0;
+    }
+    if (result == ROM_OK) nes_rom_free(&rom);
+
+    /* iNES 1.0 uses byte 8 for PRG RAM size and old dumps fill it with
+     * junk, so it must not reach the mapper number there. */
+    data[7] = 0x00;
+    data[8] = 0x21;
+    result = nes_rom_load_data(&rom, data, sizeof(data));
+    if (result != ROM_OK || rom.mapper != 4 || rom.submapper != 0 || rom.is_nes2) {
+        printf("TEST nes2_mapper: FAIL (iNES 1.0 byte 8: result %d, mapper %u.%u)\n",
+               result, rom.mapper, rom.submapper);
+        pass = 0;
+    }
+    if (result == ROM_OK) nes_rom_free(&rom);
+
+    /* Every 12-bit number parses back unchanged, and the loader and the
+     * dispatcher agree on it. */
+    for (int mapper = 0; mapper < 4096; ++mapper) {
+        data[6] = (uint8_t)((mapper & 0x0F) << 4);
+        data[7] = (uint8_t)(0x08 | (mapper & 0xF0));
+        data[8] = (uint8_t)(mapper >> 8);
+        result = nes_rom_load_data(&rom, data, sizeof(data));
+        if (rom.mapper != mapper ||
+            (result == ROM_OK) != mapper_supported((uint16_t)mapper)) {
+            printf("TEST nes2_mapper: FAIL (mapper %d parsed as %u, loader %d)\n",
+                   mapper, rom.mapper, result);
+            pass = 0;
+        }
+        if (result == ROM_OK) nes_rom_free(&rom);
+    }
+
+    if (pass)
+        printf("TEST nes2_mapper: PASS (12-bit mapper and submapper; 260 rejected by number)\n");
+    return pass;
+}
+
 int test_battery_flag(void) {
     const char *path = "/tmp/test_battery.nes";
     create_test_rom(path, 1, 1, 0x02, 0x00);  /* Battery flag set (bit 1) */
@@ -332,6 +396,7 @@ int main(void) {
     total++; passed += test_file_not_found();
     total++; passed += test_unsupported_mapper();
     total++; passed += test_mapper_gate();
+    total++; passed += test_nes2_mapper();
     total++; passed += test_battery_flag();
     total++; passed += test_rom_free();
 

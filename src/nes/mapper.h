@@ -15,7 +15,7 @@
 struct NES;
 
 typedef struct Mapper {
-    uint8_t number;         /* Mapper number */
+    uint16_t number;        /* Mapper number (NES 2.0 goes up to 4095) */
 
     /* PRG ROM banking */
     uint8_t *prg_rom;
@@ -85,7 +85,7 @@ typedef struct Mapper {
 } Mapper;
 
 /* Mapper lifecycle */
-void mapper_init(Mapper *m, uint8_t number,
+void mapper_init(Mapper *m, uint16_t number,
                  uint8_t *prg_rom, uint32_t prg_size,
                  uint8_t *chr_rom, uint32_t chr_size,
                  uint8_t mirroring);
@@ -105,6 +105,6 @@ void mapper_notify_scanline(Mapper *m);
 
 /* Helpers */
 uint8_t mapper_get_mirroring(Mapper *m);
-bool mapper_supported(uint8_t number);
+bool mapper_supported(uint16_t number);
 
 #endif /* NES_MAPPER_H */

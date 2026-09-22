@@ -722,7 +722,7 @@ static inline void nes_load_chr(NES *nes, uint8_t *data, uint32_t size) {
 }
 
 /* Load mapper - initializes the embedded Mapper and marks it loaded */
-static inline void nes_load_mapper(NES *nes, uint8_t number,
+static inline void nes_load_mapper(NES *nes, uint16_t number,
                                     uint8_t *prg_rom, uint32_t prg_size,
                                     uint8_t *chr_rom, uint32_t chr_size,
                                     uint8_t mirroring) {

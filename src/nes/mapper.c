@@ -8,7 +8,7 @@
 
 /* The single list of implemented mappers: the ROM loader's gate and
  * mapper_supported() both derive from it, so they cannot drift apart. */
-static const MapperOps *mapper_ops_lookup(uint8_t number) {
+static const MapperOps *mapper_ops_lookup(uint16_t number) {
     switch (number) {
     case 0: return &mapper0_ops;
     case 1: return &mapper1_ops;
@@ -33,12 +33,12 @@ static const MapperOps *mapper_ops_lookup(uint8_t number) {
 /* A Mapper built for an unknown number (loaders gate on mapper_supported,
  * but tests construct Mappers directly) behaves as NROM rather than
  * dereferencing NULL. */
-static const MapperOps *mapper_ops_for(uint8_t number) {
+static const MapperOps *mapper_ops_for(uint16_t number) {
     const MapperOps *ops = mapper_ops_lookup(number);
     return ops ? ops : &mapper0_ops;
 }
 
-void mapper_init(Mapper *m, uint8_t number,
+void mapper_init(Mapper *m, uint16_t number,
                  uint8_t *prg_rom, uint32_t prg_size,
                  uint8_t *chr_rom, uint32_t chr_size,
                  uint8_t mirroring) {
@@ -114,7 +114,7 @@ uint8_t mapper_get_mirroring(Mapper *m) {
     return m ? m->mirroring : 0;
 }
 
-bool mapper_supported(uint8_t number) {
+bool mapper_supported(uint16_t number) {
     return mapper_ops_lookup(number) != NULL;
 }
 
