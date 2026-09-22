@@ -311,10 +311,12 @@ float's exponent and top mantissa bits, within 1e-6 of the exact curve. The
 BT.2020 non-constant-luminance matrix then gives Y'CbCr, stored as
 limited-range 16-bit codes in three planes (yuv444p16le): 64 times the
 10-bit codes, so Y' runs from 4096 to 60160 and Cb and Cr from 4096 to
-61440. A 3840x2880 frame takes 27 ms on one idle M5 performance core and up
-to 52 ms with other work running, so large frames are split into row bands
-across up to eight threads, about 6 ms per frame; the final log line gives
-the average.
+61440. Large frames are split into row bands across up to eight threads. At
+3840x2880 on an M5 with other renders running (load average 16 to 25), one
+thread took 60 to 140 ms per frame and eight took 10 to 21 ms in a
+standalone benchmark. In a 2-second recording, where the frame is read from
+the GPU download buffer while ffmpeg encodes, the final log line reported 18
+ms per frame; it gives that average for every HDR recording.
 
 ffmpeg reads the frames as yuv444p16le rawvideo tagged `bt2020`,
 `smpte2084`, `bt2020nc` and `tv`, reduces the samples to the codec's depth

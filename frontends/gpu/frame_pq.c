@@ -78,10 +78,10 @@ FramePQ *frame_pq_create(double white_nits) {
 
 void frame_pq_destroy(FramePQ *pq) { free(pq); }
 
-/* One 3840x2880 frame takes 27 ms on an idle M5 performance core and
- * 44-52 ms with other work running, so a large frame is split into bands
- * of rows handed out from a shared counter to up to eight threads; faster
- * and slower cores then finish together. */
+/* One 3840x2880 frame took 60-140 ms on one M5 core with other renders
+ * running, so a large frame is split into bands of rows handed out from a
+ * shared counter to up to eight threads; faster and slower cores then
+ * finish together. */
 #define BAND_ROWS    16
 #define MAX_THREADS  8
 #define MIN_THREADED (1 << 19)   /* pixels; smaller frames stay on one thread */
