@@ -105,30 +105,14 @@ static inline bool nes_rom_pal_filename(const char *path) {
     return false;
 }
 
-/* Load ROM from file path */
-static inline int nes_rom_load(ROM *rom, const char *path) {
-    FILE *fp = fopen(path, "rb");
-    if (!fp) {
-        return ROM_ERR_FILE;
-    }
-
-    /* Initialize ROM struct */
-    memset(rom, 0, sizeof(ROM));
-
-    /* Read header */
-    uint8_t header[INES_HEADER_SIZE];
-    if (fread(header, 1, INES_HEADER_SIZE, fp) != INES_HEADER_SIZE) {
-        fclose(fp);
-        return ROM_ERR_FILE;
-    }
-
+/* Reads the 16-byte header into rom (sizes, flags, mapper, TV system) and
+ * applies the mapper gate. Both loaders call it, so a file and a buffer
+ * holding the same bytes describe the same cartridge. */
+static inline int nes_rom_parse_header(ROM *rom, const uint8_t *header) {
     /* Verify magic number: "NES\x1A" */
-    if (header[0] != 'N' || header[1] != 'E' || header[2] != 'S' || header[3] != 0x1A) {
-        fclose(fp);
+    if (header[0] != 'N' || header[1] != 'E' || header[2] != 'S' || header[3] != 0x1A)
         return ROM_ERR_HEADER;
-    }
 
-    /* Parse header */
     uint8_t prg_banks = header[4];
     uint8_t chr_banks = header[5];
     uint8_t flags6 = header[6];
@@ -176,16 +160,40 @@ static inline int nes_rom_load(ROM *rom, const char *path) {
         rom->tv_system = NES_TV_NTSC;
     }
 
+    if (!mapper_supported(rom->mapper)) {
+        *nes_rom_rejected_mapper() = rom->mapper;
+        return ROM_ERR_MAPPER;
+    }
+    return ROM_OK;
+}
+
+/* Load ROM from file path */
+static inline int nes_rom_load(ROM *rom, const char *path) {
+    FILE *fp = fopen(path, "rb");
+    if (!fp) {
+        return ROM_ERR_FILE;
+    }
+
+    /* Initialize ROM struct */
+    memset(rom, 0, sizeof(ROM));
+
+    /* Read header */
+    uint8_t header[INES_HEADER_SIZE];
+    if (fread(header, 1, INES_HEADER_SIZE, fp) != INES_HEADER_SIZE) {
+        fclose(fp);
+        return ROM_ERR_FILE;
+    }
+
+    int err = nes_rom_parse_header(rom, header);
+    if (err != ROM_OK) {
+        fclose(fp);
+        return err;
+    }
+
     if (!rom->is_nes2 && rom->tv_system == NES_TV_NTSC &&
         nes_rom_pal_filename(path)) {
         rom->tv_system = NES_TV_PAL;
         rom->region_from_filename = true;
-    }
-
-    if (!mapper_supported(rom->mapper)) {
-        *nes_rom_rejected_mapper() = rom->mapper;
-        fclose(fp);
-        return ROM_ERR_MAPPER;
     }
 
     /* Skip trainer if present */
@@ -239,40 +247,8 @@ static inline int nes_rom_load_data(ROM *rom, const uint8_t *data, size_t size) 
 
     if (size < INES_HEADER_SIZE) return ROM_ERR_FILE;
 
-    const uint8_t *header = data;
-    if (header[0] != 'N' || header[1] != 'E' || header[2] != 'S' || header[3] != 0x1A)
-        return ROM_ERR_HEADER;
-
-    uint8_t prg_banks = header[4];
-    uint8_t chr_banks = header[5];
-    uint8_t flags6 = header[6];
-    uint8_t flags7 = header[7];
-
-    bool is_nes2 = ((flags7 & 0x0C) == 0x08);
-    bool header_bytes_12_15_zero =
-        (header[12] | header[13] | header[14] | header[15]) == 0;
-    if (!is_nes2 && !header_bytes_12_15_zero) flags7 = 0;
-
-    rom->prg_size = prg_banks * INES_PRG_BANK_SIZE;
-    rom->chr_size = chr_banks * INES_CHR_BANK_SIZE;
-    rom->mirroring = (flags6 & 0x01);
-    rom->has_battery = (flags6 & 0x02) != 0;
-    rom->has_trainer = (flags6 & 0x04) != 0;
-    rom->mapper = ((flags6 >> 4) & 0x0F) | (flags7 & 0xF0);
-    rom->is_nes2 = is_nes2;
-
-    if (rom->is_nes2) {
-        rom->tv_system = header[12] & 0x03;
-    } else if (header_bytes_12_15_zero) {
-        rom->tv_system = (header[9] & 0x01) ? NES_TV_PAL : NES_TV_NTSC;
-    } else {
-        rom->tv_system = NES_TV_NTSC;
-    }
-
-    if (!mapper_supported(rom->mapper)) {
-        *nes_rom_rejected_mapper() = rom->mapper;
-        return ROM_ERR_MAPPER;
-    }
+    int err = nes_rom_parse_header(rom, data);
+    if (err != ROM_OK) return err;
 
     size_t offset = INES_HEADER_SIZE;
     if (rom->has_trainer) offset += INES_TRAINER_SIZE;
