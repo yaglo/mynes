@@ -464,6 +464,7 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
             frontends/gpu/gpu_render.c
             frontends/gpu/frame_capture.c
             frontends/gpu/recorder.c
+            frontends/gpu/frame_pq.c
             frontends/gpu/gpu_output.c
             frontends/gpu/preset_apply.c
             frontends/gpu/gpu_compute.c
@@ -663,7 +664,7 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
             # rawvideo/audio muxing helper (runs ffmpeg and ffprobe when they
             # are on PATH), the worker's capture window and input recording.
             add_executable(test_recorder frontends/gpu/tests/test_recorder.c
-                frontends/gpu/recorder.c frontends/gpu/frame_capture.c
+                frontends/gpu/recorder.c frontends/gpu/frame_pq.c frontends/gpu/frame_capture.c
                 frontends/gpu/playback.c frontends/gpu/audio_chain.c
                 frontends/gpu/audio_gpu.c frontends/gpu/gpu_compute.c frontends/gpu/gpu_log.c)
             target_include_directories(test_recorder PRIVATE frontends/gpu)

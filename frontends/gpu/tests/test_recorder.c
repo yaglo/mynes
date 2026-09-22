@@ -1,12 +1,15 @@
 /* Clip recorder without a GPU: frame arithmetic, ffmpeg command lines, the
  * rgb24 conversion against the PPM writer, the rawvideo/audio muxing helper
  * end to end (frames piped through ffmpeg and read back with ffmpeg and
- * ffprobe), the worker's capture window with a replay offset, and input
- * recording. The ffmpeg parts are skipped, not failed, when ffmpeg or
+ * ffprobe), an HDR clip through ProRes and back with its colour tags, the
+ * OUT.json sidecar, the worker's capture window with a replay offset, and
+ * input recording. The ffmpeg parts are skipped, not failed, when ffmpeg or
  * ffprobe is missing from PATH. */
 #define _POSIX_C_SOURCE 200809L
 #define _DARWIN_C_SOURCE
 #include "recorder.h"
+#include "frame_pq.h"
+#include "gpu_half.h"
 #include "playback.h"
 #include <math.h>
 #include <stdio.h>
@@ -166,7 +169,61 @@ static void test_paths_and_commands(void) {
     env = (RecorderOptions){ .ffmpeg = "explicit" };
     recorder_options_from_env(&env);
     CHECK(!strcmp(env.ffmpeg, "explicit") && !strcmp(env.codec_args, "-c:v prores_ks"));
-    unsetenv("MYNES_FFMPEG"); unsetenv("MYNES_RECORD_CODEC_ARGS");
+    /* HDR reads its own variable and never the SDR one. */
+    env = (RecorderOptions){ .hdr = true };
+    recorder_options_from_env(&env);
+    CHECK(!strcmp(env.codec_args, RECORDER_HDR_CODEC_ARGS) && env.white_nits == 203);
+    setenv("MYNES_RECORD_HDR_CODEC_ARGS", "-c:v libx265 -pix_fmt yuv420p10le", 1);
+    env = (RecorderOptions){ .hdr = true, .white_nits = 100 };
+    recorder_options_from_env(&env);
+    CHECK(!strcmp(env.codec_args, "-c:v libx265 -pix_fmt yuv420p10le") && env.white_nits == 100);
+    env = (RecorderOptions){0};
+    recorder_options_from_env(&env);
+    CHECK(!strcmp(env.codec_args, "-c:v prores_ks"));
+    unsetenv("MYNES_FFMPEG"); unsetenv("MYNES_RECORD_CODEC_ARGS"); unsetenv("MYNES_RECORD_HDR_CODEC_ARGS");
+
+    /* HDR: rgb48 PQ in, explicit BT.2020 matrix, tagged in and out. */
+    options = (RecorderOptions){ .output = "out/clip.mov", .ffmpeg = "ffmpeg-test", .hdr = true,
+        .codec_args = RECORDER_HDR_CODEC_ARGS, .region = 0, .width = 1920, .height = 1440 };
+    CHECK(recorder_encode_command(&cmd, &options, "out/clip.mov.video.mov"));
+    const char *const encode_hdr[] = { "ffmpeg-test", "-y", "-loglevel", "error",
+        "-f", "rawvideo", "-pix_fmt", "rgb48le", "-video_size", "1920x1440", "-r", "60.0988",
+        "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-i", "-",
+        "-vf", "scale=out_color_matrix=bt2020:out_range=tv",
+        "-c:v", "prores_ks", "-profile:v", "4", "-pix_fmt", "yuv444p10le", "-vendor", "apl0",
+        "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc",
+        "-color_range", "tv", "-an", "out/clip.mov.video.mov", NULL };
+    if (!argv_equals(&cmd, encode_hdr)) { CHECK(!"HDR encode argv"); print_argv(&cmd); }
+    CHECK(recorder_mux_command(&cmd, &options, "v.mov", "a.f32le"));
+    if (!argv_equals(&cmd, mux)) { CHECK(!"HDR mux argv"); print_argv(&cmd); }
+}
+
+/* Options an HDR recording refuses before it starts ffmpeg. */
+static void test_hdr_options(const char *directory) {
+    char output[512], error[512];
+    snprintf(output, sizeof(output), "%s/refused.mov", directory);
+    RecorderOptions options = { .output = output, .seconds = 0.1, .region = 0, .width = W, .height = H,
+        .hdr = true, .headroom = 4, .ffmpeg = "/nonexistent/ffmpeg" };
+    options.white_nits = -203;
+    CHECK(recorder_create(&options, error, sizeof(error)) == NULL && strstr(error, "at most 10000 nits"));
+    options.white_nits = 10001;
+    CHECK(recorder_create(&options, error, sizeof(error)) == NULL && strstr(error, "at most 10000 nits"));
+    /* 49.3 x 203 reaches 10008 nits. */
+    options.white_nits = 0; options.headroom = 49.3;
+    CHECK(recorder_create(&options, error, sizeof(error)) == NULL && strstr(error, "above the 10000-nit PQ peak"));
+    options.white_nits = 1000; options.headroom = 10;
+    CHECK(recorder_create(&options, error, sizeof(error)) == NULL && strstr(error, "cannot run /nonexistent/ffmpeg"));
+    options.white_nits = 1000; options.headroom = 10.5;
+    CHECK(recorder_create(&options, error, sizeof(error)) == NULL && strstr(error, "10500 nits"));
+    /* ProRes has no .mp4 mapping in ffmpeg. */
+    snprintf(output, sizeof(output), "%s/refused.mp4", directory);
+    options.white_nits = 0; options.headroom = 4;
+    CHECK(recorder_create(&options, error, sizeof(error)) == NULL && strstr(error, "needs a .mov output"));
+    /* With a codec that fits .mp4 the options pass and only ffmpeg is missing. */
+    options.codec_args = "-c:v libx265 -pix_fmt yuv420p10le";
+    CHECK(recorder_create(&options, error, sizeof(error)) == NULL && strstr(error, "cannot run /nonexistent/ffmpeg"));
+    options.headroom = 49.2;   /* 9988 nits */
+    CHECK(recorder_create(&options, error, sizeof(error)) == NULL && strstr(error, "cannot run /nonexistent/ffmpeg"));
 }
 
 /* rgb24 must be the PPM's pixels: compare with frame_capture_write. */
@@ -383,6 +440,110 @@ static void test_end_to_end(const char *directory) {
     CHECK(strstr(error, "at least one frame") != NULL);
 }
 
+/* Four 16-pixel columns: SDR white, 4x white, BT.709 red and black, as the
+ * half-float target holds them. ProRes codes flat 8x8 blocks closely. */
+static void fill_hdr_frame(uint16_t *rgba) {
+    const uint16_t columns[4][3] = { { 0x3c00, 0x3c00, 0x3c00 }, { 0x4400, 0x4400, 0x4400 },
+                                     { 0x3c00, 0, 0 }, { 0, 0, 0 } };
+    for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) {
+        uint16_t *px = rgba + ((size_t)y * W + x) * 4;
+        memcpy(px, columns[x / 16], sizeof(columns[0]));
+        px[3] = 0x3c00;
+    }
+}
+
+/* An HDR clip through the default ProRes master and back: the decoded
+ * BT.2020 PQ values, the stream tags, the frame count and the sidecar. */
+static void test_hdr_end_to_end(const char *directory) {
+    char output[512], decoded[600], json[600], text[1024], error[2048];
+    snprintf(output, sizeof(output), "%s/hdr.mov", directory);
+    snprintf(decoded, sizeof(decoded), "%s/hdr.rgb48", directory);
+    snprintf(json, sizeof(json), "%s/hdr.json", directory);
+    RecorderOptions options = { .output = output, .seconds = 0.1, .after = 0, .region = 0,
+        .width = W, .height = H, .hdr = true, .headroom = 4 };
+    Recorder *r = recorder_create(&options, error, sizeof(error));
+    CHECK(r != NULL);
+    if (!r) { fprintf(stderr, "  %s\n", error); return; }
+    static uint16_t rgba[W * H * 4];
+    static uint8_t sdr[W * H * 4];
+    fill_hdr_frame(rgba);
+    FrameCaptureImage image = { .pixels = rgba, .width = W, .height = H, .hdr = true, .white_level = 1 };
+    for (unsigned f = 0; f < recorder_frames(r); f++) CHECK(recorder_push_frame(r, &image));
+    write_sine(recorder_audio_file(r), 4410);
+    bool finished = recorder_finish(r, error, sizeof(error));
+    if (!finished) fprintf(stderr, "  finish: %s\n", error);
+    CHECK(finished);
+    recorder_destroy(r);
+
+    char info[2048], value[128];
+    CHECK(probe(output, "v:0", "codec_name,codec_tag_string,profile,nb_frames,r_frame_rate,width,height,"
+                "color_range,color_space,color_transfer,color_primaries", info, sizeof(info)));
+    CHECK(probe_value(info, "codec_name", value, sizeof(value)) && !strcmp(value, "prores"));
+    CHECK(probe_value(info, "codec_tag_string", value, sizeof(value)) && !strcmp(value, "ap4h"));
+    CHECK(probe_value(info, "profile", value, sizeof(value)) && !strcmp(value, "4444"));
+    CHECK(probe_value(info, "nb_frames", value, sizeof(value)) && atoi(value) == 6);
+    CHECK(probe_value(info, "width", value, sizeof(value)) && atoi(value) == W);
+    CHECK(probe_value(info, "color_range", value, sizeof(value)) && !strcmp(value, "tv"));
+    CHECK(probe_value(info, "color_space", value, sizeof(value)) && !strcmp(value, "bt2020nc"));
+    CHECK(probe_value(info, "color_transfer", value, sizeof(value)) && !strcmp(value, "smpte2084"));
+    CHECK(probe_value(info, "color_primaries", value, sizeof(value)) && !strcmp(value, "bt2020"));
+    if (probe_value(info, "r_frame_rate", value, sizeof(value))) {
+        long num = 0, den = 1;
+        CHECK(sscanf(value, "%ld/%ld", &num, &den) == 2 && den > 0 && fabs((double)num / den - 60.0988) < 1e-4);
+    } else CHECK(false);
+    CHECK(probe(output, "a:0", "codec_name", info, sizeof(info)));
+    CHECK(probe_value(info, "codec_name", value, sizeof(value)) && !strcmp(value, "aac"));
+
+    /* Back to RGB with the BT.2020 matrix: each column within 2/1023 of the
+     * PQ value it went in as. */
+    char command[2048];
+    snprintf(command, sizeof(command), "ffmpeg -y -loglevel error -i '%s' -frames:v 1 "
+             "-vf scale=in_color_matrix=bt2020:in_range=tv -f rawvideo -pix_fmt rgb48le '%s'", output, decoded);
+    CHECK(system(command) == 0);
+    FILE *f = fopen(decoded, "rb");
+    static uint8_t got[W * H * 6];
+    CHECK(f && fread(got, 1, sizeof(got), f) == sizeof(got));
+    if (f) fclose(f);
+    float red[3], one[3] = { 1, 0, 0 };
+    frame_pq_bt2020(one, red);
+    const double expected[4][3] = {
+        { frame_pq_encode(203), frame_pq_encode(203), frame_pq_encode(203) },
+        { frame_pq_encode(812), frame_pq_encode(812), frame_pq_encode(812) },
+        { frame_pq_encode(203 * red[0]), frame_pq_encode(203 * red[1]), frame_pq_encode(203 * red[2]) },
+        { 0, 0, 0 } };
+    double worst = 0;
+    for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) for (int c = 0; c < 3; c++) {
+        size_t i = (((size_t)y * W + x) * 3 + c) * 2;
+        double v = (got[i] | got[i + 1] << 8) / 65535.0;
+        worst = fmax(worst, fabs(v - expected[x / 16][c]));
+    }
+    CHECK(worst < 2.0 / 1023);
+    fprintf(stderr, "recorder: HDR ProRes round trip within %.2f of a 10-bit code\n", worst * 1023);
+
+    /* Brightest pixel 4 x 203 nits; frame average of the largest component
+     * of white, 4x white, red and black. */
+    char expected_json[512];
+    snprintf(expected_json, sizeof(expected_json),
+        "{\n  \"frames\": 6,\n  \"rate\": 60.0988,\n  \"width\": 64,\n  \"height\": 48,\n"
+        "  \"hdr\": true,\n  \"white_nits\": 203,\n  \"headroom\": 4,\n"
+        "  \"max_cll\": 812,\n  \"max_fall\": %.0f\n}\n", (203 + 812 + 203 * red[0]) / 4);
+    CHECK(!strcmp(read_text(json, text, sizeof(text)), expected_json));
+    if (strcmp(text, expected_json)) fprintf(stderr, "  %s", text);
+
+    /* An 8-bit target cannot feed an HDR recording. */
+    snprintf(output, sizeof(output), "%s/hdr-from-sdr.mov", directory);
+    r = recorder_create(&options, error, sizeof(error));
+    CHECK(r != NULL);
+    if (r) {
+        FrameCaptureImage eight = { .pixels = sdr, .width = W, .height = H, .white_level = 1 };
+        CHECK(!recorder_push_frame(r, &eight));
+        CHECK(!recorder_finish(r, error, sizeof(error)) && strstr(error, "half-float display target"));
+        recorder_destroy(r);
+        snprintf(json, sizeof(json), "%s/hdr-from-sdr.json", directory);
+        CHECK(!file_exists(output) && !file_exists(json));
+    }
+}
+
 static bool next(Playback *p, PlaybackFrame *frame) {
     Uint64 timeout = SDL_GetTicks() + 2000;
     do {
@@ -544,8 +705,11 @@ int main(void) {
     test_arithmetic();
     test_paths_and_commands();
     test_rgb24(directory);
-    if (tool_available("ffmpeg") && tool_available("ffprobe")) test_end_to_end(directory);
-    else fprintf(stderr, "recorder: ffmpeg/ffprobe not on PATH, end-to-end muxing not tested\n");
+    test_hdr_options(directory);
+    if (tool_available("ffmpeg") && tool_available("ffprobe")) {
+        test_end_to_end(directory);
+        test_hdr_end_to_end(directory);
+    } else fprintf(stderr, "recorder: ffmpeg/ffprobe not on PATH, end-to-end muxing not tested\n");
     test_capture_window(directory);
     test_input_record(directory);
     char command[600];

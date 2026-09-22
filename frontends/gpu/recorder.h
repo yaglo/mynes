@@ -1,10 +1,11 @@
 /* Pixel-exact clip recorder for hidden (--offscreen) playback. Every
- * emulated frame becomes one rgb24 rawvideo frame on an ffmpeg child's
- * stdin, the worker writes the audio of the same frames to a temporary
- * file, and a second ffmpeg run muxes both into the requested .mov/.mp4.
- * OUT.json beside the clip records its frame count, rate, size and light
- * levels. The ffmpeg command lines, the frame arithmetic and the input
- * recorder are plain functions so they can be tested without a GPU. */
+ * emulated frame becomes one rawvideo frame on an ffmpeg child's stdin
+ * (rgb24, or rgb48 BT.2020 PQ for an HDR recording), the worker writes the
+ * audio of the same frames to a temporary file, and a second ffmpeg run
+ * muxes both into the requested .mov/.mp4. OUT.json beside the clip records
+ * its frame count, rate, size and light levels. The ffmpeg command lines,
+ * the frame arithmetic and the input recorder are plain functions so they
+ * can be tested without a GPU. */
 #ifndef GPU_RECORDER_H
 #define GPU_RECORDER_H
 
@@ -18,6 +19,12 @@
  * string; "-c:v h264_videotoolbox -b:v 90M -pix_fmt yuv420p" is the fast
  * hardware option on macOS. */
 #define RECORDER_DEFAULT_CODEC_ARGS "-c:v libx264 -preset veryfast -crf 12 -pix_fmt yuv444p"
+/* HDR master: 10-bit 4:4:4 ProRes 4444, which QuickTime and editors read;
+ * .mov only. MYNES_RECORD_HDR_CODEC_ARGS replaces it (MYNES_RECORD_CODEC_ARGS
+ * is for SDR recordings only) and must choose a 10-bit or deeper format. */
+#define RECORDER_HDR_CODEC_ARGS "-c:v prores_ks -profile:v 4 -pix_fmt yuv444p10le -vendor apl0"
+/* ITU-R BT.2408 reference white, where an HDR recording puts 1.0. */
+#define RECORDER_HDR_WHITE_NITS 203.0
 
 typedef struct {
     const char *output;      /* --record OUT: .mov or .mp4 */
@@ -26,12 +33,15 @@ typedef struct {
     int         region;      /* SIGNAL_REGION_NTSC or SIGNAL_REGION_PAL, sets the frame rate */
     int         width, height;   /* the offscreen target, hence every video frame */
     const char *ffmpeg;      /* executable; NULL means MYNES_FFMPEG, else "ffmpeg" from PATH */
-    const char *codec_args;  /* NULL means MYNES_RECORD_CODEC_ARGS, else the default */
+    const char *codec_args;  /* NULL means MYNES_RECORD_CODEC_ARGS (MYNES_RECORD_HDR_CODEC_ARGS
+                              * for HDR), else the default */
     double      headroom;    /* the render's headroom (1.0 on an SDR target), for OUT.json */
+    bool        hdr;         /* BT.2020 PQ frames from the half-float target */
+    double      white_nits;  /* HDR: nits of SDR white (1.0); 0 means RECORDER_HDR_WHITE_NITS */
 } RecorderOptions;
 
 /* One ffmpeg argv with the storage its entries point into. */
-#define RECORDER_ARGV_MAX 48
+#define RECORDER_ARGV_MAX 64
 typedef struct {
     char  *argv[RECORDER_ARGV_MAX + 1];  /* NULL-terminated */
     int    argc;
@@ -49,8 +59,8 @@ unsigned    recorder_frame_count(double seconds, int region);
 
 /* --- Command construction --- */
 
-/* Fill the ffmpeg and codec_args fields that are still NULL from the
- * environment, then from the built-in defaults. */
+/* Fill the ffmpeg, codec_args and white_nits fields that are still unset
+ * from the environment, then from the built-in defaults. */
 void recorder_options_from_env(RecorderOptions *options);
 /* Temporary files beside the output: <out>.video.<ext>, <out>.audio.f32le
  * and <out>.ffmpeg.log. False when the output is not .mov or .mp4. */
@@ -61,7 +71,9 @@ bool recorder_json_path(const char *output, char *json, size_t n);
 bool recorder_command_add(RecorderCommand *cmd, const char *arg);
 /* Append a whitespace-separated argument string; false when it is empty. */
 bool recorder_command_add_split(RecorderCommand *cmd, const char *args);
-/* The encode run: rgb24 frames on stdin at the region rate, no audio. */
+/* The encode run: rgb24 frames on stdin at the region rate, no audio. HDR
+ * takes rgb48 PQ frames tagged BT.2020, converts them to YCbCr with the
+ * BT.2020 matrix in limited range and tags the stream the same way. */
 bool recorder_encode_command(RecorderCommand *cmd, const RecorderOptions *options,
                              const char *video_path);
 /* The mux run: the encoded video plus float32 mono 44100 Hz audio into the
@@ -92,8 +104,8 @@ unsigned  recorder_frames_written(const Recorder *r);
 FILE     *recorder_audio_file(Recorder *r);
 /* True when the worker's picture `number` (1-based) is part of the clip. */
 bool      recorder_want_frame(const Recorder *r, unsigned number);
-/* GPURenderCtx capture sink: converts one final display image to rgb24 and
- * writes it to the encoder. user is the Recorder. */
+/* GPURenderCtx capture sink: converts one final display image to rgb24, or
+ * to rgb48 PQ for HDR, and writes it to the encoder. user is the Recorder. */
 bool      recorder_push_frame(void *user, const FrameCaptureImage *image);
 bool      recorder_complete(const Recorder *r);
 /* Ends the encoder, muxes with the audio, writes OUT.json and removes the

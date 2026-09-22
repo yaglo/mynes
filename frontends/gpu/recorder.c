@@ -3,6 +3,7 @@
  * arithmetic, the ffmpeg command lines and the muxing helper run in tests. */
 #define _POSIX_C_SOURCE 200809L
 #include "recorder.h"
+#include "frame_pq.h"
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -13,6 +14,7 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 extern char **environ;
@@ -36,8 +38,13 @@ unsigned recorder_frame_count(double seconds, int region) {
 void recorder_options_from_env(RecorderOptions *options) {
     if (!options->ffmpeg) options->ffmpeg = getenv("MYNES_FFMPEG");
     if (!options->ffmpeg || !*options->ffmpeg) options->ffmpeg = "ffmpeg";
-    if (!options->codec_args) options->codec_args = getenv("MYNES_RECORD_CODEC_ARGS");
-    if (!options->codec_args || !*options->codec_args) options->codec_args = RECORDER_DEFAULT_CODEC_ARGS;
+    /* An SDR override, often 8-bit 4:2:0 for speed, would quietly carry PQ
+     * in a format too coarse for it, so HDR has its own variable. */
+    if (!options->codec_args)
+        options->codec_args = getenv(options->hdr ? "MYNES_RECORD_HDR_CODEC_ARGS" : "MYNES_RECORD_CODEC_ARGS");
+    if (!options->codec_args || !*options->codec_args)
+        options->codec_args = options->hdr ? RECORDER_HDR_CODEC_ARGS : RECORDER_DEFAULT_CODEC_ARGS;
+    if (options->hdr && options->white_nits == 0) options->white_nits = RECORDER_HDR_WHITE_NITS;
 }
 
 /* The container extension, or NULL when it is not one ffmpeg muxes as
@@ -112,8 +119,21 @@ bool recorder_encode_command(RecorderCommand *cmd, const RecorderOptions *option
         "-f", "rawvideo", "-pix_fmt", "rgb24", "-video_size", size,
         "-r", recorder_rate_string(options->region), "-i", "-", NULL };
     const char *const tail[] = { "-an", video_path, NULL };
-    return add_all(cmd, head) && recorder_command_add_split(cmd, options->codec_args) &&
-           add_all(cmd, tail);
+    /* HDR: the input tags make the frames themselves BT.2020 PQ. prores_ks
+     * takes its colour fields, and the .mov its 'colr' atom, from the
+     * frames; the output tags alone leave primaries and transfer unknown.
+     * The scale filter names the RGB to YCbCr matrix, since swscale's
+     * default is BT.601; it does not change the size. */
+    const char *const hdr_head[] = { options->ffmpeg, "-y", "-loglevel", "error",
+        "-f", "rawvideo", "-pix_fmt", FRAME_PQ_PIX_FMT, "-video_size", size,
+        "-r", recorder_rate_string(options->region),
+        "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-i", "-",
+        "-vf", "scale=out_color_matrix=bt2020:out_range=tv", NULL };
+    const char *const hdr_tail[] = { "-color_primaries", "bt2020", "-color_trc", "smpte2084",
+        "-colorspace", "bt2020nc", "-color_range", "tv", "-an", video_path, NULL };
+    return add_all(cmd, options->hdr ? hdr_head : head) &&
+           recorder_command_add_split(cmd, options->codec_args) &&
+           add_all(cmd, options->hdr ? hdr_tail : tail);
 }
 
 bool recorder_mux_command(RecorderCommand *cmd, const RecorderOptions *options,
@@ -250,20 +270,31 @@ struct Recorder {
     Child    encoder;
     FILE    *audio;
     uint8_t *rgb;
+    uint16_t *rgb48;          /* HDR frames */
+    FramePQ  *pq;
+    double   max_nits, max_mean_nits;   /* over all frames so far */
+    uint64_t convert_ns;
     char     error[512];
 };
 
 /* What a later stage needs to know about the clip without probing it. The
  * headroom is the one the CRT shader rendered with; an SDR file clips at
  * its white, which is display-relative (100 nits is the BT.709 studio
- * reference). */
+ * reference). For HDR, max_cll and max_fall are the CTA-861.3 levels: the
+ * brightest pixel and the brightest frame average over the clip, each
+ * pixel measured by its largest BT.2020 component, in whole nits. */
 static bool write_json(const Recorder *r, char *error, size_t error_size) {
+    char light[96] = "";
+    if (r->options.hdr)
+        snprintf(light, sizeof(light), ",\n  \"max_cll\": %.0f,\n  \"max_fall\": %.0f",
+                 r->max_nits, r->max_mean_nits);
     FILE *f = fopen(r->json_path, "w");
     bool ok = f && fprintf(f,
         "{\n  \"frames\": %u,\n  \"rate\": %s,\n  \"width\": %d,\n  \"height\": %d,\n"
-        "  \"hdr\": false,\n  \"white_nits\": 100,\n  \"headroom\": %.6g\n}\n",
+        "  \"hdr\": %s,\n  \"white_nits\": %.6g,\n  \"headroom\": %.6g%s\n}\n",
         r->written, recorder_rate_string(r->options.region), r->options.width, r->options.height,
-        r->options.headroom > 0 ? r->options.headroom : 1) > 0;
+        r->options.hdr ? "true" : "false", r->options.hdr ? r->options.white_nits : 100,
+        r->options.headroom > 0 ? r->options.headroom : 1, light) > 0;
     if (f && fclose(f)) ok = false;
     if (!ok) snprintf(error, error_size, "cannot write %s: %s", r->json_path, strerror(errno));
     return ok;
@@ -304,11 +335,32 @@ Recorder *recorder_create(const RecorderOptions *options, char *error, size_t er
         snprintf(error, error_size, "recording needs the offscreen target size");
         goto fail;
     }
-    r->rgb = malloc((size_t)options->width * options->height * 3);
+    size_t pixels = (size_t)options->width * options->height;
+    if (r->options.hdr) {
+        double white = r->options.white_nits, headroom = options->headroom > 1 ? options->headroom : 1;
+        if (!(white > 0 && white <= FRAME_PQ_PEAK_NITS)) {
+            snprintf(error, error_size, "the HDR white level must be above 0 and at most 10000 nits");
+            goto fail;
+        }
+        if (headroom * white > FRAME_PQ_PEAK_NITS) {
+            snprintf(error, error_size, "headroom %.4g at %.4g nits white reaches %.0f nits, "
+                     "above the 10000-nit PQ peak", headroom, white, headroom * white);
+            goto fail;
+        }
+        if (!strcmp(r->codec_args, RECORDER_HDR_CODEC_ARGS) &&
+            strcasecmp(container_extension(r->output), ".mov")) {
+            snprintf(error, error_size, "the default HDR master is ProRes, which needs a .mov output");
+            goto fail;
+        }
+        r->pq = frame_pq_create(white);
+        r->rgb48 = malloc(pixels * 3 * sizeof(uint16_t));
+    } else {
+        r->rgb = malloc(pixels * 3);
+    }
     FILE *log = fopen(r->log_path, "w");
     if (log) fclose(log);
     r->audio = fopen(r->audio_path, "wb");
-    if (!r->rgb || !log || !r->audio) {
+    if (!(r->rgb || (r->rgb48 && r->pq)) || !log || !r->audio) {
         snprintf(error, error_size, "cannot create %s: %s", r->audio_path, strerror(errno));
         goto fail;
     }
@@ -324,12 +376,20 @@ Recorder *recorder_create(const RecorderOptions *options, char *error, size_t er
     recorder_command_text(&cmd, text, sizeof(text));
     fprintf(stderr, "Recording %u frames (%.3f s at %s fps) to %s\n", r->frames,
             r->frames / recorder_rate(options->region), recorder_rate_string(options->region), r->output);
+    if (r->options.hdr) {
+        fprintf(stderr, "Recording: HDR, BT.2020 PQ with SDR white at %.4g nits, headroom %.4g\n",
+                r->options.white_nits, options->headroom > 1 ? options->headroom : 1);
+        if (!options->codec_args && getenv("MYNES_RECORD_CODEC_ARGS") && !getenv("MYNES_RECORD_HDR_CODEC_ARGS"))
+            fprintf(stderr, "Recording: MYNES_RECORD_CODEC_ARGS is for SDR; HDR reads MYNES_RECORD_HDR_CODEC_ARGS\n");
+    }
     fprintf(stderr, "Recording: %s\n", text);
     return r;
 fail:
     if (r->audio) fclose(r->audio);
     remove_temps(r);
     free(r->rgb);
+    free(r->rgb48);
+    frame_pq_destroy(r->pq);
     free(r);
     return NULL;
 }
@@ -358,12 +418,32 @@ bool recorder_push_frame(void *user, const FrameCaptureImage *image) {
         snprintf(r->error, sizeof(r->error), "more frames than the %u requested", r->frames);
         return false;
     }
-    if (!frame_capture_rgb24(image, r->rgb)) {
+    const uint8_t *data = r->rgb;
+    size_t bytes = (size_t)image->width * image->height * 3;
+    if (r->options.hdr) {
+        if (!image->hdr) {
+            snprintf(r->error, sizeof(r->error), "an HDR recording needs the half-float display target");
+            return false;
+        }
+        FramePQLight light;
+        struct timespec start, end;
+        clock_gettime(CLOCK_MONOTONIC, &start);
+        bool converted = frame_pq_convert(r->pq, image, r->rgb48, &light);
+        clock_gettime(CLOCK_MONOTONIC, &end);
+        if (!converted) {
+            snprintf(r->error, sizeof(r->error), "cannot convert frame %u", r->written + 1);
+            return false;
+        }
+        r->convert_ns += (uint64_t)((end.tv_sec - start.tv_sec) * 1000000000LL + (end.tv_nsec - start.tv_nsec));
+        r->max_nits = fmax(r->max_nits, light.max_nits);
+        r->max_mean_nits = fmax(r->max_mean_nits, light.mean_nits);
+        data = (const uint8_t *)r->rgb48;
+        bytes *= 2;
+    } else if (!frame_capture_rgb24(image, r->rgb)) {
         snprintf(r->error, sizeof(r->error), "cannot convert frame %u", r->written + 1);
         return false;
     }
-    size_t bytes = (size_t)image->width * image->height * 3;
-    if (!write_all(r->encoder.stdin_fd, r->rgb, bytes)) {
+    if (!write_all(r->encoder.stdin_fd, data, bytes)) {
         snprintf(r->error, sizeof(r->error), "ffmpeg stopped reading video at frame %u: %s",
                  r->written + 1, strerror(errno));
         return false;
@@ -410,6 +490,9 @@ bool recorder_finish(Recorder *r, char *error, size_t error_size) {
     if (ok)
         fprintf(stderr, "Recorded %u frames (%.3f s) to %s\n", r->written,
                 r->written / recorder_rate(r->options.region), r->output);
+    if (ok && r->options.hdr)
+        fprintf(stderr, "Recording: MaxCLL %.0f nits, MaxFALL %.0f nits, PQ conversion %.1f ms per frame\n",
+                r->max_nits, r->max_mean_nits, r->convert_ns / 1e6 / r->written);
     remove_temps(r);
     return ok;
 }
@@ -425,6 +508,8 @@ void recorder_destroy(Recorder *r) {
         remove_temps(r);
     }
     free(r->rgb);
+    free(r->rgb48);
+    frame_pq_destroy(r->pq);
     free(r);
 }
 
