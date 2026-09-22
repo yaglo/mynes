@@ -58,6 +58,7 @@ class Runner:
             timeout: float | None = 3600, log_file: Path | None = None,
             what: str = "") -> None:
         cmd = [str(c) for c in cmd]
+        cmd[0] = tool(cmd[0])
         prefix = "dry-run $ " if self.dry_run else "$ "
         self.say(prefix + shlex.join(cmd) + (f"   # {what}" if what else ""))
         self.ran.append(cmd)
@@ -92,7 +93,9 @@ class Runner:
 
     def capture(self, cmd: Sequence[str], timeout: float = 600) -> str:
         """Run a query command (ffprobe, --help) and return stdout; never dry-run."""
-        result = subprocess.run([str(c) for c in cmd], capture_output=True, timeout=timeout)
+        cmd = [str(c) for c in cmd]
+        cmd[0] = tool(cmd[0])
+        result = subprocess.run(cmd, capture_output=True, timeout=timeout)
         if result.returncode != 0:
             raise PipelineError(f"{cmd[0]} failed (exit {result.returncode}): "
                                 f"{result.stderr.decode('utf-8', 'replace')[-2000:]}")
@@ -151,15 +154,15 @@ class VideoInfo:
     duration: float = 0.0
 
 
-def ffprobe_json(path: Path, ffprobe: str = "ffprobe") -> dict:
-    cmd = [ffprobe, "-v", "error", "-show_streams", "-show_format", "-of", "json", str(path)]
+def ffprobe_json(path: Path, ffprobe: str | None = None) -> dict:
+    cmd = [ffprobe or tool("ffprobe"), "-v", "error", "-show_streams", "-show_format", "-of", "json", str(path)]
     result = subprocess.run(cmd, capture_output=True, timeout=600)
     if result.returncode != 0:
         raise PipelineError(f"ffprobe failed on {path}: {result.stderr.decode('utf-8', 'replace')[-2000:]}")
     return json.loads(result.stdout.decode("utf-8", "replace"))
 
 
-def probe_video(path: Path, *, count_frames: bool = False, ffprobe: str = "ffprobe") -> VideoInfo:
+def probe_video(path: Path, *, count_frames: bool = False, ffprobe: str | None = None) -> VideoInfo:
     """Stream facts, with an exact frame count.
 
     ``nb_frames`` comes from the container (mp4/mov keep it). When it is
@@ -186,8 +189,8 @@ def probe_video(path: Path, *, count_frames: bool = False, ffprobe: str = "ffpro
         colour=colour, duration=float(data.get("format", {}).get("duration") or 0.0))
 
 
-def count_video_frames(path: Path, ffprobe: str = "ffprobe") -> int:
-    cmd = [ffprobe, "-v", "error", "-count_frames", "-select_streams", "v:0",
+def count_video_frames(path: Path, ffprobe: str | None = None) -> int:
+    cmd = [ffprobe or tool("ffprobe"), "-v", "error", "-count_frames", "-select_streams", "v:0",
            "-show_entries", "stream=nb_read_frames", "-of", "default=nw=1:nk=1", str(path)]
     result = subprocess.run(cmd, capture_output=True, timeout=3600)
     if result.returncode != 0:
@@ -271,9 +274,92 @@ def find_font(explicit: str | None = None) -> Path | None:
     return None
 
 
-def tool_version(tool: str) -> str | None:
+FFMPEG_FULL_BIN = Path("/opt/homebrew/opt/ffmpeg-full/bin")
+FFMPEG_TOOLS = {"ffmpeg": "MYNES_FFMPEG", "ffprobe": "MYNES_FFPROBE"}
+
+
+@dataclass(frozen=True)
+class ToolChoice:
+    name: str
+    path: str | None
+    source: str
+
+    def describe(self) -> str:
+        return f"{self.name}: {self.path} ({self.source})" if self.path else f"{self.name}: MISSING"
+
+
+def _executable(path: Path | str) -> str | None:
+    p = Path(path).expanduser()
+    return str(p) if p.is_file() and os.access(p, os.X_OK) else None
+
+
+def discover_ffmpeg(ffmpeg: str | None = None, ffprobe: str | None = None, *,
+                    env: dict | None = None, keg: Path = FFMPEG_FULL_BIN,
+                    which: Callable[[str], str | None] = shutil.which) -> dict[str, ToolChoice]:
+    """Pick ffmpeg and ffprobe: --ffmpeg/--ffprobe, then MYNES_FFMPEG/MYNES_FFPROBE,
+    then Homebrew's keg-only ffmpeg-full (it has libwebp, drawtext and zscale,
+    the plain formula does not), then PATH. When only ffmpeg is given, by flag
+    or variable, ffprobe is taken from beside it if it is there."""
+    env = os.environ if env is None else env
+    explicit = {"ffmpeg": ffmpeg, "ffprobe": ffprobe}
+    chosen: dict[str, ToolChoice] = {}
+    for name, var in FFMPEG_TOOLS.items():
+        choice = None
+        for value, source in ((explicit[name], f"--{name}"), (env.get(var), var)):
+            if value:
+                path = _executable(value) if os.sep in value else which(value)
+                if not path:
+                    raise PipelineError(f"{source} {value}: not an executable")
+                choice = ToolChoice(name, path, source)
+                break
+        if choice is None and name == "ffprobe" and chosen["ffmpeg"].source in ("--ffmpeg", "MYNES_FFMPEG"):
+            beside = _executable(Path(chosen["ffmpeg"].path).with_name("ffprobe"))
+            if beside:
+                choice = ToolChoice(name, beside, f"beside {chosen['ffmpeg'].source}")
+        if choice is None and _executable(keg / name):
+            choice = ToolChoice(name, str(keg / name), "ffmpeg-full")
+        if choice is None:
+            path = which(name)
+            choice = ToolChoice(name, path, "PATH" if path else "missing")
+        chosen[name] = choice
+    return chosen
+
+
+_TOOLS: dict[str, ToolChoice] = {}
+_TOOLS_LOCK = threading.Lock()
+
+
+def configure_tools(ffmpeg: str | None = None, ffprobe: str | None = None,
+                    env: dict | None = None) -> dict[str, ToolChoice]:
+    """Resolve ffmpeg/ffprobe once for this process; see discover_ffmpeg."""
+    chosen = discover_ffmpeg(ffmpeg, ffprobe, env=env)
+    with _TOOLS_LOCK:
+        _TOOLS.clear()
+        _TOOLS.update(chosen)
+    return chosen
+
+
+def tool(name: str) -> str:
+    """The executable to run for ``name``: the configured ffmpeg/ffprobe, else
+    whatever PATH finds, else the name itself (the run then fails clearly)."""
+    if name in FFMPEG_TOOLS:
+        with _TOOLS_LOCK:
+            configured = _TOOLS.get(name)
+        if configured is None:
+            configured = configure_tools()[name]
+        return configured.path or name
+    if os.sep in name:
+        return name
+    return shutil.which(name) or name
+
+
+def have_tool(name: str) -> bool:
+    return shutil.which(tool(name)) is not None
+
+
+def tool_version(name: str) -> str | None:
     """First line of ``tool -version``; None when the tool is missing."""
-    path = shutil.which(tool)
+    path = shutil.which(tool(name))
     if not path:
         return None
     try:
@@ -294,7 +380,7 @@ def ffmpeg_version_tuple(line: str | None) -> tuple[int, ...] | None:
 def ffmpeg_has(kind: str, names: Iterable[str]) -> dict[str, bool]:
     """kind is 'encoders' or 'filters'; which of ``names`` this ffmpeg lists."""
     try:
-        out = subprocess.run(["ffmpeg", "-hide_banner", f"-{kind}"], capture_output=True,
+        out = subprocess.run([tool("ffmpeg"), "-hide_banner", f"-{kind}"], capture_output=True,
                              timeout=60).stdout.decode("utf-8", "replace")
     except (OSError, subprocess.TimeoutExpired):
         out = ""
@@ -423,6 +509,7 @@ def env_for_capture(base: dict | None = None, config_home: Path | None = None) -
                 "MYNES_REVIEW_FRAME", "MYNES_REVIEW_PRESET", "MYNES_PLAYBACK_FRAMES"):
         env.pop(key, None)
     env["MYNES_REVIEW_NO_INPUT"] = "1"
+    env["MYNES_FFMPEG"] = tool("ffmpeg")
     if config_home:
         env["XDG_CONFIG_HOME"] = str(config_home)
     return env

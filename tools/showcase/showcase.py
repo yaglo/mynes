@@ -47,6 +47,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--jobs", type=int, default=None, help="parallel workers (record: 1, encode/features: 2)")
     p.add_argument("--flicker-scale", help="master pixels per NES pixel for the flicker crop, S or SXxSY (default from the master size: 15x12)")
     p.add_argument("--font", help="font file for drawtext captions")
+    p.add_argument("--ffmpeg", help="ffmpeg executable (default MYNES_FFMPEG, then "
+                   "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg, then PATH)")
+    p.add_argument("--ffprobe", help="ffprobe executable (default MYNES_FFPROBE, beside --ffmpeg, "
+                   "then ffmpeg-full, then PATH)")
     p.add_argument("--force", action="store_true", help="rebuild outputs even when newer than their inputs")
     p.add_argument("--dry-run", action="store_true", help="print every command; run nothing")
     p.add_argument("--quiet", action="store_true")
@@ -114,9 +118,10 @@ def cmd_check(ctx: jobs_mod.Context, args, runner: Runner) -> int:
     say("tools:")
     for tool in ("ffmpeg", "ffprobe"):
         v = runner_mod.tool_version(tool)
-        say(f"  {tool}: {v or 'MISSING'}")
+        say(f"  {tool}: {runner_mod.tool(tool)}: {v or 'MISSING'}")
         if not v:
-            errors.append(f"{tool} is not on PATH (brew install ffmpeg)")
+            errors.append(f"{tool} not found: brew install ffmpeg-full, or pass --{tool} "
+                          f"or set MYNES_{tool.upper()}")
     ver = runner_mod.ffmpeg_version_tuple(runner_mod.tool_version("ffmpeg"))
     if ver and ver < (5, 1):
         errors.append(f"ffmpeg {ver[0]}.{ver[1]} lacks -fps_mode; 5.1 or newer is required")
@@ -273,6 +278,8 @@ def main(argv=None) -> int:
     try:
         runner.say(f"showcase {args.command}" + (" (dry run)" if args.dry_run else "")
                    + f" - {runner_mod.platform_note()}, cwd {os.getcwd()}")
+        for choice in runner_mod.configure_tools(args.ffmpeg, args.ffprobe).values():
+            runner.say("using " + choice.describe())
         return COMMANDS[args.command](ctx, args, runner)
     except (PipelineError, ShotListError, recipes.RecipeError) as e:
         runner.say(f"error: {e}")

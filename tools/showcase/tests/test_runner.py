@@ -1,4 +1,5 @@
 import os
+import shutil
 import tempfile
 import time
 import unittest
@@ -75,6 +76,66 @@ class Jobs(unittest.TestCase):
                      Runner(quiet=True))
         with self.assertRaises(PipelineError):
             run_jobs([Job("a", lambda r: None, deps={"zzz"})], Runner(quiet=True))
+
+
+class Discovery(unittest.TestCase):
+    """ffmpeg/ffprobe: flag, then variable, then the ffmpeg-full keg, then PATH."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.dirs = {}
+        for name in ("flag", "env", "keg", "path", "lonely"):
+            d = root / name
+            d.mkdir()
+            self.dirs[name] = d
+            for exe in ("ffmpeg", "ffprobe"):
+                if name == "lonely" and exe == "ffprobe":
+                    continue
+                f = d / exe
+                f.write_text("#!/bin/sh\n")
+                f.chmod(0o755)
+        self.which = lambda n: shutil.which(n, path=str(self.dirs["path"]))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def pick(self, ffmpeg=None, ffprobe=None, env=None, keg=True):
+        keg_dir = self.dirs["keg"] if keg else Path(self.tmp.name) / "no-keg"
+        chosen = runner_mod.discover_ffmpeg(ffmpeg, ffprobe, env=env or {}, keg=keg_dir, which=self.which)
+        return {k: (Path(v.path).parent.name if v.path else None, v.source) for k, v in chosen.items()}
+
+    def test_order(self):
+        flag = str(self.dirs["flag"] / "ffmpeg")
+        env = {"MYNES_FFMPEG": str(self.dirs["env"] / "ffmpeg"), "MYNES_FFPROBE": str(self.dirs["env"] / "ffprobe")}
+        self.assertEqual(self.pick(flag, str(self.dirs["flag"] / "ffprobe"), env),
+                         {"ffmpeg": ("flag", "--ffmpeg"), "ffprobe": ("flag", "--ffprobe")})
+        self.assertEqual(self.pick(env=env), {"ffmpeg": ("env", "MYNES_FFMPEG"), "ffprobe": ("env", "MYNES_FFPROBE")})
+        self.assertEqual(self.pick(), {"ffmpeg": ("keg", "ffmpeg-full"), "ffprobe": ("keg", "ffmpeg-full")})
+        self.assertEqual(self.pick(keg=False), {"ffmpeg": ("path", "PATH"), "ffprobe": ("path", "PATH")})
+
+    def test_ffprobe_follows_an_explicit_ffmpeg(self):
+        self.assertEqual(self.pick(str(self.dirs["flag"] / "ffmpeg")),
+                         {"ffmpeg": ("flag", "--ffmpeg"), "ffprobe": ("flag", "beside --ffmpeg")})
+        env = {"MYNES_FFMPEG": str(self.dirs["lonely"] / "ffmpeg")}
+        self.assertEqual(self.pick(env=env), {"ffmpeg": ("lonely", "MYNES_FFMPEG"), "ffprobe": ("keg", "ffmpeg-full")})
+
+    def test_bad_explicit_path_and_missing(self):
+        with self.assertRaises(PipelineError):
+            self.pick(str(self.dirs["flag"] / "nope"))
+        chosen = runner_mod.discover_ffmpeg(env={}, keg=Path(self.tmp.name) / "no-keg", which=lambda n: None)
+        self.assertIsNone(chosen["ffmpeg"].path)
+        self.assertEqual(chosen["ffmpeg"].describe(), "ffmpeg: MISSING")
+
+    def test_runner_runs_the_configured_tool(self):
+        try:
+            runner_mod.configure_tools(str(self.dirs["flag"] / "ffmpeg"), env={})
+            r = Runner(dry_run=True, quiet=True)
+            r.run(["ffmpeg", "-version"])
+            self.assertEqual(r.ran[0][0], str(self.dirs["flag"] / "ffmpeg"))
+            self.assertEqual(runner_mod.env_for_capture({})["MYNES_FFMPEG"], str(self.dirs["flag"] / "ffmpeg"))
+        finally:
+            runner_mod.configure_tools()
 
 
 class Tools(unittest.TestCase):
