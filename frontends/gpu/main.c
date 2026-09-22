@@ -20,6 +20,11 @@
 #include <stdbool.h>
 #include <string.h>
 #include <math.h>
+#ifndef _WIN32
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
+#endif
 
 /* NES core. */
 #include "nes/nes.h"
@@ -473,6 +478,23 @@ static void toggle_fullscreen(void) {
         fprintf(stderr, "Fullscreen: %s\n", SDL_GetError());
 }
 
+/* Batch runs (offscreen, screenshots, recordings, benchmarks) take turns on
+ * a lock file: scripts start many at once, and together they fight over the
+ * GPU. The lock is held until exit; interactive play never waits.
+ * MYNES_BATCH_LOCK names another lock file, or 0 turns the queue off. */
+static void batch_lock_wait(void) {
+#ifndef _WIN32
+    const char *path = getenv("MYNES_BATCH_LOCK");
+    if (path && !strcmp(path, "0")) return;
+    if (!path || !*path) path = "/tmp/mynes_gpu-batch.lock";
+    int fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0666);
+    if (fd < 0) return;
+    if (flock(fd, LOCK_EX | LOCK_NB) == 0) return;
+    fprintf(stderr, "Waiting for another batch run to finish (%s)\n", path);
+    if (flock(fd, LOCK_EX) != 0) close(fd);
+#endif
+}
+
 static void handle_key(SDL_Scancode sc, bool down) {
     uint8_t mask = 0;
     int player = 0;
@@ -918,6 +940,11 @@ int main(int argc, char **argv) {
     low_latency=mynes_config.gpu_low_latency;
 
     /* --- SDL3 init --- */
+    if (offscreen_w || screenshot_after > 0 || benchmark || record_path) {
+        /* An offscreen run shows nothing: no Dock icon, no activation. */
+        if (offscreen_w) SDL_SetHint(SDL_HINT_MAC_BACKGROUND_APP, "1");
+        batch_lock_wait();
+    }
     gpu_output_disable_desktop_spaces();
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD)) {
         fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
