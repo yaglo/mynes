@@ -125,12 +125,18 @@ static bool json_take_string(const char **cursor, char *out, int out_sz) {
     return true;
 }
 
+/* gpu_render_scale values, in MynesConfig order. */
+static const char *const render_scale_names[] = { "auto", "1", "0.75", "0.5" };
+
 bool mynes_config_load(MynesConfig *cfg) {
     if (!cfg) return false;
     memset(cfg, 0, sizeof(*cfg));
     /* Absent from older files, and on is the better default: the key is
      * only written as 0 when the user switched it off. */
     cfg->gpu_low_latency = 1;
+    /* Full size: a smaller internal CRT is upsampled, which moves the
+     * scanlines off whole panel rows. */
+    cfg->gpu_render_scale = 1;
 
     char path[MYNES_PATH_MAX];
     mynes_config_path(path, sizeof(path));
@@ -180,9 +186,19 @@ bool mynes_config_load(MynesConfig *cfg) {
             const char *colon=strchr(s, ':');
             cfg->gpu_room_reflections=colon && atoi(colon+1)==1 ? 1 : 0;
         } else if (strstr(s, "\"gpu_render_scale\"")) {
+            /* Stored by name. The first builds wrote an index and saved
+             * Auto's 0 as the default, so a bare 0 is ignored; 1..3 were
+             * explicit menu choices and keep their meaning. */
             const char *colon=strchr(s, ':');
-            int scale=colon ? atoi(colon+1) : 0;
-            cfg->gpu_render_scale=scale>=0 && scale<=3 ? scale : 0;
+            const char *cur=colon ? colon+1 : NULL;
+            char name[16];
+            if (cur && json_take_string(&cur, name, sizeof(name))) {
+                for (int i=0; i<4; i++)
+                    if (strcmp(name, render_scale_names[i])==0) cfg->gpu_render_scale=i;
+            } else if (colon) {
+                int index=atoi(colon+1);
+                if (index>=1 && index<=3) cfg->gpu_render_scale=index;
+            }
         } else if (strstr(s, "\"gpu_low_latency\"")) {
             const char *colon=strchr(s, ':');
             cfg->gpu_low_latency=colon && atoi(colon+1)==0 ? 0 : 1;
@@ -230,7 +246,8 @@ bool mynes_config_save(const MynesConfig *cfg) {
     fprintf(f, "    ],\n");
     fprintf(f, "    \"gpu_mask_alignment\": %d,\n",cfg->gpu_mask_alignment==1 ? 1 : 0);
     fprintf(f, "    \"gpu_room_reflections\": %d,\n",cfg->gpu_room_reflections==1 ? 1 : 0);
-    fprintf(f, "    \"gpu_render_scale\": %d,\n",cfg->gpu_render_scale>=0 && cfg->gpu_render_scale<=3 ? cfg->gpu_render_scale : 0);
+    fprintf(f, "    \"gpu_render_scale\": \"%s\",\n",
+            render_scale_names[cfg->gpu_render_scale>=0 && cfg->gpu_render_scale<=3 ? cfg->gpu_render_scale : 1]);
     fprintf(f, "    \"gpu_low_latency\": %d,\n",cfg->gpu_low_latency==0 ? 0 : 1);
     fprintf(f, "    \"last_preset\": ");
     json_escape(f, cfg->last_preset);

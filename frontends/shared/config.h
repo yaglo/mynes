@@ -22,7 +22,7 @@ typedef struct {
     int  recent_count;
     int  gpu_room_reflections; /* host setting: simulated room light, off by default */
     int  gpu_mask_alignment; /* host setting: 0=panel pixels, 1=CRT pitch */
-    int  gpu_render_scale;   /* host setting: 0=auto, 1=full, 2=3/4, 3=half drawable */
+    int  gpu_render_scale;   /* host setting: 0=auto, 1=full (default), 2=3/4, 3=half */
     int  gpu_low_latency;    /* host setting: 1=one picture queued ahead of the display */
     char last_preset[MYNES_PRESET_MAX];                  /* slug or filename */
 } MynesConfig;
@@ -45,7 +45,7 @@ bool mynes_mkdir_p(const char *path);
 
 /* Load config from disk; returns true if a file was found and parsed.
  * On false, `cfg` holds the defaults and is safe to use: every field is
- * zero except gpu_low_latency, which is on unless the file turns it off. */
+ * zero except gpu_low_latency (on) and gpu_render_scale (1, full size). */
 bool mynes_config_load(MynesConfig *cfg);
 
 /* Write config to disk, creating the parent directory if needed.

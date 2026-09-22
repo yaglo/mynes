@@ -160,6 +160,7 @@ static int              render_scale_mode;      /* OSD cyclic target, persisted 
 static int              render_scale_auto_level = RENDER_SCALE_FULL;
 static int              render_scale_over_windows;
 static bool             render_scale_fixed;     /* offscreen / benchmark */
+static int              render_scale_settle;    /* timing windows Auto ignores */
 static int              low_latency;            /* OSD toggle target, persisted */
 
 static float render_scale_effective(void) {
@@ -829,8 +830,8 @@ int main(int argc, char **argv) {
                    "  --native-fullscreen   Enter native panel mode (F11 toggles back)\n"
                    "  --mask-alignment M    pixels (default) or physical CRT pitch\n"
                    "  --render-scale S      Internal CRT resolution: 1, 0.75, 0.5 or auto\n"
-                   "                        (default auto: full size, steps down if the\n"
-                   "                        GPU cannot keep up; M > Host display)\n"
+                   "                        (default 1; auto starts at 1 and steps down\n"
+                   "                        if the GPU cannot keep up; M > Host display)\n"
                    "  --window-size WxH     Initial window size (UI coordinates)\n"
                    "  --record OUT          Record every emulated frame to OUT (.mov or .mp4)\n"
                    "                        with the APU audio; needs --offscreen and\n"
@@ -1470,6 +1471,12 @@ int main(int argc, char **argv) {
                  ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || ev.type == SDL_EVENT_GAMEPAD_BUTTON_UP ||
                  ev.type == SDL_EVENT_GAMEPAD_AXIS_MOTION ||
                  ev.type == SDL_EVENT_GAMEPAD_ADDED || ev.type == SDL_EVENT_GAMEPAD_REMOVED)) continue;
+            /* Resizes, fullscreen switches and display changes reallocate the
+             * swapchain and CRT targets; the frames around them say nothing
+             * about the steady GPU load Auto render scale judges. */
+            if ((ev.type >= SDL_EVENT_WINDOW_FIRST && ev.type <= SDL_EVENT_WINDOW_LAST) ||
+                (ev.type >= SDL_EVENT_DISPLAY_FIRST && ev.type <= SDL_EVENT_DISPLAY_LAST))
+                render_scale_settle = 2;
             switch (ev.type) {
                 case SDL_EVENT_QUIT:
                     running = false;
@@ -1812,6 +1819,7 @@ int main(int argc, char **argv) {
             beam_target_size(w,h,video_chain.tv.monitor_model==1 ? 16 : 4,
                              video_chain.tv.monitor_model==1 ? 10 : 3,render_scale_effective(),&w,&h);
             if(w>0 && h>0 && (w!=video_gpu_chain.beam_out_w || h!=video_gpu_chain.beam_out_h)) {
+                render_scale_settle = 2;
                 if(!render_ctx.owns_display_tex) render_ctx.display_tex=NULL;
                 if(!video_gpu_set_beam_params(&video_gpu_chain,gpu,w,h,h/240>0 ? h/240 : 1,
                        video_gpu_chain.beam_sigma_narrow,video_gpu_chain.beam_sigma_wide))
@@ -2264,15 +2272,20 @@ int main(int argc, char **argv) {
                  * purpose and are not evidence; neither is a window with a
                  * frame that was not live (browser, menu, pause, static
                  * review), where no game frame can drop and the CPU-paced
-                 * wait shapes the timing. It never steps back up. */
+                 * wait shapes the timing, nor the window of a resize,
+                 * fullscreen switch or display change and the one after it.
+                 * It never steps back up. */
                 double native_ms = signal_region_frame_ms(preset_ctx.region);
                 double budget_ms = gpu_presentation_playback_period(render_ctx.presentation_mode,
                     (uint64_t)(native_ms * 1000000.0), render_ctx.presentation_hz,
                     render_ctx.vsync_paced) / 1e6;
                 if (render_ctx.presentation_slots > 1) budget_ms /= render_ctx.presentation_slots;
+                bool settling = render_scale_settle > 0;
+                if (settling) render_scale_settle--;
                 if (render_scale_mode == RENDER_SCALE_AUTO && !render_scale_fixed &&
                     render_scale_auto_level < RENDER_SCALE_HALF && gpu_samples >= 10 &&
-                    !perf_fast_window && !perf_idle_window && gpu_frame_ms > 0.9 * budget_ms) {
+                    !perf_fast_window && !perf_idle_window && !settling &&
+                    gpu_frame_ms > 0.9 * budget_ms) {
                     if (++render_scale_over_windows >= 2) {
                         render_scale_over_windows = 0;
                         render_scale_auto_level++;

@@ -452,7 +452,7 @@ geometry, glass scatter, the HDR shoulder, audio, PPU timing and carrier phase
 are unchanged. Emulation cost does not change either; only the GPU stages
 sized by the target get cheaper.
 
-**Auto** (the default) starts at 1.0. Every second the frontend averages the
+The default is 1.0. **Auto** starts at 1.0. Every second the frontend averages the
 GPU's submit-to-completion time for the on-screen frame; it is the `GPU`
 figure in the V performance overlay, next to the CPU encode times `ENC` and
 `PRESENT`, which cannot see a GPU-bound frame. When that average exceeds 90%
@@ -461,7 +461,9 @@ steps down one notch, shows "Render scale 0.75 (auto)", and the overlay adds
 `SCALE 0.75`. It never steps back up on its own: choose Auto again, or a fixed
 value, in the menu to restart from full size. Fast-forward windows are not
 counted, and neither is a window in which the game was not running (the ROM
-browser, the menu, a pause or a static review frame). `--offscreen` captures
+browser, the menu, a pause or a static review frame), nor the window of a
+resize, fullscreen switch or display change and the one after it, which
+reallocate the swapchain and the CRT targets. `--offscreen` captures
 and `--benchmark` always render at exactly the requested size, so
 measurements and screenshots stay comparable.
 
