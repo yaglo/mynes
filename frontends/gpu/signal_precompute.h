@@ -311,6 +311,30 @@ static inline void signal_design_vhs(float *taps, float fs, float luma_bw,
     }
 }
 
+/* Playback equalization of the recovered luma filter. Both operations retain
+ * its stopband: unlike adding a raw impulse, this cannot bypass Y/C separation.
+ * The causal tail uses earlier input samples (negative tap offsets). */
+static inline void signal_vhs_luma_eq(float *taps, float fs, float peaking, float smear) {
+    float src[SIGNAL_VHS_TAPS], eq[SIGNAL_VHS_TAPS];
+    peaking=fminf(1,fmaxf(0,peaking)); smear=fminf(1,fmaxf(0,smear));
+    if(peaking==0 && smear==0) return;
+    int shift=(int)fmaxf(1,roundf(fs*100e-9f));
+    float decay=expf(-1/(fs*140e-9f));
+    for(int k=0;k<SIGNAL_VHS_TAPS;k++) src[k]=taps[4*k];
+    for(int k=0;k<SIGNAL_VHS_TAPS;k++) {
+        float left=k>=shift ? src[k-shift] : 0;
+        float right=k+shift<SIGNAL_VHS_TAPS ? src[k+shift] : 0;
+        eq[k]=src[k]*(1+peaking)-.5f*peaking*(left+right);
+    }
+    float tail=0,sum=0;
+    for(int k=SIGNAL_VHS_TAPS-1;k>=0;k--) {
+        tail=(1-decay)*eq[k]+decay*tail;
+        taps[4*k]=(1-smear)*eq[k]+smear*tail;
+        sum+=taps[4*k];
+    }
+    for(int k=0;k<SIGNAL_VHS_TAPS;k++) taps[4*k]/=sum;
+}
+
 /* Add a generic highpass shelf to a FIR. For receiver sharpness, start
  * with an identity FIR and apply the result AFTER luma extraction.
  * Adding this directly to a separation FIR bypasses its stopband/trap.

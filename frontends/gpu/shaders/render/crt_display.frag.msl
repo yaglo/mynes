@@ -430,6 +430,21 @@ fragment main0_out main0(main0_in in [[stage_in]], constant DisplayParams& _81 [
         float corner_fade = smoothstep(0.0, 0.039999999105930328369140625, sqrt(edge_vec.x * edge_vec.y));
         color += ((((env * edge_boost) * corner_fade) * _81.glass_glare) * 1.60000002384185791015625);
     }
+    float2 face = in.uv - float2(0.5);
+    float face_r2 = dot(face, face);
+    float _1237;
+    if (_81.barrel_v != 0.0)
+    {
+        _1237 = _81.barrel_v;
+    }
+    else
+    {
+        _1237 = _81.barrel;
+    }
+    face *= (float2(1.0) + (float2(_81.barrel, _1237) * face_r2));
+    face += float2(0.5);
+    float2 coverage = fast::clamp(float2(0.5) + (fast::min(face, float2(1.0) - face) / fast::max(fwidth(face), float2(9.9999999747524270787835121154785e-07))), float2(0.0), float2(1.0));
+    color = mix(float3(_81.ambient_light * 0.1500000059604644775390625), color, float3(coverage.x * coverage.y));
     if (_81.output_hdr == 0)
     {
         float low = fast::min(fast::min(color.x, color.y), color.z);
@@ -448,17 +463,17 @@ fragment main0_out main0(main0_in in [[stage_in]], constant DisplayParams& _81 [
         float mapped = knee + (((limit - knee) * (peak - knee)) / (((peak - knee) + limit) - knee));
         color *= (mapped / peak);
     }
-    float3 _1313;
+    float3 _1374;
     if (_81.output_hdr != 0)
     {
-        _1313 = color * _81.sdr_white_level;
+        _1374 = color * _81.sdr_white_level;
     }
     else
     {
         float3 param_13 = color;
-        _1313 = srgb_encode(param_13);
+        _1374 = srgb_encode(param_13);
     }
-    color = _1313;
+    color = _1374;
     out.frag_color = float4(color, 1.0);
     return out;
 }

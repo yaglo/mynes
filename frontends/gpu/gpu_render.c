@@ -247,6 +247,7 @@ void gpu_render_presentation_update(GPURenderCtx *ctx, float source_hz) {
         ctx->presentation_slot = ctx->cadence_samples = 0;
         ctx->cadence_start_ns = 0;
         ctx->pacing_deadline_ns = 0;
+        ctx->presentation_epoch++;
         ctx->presentation_last_mode = ctx->presentation_mode;
         ctx->presentation_display = display;
         ctx->presentation_hz = hz;
@@ -260,10 +261,12 @@ void gpu_render_presentation_update(GPURenderCtx *ctx, float source_hz) {
         !ctx->presentation_blocked && ctx->gpu_display_enabled && ctx->crt_shader_enabled &&
         !ctx->split_mode ? gpu_presentation_slots(hz, source_hz) : 1;
     if (ctx->presentation_slots == 1) ctx->presentation_slot = 0;
+    ctx->vsync_paced = !ctx->offscreen_w &&
+        gpu_presentation_vsync_paced(ctx->presentation_mode, hz, source_hz);
 #ifdef MYNES_BUNDLED_SDL3
     /* The bundled Metal backend schedules scanout, rather than delaying CPU
      * submission until a deadline the GPU can then miss. */
-    ctx->scheduled_present = !ctx->offscreen_w &&
+    ctx->scheduled_present = !ctx->offscreen_w && !ctx->vsync_paced &&
         ctx->presentation_mode != GPU_PRESENT_BFI && source_hz > 0 &&
         strcmp(SDL_GetGPUDeviceDriver(ctx->gpu), "metal") == 0;
     uint64_t interval = source_hz > 0 ? gpu_presentation_period_ns(ctx->presentation_mode,
@@ -271,10 +274,12 @@ void gpu_render_presentation_update(GPURenderCtx *ctx, float source_hz) {
     SDL_SetNumberProperty(SDL_GetWindowProperties(ctx->window),
         "mynes.gpu.metal.present_interval_ns",
         ctx->scheduled_present ? interval : 0);
+    SDL_SetNumberProperty(SDL_GetWindowProperties(ctx->window),
+        "mynes.gpu.metal.present_epoch", ctx->presentation_epoch);
 #endif
     /* SDL flushes the queue here: never reconfigure while holding an acquired
      * drawable waiting for a source picture. Apply at the next free boundary. */
-    int in_flight = ctx->presentation_slots > 1 ||
+    int in_flight = ctx->vsync_paced || ctx->presentation_slots > 1 ||
         (ctx->presentation_mode == GPU_PRESENT_60HZ && !ctx->scheduled_present) ? 1 : 2;
     if (!ctx->present_cmd && ctx->frames_in_flight != in_flight &&
         SDL_SetGPUAllowedFramesInFlight(ctx->gpu, in_flight))
@@ -481,7 +486,7 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
         SDL_BlitGPUTexture(cmd, &split);
     }
 
-    if (ctx->presentation_mode == GPU_PRESENT_60HZ && !ctx->scheduled_present) {
+    if (ctx->presentation_mode == GPU_PRESENT_60HZ && !ctx->scheduled_present && !ctx->vsync_paced) {
         uint64_t now = SDL_GetTicksNS();
         /* Start one interval ahead so source wakeup/processing jitter does not
          * immediately move the presentation deadline. Only this mode pays

@@ -70,12 +70,63 @@ in [JVC's HR-S8000U manual](https://library.mikesservers.com/J/JVC/HRS-8000U/HRS
 and [US6459848B1](https://patents.google.com/patent/US6459848B1/en), which identifies
 VHS chroma at 629 kHz. Here that down/up conversion is collapsed into its
 recovered response. 2.5 MHz luma, 0.35 MHz chroma, delay and error strengths are
-estimated playback characteristics. Magnetic recording, FM threshold noise,
-head switching, dropouts, tracking, tape speed and VHS audio are not simulated.
+estimated playback characteristics. Playback luma equalization now adds a DC-neutral
+high-frequency shelf and a causal tail while retaining the separation filter's
+stopband. Separate luma and chroma noise envelopes use signal-sample coordinates;
+luma mixes fine grain with a longer horizontal component, while chroma noise
+occupies narrow envelopes around the reconstructed subcarrier. Their RMS
+controls specify voltage before the receiver, not final screenshot pixel noise.
+
+Transport timing and colour-phase errors interpolate continuously through a
+random field over successive source frames. Grain is renewed each source frame.
+Optional head-switch displacement is confined to the last six active picture
+lines (usually cropped by overscan). Dropouts are sparse horizontal reductions
+of recovered signal with a local noise increase. These are phenomenological
+playback defects; magnetic recording, FM threshold/demodulation, tracking servos,
+tape speed and VHS audio remain outside the model. No particular deck's noise
+spectrum or transport constants are claimed as measured.
+
+The SP preset uses 0.008 luma and 0.004 chroma RMS, 180 ms transport correlation,
+100 ns switching displacement, and 0.15 dropouts/second at 65% peak loss.
+Its existing 140 ns chroma delay is retained. The noise is upstream of receiver
+clamping, bandwidth limits, and the tube's gun cutoff: below-black NES colours
+can remain visually quiet. A mandatory 10–15/255 black pedestal or 1–2 NES-pixel
+chroma displacement would not be a format-wide physical calibration.
+All playback controls are available under Video → VHS recording / playback;
+older saved profiles retain their legacy noise and default new defects to zero.
 
 Actual GPU tests preserve DC grey and the 3.58 MHz carrier, while attenuating
 an upper sideband 1 MHz away from the carrier by more than 49 dB relative to the
-carrier. This checks recovered bandwidth, not a particular VCR's response.
+carrier. Tests also check noise RMS, horizontal/vertical and inter-frame
+correlation, smoothly changing timing, switching-band and dropout locality,
+maximum offsets across workgroup/line boundaries, and DC preservation with
+playback equalization. This checks the implemented model, not a particular
+VCR's measured response.
+
+Validation on 2026-09-22: Metal readback measured 0.00999 luma RMS for a
+0.010 request, adjacent-sample correlation 0.981 and adjacent-line correlation
+−0.003. Five targeted suites passed (fidelity, preset JSON, control coverage,
+signal precomputation, and complete pipeline). Matching 1280×960 captures were
+inspected. The complete VHS video-chain benchmark, 60 frames after 12 warm-up
+frames, averaged 6.680 ms at 1280×960 and 12.463 ms at 2560×1920. These are
+CPU-submit-to-GPU-fence times, excluding emulation, audio, vsync and readback;
+they are not a physical presentation-cadence measurement or a before/after
+speedup claim.
+
+## Raster edge and fixed glass aperture
+
+The source bounds and beam spot define the raster perimeter. The former second
+UV-space fade (roughly ten display pixels wide at 1280 pixels) has been removed.
+The final optics pass clips emission and specular room reflection against the
+fixed curved glass aperture with one-pixel coverage antialiasing. Service size,
+position and overscan move the raster inside that aperture. Outside it, the
+same diffuse ambient surround as the render-target clear is retained, independent
+of emission gain. This is a consistent surround treatment, not a measured bezel
+material or full three-dimensional tube face.
+
+The existing analytic aperture-grille filtering and mip-filtered slot/dot masks
+remain resolution-aware. An unresolved fine mask is expected to average out;
+forcing it sharp would introduce aliasing rather than improve fidelity.
 
 ## Controls and calibration
 
@@ -199,3 +250,40 @@ the two carrier phases remain distinct. Separate 900-frame Hold / 60 Hz runs
 preserved identical carrier phase on all 900 matching source frames, with no
 source skips. These checks do not constitute a
 photodiode measurement or prove that every host scheduling stall is eliminated.
+
+## MacBook Air, PAL and MMC5 follow-up (2026-09-22)
+
+On the M5 MacBook Air's fixed 60 Hz panel, BFI falls back to an ordinary lit
+presentation. Its stable appearance pointed to the different timed-present path
+used by Hold. Both hold modes now use ordinary vsync when the display refresh
+matches the target within 0.5%, with one frame in flight. Playback follows that
+display period and waits for room in its bounded queue instead of dropping
+source phases. Unmatched refresh rates retain the Metal timed-present path.
+
+Visible Metal timestamps at a 2560×1542 drawable, Reference Composite and GPU
+audio enabled recorded 539/539 intervals near 16.67 ms in native Hold. The final
+60 Hz Hold run recorded 838/839 near 16.67 ms and one 50 ms interval. Both had
+zero skipped source frames and zero unshown drawables. Thus the competing-clock
+path is removed on this panel, but an occasional host stall remains measurable;
+this is not a claim of perfect physical-panel exposure or a subjective flicker
+test. GPU audio can fall back to CPU processing within its deadline.
+
+PAL now uses the 16:5 CPU/PPU master-clock ratio, regional APU frame sequencer,
+noise and DMC periods. Legacy iNES files with explicit European filename tags
+can select PAL when their header leaves the timing bit unset. Triangle register
+writes preserve oscillator phase, a stopped triangle retains its DAC level,
+and halt/reload writes are ordered correctly against length-counter clocks.
+Volume writes no longer retrigger envelopes. All ten bundled PAL APU timing
+ROMs pass; their README states they were verified on a PAL NES. They are now a
+permanent CTest alongside the direct APU checks and AccuracyCoin.
+
+MMC5 now routes each nametable quadrant independently (CIRAM, ExRAM or fill),
+selects CHR banks by fetch type and sprite size, and derives its scanline IRQ
+from actual PPU reads including the odd-frame boundary. A scripted Castlevania
+III (USA) replay at frame 6,000, BLK 1-02, matched an independent FCEUmm render at
+all 61,440 pixel positions after palette-colour remapping. The equivalent PAL
+replay and an offscreen composite render retained the background walls. The
+user's later missing-wall screenshot was not reproduced with this build. These
+checks do not cover every MMC5 feature: extended attributes, vertical split and
+PCM still need separate work. Asterix PAL's raw framebuffer now has its blue
+background; its reported audio hum still needs listening confirmation.

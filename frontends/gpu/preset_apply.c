@@ -107,6 +107,7 @@ static void preset_apply_cpu_state_ex(PresetCtx *ctx, const PhysicalPreset *p,
         rf->agc_attack_ms=-signal_region_frame_ms(new_region)/logf(.9f);
         rf->agc_release_ms=-signal_region_frame_ms(new_region)/logf(.98f);
     }
+    if(ctx->video_chain->vhs.drift_ms<=0) ctx->video_chain->vhs.drift_ms=180;
     if(ctx->video_chain->vhs.luma_bandwidth<=0) ctx->video_chain->vhs.luma_bandwidth=2.5e6f;
     if(ctx->video_chain->vhs.chroma_bandwidth<=0) ctx->video_chain->vhs.chroma_bandwidth=.35e6f;
     ctx->video_chain->console_coupling_R = p->console_coupling_R>0 ? p->console_coupling_R : 75.0f;
@@ -489,6 +490,9 @@ static void gpu_cb_mask_alignment(void) {
     mynes_config_save(g_ctx->config);
 }
 
+static void gpu_cb_console_reset(void) {
+    g_ctx->console_reset_requested = true;
+}
 static void gpu_cb_fullscreen(void) {
     if(!gpu_output_toggle_fullscreen(g_ctx->render_ctx->window,true))
         fprintf(stderr,"Native fullscreen: %s\n",SDL_GetError());
@@ -633,7 +637,7 @@ static int menu_presets_video_idx = -1;
 /* Forward declarations — actual storage lives further down. The save
  * action callback (also further down) needs to update these tables. */
 static OSDMenuItem menu_video[15];
-OSDMenuItem preset_menu_root[7];   /* defined below; declared here so the
+OSDMenuItem preset_menu_root[8];   /* defined below; declared here so the
                                     * save callback can update it. */
 
 /* Public entry points used by main.c. */
@@ -932,14 +936,14 @@ static OSDMenuItem menu_phosphor[48];     /* Stage 12: phosphor screen */
 static OSDMenuItem menu_glass[48];        /* Stage 13: CRT glass + service geometry */
 static OSDMenuItem menu_env[48];           /* Stage 14: environment */
 static OSDMenuItem menu_audio_chain[16];
-static OSDMenuItem menu_rf[7],menu_vhs[7];
+static OSDMenuItem menu_rf[7],menu_vhs[15];
 
 /* Mid-level submenus. menu_video[] + preset_menu_root[] are forward-
  * declared near the top of this file so the save action can reach them. */
 static OSDMenuItem menu_audio_top[3];
 static OSDMenuItem menu_picture[9], menu_tube[5];
 static OSDMenuItem menu_diagnostics[1],menu_display[4];
-int         preset_menu_root_count = 7;
+int         preset_menu_root_count = 8;
 
 /* Helper to populate an OSDMenuItem. */
 static OSDMenuItem make_item(const char *label, OSDMenuItemType type,
@@ -1340,7 +1344,15 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_vhs[n++]=MI_FLOAT("Chroma delay ns", &vc->vhs.chroma_delay_ns, 10,-1000,1000,gpu_cb_redesign_firs,"%.0f");
     menu_vhs[n++]=MI_FLOAT("Line timing error ns", &vc->vhs.timebase_ns, 5,0,300,gpu_cb_redesign_firs,"%.0f");
     menu_vhs[n++]=MI_FLOAT("Color phase error deg", &vc->vhs.chroma_phase_deg, .5f,0,20,gpu_cb_redesign_firs,"%.1f");
-    menu_vhs[n++]=MI_FLOAT("Playback noise", &vc->vhs.noise, .001f,0,.05f,gpu_cb_redesign_firs,"%.3f");
+    menu_vhs[n++]=MI_FLOAT("Wideband noise", &vc->vhs.noise, .001f,0,.05f,gpu_cb_redesign_firs,"%.3f");
+    menu_vhs[n++]=MI_FLOAT("Luma grain RMS", &vc->vhs.luma_noise_rms, .001f,0,.05f,gpu_cb_redesign_firs,"%.3f");
+    menu_vhs[n++]=MI_FLOAT("Chroma noise RMS", &vc->vhs.chroma_noise_rms, .001f,0,.05f,gpu_cb_redesign_firs,"%.3f");
+    menu_vhs[n++]=MI_FLOAT("Transport drift ms", &vc->vhs.drift_ms, 10,20,1000,gpu_cb_redesign_firs,"%.0f");
+    menu_vhs[n++]=MI_FLOAT("Head switching ns", &vc->vhs.head_switch_ns, 20,0,700,gpu_cb_redesign_firs,"%.0f");
+    menu_vhs[n++]=MI_FLOAT("Dropouts per second", &vc->vhs.dropout_rate, .1f,0,10,gpu_cb_redesign_firs,"%.1f");
+    menu_vhs[n++]=MI_FLOAT("Dropout depth", &vc->vhs.dropout_depth, .05f,0,1,gpu_cb_redesign_firs,"%.2f");
+    menu_vhs[n++]=MI_FLOAT("Playback luma peaking", &vc->vhs.luma_peaking, .05f,0,1,gpu_cb_redesign_firs,"%.2f");
+    menu_vhs[n++]=MI_FLOAT("Playback luma tail", &vc->vhs.luma_smear, .05f,0,1,gpu_cb_redesign_firs,"%.2f");
 
     /* Everyday picture controls, then the physical chain and tube service controls. */
     menu_picture[0] = menu_luma[4];
@@ -1361,7 +1373,7 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_video[n++] = MI_SUB("Console output", menu_console, menu_console_count);
     menu_video[n++] = MI_SUB("Cable", menu_cable, menu_cable_count);
     menu_video[n++] = MI_SUB("RF receiver",menu_rf,7);
-    menu_video[n++] = MI_SUB("VHS recording / playback",menu_vhs,7);
+    menu_video[n++] = MI_SUB("VHS recording / playback",menu_vhs,15);
     menu_video[n++] = MI_SUB("Y/C separation", menu_comb, menu_comb_count);
     menu_video[n++] = MI_SUB("Chroma decoder", menu_chroma, menu_chroma_count);
     menu_video[n++] = MI_SUB("Luma response", menu_luma, menu_luma_count);
@@ -1387,6 +1399,7 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_display[2] = MI_CYCLIC("Presentation",&ctx->render_ctx->presentation_mode,0,2,NULL,"Hold|BFI (high Hz)|60 Hz hold");
     menu_display[3] = MI_FLOAT("Dark refresh",&ctx->render_ctx->dark_frame_level,.05f,0,1,NULL,"%.2f");
     preset_menu_root[6] = MI_SUB("Host display",menu_display,4);
+    preset_menu_root[7] = make_item("Reset console (F2)",OSD_MI_ACTION,NULL,0,0,0,NULL,NULL,0,gpu_cb_console_reset,NULL);
 }
 
 /* ============================================================================

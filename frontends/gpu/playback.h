@@ -1,8 +1,9 @@
-/* Emulation/audio clock and a bounded latest-picture mailbox. The main thread
+/* Emulation/audio clock and a bounded three-picture queue. The main thread
  * owns the display and menus; this worker owns NES while playback is active. */
 #ifndef GPU_PLAYBACK_H
 #define GPU_PLAYBACK_H
 #include "nes/nes.h"
+#include "nes/rom.h"
 #include "audio_gpu.h"
 
 typedef struct Playback Playback;
@@ -12,6 +13,8 @@ typedef struct {
     int region;
     bool gpu_audio;
     int presentation_mode;
+    bool display_paced;
+    float display_hz;
     uint8_t controller;
 } PlaybackControls;
 typedef struct {
@@ -30,6 +33,10 @@ Playback *playback_create(NES *nes, SDL_GPUDevice *gpu, AudioGPUChain *audio,
 void playback_controls(Playback *p, const PlaybackControls *controls);
 /* Pausing waits for a frame boundary. Core/ROM mutation is safe after return. */
 void playback_pause(Playback *p);
+/* Both leave playback paused. Loading creates a fresh console; reset retains
+ * the cartridge and RAM. The caller owns ROM storage and resumes afterward. */
+void playback_load_cartridge(Playback *p, const ROM *rom, int region);
+void playback_reset_console(Playback *p);
 void playback_resume(Playback *p);
 bool playback_read(Playback *p, PlaybackFrame *frame);
 void playback_destroy(Playback *p);

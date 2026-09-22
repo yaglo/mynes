@@ -95,6 +95,14 @@ static const uint16_t apu_noise_period_table[16] = {
     4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068
 };
 
+static const uint16_t apu_noise_period_table_pal[16] = {
+    4, 8, 14, 30, 60, 88, 118, 148, 188, 236, 354, 472, 708, 944, 1890, 3778
+};
+
+static const uint16_t apu_dmc_rate_table_pal[16] = {
+    398, 354, 316, 298, 276, 236, 210, 198, 176, 148, 132, 118, 98, 78, 66, 50
+};
+
 static const uint16_t apu_dmc_rate_table[16] = {
     428, 380, 340, 320, 286, 254, 226, 214,
     190, 160, 142, 128, 106,  84,  72,  54
@@ -103,6 +111,9 @@ static const uint16_t apu_dmc_rate_table[16] = {
 /* Frame counter step timings in CPU cycles */
 static const int apu_frame_steps_mode0[6] = {7456, 14912, 22370, 29827, 29828, 29829};
 static const int apu_frame_steps_mode1[5] = {7456, 14912, 22370, 37280, 37280};
+
+static const int apu_frame_steps_mode0_pal[6] = {8312, 16626, 24938, 33251, 33252, 33253};
+static const int apu_frame_steps_mode1_pal[5] = {8312, 16626, 24938, 41564, 41564};
 
 /* ============================================================================
  * Channel Structures
@@ -213,6 +224,13 @@ typedef struct APU {
 
     /* Frame counter */
     APU_FrameCounter frame;
+    /* CPU writes reach the length units after the next sequencer clock.
+     * A reload coinciding with a length clock is ignored if already nonzero. */
+    uint8_t length_halt;
+    uint8_t length_writes; /* bits 0..3 reload, bit 4 refresh halt inputs */
+    uint8_t length_reload[4], length_reload_old[4];
+    bool length_clocked;
+
 
     /* Sample generation.
      * Philosophy: we compute ONE raw DAC sample per CPU cycle
@@ -226,6 +244,7 @@ typedef struct APU {
      * folded back into the audible band like a point sampler would. */
     int    sample_accumulator;  /* fractional phase in input samples */
     int    sample_rate;         /* effective output rate (adjusted for sync) */
+    bool   pal;                /* 2A07 frame sequencer and noise/DMC divisors */
     int    cpu_clock;           /* CPU clock rate (NTSC or PAL) */
 
     /* Change detection: true when any channel has reported a state
@@ -455,19 +474,40 @@ static inline void apu_clock_quarter_frame(APU *apu) {
 }
 
 static inline void apu_clock_half_frame(APU *apu) {
+    apu->length_clocked = true;
     HOOK_APU_FRAME(0, false, true, apu->frame.irq_flag);
-    apu_clock_length(apu_pulse_length_halt(&apu->pulse[0]),
+    apu_clock_length(apu->length_halt & 1,
                      &apu->pulse[0].length_counter);
-    apu_clock_length(apu_pulse_length_halt(&apu->pulse[1]),
+    apu_clock_length(apu->length_halt & 2,
                      &apu->pulse[1].length_counter);
-    apu_clock_length(apu_triangle_control_flag(&apu->triangle),
+    apu_clock_length(apu->length_halt & 4,
                      &apu->triangle.length_counter);
-    apu_clock_length(apu_noise_length_halt(&apu->noise),
+    apu_clock_length(apu->length_halt & 8,
                      &apu->noise.length_counter);
 
     apu_clock_sweep(&apu->pulse[0], true);   /* Pulse 1: negate adds 1 */
     apu_clock_sweep(&apu->pulse[1], false);  /* Pulse 2: negate doesn't */
     apu->dirty = true;  /* length counters and sweep can change output */
+}
+
+static inline void apu_apply_length_writes(APU *apu) {
+    if (!apu->length_writes) return;
+    int *counters[] = {&apu->pulse[0].length_counter, &apu->pulse[1].length_counter,
+                       &apu->triangle.length_counter, &apu->noise.length_counter};
+    bool enabled[] = {apu->pulse[0].enabled, apu->pulse[1].enabled,
+                      apu->triangle.enabled, apu->noise.enabled};
+    for (int i=0; i<4; ++i) {
+        if ((apu->length_writes & (1u<<i)) && enabled[i] &&
+            (!apu->length_clocked || !apu->length_reload_old[i])) {
+            *counters[i] = apu->length_reload[i];
+            apu->dirty = true;
+        }
+    }
+    apu->length_halt = (apu_pulse_length_halt(&apu->pulse[0]) ? 1 : 0) |
+        (apu_pulse_length_halt(&apu->pulse[1]) ? 2 : 0) |
+        (apu_triangle_control_flag(&apu->triangle) ? 4 : 0) |
+        (apu_noise_length_halt(&apu->noise) ? 8 : 0);
+    apu->length_writes = 0;
 }
 
 /* ============================================================================
@@ -487,7 +527,9 @@ static inline void apu_clock_frame_counter(APU *apu) {
         return;
     }
 
-    const int *steps = fc->five_step ? apu_frame_steps_mode1 : apu_frame_steps_mode0;
+    const int *steps = apu->pal
+        ? (fc->five_step ? apu_frame_steps_mode1_pal : apu_frame_steps_mode0_pal)
+        : (fc->five_step ? apu_frame_steps_mode1 : apu_frame_steps_mode0);
 
     if (fc->five_step) {
         if (fc->cycle == steps[0]) {
@@ -557,21 +599,21 @@ static inline bool apu_clock_pulse_timer(APU_Pulse *p) {
 }
 
 static inline bool apu_clock_triangle_timer(APU_Triangle *t) {
-    if (!t->enabled || t->length_counter == 0 || t->linear_counter == 0)
-        return false;
     if (--t->timer <= 0) {
         t->timer = t->timer_reload + 1;
-        t->sequence_step = (t->sequence_step + 1) & 31;
-        return true;  /* triangle ramp stepped */
+        if (t->length_counter > 0 && t->linear_counter > 0) {
+            t->sequence_step = (t->sequence_step + 1) & 31;
+            return true;  /* Counters gate the sequencer, not its timer. */
+        }
     }
     return false;
 }
 
-static inline bool apu_clock_noise_timer(APU_Noise *n) {
+static inline bool apu_clock_noise_timer(APU_Noise *n, bool pal) {
     if (!n->enabled || n->length_counter == 0)
         return false;
     if (--n->timer <= 0) {
-        n->timer = apu_noise_period_table[n->reg2 & 0x0F];
+        n->timer = (pal ? apu_noise_period_table_pal : apu_noise_period_table)[n->reg2 & 0x0F];
         int feedback_bit = (n->reg2 & 0x80) ? ((n->lfsr >> 6) & 1)
                                               : ((n->lfsr >> 1) & 1);
         int bit0 = n->lfsr & 1;
@@ -632,8 +674,8 @@ static inline int apu_pulse_output(const APU_Pulse *p) {
 }
 
 static inline int apu_triangle_output(const APU_Triangle *t) {
-    if (!t->enabled || t->length_counter == 0 || t->linear_counter == 0)
-        return 0;
+    /* A stopped triangle holds its last DAC level; gating it to zero
+     * adds a discontinuity every time the music engine silences it. */
     return apu_triangle_table[t->sequence_step];
 }
 
@@ -958,7 +1000,9 @@ static inline void apu_step(APU *apu) {
     if (apu->dmc_abort_delay && --apu->dmc_abort_delay == 0)
         apu->dmc_abort_pending = true;
 
+    apu->length_clocked = false;
     apu_clock_frame_counter(apu);  /* may set apu->dirty via quarter/half frame */
+    apu_apply_length_writes(apu);
 
     /* Clock all channels. Each timer returns true if its state change
      * would affect the mixer output (sequence step, LFSR shift, DMC
@@ -967,7 +1011,7 @@ static inline void apu_step(APU *apu) {
     step_dirty |= apu_clock_pulse_timer(&apu->pulse[0]);
     step_dirty |= apu_clock_pulse_timer(&apu->pulse[1]);
     step_dirty |= apu_clock_triangle_timer(&apu->triangle);
-    step_dirty |= apu_clock_noise_timer(&apu->noise);
+    step_dirty |= apu_clock_noise_timer(&apu->noise, apu->pal);
 
     step_dirty |= apu_clock_dmc_timer(apu);
 
@@ -1096,7 +1140,7 @@ static inline void apu_write(APU *apu, uint16_t addr, uint8_t val) {
     /* Pulse 1: $4000-$4003 */
     case 0x4000:
         apu->pulse[0].reg[0] = val;
-        apu->pulse[0].envelope_start = true;
+        apu->length_writes |= 16;
         break;
     case 0x4001:
         apu->pulse[0].reg[1] = val;
@@ -1117,14 +1161,17 @@ static inline void apu_write(APU *apu, uint16_t addr, uint8_t val) {
         apu_update_pulse_timer(&apu->pulse[0]);
         apu->pulse[0].sequence_step = 0;
         apu->pulse[0].envelope_start = true;
-        if (apu->pulse[0].enabled)
-            apu->pulse[0].length_counter = apu_length_table[val >> 3];
+        if (apu->pulse[0].enabled) {
+            apu->length_reload[0] = apu_length_table[val >> 3];
+            apu->length_reload_old[0] = apu->pulse[0].length_counter;
+            apu->length_writes |= 1;
+        }
         break;
 
     /* Pulse 2: $4004-$4007 */
     case 0x4004:
         apu->pulse[1].reg[0] = val;
-        apu->pulse[1].envelope_start = true;
+        apu->length_writes |= 16;
         break;
     case 0x4005:
         apu->pulse[1].reg[1] = val;
@@ -1145,13 +1192,17 @@ static inline void apu_write(APU *apu, uint16_t addr, uint8_t val) {
         apu_update_pulse_timer(&apu->pulse[1]);
         apu->pulse[1].sequence_step = 0;
         apu->pulse[1].envelope_start = true;
-        if (apu->pulse[1].enabled)
-            apu->pulse[1].length_counter = apu_length_table[val >> 3];
+        if (apu->pulse[1].enabled) {
+            apu->length_reload[1] = apu_length_table[val >> 3];
+            apu->length_reload_old[1] = apu->pulse[1].length_counter;
+            apu->length_writes |= 2;
+        }
         break;
 
     /* Triangle: $4008-$400B */
     case 0x4008:
         apu->triangle.reg0 = val;
+        apu->length_writes |= 16;
         break;
     case 0x4009:
         /* Unused */
@@ -1163,30 +1214,35 @@ static inline void apu_write(APU *apu, uint16_t addr, uint8_t val) {
     case 0x400B:
         apu->triangle.reg3 = val;
         apu->triangle.timer_reload = ((val & 0x07) << 8) | apu->triangle.reg2;
-        if (apu->triangle.enabled)
-            apu->triangle.length_counter = apu_length_table[val >> 3];
-        apu->triangle.sequence_step = 0;
+        if (apu->triangle.enabled) {
+            apu->length_reload[2] = apu_length_table[val >> 3];
+            apu->length_reload_old[2] = apu->triangle.length_counter;
+            apu->length_writes |= 4;
+        }
+        /* $400B reloads length/linear counters, not waveform phase or timer. */
         apu->triangle.linear_reload = true;
-        apu->triangle.timer = apu->triangle.timer_reload + 1;
         break;
 
     /* Noise: $400C-$400F */
     case 0x400C:
         apu->noise.reg0 = val;
-        apu->noise.envelope_start = true;
+        apu->length_writes |= 16;
         break;
     case 0x400D:
         /* Unused */
         break;
     case 0x400E:
         apu->noise.reg2 = val;
-        apu->noise.timer = apu_noise_period_table[val & 0x0F];
+        apu->noise.timer = (apu->pal ? apu_noise_period_table_pal : apu_noise_period_table)[val & 0x0F];
         break;
     case 0x400F:
         apu->noise.reg3 = val;
         apu->noise.envelope_start = true;
-        if (apu->noise.enabled)
-            apu->noise.length_counter = apu_length_table[val >> 3];
+        if (apu->noise.enabled) {
+            apu->length_reload[3] = apu_length_table[val >> 3];
+            apu->length_reload_old[3] = apu->noise.length_counter;
+            apu->length_writes |= 8;
+        }
         break;
 
     /* DMC: $4010-$4013 */
@@ -1194,7 +1250,7 @@ static inline void apu_write(APU *apu, uint16_t addr, uint8_t val) {
         apu->dmc.reg[0] = val;
         apu->dmc.irq_enabled = (val & 0x80) != 0;
         apu->dmc.loop_flag = (val & 0x40) != 0;
-        apu->dmc.timer_reload = apu_dmc_rate_table[val & 0x0F];
+        apu->dmc.timer_reload = (apu->pal ? apu_dmc_rate_table_pal : apu_dmc_rate_table)[val & 0x0F];
         if (!apu->dmc.irq_enabled)
             apu->dmc.irq_flag = false;
         break;
@@ -1338,16 +1394,18 @@ static inline void apu_reset(APU *apu) {
     void *saved_ud = apu->audio_user_data;
     int saved_rate = apu->sample_rate;
     int saved_clock = apu->cpu_clock;
+    bool saved_pal = apu->pal;
 
     memset(apu, 0, sizeof(APU));
     apu->sample_rate = saved_rate ? saved_rate : APU_SAMPLE_RATE;
     apu->cpu_clock = saved_clock ? saved_clock : APU_CPU_CLOCK_NTSC;
+    apu->pal = saved_pal;
     apu->noise.lfsr = 1;
     apu->dmc.sample_buffer_empty = true;
     apu->dmc.silence_flag = true;
     apu->dmc.bits_remaining = 8;
-    apu->dmc.timer = apu_dmc_rate_table[0];
-    apu->dmc.timer_reload = apu_dmc_rate_table[0];
+    apu->dmc.timer = apu->pal ? apu_dmc_rate_table_pal[0] : apu_dmc_rate_table[0];
+    apu->dmc.timer_reload = apu->dmc.timer;
 
     /* Re-design resampling FIR, DAC tables, filter config, and
      * analog character layer (memset wiped them all). */
@@ -1371,6 +1429,7 @@ static inline void apu_reset(APU *apu) {
 
     /* Restore triangle control flag (unaffected by reset) */
     apu->triangle.reg0 = saved_tri_reg0;
+    apu->length_halt = (saved_tri_reg0 & 0x80) ? 4 : 0;
 
     /* Restore audio callback */
     apu->audio_callback = saved_cb;
@@ -1383,9 +1442,14 @@ static inline void apu_set_audio_callback(APU *apu, apu_audio_callback_t cb, voi
     apu->audio_user_data = user_data;
 }
 
-/* Set region (affects CPU clock rate used for sample generation) */
+/* Set 2A03/2A07 timing; preserve the fractional output sample position. */
 static inline void apu_set_region(APU *apu, int region) {
-    apu->cpu_clock = (region == 1) ? APU_CPU_CLOCK_PAL : APU_CPU_CLOCK_NTSC;
+    int clock = region == 1 ? APU_CPU_CLOCK_PAL : APU_CPU_CLOCK_NTSC;
+    if (apu->cpu_clock > 0)
+        apu->sample_accumulator = (int)((int64_t)apu->sample_accumulator * clock / apu->cpu_clock);
+    apu->cpu_clock = clock;
+    apu->pal = region == 1;
+    apu->dmc.timer_reload = (apu->pal ? apu_dmc_rate_table_pal : apu_dmc_rate_table)[apu->dmc.reg[0] & 15];
 }
 
 #endif /* NES_APU_H */

@@ -432,6 +432,18 @@ void main() {
         color += env * edge_boost * corner_fade * glass_glare * 1.6;
     }
 
+    // Fixed visible glass aperture, independent of raster size/position and
+    // overscan. Integrate its hard boundary over one host pixel; the beam has
+    // already supplied the physical raster-edge falloff. Outside, retain the
+    // same diffuse room-lit surround as the render-target clear (no emission
+    // or specular glass reflection). Do this in linear light before encoding.
+    vec2 face=uv-0.5;
+    float face_r2=dot(face,face);
+    face*=1.0+vec2(barrel,barrel_v!=0.0 ? barrel_v : barrel)*face_r2;
+    face+=0.5;
+    vec2 coverage=clamp(0.5+min(face,1.0-face)/max(fwidth(face),vec2(1e-6)),0.0,1.0);
+    color=mix(vec3(ambient_light*.15),color,coverage.x*coverage.y);
+
     // Negative components after the phosphor-primary transform can describe
     // real colours outside sRGB. Extended-linear HDR carries them to the
     // host colour manager; clipping them here changes their chromaticity.

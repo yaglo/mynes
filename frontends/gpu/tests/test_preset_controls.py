@@ -12,6 +12,9 @@ fields=set(re.findall(r'MATCH_\w+\(PJSON_SEC_TV,\s*"(\w+)"',schema))
 fields.discard('mask_pitch_mm')
 missing=[f for f in sorted(fields) if '&vc->tv.'+f not in source]
 assert not missing, f'Saved TV parameters missing from OSD: {missing}'
+vhs_fields=set(re.findall(r'MATCH_\w+\(PJSON_SEC_VHS,\s*"(\w+)"',schema))
+missing=[f for f in sorted(vhs_fields) if '&vc->vhs.'+f not in source]
+assert not missing, f'Saved VHS parameters missing from OSD: {missing}'
 ranges={}
 pattern=r'MI_FLOAT\("[^"\n]*",\s*&vc->(tv\.\w+|cable\.\w+|rf\.\w+|vhs\.\w+|\w+),\s*([^,]+),\s*([^,]+),\s*([^,]+),'
 for field,step,lo,hi in re.findall(pattern,source):

@@ -103,3 +103,13 @@ bool mapper_supported(uint8_t number) {
            number == 3 || number == 4 || number == 5 ||
            number == 7 || number == 10 || number == 69 || number == 227;
 }
+
+void mapper_ppu_bus_read(Mapper *m, uint16_t addr) {
+    const MapperOps *ops = mapper_ops_for(m->number);
+    if (ops->ppu_bus_read) ops->ppu_bus_read(m, addr);
+}
+
+void mapper_cpu_clock(Mapper *m) {
+    const MapperOps *ops = mapper_ops_for(m->number);
+    if (ops->cpu_clock) ops->cpu_clock(m);
+}

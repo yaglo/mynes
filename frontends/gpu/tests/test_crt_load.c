@@ -146,6 +146,13 @@ int test_crt_load(SDL_GPUDevice *gpu) {
     // the source center, and the illuminated raster still fills the tube.
     CHECK(landing[(120*256+192)*4]<192.5f*sp.samples_per_pixel-8);
     CHECK(landing[(120*256+254)*4+3]>.99f);
+    // Underscan changes the landing coordinates, not beam intensity through
+    // an arbitrary UV-width raster fade. The beam sampler owns source bounds.
+    c.tv.overscan=0;c.tv.h_size=.8f;c.tv.v_size=.8f;
+    CHECK(chain_run(&v.sig_chain,gpu));
+    CHECK(gpu_buffer_download(gpu,v.buf_deflection_x,landing,256*240*4*sizeof(float)));
+    CHECK(landing[(120*256+26)*4+3]>.99f);
+    CHECK(landing[(25*256+128)*4+3]>.99f);
     video_gpu_reset_temporal_state(&v,gpu);
     CHECK(!v.deflection_cache_valid);
     CHECK(gpu_buffer_download(gpu,v.buf_crt_load,load,map_count*sizeof(float)));

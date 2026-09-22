@@ -7,6 +7,8 @@
 #include <string.h>
 #include <math.h>
 
+enum { PLAYBACK_PICTURES = 3 };
+
 struct Playback {
     NES *nes;
     SDL_GPUDevice *gpu;
@@ -15,9 +17,10 @@ struct Playback {
     SDL_Thread *thread;
     SDL_Mutex *mutex;
     SDL_Condition *condition;
-    bool active, busy, stop, fresh;
+    bool active, busy, stop;
     PlaybackControls controls;
-    PlaybackFrame frame;
+    PlaybackFrame frames[PLAYBACK_PICTURES];
+    unsigned first_picture, picture_count;
     unsigned number, limit, capture_from;
     unsigned review_start_frame;
     struct { unsigned frame, buttons; } review_events[128];
@@ -127,15 +130,22 @@ static int run(void *user) {
             continue;
         }
         /* Offline paired screenshots must consume both actual PPU frames.
-         * Normal playback always overwrites the mailbox with the newest frame. */
-        if (p->capture_from && p->number >= p->capture_from && p->fresh) {
+         * Normal playback retains a few consecutive phases across short UI stalls.
+         * Matched-refresh hold applies backpressure instead of dropping a phase.
+         * Pause/stop still wake this wait; other modes keep the audio clock free. */
+        if ((p->capture_from && p->number >= p->capture_from && p->picture_count) ||
+            (p->controls.display_paced && p->picture_count == PLAYBACK_PICTURES)) {
+            /* After display backpressure, the next audio block gets a fresh
+             * deadline too; an expired producer deadline must not persist. */
+            deadline = 0;
             SDL_WaitCondition(p->condition, p->mutex);
             continue;
         }
         PlaybackControls c = p->controls;
         Uint64 now = SDL_GetTicksNS();
         Uint64 native_period = (Uint64)(signal_region_frame_ms(c.region) * 1000000.0);
-        Uint64 period = gpu_presentation_period_ns(c.presentation_mode, native_period);
+        Uint64 period = gpu_presentation_playback_period(c.presentation_mode, native_period,
+            c.display_hz, c.display_paced);
         if (!deadline || now > deadline + 3 * period) deadline = now;
         if (now < deadline) {
             Sint32 remaining_ms=(Sint32)((deadline-now+999999)/1000000);
@@ -170,44 +180,35 @@ static int run(void *user) {
         }
         p->count = 0;
         Uint64 start_ns = SDL_GetTicksNS(), start = SDL_GetPerformanceCounter();
-        uint64_t cpu_before=p->nes->cpu.cycles;
-        uint64_t dots_before=p->nes->ppu.next_dot_master_tick/4;
         nes_run_frame(p->nes);
         Uint64 duration = SDL_GetPerformanceCounter() - start;
-        /* Convert APU cycles to wall-clock audio using the core's observed
-         * CPU/PPU cadence. The current core advances three dots per CPU cycle
-         * in PAL too; assuming hardware's 16:5 ratio overproduces audio by
-         * 6.67%. This adapter fixes stream duration, not core PAL timing. */
-        uint64_t dots=p->nes->ppu.next_dot_master_tick/4-dots_before;
-        uint64_t cycles=p->nes->cpu.cycles-cpu_before;
-        if(dots && cycles) {
-            double dot_hz=signal_region_sample_rate_hz(c.region)/(c.region ? 10 : 8);
-            int clock=(int)llround(cycles*dot_hz/dots);
-            if(clock>1000000 && clock<2500000 && abs(clock-p->nes->apu.cpu_clock)>200) {
-                p->nes->apu.sample_accumulator=(int)((int64_t)p->nes->apu.sample_accumulator*clock/p->nes->apu.cpu_clock);
-                p->nes->apu.cpu_clock=clock;
-            }
-        }
         ++p->number;
         Uint64 audio_start=SDL_GetTicksNS();
         submit_audio(p, &c, deadline);
         Uint64 ready_ns=SDL_GetTicksNS();
         SDL_LockMutex(p->mutex);
-        memcpy(p->frame.rgb, p->nes->ppu.framebuffer, sizeof(p->frame.rgb));
-        memcpy(p->frame.codes, p->nes->ppu.index_framebuffer, sizeof(p->frame.codes));
-        p->frame.number = p->number;
-        p->frame.backdrop = (p->nes->ppu.palette[0] & (p->nes->ppu.mask & 1 ? 0x30 : 0x3f))
+        if (p->capture_from && p->number <= p->capture_from)
+            p->picture_count = p->first_picture = 0;
+        if (p->picture_count == PLAYBACK_PICTURES) {
+            p->first_picture = (p->first_picture + 1) % PLAYBACK_PICTURES;
+            p->picture_count--;
+        }
+        PlaybackFrame *picture = &p->frames[(p->first_picture + p->picture_count) % PLAYBACK_PICTURES];
+        memcpy(picture->rgb, p->nes->ppu.framebuffer, sizeof(picture->rgb));
+        memcpy(picture->codes, p->nes->ppu.index_framebuffer, sizeof(picture->codes));
+        picture->number = p->number;
+        picture->backdrop = (p->nes->ppu.palette[0] & (p->nes->ppu.mask & 1 ? 0x30 : 0x3f))
                          | ((p->nes->ppu.mask & 0xe0) << 1);
-        p->frame.audio_energy = p->energy;
-        p->frame.emulation_ticks = duration;
-        p->frame.start_ns=start_ns;
-        p->frame.ready_ns=ready_ns;
-        p->frame.audio_ns=ready_ns-audio_start;
-        /* The core's master-tick unit is four ticks per dot in both regions. */
-        dots = p->nes->ppu.next_dot_master_tick / 4;
+        picture->audio_energy = p->energy;
+        picture->emulation_ticks = duration;
+        picture->start_ns=start_ns;
+        picture->ready_ns=ready_ns;
+        picture->audio_ns=ready_ns-audio_start;
+        /* Convert the region's hardware master divider to PPU dots. */
+        uint64_t dots = p->nes->ppu.next_dot_master_tick / (c.region ? 5 : 4);
         uint64_t position = (uint64_t)p->nes->ppu.scanline * 341 + p->nes->ppu.dot;
-        p->frame.phase = dots >= position ? (int)(((dots - position) % 12) * (c.region ? 10 : 8) % 12) : -1;
-        p->fresh = true;
+        picture->phase = dots >= position ? (int)(((dots - position) % 12) * (c.region ? 10 : 8) % 12) : -1;
+        p->picture_count++;
         if (p->limit && p->number >= p->limit) p->active = false;
         SDL_BroadcastCondition(p->condition);
     }
@@ -239,7 +240,9 @@ Playback *playback_create(NES *nes, SDL_GPUDevice *gpu, AudioGPUChain *audio,
 
 void playback_controls(Playback *p, const PlaybackControls *controls) {
     SDL_LockMutex(p->mutex);
+    bool pacing_changed = p->controls.display_paced != controls->display_paced;
     p->controls = *controls;
+    if (pacing_changed) SDL_BroadcastCondition(p->condition);
     SDL_UnlockMutex(p->mutex);
 }
 void playback_pause(Playback *p) {
@@ -247,7 +250,7 @@ void playback_pause(Playback *p) {
     p->active = false;
     SDL_BroadcastCondition(p->condition);
     while (p->busy) SDL_WaitCondition(p->condition, p->mutex);
-    p->fresh = false;
+    p->picture_count = p->first_picture = 0;
     SDL_UnlockMutex(p->mutex);
 }
 void playback_resume(Playback *p) {
@@ -256,10 +259,54 @@ void playback_resume(Playback *p) {
     SDL_BroadcastCondition(p->condition);
     SDL_UnlockMutex(p->mutex);
 }
+void playback_load_cartridge(Playback *p, const ROM *rom, int region) {
+    playback_pause(p);
+    /* A reset flag alone cannot escape a jammed CPU microinstruction, and
+     * leaves the old cartridge's DMA/NMI/bus state alive. Cartridge changes
+     * start a new machine while retaining the worker and its audio stream. */
+    nes_init(p->nes);
+    nes_load_mapper(p->nes,rom->mapper,rom->prg_rom,rom->prg_size,
+                    rom->chr_rom,rom->chr_size,rom->mirroring);
+    ppu_set_region(&p->nes->ppu,region ? PPU_REGION_PAL : PPU_REGION_NTSC);
+    nes_reset(p->nes);
+    apu_set_region(&p->nes->apu,region);
+    apu_set_audio_callback(&p->nes->apu,sample,p);
+    reset_audio(p);
+}
+void playback_reset_console(Playback *p) {
+    playback_pause(p);
+    NES *nes=p->nes;
+    /* Frontend reset: restart the CPU reset sequence even from KIL, retaining
+     * cartridge/work RAM. Keep the shared master-clock timeline intact. */
+    nes->cpu.uPC=0;
+    nes->cpu.reset_pending=true;
+    nes->cpu.rdy=true;
+    nes->cpu.irq_pending=nes->cpu.nmi_pending=false;
+    nes->cpu.irq_sampled=nes->cpu.nmi_sampled=0;
+    nes->cpu.irq_armed=nes->cpu.nmi_armed=0;
+    memset(&nes->dma,0,sizeof(nes->dma));
+    nes->oam_dma_pending=false;
+    nes->prev_nmi=nes->nmi_edge_detected=false;
+    nes->irq_inhibit_cycles=0;
+    nes->controller_strobe=nes->controller_strobed=0;
+    if(nes->mapper_loaded) {
+        mapper_reset(&nes->mapper);
+        nes->mapper.irq_pending=false;
+        nes->ppu.mirroring=mapper_get_mirroring(&nes->mapper);
+    }
+    ppu_reset(&nes->ppu);
+    apu_reset(&nes->apu);
+    reset_audio(p);
+}
 bool playback_read(Playback *p, PlaybackFrame *frame) {
     SDL_LockMutex(p->mutex);
-    bool fresh = p->fresh;
-    if (fresh) { *frame = p->frame; p->fresh = false; SDL_BroadcastCondition(p->condition); }
+    bool fresh = p->picture_count != 0;
+    if (fresh) {
+        *frame = p->frames[p->first_picture];
+        p->first_picture = (p->first_picture + 1) % PLAYBACK_PICTURES;
+        p->picture_count--;
+        SDL_BroadcastCondition(p->condition);
+    }
     SDL_UnlockMutex(p->mutex);
     return fresh;
 }

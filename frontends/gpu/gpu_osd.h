@@ -40,7 +40,10 @@ static inline bool gpu_osd_handle_key(SDL_Scancode key, bool *editing) {
         return true;
     case SDL_SCANCODE_UP:
     case SDL_SCANCODE_DOWN:
-        if (!*editing) osd_menu_move(key==SDL_SCANCODE_UP ? -1 : 1);
+        osd_menu_move(key==SDL_SCANCODE_UP ? -1 : 1);
+        /* Keep the compact adjustment panel when moving between settings.
+         * A submenu/action returns to the list; navigation never activates it. */
+        *editing = *editing && gpu_osd_editable(osd_menu_current_item());
         return true;
     default: return false;
     }

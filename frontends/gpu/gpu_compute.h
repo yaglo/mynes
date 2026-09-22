@@ -287,6 +287,8 @@ typedef struct { uint32_t count, samples_per_line, tap_count, reserved; } GpuRFI
 typedef struct {
     uint32_t count, samples_per_line, tap_count, frame_seed;
     float delay_samples, timebase_samples, phase_radians, noise;
+    float sample_rate, drift_frames, luma_noise_rms, chroma_noise_rms;
+    float head_switch_samples, dropout_rate, dropout_depth, frame_rate;
 } GpuVHSParams;
 
 /* Horizontal AFC is independent of the colour-burst PLL. Zero response

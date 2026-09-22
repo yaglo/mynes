@@ -172,6 +172,15 @@ static void make_distinctive_preset(PhysicalPreset *p)
     p->vhs.timebase_ns = 35;
     p->vhs.chroma_phase_deg = 1.5;
     p->vhs.noise = 0.004;
+    p->vhs.luma_noise_rms = 0.008;
+    p->vhs.chroma_noise_rms = 0.004;
+    p->vhs.drift_ms = 180;
+    p->vhs.head_switch_ns = 100;
+    p->vhs.dropout_rate = 0.15;
+    p->vhs.dropout_depth = 0.65;
+    p->vhs.luma_peaking = 0.12;
+    p->vhs.luma_smear = 0.08;
+
     p->tv.persistence_ms  = 1.7f;
 
     p->tv.halation   = 0.09f;
@@ -343,6 +352,15 @@ static int compare_presets(const PhysicalPreset *a, const PhysicalPreset *b,
     ASSERT_NEAR(b->vhs.timebase_ns,a->vhs.timebase_ns,FLOAT_TOL,"vhs.timebase_ns");
     ASSERT_NEAR(b->vhs.chroma_phase_deg,a->vhs.chroma_phase_deg,FLOAT_TOL,"vhs.chroma_phase_deg");
     ASSERT_NEAR(b->vhs.noise,a->vhs.noise,FLOAT_TOL,"vhs.noise");
+    ASSERT_NEAR(b->vhs.luma_noise_rms,a->vhs.luma_noise_rms,FLOAT_TOL,"vhs.luma_noise_rms");
+    ASSERT_NEAR(b->vhs.chroma_noise_rms,a->vhs.chroma_noise_rms,FLOAT_TOL,"vhs.chroma_noise_rms");
+    ASSERT_NEAR(b->vhs.drift_ms,a->vhs.drift_ms,FLOAT_TOL,"vhs.drift_ms");
+    ASSERT_NEAR(b->vhs.head_switch_ns,a->vhs.head_switch_ns,FLOAT_TOL,"vhs.head_switch_ns");
+    ASSERT_NEAR(b->vhs.dropout_rate,a->vhs.dropout_rate,FLOAT_TOL,"vhs.dropout_rate");
+    ASSERT_NEAR(b->vhs.dropout_depth,a->vhs.dropout_depth,FLOAT_TOL,"vhs.dropout_depth");
+    ASSERT_NEAR(b->vhs.luma_peaking,a->vhs.luma_peaking,FLOAT_TOL,"vhs.luma_peaking");
+    ASSERT_NEAR(b->vhs.luma_smear,a->vhs.luma_smear,FLOAT_TOL,"vhs.luma_smear");
+
     ASSERT_NEAR(b->tv.persistence_ms,     a->tv.persistence_ms,     FLOAT_TOL, "tv.persistence_ms");
 
     ASSERT_NEAR(b->tv.halation,           a->tv.halation,           FLOAT_TOL, "tv.halation");
@@ -464,6 +482,11 @@ static int test_save_load_roundtrip(void)
     ASSERT_TRUE(preset_json_load(&dst, path) && dst.vhs.enabled == 1, "numeric VHS compatibility");
     ASSERT_TRUE(write_text_file(path, "{\"vhs\":{\"enabled\":false}}"), "write disabled VHS toggle");
     ASSERT_TRUE(preset_json_load(&dst, path) && dst.vhs.enabled == 0, "boolean VHS disable");
+
+    ASSERT_TRUE(dst.vhs.luma_noise_rms==0 && dst.vhs.chroma_noise_rms==0 &&
+                dst.vhs.head_switch_ns==0 && dst.vhs.dropout_rate==0 &&
+                dst.vhs.luma_peaking==0 && dst.vhs.luma_smear==0,
+                "missing VHS defects default off in older presets");
 
     unlink(path);
     return 1;

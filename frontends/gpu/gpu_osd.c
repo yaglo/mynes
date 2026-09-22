@@ -34,11 +34,11 @@ static void text(uint32_t *rgba,int x,int y,const char *value,uint8_t index,int 
     }
 }
 static void adjustment(uint32_t *rgba,const OSDMenuItem *item) {
-    const int x=12,y=184,w=232;
+    const int x=12,y=175,w=232;
     char label[37],value[40];
     snprintf(label,sizeof(label),"%.36s",item->label);
     osd_menu_format_value(item,value,sizeof(value));
-    fill(rgba,x,y,w,40,0x0f);
+    fill(rgba,x,y,w,49,0x0f);
     fill(rgba,x,y,w,1,0x2c);
     text(rgba,x+8,y+5,label,0x30,1);
     bool numeric=item->type==OSD_MI_FLOAT || item->type==OSD_MI_INT;
@@ -50,7 +50,8 @@ static void adjustment(uint32_t *rgba,const OSDMenuItem *item) {
     }
     int value_x=numeric ? x+w-8-osd_nesfb_text_width(value,1) : x+8;
     text(rgba,value_x,y+16,value,0x2c,1);
-    text(rgba,x+8,y+29,"L/R ADJUST  ENTER/ESC RETURN",0x10,1);
+    text(rgba,x+8,y+29,"L/R ADJUST  U/D SETTING",0x10,1);
+    text(rgba,x+8,y+38,"ENTER/ESC RETURN  M CLOSE",0x10,1);
 }
 void gpu_osd_blend_rgb(uint8_t *rgb,const uint32_t *rgba) {
     for(int p=0;p<GPU_OSD_PIXELS;p++) {

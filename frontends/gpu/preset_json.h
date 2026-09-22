@@ -437,6 +437,14 @@ static inline bool preset_json_save(const PhysicalPreset *p, const char *path)
     fprintf(f, "        \"chroma_delay_ns\": %.6f,\n", p->vhs.chroma_delay_ns);
     fprintf(f, "        \"timebase_ns\": %.6f,\n", p->vhs.timebase_ns);
     fprintf(f, "        \"chroma_phase_deg\": %.6f,\n", p->vhs.chroma_phase_deg);
+    fprintf(f, "        \"luma_noise_rms\": %.6f,\n", p->vhs.luma_noise_rms);
+    fprintf(f, "        \"chroma_noise_rms\": %.6f,\n", p->vhs.chroma_noise_rms);
+    fprintf(f, "        \"drift_ms\": %.6f,\n", p->vhs.drift_ms);
+    fprintf(f, "        \"head_switch_ns\": %.6f,\n", p->vhs.head_switch_ns);
+    fprintf(f, "        \"dropout_rate\": %.6f,\n", p->vhs.dropout_rate);
+    fprintf(f, "        \"dropout_depth\": %.6f,\n", p->vhs.dropout_depth);
+    fprintf(f, "        \"luma_peaking\": %.6f,\n", p->vhs.luma_peaking);
+    fprintf(f, "        \"luma_smear\": %.6f,\n", p->vhs.luma_smear);
     fprintf(f, "        \"noise\": %.6f\n", p->vhs.noise);
     fprintf(f, "    },\n");
 
@@ -717,6 +725,15 @@ static inline void preset_json__assign(PhysicalPreset *p, PresetJsonSection sect
         else MATCH_FLOAT(PJSON_SEC_VHS, "timebase_ns", p->vhs.timebase_ns)
         else MATCH_FLOAT(PJSON_SEC_VHS, "chroma_phase_deg", p->vhs.chroma_phase_deg)
         else MATCH_FLOAT(PJSON_SEC_VHS, "noise", p->vhs.noise)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "luma_noise_rms", p->vhs.luma_noise_rms)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "chroma_noise_rms", p->vhs.chroma_noise_rms)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "drift_ms", p->vhs.drift_ms)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "head_switch_ns", p->vhs.head_switch_ns)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "dropout_rate", p->vhs.dropout_rate)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "dropout_depth", p->vhs.dropout_depth)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "luma_peaking", p->vhs.luma_peaking)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "luma_smear", p->vhs.luma_smear)
+
         /* ---- RF modulator ---- */
         else MATCH_BOOL (PJSON_SEC_RF, "enabled",              p->rf.enabled)
         else MATCH_FLOAT(PJSON_SEC_RF, "carrier_freq",         p->rf.carrier_freq)

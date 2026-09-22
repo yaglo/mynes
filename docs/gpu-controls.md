@@ -3,8 +3,20 @@
 **M** opens the translucent TV menu. Use Up/Down to choose a row and Enter to
 open a submenu or enter adjustment mode. On a parameter, Left/Right also starts
 adjustment immediately. The menu then collapses to a bottom strip with only the
-parameter, value and range bar; the rest of the game stays visible. Enter or
+parameter, value and range bar; the rest of the game stays visible. Up/Down
+moves to the previous/next setting while staying in adjustment mode. Enter or
 Escape returns to the same row. M closes either view.
+
+**M → Reset console (F2)** or **F2** restarts the loaded console with its cartridge
+and RAM retained. **O** opens the ROM browser; selecting another ROM initializes
+a fresh console and clears the old picture history before playback resumes.
+
+Region detection follows NES 2.0 timing metadata or the iNES PAL bit. Older
+ROM dumps often leave the PAL bit unset: explicit `(E)`, `(Europe)`, `(PAL)`,
+`(Australia)` and `(Europe, Australia)` filename tags supply a PAL fallback for
+those legacy headers. Directory names do not affect detection, and NES 2.0
+metadata takes precedence. The detected region applies to CPU/PPU timing, APU,
+and the signal chain; loading a CRT preset retains the running console's region.
 
 **M → Picture** puts the everyday TV controls first:
 
@@ -127,29 +139,27 @@ The companion PFM capture preserves signed HDR values; PPM clips to SDR white.
 ## High-refresh presentation
 
 **Host display → Presentation → 60 Hz hold** is the default and targets picture presentation at
-60 per second, without dark-frame insertion. The command-line equivalent is
-`--presentation 60hz`. Each picture remains visible until its replacement,
-including across additional panel refreshes. This is a session preference,
-independent of CRT presets; Hold remains the default.
+60 per second, without dark-frame insertion (`--presentation 60hz`). Each picture
+remains visible until its replacement. This is a session preference, independent
+of CRT presets. **Hold** uses the native source rate, except when locking to a
+panel within 0.5% of that rate (for example NTSC on a 60 Hz MacBook Air).
+Neither option freezes or averages the composite carrier phase.
 
-This mode preserves emulated PPU/APU cycles and genuine NTSC phase alternation.
-It does not freeze or average the composite pattern. The frontend paces NTSC
-frames at 60 instead of about 60.0988 frames/s (about 0.16% slower wall-clock
-playback), with matching audio resampling. This avoids periodic frame drops
-from running a faster source against a 60 Hz presentation clock. Absolute
-presentation deadlines prevent timer overshoot from accumulating. PAL remains
-about 50 frames/s. Audio continues independently if rendering stalls.
-The bundled macOS Metal backend submits work early and uses timed drawable
-presentation. Its initial deadline is two source intervals ahead (about 33 ms
-for NTSC), with two frames allowed in flight. Hold uses the native source
-interval; 60 Hz hold uses 16.667 ms for NTSC. Skipped source frames retain their
-place in the schedule, and long stalls reset the deadline. This trades video
-latency for consistent exposure of the alternating composite phases. Other
-backends and offscreen tests retain CPU submission pacing in 60 Hz mode.
-Neither path can hide a sustained rendering overload or OS scheduling stall.
-The option controls application timing; it does not change the monitor's
-refresh rate. A fixed 144 Hz panel still cannot show 60 evenly spaced updates
-without a matching display mode or variable refresh.
+On a matching fixed-refresh panel, both hold modes use ordinary vsync with one
+frame allowed in flight. The emulation worker follows the panel rate and waits
+when its three-picture queue is full, preserving consecutive composite phases.
+There is no second CPU or Metal presentation deadline racing against vblank.
+The small wall-clock speed adjustment is compensated in audio resampling;
+emulated CPU/APU/PPU cycle ratios are unchanged. A sustained rendering stall
+can still cause audio starvation, but cannot silently discard queued phases.
+
+For unmatched rates, the bundled Metal backend retains timed presentation with
+two source intervals of lead and automatic recovery after stalls. Other
+backends and offscreen reviews use CPU pacing for 60 Hz hold. PAL remains about
+50 frames/s on a 60 Hz panel, which necessarily produces uneven frame repeats.
+The option does not change the monitor's refresh rate: a fixed 144 Hz panel
+also cannot show 60 evenly spaced updates without a matching display mode or
+variable refresh.
 
 The serrated colored edges in composite video are consistent with cross-luma
 (dot crawl): see the [AD723 encoder datasheet](https://www.analog.com/media/en/technical-documentation/data-sheets/AD723.pdf).
@@ -158,6 +168,10 @@ intermittent shimmer. `MYNES_PRESENT_TRACE=/tmp/presentation.csv` records each
 submission's source frame, carrier phase, presentation mode and refresh slot.
 This helps distinguish missed pictures from normal phase changes; submission
 timestamps alone cannot establish what the panel actually displayed.
+The playback handoff retains three consecutive pictures rather than replacing
+an unread picture immediately. This absorbs brief scheduling jitter without
+discarding alternating carrier phases. Sustained overload still drops the
+oldest picture; emulation and audio never wait for the renderer.
 The bundled Metal backend also supports `MYNES_METAL_PRESENT_TRACE=1`, which
 logs actual drawable presentation timestamps, deadlines and source frames.
 `frontends/gpu/tests/test_metal_presentation.py` runs a windowed composite/GPU

@@ -3,12 +3,12 @@
  *
  * Used by: Castlevania 3, Laser Invasion, Just Breed, etc.
  *
- * Features implemented (sufficient for Castlevania 3 US):
+ * Features implemented:
  *   - PRG banking modes 0-3 (8/16/16+8/32 KB granularity)
- *   - 1KB CHR banking (registers $5120-$512B)
+ *   - CHR banking modes 0-3, separate BG/sprite banks in 8x16 mode
  *   - Scanline IRQ ($5203/$5204)
- *   - Nametable mapping ($5105) translated to standard mirroring
- *   - Fill-mode tile/attribute ($5106/$5107) — stored but not rendered
+ *   - Per-quadrant CIRAM/ExRAM/fill nametable mapping ($5105)
+ *   - Fill-mode tile/attribute ($5106/$5107)
  *   - PRG RAM at $6000-$7FFF
  *   - Multiplicand/multiplier hardware ($5205/$5206)
  *   - ExRAM ($5C00-$5FFF) as general-purpose RAM
@@ -17,10 +17,10 @@
  *   - ExRAM as extended nametable attributes (needs PPU changes)
  *   - Split-screen mode ($5200-$5202)
  *   - PCM audio channel
- *   - 8x16 sprite mode CHR bank switching
  */
 
 #include "mapper_ops.h"
+#include "../nes.h"
 #include <string.h>
 
 /* --------------------------------------------------------------------------
@@ -53,6 +53,10 @@ typedef struct {
     uint8_t scanline_counter;
     bool    in_frame;
     bool    irq_status;
+    uint16_t last_ppu_read;
+    uint8_t repeated_reads;
+    uint8_t idle_cpu_cycles;
+    bool ppu_read_since_clock;
 
     /* Multiplier */
     uint8_t multiplicand;      /* $5205 */
@@ -63,37 +67,6 @@ _Static_assert(sizeof(MMC5) <= 0x2000, "MMC5 state must fit in chr_ram");
 
 static MMC5 *mmc5(Mapper *m) {
     return (MMC5 *)(void *)m->chr_ram;
-}
-
-/* ========================================================================== */
-/* Nametable mapping → standard mirroring                                     */
-/*                                                                            */
-/* $5105 has four 2-bit fields: [NT3 NT2 NT1 NT0]. Values 0/1 select CIRAM   */
-/* pages; 2=ExRAM; 3=fill. We approximate by looking at which CIRAM pages     */
-/* are used and mapping to the closest standard mode.                         */
-/* ========================================================================== */
-
-static void mmc5_update_mirroring(Mapper *m) {
-    MMC5 *s = mmc5(m);
-    uint8_t v = s->nt_mapping;
-    uint8_t nt0 = (v >> 0) & 3;
-    uint8_t nt1 = (v >> 2) & 3;
-    uint8_t nt2 = (v >> 4) & 3;
-    uint8_t nt3 = (v >> 6) & 3;
-
-    /* Common patterns used by CV3 and other MMC5 games: */
-    if (nt0 == 0 && nt1 == 0 && nt2 == 0 && nt3 == 0) {
-        m->mirroring = 2; /* Single-screen A */
-    } else if (nt0 == 1 && nt1 == 1 && nt2 == 1 && nt3 == 1) {
-        m->mirroring = 3; /* Single-screen B */
-    } else if (nt0 == 0 && nt1 == 1 && nt2 == 0 && nt3 == 1) {
-        m->mirroring = 1; /* Vertical */
-    } else if (nt0 == 0 && nt1 == 0 && nt2 == 1 && nt3 == 1) {
-        m->mirroring = 0; /* Horizontal */
-    } else {
-        /* Fallback: use lower-left page for single-screen */
-        m->mirroring = (nt0 == 0) ? 2 : 3;
-    }
 }
 
 /* ========================================================================== */
@@ -110,7 +83,7 @@ static void mmc5_update_mirroring(Mapper *m) {
  *   Mode 2: 16+8+8 — $5115 for $8000-$BFFF, $5116 for $C000-$DFFF, $5117 for $E000
  *   Mode 3: Four 8KB — $5114/$5115/$5116/$5117 for each 8KB slot
  *
- * Registers $5114-$5116: bit 7 = 1 means PRG RAM, 0 means PRG ROM.
+ * Registers $5114-$5116: bit 7 = 1 means PRG ROM, 0 means PRG RAM.
  * Register $5117: always PRG ROM (bit 7 ignored for ROM/RAM selection).
  */
 static uint8_t mmc5_get_prg_reg(MMC5 *s, uint16_t addr) {
@@ -185,12 +158,9 @@ static uint8_t mmc5_read_prg(Mapper *m, uint16_t addr) {
 /* CHR banking                                                                */
 /* ========================================================================== */
 
-/*
- * MMC5 CHR banking. For 8x8 sprite mode (CV3), only the A set
- * ($5120-$5127) is used for ALL fetches. The B set is ignored.
- *   Dots 1-256, 321-336: BG tile fetches → A set
- *   Dots 257-320: sprite tile fetches → B set
- */
+/* In 8x8 mode all fetches use set A. In 8x16 mode rendering uses
+ * A for sprites and B for backgrounds; CPU $2007 accesses outside
+ * rendering use the most recently written set. */
 static uint8_t mmc5_read_chr(Mapper *m, uint16_t addr) {
     MMC5 *s = mmc5(m);
     uint32_t total_1k = m->chr_rom_size / 0x400;
@@ -199,8 +169,16 @@ static uint8_t mmc5_read_chr(Mapper *m, uint16_t addr) {
     uint32_t bank = 0;
     int slot = (addr >> 10) & 7;
 
-    /* For 8x8 sprites (CV3), only A set is used. B set is ignored. */
     bool use_b = false;
+    if (m->nes && (m->nes->ppu.ctrl & CTRL_SPRITE_SIZE)) {
+        PPU *ppu = &m->nes->ppu;
+        bool rendering = (ppu->mask & (MASK_BG_ENABLE | MASK_SPRITE_ENABLE)) &&
+            (ppu->scanline < 240 || ppu->scanline == ppu->prerender_line);
+        use_b = rendering ? !(ppu->dot >= 257 && ppu->dot <= 320)
+                          : s->chr_hi_written;
+    } else {
+        s->chr_hi_written = false;
+    }
 
     switch (s->chr_mode) {
     case 0: { /* 8KB */
@@ -246,6 +224,13 @@ static uint8_t mmc5_read_chr(Mapper *m, uint16_t addr) {
 static uint8_t mapper5_cpu_read(Mapper *m, uint16_t addr) {
     MMC5 *s = mmc5(m);
 
+    if (addr == 0xFFFA || addr == 0xFFFB) {
+        s->in_frame = false;
+        s->scanline_counter = 0;
+        s->repeated_reads = 0;
+        s->irq_status = false;
+        m->irq_pending = false;
+    }
     if (addr >= 0x8000)
         return mmc5_read_prg(m, addr);
 
@@ -296,6 +281,9 @@ static void mapper5_cpu_write(Mapper *m, uint16_t addr, uint8_t val) {
         return;
     }
 
+    if (addr >= 0x5120 && addr <= 0x512B)
+        s->chr_hi_written = addr >= 0x5128;
+
     switch (addr) {
     /* PRG mode */
     case 0x5100: s->prg_mode = val & 3; break;
@@ -312,7 +300,6 @@ static void mapper5_cpu_write(Mapper *m, uint16_t addr, uint8_t val) {
     /* Nametable mapping */
     case 0x5105:
         s->nt_mapping = val;
-        mmc5_update_mirroring(m);
         break;
 
     /* Fill-mode */
@@ -346,7 +333,10 @@ static void mapper5_cpu_write(Mapper *m, uint16_t addr, uint8_t val) {
 
     /* Scanline IRQ */
     case 0x5203: s->irq_target = val; break;
-    case 0x5204: s->irq_enabled = (val & 0x80) != 0; break;
+    case 0x5204:
+        s->irq_enabled = (val & 0x80) != 0;
+        m->irq_pending = s->irq_enabled && s->irq_status;
+        break;
 
     /* Multiplier */
     case 0x5205: s->multiplicand = val; break;
@@ -355,59 +345,75 @@ static void mapper5_cpu_write(Mapper *m, uint16_t addr, uint8_t val) {
 }
 
 /* ========================================================================== */
-/* PPU read/write — CHR pattern tables only ($0000-$1FFF).                    */
-/* Nametable mapping uses standard mirroring via m->mirroring.                */
+/* PPU memory: MMC5 independently routes each 1KB nametable quadrant.        */
 /* ========================================================================== */
 
 static uint8_t mapper5_ppu_read(Mapper *m, uint16_t addr) {
-    if (addr < 0x2000)
-        return mmc5_read_chr(m, addr);
-    return 0;
+    if (addr < 0x2000) return mmc5_read_chr(m, addr);
+    MMC5 *s = mmc5(m);
+    unsigned offset = addr & 0x3ff;
+    unsigned source = (s->nt_mapping >> (((addr >> 10) & 3) * 2)) & 3;
+    if (source < 2)
+        return m->nes ? m->nes->ppu.vram[0x2000 + source * 0x400 + offset] : 0;
+    if (source == 2)
+        return s->exram_mode < 2 ? s->exram[offset] : 0;
+    return offset < 0x3c0 ? s->fill_tile : s->fill_attr * 0x55;
 }
 
 static void mapper5_ppu_write(Mapper *m, uint16_t addr, uint8_t val) {
-    (void)m; (void)addr; (void)val; /* CHR ROM read-only */
+    if (addr < 0x2000) return; /* CHR ROM */
+    MMC5 *s = mmc5(m);
+    unsigned offset = addr & 0x3ff;
+    unsigned source = (s->nt_mapping >> (((addr >> 10) & 3) * 2)) & 3;
+    if (source < 2 && m->nes)
+        m->nes->ppu.vram[0x2000 + source * 0x400 + offset] = val;
+    else if (source == 2 && s->exram_mode == 0)
+        s->exram[offset] = val;
+    /* Fill and unavailable ExRAM mappings ignore writes. */
 }
 
 /* ========================================================================== */
 /* Scanline counter                                                           */
 /* ========================================================================== */
 
-/*
- * Scanline counter — matches Mesen's two-phase detection:
- *
- * Real MMC5 detects scanlines by watching for consecutive identical
- * nametable reads on the PPU address bus. We approximate using the
- * scanline callback from nes_step (fires at dot 260 of each visible
- * scanline).
- *
- * Phase 1 (first callback of frame): set in_frame, counter = 0, NO check.
- * Phase 2 (subsequent callbacks): increment counter, check against target.
- *
- * This matches Mesen's behavior where the first scanline detection
- * initializes the counter but doesn't fire an IRQ.
- */
-static void mapper5_scanline(Mapper *m) {
+/* MMC5 sees /RD strobes, not the scanline number. Three consecutive
+ * identical nametable reads precede the attribute fetch that clocks it.
+ * End-of-line dummy fetches provide the first two reads. */
+static void mapper5_ppu_bus_read(Mapper *m, uint16_t addr) {
     MMC5 *s = mmc5(m);
-
-    if (!s->in_frame) {
-        /* First scanline of frame — initialize, don't check IRQ */
-        s->in_frame = true;
-        s->scanline_counter = 0;
-        return;
+    s->ppu_read_since_clock = true;
+    if (s->repeated_reads == 3) {
+        s->repeated_reads = 0;
+        if (!s->in_frame) {
+            s->in_frame = true;
+            s->scanline_counter = 0;
+            s->irq_status = false;
+        } else if (++s->scanline_counter == 240) {
+            s->in_frame = false;
+            s->scanline_counter = 0;
+            s->irq_status = false;
+        } else if (s->irq_target && s->scanline_counter == s->irq_target) {
+            s->irq_status = true;
+        }
+        m->irq_pending = s->irq_enabled && s->irq_status;
     }
-
-    s->scanline_counter++;
-
-    if (s->scanline_counter == s->irq_target) {
-        s->irq_status = true;
-        if (s->irq_enabled)
-            m->irq_pending = true;
+    if (addr >= 0x2000 && addr < 0x3000) {
+        s->repeated_reads = addr == s->last_ppu_read ? s->repeated_reads + 1 : 1;
+    } else {
+        s->repeated_reads = 0;
     }
+    s->last_ppu_read = addr;
+}
 
-    /* Reset in-frame after visible scanlines end */
-    if (s->scanline_counter >= 240)
+static void mapper5_cpu_clock(Mapper *m) {
+    MMC5 *s = mmc5(m);
+    if (s->ppu_read_since_clock) {
+        s->idle_cpu_cycles = 0;
+        s->ppu_read_since_clock = false;
+    } else if (s->idle_cpu_cycles < 3 && ++s->idle_cpu_cycles == 3) {
         s->in_frame = false;
+        s->repeated_reads = 0;
+    }
 }
 
 /* ========================================================================== */
@@ -426,7 +432,6 @@ static void mapper5_init(Mapper *m) {
     m->prg_ram_enabled = true;
     m->has_chr_ram = false;
 
-    mmc5_update_mirroring(m);
 }
 
 /* ========================================================================== */
@@ -439,5 +444,6 @@ const MapperOps mapper5_ops = {
     .cpu_write = mapper5_cpu_write,
     .ppu_read  = mapper5_ppu_read,
     .ppu_write = mapper5_ppu_write,
-    .scanline  = mapper5_scanline,
+    .ppu_bus_read = mapper5_ppu_bus_read,
+    .cpu_clock = mapper5_cpu_clock,
 };

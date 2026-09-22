@@ -852,6 +852,7 @@ int main(int argc, char **argv) {
         }
 
         /* --- Event processing --- */
+        bool console_changed = false;
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             /* Offline captures use explicit frame-script input only. Live
@@ -890,12 +891,8 @@ int main(int argc, char **argv) {
                             ROM new_rom;
                             int re = nes_rom_load(&new_rom, browser.chosen_path);
                             if (re == ROM_OK) {
-                                nes_load_mapper(&nes, new_rom.mapper,
-                                    new_rom.prg_rom, new_rom.prg_size,
-                                    new_rom.chr_rom, new_rom.chr_size,
-                                    new_rom.mirroring);
-                                /* Auto-detect region from the iNES
-                                 * header (bit 0 of byte 9). Flip the
+                                /* The loader resolves header timing plus
+                                 * explicit legacy PAL filename tags. Flip the
                                  * PPU + APU + GPU pipeline so PAL
                                  * ROMs decode with the 2C07 table +
                                  * correct per-line V-phase inversion. */
@@ -915,13 +912,10 @@ int main(int argc, char **argv) {
                                             NULL);
                                     }
                                     region = new_region;
-                                    ppu_set_region(&nes.ppu,
-                                        new_region == SIGNAL_REGION_PAL
-                                            ? PPU_REGION_PAL : PPU_REGION_NTSC);
-                                    apu_set_region(&nes.apu,
-                                        new_region == SIGNAL_REGION_PAL ? 1 : 0);
                                 }
-                                nes_reset(&nes);
+                                playback_load_cartridge(playback,&new_rom,new_region);
+                                playback_active = false;
+                                console_changed = true;
                                 nes_rom_free(&rom);
                                 rom = new_rom;
                                 rom_loaded = true;
@@ -963,6 +957,10 @@ int main(int argc, char **argv) {
                         break;
                     }
                     /* L: toggle chain visualiser. */
+                    if (ev.key.scancode == SDL_SCANCODE_F2) {
+                        if (!ev.key.repeat) preset_ctx.console_reset_requested = true;
+                        break;
+                    }
                     if (ev.key.scancode == SDL_SCANCODE_L) {
                         chain_vis_toggle(chain_vis);
                         break;
@@ -1121,6 +1119,26 @@ int main(int argc, char **argv) {
             }
         }
 
+        if (preset_ctx.console_reset_requested) {
+            preset_ctx.console_reset_requested = false;
+            if (rom_loaded && nes.mapper_loaded && !static_frame_buf) {
+                playback_reset_console(playback);
+                playback_active = false;
+                console_changed = true;
+                osd_menu_close();
+                osd_parameter_editing = false;
+                fprintf(stderr,"Console reset (cartridge retained)\n");
+            }
+        }
+        if (console_changed) {
+            controller_state = 0;
+            previous_picture = 0;
+            frame_deadline = 0;
+            render_ctx.presentation_slot = 0;
+            render_ctx.pacing_deadline_ns = 0;
+            render_ctx.presentation_epoch++;
+            if (gpu_video_enabled) video_gpu_reset_temporal_state(&video_gpu_chain,gpu);
+        }
         if (!rom_loaded && !browser_active) { SDL_Delay(10); continue; }
         // Check viewport after events and preset changes, including offscreen mode.
         if (gpu_video_enabled && video_gpu_chain.beam_out_w>0) {
@@ -1138,16 +1156,18 @@ int main(int argc, char **argv) {
             }
         }
         bool live = rom_loaded && !browser_active && !static_frame_buf;
+        gpu_render_presentation_update(&render_ctx, 1000.0f / signal_region_frame_ms(preset_ctx.region));
         PlaybackControls controls = { .audio = audio_chain, .analog = analog_controls,
             .region = preset_ctx.region, .gpu_audio = use_gpu_audio != 0,
             .presentation_mode = render_ctx.presentation_mode,
+            .display_paced = render_ctx.vsync_paced,
+            .display_hz = render_ctx.presentation_hz,
             .controller = controller_state };
         playback_controls(playback, &controls);
         if (live != playback_active) {
             if (live) playback_resume(playback); else playback_pause(playback);
             playback_active = live;
         }
-        gpu_render_presentation_update(&render_ctx, 1000.0f / signal_region_frame_ms(preset_ctx.region));
         if (render_ctx.presentation_slot > 0) {
             /* Re-present phosphor light only. Do not advance the PPU, audio,
              * signal phase, beam history, CRT load or diagnostic frame count. */
@@ -1180,7 +1200,8 @@ int main(int argc, char **argv) {
         } else {
             Uint64 now = SDL_GetTicksNS();
             Uint64 period = (Uint64)(signal_region_frame_ms(preset_ctx.region) * 1000000.0);
-            period = gpu_presentation_period_ns(render_ctx.presentation_mode, period);
+            period = gpu_presentation_playback_period(render_ctx.presentation_mode, period,
+                render_ctx.presentation_hz, render_ctx.vsync_paced);
             if (!frame_deadline || now > frame_deadline + period * 3) frame_deadline = now;
             if (now < frame_deadline) SDL_DelayPrecise(frame_deadline - now);
             frame_deadline += period;

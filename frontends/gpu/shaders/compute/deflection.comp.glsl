@@ -106,14 +106,6 @@ vec2 barrel_distort(vec2 coord, float k_h, float k_v) {
     return centered + 0.5;
 }
 
-float rect_envelope(vec2 coord, float edge_x, float edge_y) {
-    float l = smoothstep(-edge_x, edge_x, coord.x);
-    float r = smoothstep(-edge_x, edge_x, 1.0 - coord.x);
-    float t = smoothstep(-edge_y, edge_y, coord.y);
-    float b = smoothstep(-edge_y, edge_y, 1.0 - coord.y);
-    return l * r * t * b;
-}
-
 void main() {
     uint ox = gl_GlobalInvocationID.x;
     uint oy = gl_GlobalInvocationID.y;
@@ -174,19 +166,13 @@ void main() {
         warped = (warped - 0.5) * max(1.0 - overscan * 2.0, 0.2) + 0.5;
     }
 
-    // The tube's visible face does not grow with overscan or rotate with
-    // service geometry. Clip the moving raster against this fixed aperture.
-    float tube_envelope = rect_envelope(barrel_distort(tube_uv,barrel,kv),0.0025,0.0025);
-
     vec2 raster = warped;
     raster.x = (warped.x - 0.5 - h_pos) / max(h_size, 0.01) + 0.5;
     raster.y = (warped.y - 0.5 - v_pos) / max(v_size, 0.01) + 0.5;
 
-    /* Soft raster blanking at the physical beam perimeter. This hides
-     * the clamp-to-edge artefact that showed up on the curved sides and
-     * gives the final beam spot room to taper off naturally. */
-    float raster_envelope = rect_envelope(raster, 0.004, 0.0045);
-    float visibility = tube_envelope * raster_envelope;
+    // Source bounds and the finite beam spot define the raster edge. A second
+    // UV-space fade would soften it by more display pixels as resolution grows.
+    // The fixed face aperture clips the finished light in the display pass.
 
     float cx = raster.x * 2.0 - 1.0;
     float cy = raster.y * 2.0 - 1.0;
@@ -300,7 +286,6 @@ void main() {
     float edge_drive = clamp(geometry_warp * 0.45 + velocity_dim * 1.2, 0.0, 1.0);
     dwell *= 1.0 - 0.10 * edge_drive * left_settle;
     dwell *= 1.0 + 0.06 * edge_drive * right_retrace;
-    dwell *= visibility;
 
     uint idx = (oy * out_w + ox) * 4u;
     out_x[idx + 0u] = r_x;

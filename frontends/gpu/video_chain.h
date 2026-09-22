@@ -163,6 +163,14 @@ typedef struct {
     float timebase_ns;          /* residual line timebase error, peak ns */
     float chroma_phase_deg;     /* residual line colour phase error, peak degrees */
     float noise;               /* playback luma noise, peak normalized voltage */
+    float luma_noise_rms; /* recovered luma grain RMS, normalized voltage */
+    float chroma_noise_rms; /* recovered chroma noise RMS, normalized voltage */
+    float drift_ms; /* transport correlation interval; zero selects 180 ms */
+    float head_switch_ns; /* bottom six active lines: peak timing displacement */
+    float dropout_rate; /* mean localized carrier losses per second */
+    float dropout_depth; /* fraction of recovered signal lost, 0..1 */
+    float luma_peaking; /* recovered luma high-frequency shelf, 0..1 */
+    float luma_smear; /* fraction in a causal 140 ns luma tail, 0..1 */
 } VHSParams;
 
 static inline float video_rf_noise_rms(const RFModulatorParams *rf) {

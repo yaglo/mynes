@@ -58,6 +58,7 @@ typedef struct {
     uint8_t mapper;         /* Mapper number */
     uint8_t mirroring;      /* 0=horizontal, 1=vertical */
     uint8_t tv_system;      /* NES_TV_NTSC / NES_TV_PAL / NES_TV_MULTI / NES_TV_DENDY */
+    bool region_from_filename; /* Legacy header corrected by explicit PAL filename tag */
     bool is_nes2;           /* true if NES 2.0 header detected */
     bool has_battery;       /* Battery-backed RAM */
     bool has_trainer;       /* 512-byte trainer present */
@@ -66,6 +67,30 @@ typedef struct {
 /* ============================================================================
  * ROM Loading
  * ============================================================================ */
+
+/* Older iNES dumps often leave byte 9 at zero even for PAL releases.
+ * Use explicit, conventional tags in the basename only as a fallback.
+ * A NES 2.0 timing declaration or an explicit iNES PAL bit wins. */
+static inline bool nes_rom_pal_filename(const char *path) {
+    const char *base = path;
+    for (const char *p = path; *p; ++p)
+        if (*p == '/' || *p == '\\') base = p + 1;
+    const char *tags[] = {"(e)", "(europe)", "(pal)", "(australia)",
+                          "(europe, australia)"};
+    for (const char *p = base; *p; ++p) {
+        for (size_t i = 0; i < sizeof(tags)/sizeof(tags[0]); ++i) {
+            size_t j = 0;
+            while (p[j] && tags[i][j]) {
+                char c = p[j];
+                if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+                if (c != tags[i][j]) break;
+                ++j;
+            }
+            if (!tags[i][j]) return true;
+        }
+    }
+    return false;
+}
 
 /* Load ROM from file path */
 static inline int nes_rom_load(ROM *rom, const char *path) {
@@ -136,6 +161,12 @@ static inline int nes_rom_load(ROM *rom, const char *path) {
         rom->tv_system = (header[9] & 0x01) ? NES_TV_PAL : NES_TV_NTSC;
     } else {
         rom->tv_system = NES_TV_NTSC;
+    }
+
+    if (!rom->is_nes2 && rom->tv_system == NES_TV_NTSC &&
+        nes_rom_pal_filename(path)) {
+        rom->tv_system = NES_TV_PAL;
+        rom->region_from_filename = true;
     }
 
     /* Check for supported mappers. */
@@ -292,7 +323,8 @@ static inline void nes_rom_print_info(const ROM *rom) {
     printf("  Mirroring: %s\n", rom->mirroring ? "Vertical" : "Horizontal");
     const char *tv_names[] = {"NTSC", "PAL", "Multi-region", "Dendy"};
     printf("  TV System: %s%s\n", tv_names[rom->tv_system & 3],
-           rom->is_nes2 ? " (NES 2.0)" : "");
+           rom->is_nes2 ? " (NES 2.0)" :
+           rom->region_from_filename ? " (filename fallback)" : "");
     printf("  Battery: %s\n", rom->has_battery ? "Yes" : "No");
     printf("  Trainer: %s\n", rom->has_trainer ? "Yes" : "No");
 }

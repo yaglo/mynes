@@ -211,6 +211,17 @@ if(NES_BUILD_TESTS)
     target_link_libraries(test_nes PRIVATE nes_static)
     add_test(NAME nes_tests COMMAND test_nes)
 
+    add_executable(test_apu tests/nes/test_apu.c)
+    target_link_libraries(test_apu PRIVATE nes_static)
+    add_test(NAME apu_tests COMMAND test_apu)
+
+    add_executable(test_pal_apu_roms tests/nes/test_pal_apu_roms.c)
+    target_link_libraries(test_pal_apu_roms PRIVATE nes_static)
+    add_test(NAME pal_apu_rom_tests COMMAND test_pal_apu_roms)
+    set_tests_properties(pal_apu_rom_tests PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        TIMEOUT 120)
+
     # ROM loading tests
     add_executable(test_rom tests/nes/test_rom.c)
     target_link_libraries(test_rom PRIVATE nes_static)
@@ -225,6 +236,10 @@ if(NES_BUILD_TESTS)
     add_executable(test_mapper1 tests/nes/test_mapper1.c)
     target_link_libraries(test_mapper1 PRIVATE nes_static)
     add_test(NAME mapper1_tests COMMAND test_mapper1)
+
+    add_executable(test_mapper5 tests/nes/test_mapper5.c)
+    target_link_libraries(test_mapper5 PRIVATE nes_static)
+    add_test(NAME mapper5_tests COMMAND test_mapper5)
 
     # AccuracyCoin test runner
     add_executable(accuracy_coin tests/accuracy_coin/run_accuracy.c)

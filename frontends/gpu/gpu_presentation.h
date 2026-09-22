@@ -18,6 +18,23 @@ static inline uint64_t gpu_presentation_period_ns(int mode, uint64_t native_peri
         ? GPU_PRESENT_60HZ_PERIOD_NS : native_period;
 }
 
+/* A fixed-refresh panel close to the source rate can pace hold directly by
+ * vsync. Do not race an independent Metal timestamp against the same vblank.
+ * 50-on-60 and 60-on-120 still need separate cadence handling. */
+static inline int gpu_presentation_vsync_paced(int mode, float hz, float source_hz) {
+    if (mode == GPU_PRESENT_BFI || !isfinite(hz) || !isfinite(source_hz) || hz <= 0 || source_hz <= 0)
+        return 0;
+    float target = mode == GPU_PRESENT_60HZ && source_hz > 60 ? 60 : source_hz;
+    return fabsf(hz / target - 1) <= .005f;
+}
+
+static inline uint64_t gpu_presentation_playback_period(int mode, uint64_t native_period,
+                                                       float display_hz, int display_paced) {
+    return display_paced && isfinite(display_hz) && display_hz > 0
+        ? (uint64_t)llround(1e9 / display_hz)
+        : gpu_presentation_period_ns(mode, native_period);
+}
+
 /* Absolute deadlines avoid accumulating scheduler overshoot. After a missed
  * whole interval, restart instead of presenting a burst of stale pictures. */
 static inline uint64_t gpu_presentation_next_ns(uint64_t deadline, uint64_t submitted) {

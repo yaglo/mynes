@@ -251,6 +251,37 @@ int test_rom_free(void) {
  * Main
  * ============================================================================ */
 
+static int test_region_fallback(void) {
+    const char *paths[] = {"/tmp/mynes_test (E).nes", "/tmp/mynes_test (Europe).nes",
+        "/tmp/mynes_test (PAL).nes", "/tmp/mynes_test (Australia).nes",
+        "/tmp/mynes_test (U).nes", "/tmp/mynes_test Europe.nes"};
+    int pass = !nes_rom_pal_filename("/Europe/(E)/Game (USA).nes");
+    for (int i = 0; i < 6; ++i) {
+        create_test_rom(paths[i], 1, 0, 0, 0);
+        ROM rom;
+        if (nes_rom_load(&rom, paths[i]) != ROM_OK) return 0;
+        pass &= rom.tv_system == (i < 4 ? NES_TV_PAL : NES_TV_NTSC);
+        pass &= rom.region_from_filename == (i < 4);
+        nes_rom_free(&rom);
+        remove(paths[i]);
+    }
+    /* NES 2.0 explicitly declares NTSC: the filename must not override it. */
+    create_test_rom(paths[0], 1, 0, 0, 8);
+    ROM rom;
+    if (nes_rom_load(&rom, paths[0]) != ROM_OK) return 0;
+    pass &= rom.is_nes2 && rom.tv_system == NES_TV_NTSC && !rom.region_from_filename;
+    nes_rom_free(&rom);
+    remove(paths[0]);
+    /* The memory loader has no filename and continues to honour the header. */
+    uint8_t data[16 + 16384] = {'N', 'E', 'S', 0x1a, 1};
+    data[9] = 1;
+    if (nes_rom_load_data(&rom, data, sizeof(data)) != ROM_OK) return 0;
+    pass &= rom.tv_system == NES_TV_PAL && !rom.region_from_filename;
+    nes_rom_free(&rom);
+    printf("TEST region_fallback: %s\n", pass ? "PASS" : "FAIL");
+    return pass;
+}
+
 int main(void) {
     printf("=== NES ROM Loading Tests ===\n\n");
 
@@ -258,6 +289,7 @@ int main(void) {
     int total = 0;
 
     total++; passed += test_valid_rom();
+    total++; passed += test_region_fallback();
     total++; passed += test_horizontal_mirroring();
     total++; passed += test_chr_ram();
     total++; passed += test_invalid_magic();

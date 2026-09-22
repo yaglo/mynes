@@ -125,6 +125,26 @@ int test_ppu_scroll_write(void) {
     }
 }
 
+int test_pal_clock_ratio(void) {
+    setup();
+    uint8_t prog[] = {0x4C, 0x00, 0x80};
+    write_program(0x8000, prog, sizeof(prog));
+    set_reset_vector(0x8000);
+    nes_set_region(&nes, NES_REGION_PAL);
+    nes_reset(&nes);
+    run_cycles(1000);
+    int pass = nes.master_tick == 16000 &&
+        nes.ppu.next_dot_master_tick == 16000 &&
+        nes.ppu.scanline * 341 + nes.ppu.dot == 3200;
+    /* Five complete PAL frames are exactly 166237.5 CPU cycles;
+     * the rounded end is at cycle 166238, with 532762 PPU dots. */
+    run_cycles(166238 - 1000);
+    pass &= nes.ppu.frame == 5 && nes.ppu.scanline == 0 && nes.ppu.dot == 2;
+    pass &= nes.apu.cpu_clock == APU_CPU_CLOCK_PAL;
+    printf("TEST pal_clock_ratio: %s\n", pass ? "PASS" : "FAIL");
+    return pass;
+}
+
 int test_timing_ratio(void) {
     setup();
 
@@ -466,6 +486,7 @@ int main(void) {
     total++; passed += test_ppu_register_access();
     total++; passed += test_ppu_scroll_write();
     total++; passed += test_timing_ratio();
+    total++; passed += test_pal_clock_ratio();
     total++; passed += test_nmi_fires();
     total++; passed += test_controller_read();
     total++; passed += test_oam_dma();

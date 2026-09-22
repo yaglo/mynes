@@ -276,6 +276,17 @@ int test_display_fidelity(SDL_GPUDevice *gpu) {
     render_region(gpu,&d,input,target,&p,&shifted,avg,&peak);
     for(int x=18;x<167;x++) for(int c=0;c<3;c++)
         CHECK(fabsf(center_row[x][c]-rgb_row[x][c])<.001f);
+    // The fixed curved aperture clips emission and specular reflection to
+    // the glass, with a one-pixel coverage edge rather than a UV-width fade.
+    p.mask_strength=0;p.ambient_light=.1f;p.barrel=.8f;p.glass_glare=.2f;
+    render(gpu,&d,input,target,&p,avg,&peak);
+    CHECK(fabsf(center_row[0][0]-.015f)<.001f);
+    CHECK(center_row[W/2][0]>.25f);
+    int partial=0;
+    for(int x=0;x<W/2;x++)
+        if(center_row[x][0]>.016f && center_row[x][0]<.20f) partial++;
+    CHECK(partial<=1);
+    p.barrel=0;p.glass_glare=0;
     p.mask_strength=0; p.ambient_light=0.1f;
     SDL_GPUViewport viewport={.x=W/4,.y=0,.w=W/2,.h=H,.min_depth=0,.max_depth=1};
     render_region(gpu,&d,input,target,&p,&viewport,avg,&peak);

@@ -97,6 +97,8 @@ void mapper_cpu_write(Mapper *m, uint16_t addr, uint8_t val);
 uint8_t mapper_ppu_read(Mapper *m, uint16_t addr);
 void mapper_ppu_write(Mapper *m, uint16_t addr, uint8_t val);
 void mapper_ppu_address(Mapper *m, uint16_t addr);
+void mapper_ppu_bus_read(Mapper *m, uint16_t addr);
+void mapper_cpu_clock(Mapper *m);
 
 /* Scanline notification (called by PPU at end of each visible scanline) */
 void mapper_notify_scanline(Mapper *m);

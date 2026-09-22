@@ -21,6 +21,8 @@ parser.add_argument("rom", type=Path)
 parser.add_argument("output", type=Path)
 parser.add_argument("--mode", choices=("hold", "60hz"), default="60hz")
 parser.add_argument("--frames", type=int, default=1800)
+parser.add_argument("--stall-ms", type=int, default=0,
+                    help="Inject one renderer stall at source frame 60; audio keeps running")
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[3]
 output = args.output.resolve()
@@ -33,6 +35,8 @@ with tempfile.TemporaryDirectory(prefix="mynes-metal-") as config:
     for key in ("MYNES_GPU_AUDIO", "MYNES_PRESENT_STALL_MS", "MYNES_REVIEW_INPUT_SCRIPT",
                 "MYNES_REVIEW_FRAME", "MYNES_REVIEW_PRESET"):
         env.pop(key, None)
+    if args.stall_ms > 0:
+        env["MYNES_PRESENT_STALL_MS"] = str(args.stall_ms)
     with (output / "run.log").open("w") as log:
         subprocess.run([str(args.binary.resolve()), str(args.rom.resolve()),
                         "--preset", str(root / "presets/reference_composite.json"),
@@ -41,8 +45,13 @@ with tempfile.TemporaryDirectory(prefix="mynes-metal-") as config:
 
 pattern = r"MYNES_METAL_PRESENT (\d+) ([\d.]+) ([\d.]+) ([\d.]+) (\d+)"
 rows = sorted((int(i), float(t), float(target), float(submit), int(source))
-              for i, t, target, submit, source in re.findall(pattern, (output/"run.log").read_text()))[60:]
+              for i, t, target, submit, source in re.findall(pattern, (output/"run.log").read_text()))
 assert rows, "No Metal drawable timestamps; use the bundled SDL Metal backend"
+scheduled = [r for r in rows if r[2] > 0]
+minimum_lead_ms = min(((r[2]-r[3])*1000 for r in scheduled), default=None)
+expired_targets = sum(r[2] < r[3] for r in scheduled)
+drawable_count = len(rows)
+rows = rows[60:]
 # Zero timestamps mean the drawable was not shown (e.g. covered/minimized).
 # Never call an occluded run a successful visible-cadence test.
 pairs = [(a, b) for a, b in zip(rows, rows[1:]) if a[1] > 0 and b[1] > 0]
@@ -55,6 +64,9 @@ submissions = list(csv.DictReader((output/"submissions.csv").open()))
 frames = [int(r["source_frame"]) for r in submissions]
 assert all(b > a for a, b in zip(frames, frames[1:])), "Source frames repeated/reversed"
 report = dict(mode=args.mode, visible_intervals=len(intervals),
+              injected_stall_ms=args.stall_ms,
+              minimum_gpu_lead_ms=minimum_lead_ms, expired_targets=expired_targets,
+              timed_drawables=len(scheduled), vsync_drawables=drawable_count-len(scheduled),
               unshown_drawables=sum(r[1] == 0 for r in rows),
               median_ms=statistics.median(intervals), maximum_ms=max(intervals),
               interval_histogram_ms=dict(collections.Counter(round(t, 2) for t in intervals)),

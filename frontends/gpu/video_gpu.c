@@ -85,9 +85,19 @@ static bool rebind_rf_if(struct SignalChainFwd *chain,struct ChainStageFwd *stag
 static GpuVHSParams vhs_params(const VideoGPUChain *v) {
     const VHSParams *t=&v->chain->vhs;
     float fs=signal_format_sample_rate_hz(&v->signal_fmt);
-    GpuVHSParams p={(uint32_t)v->raster_fmt.total_samples,(uint32_t)v->raster_fmt.samples_per_line,
-        SIGNAL_VHS_TAPS,v->signal_frame_counter,t->chroma_delay_ns*fs*1e-9f,
-        t->timebase_ns*fs*1e-9f,t->chroma_phase_deg*(float)M_PI/180,t->noise};
+    float frame_ms=signal_region_frame_ms(v->signal_fmt.region);
+    GpuVHSParams p={
+        .count=(uint32_t)v->raster_fmt.total_samples,
+        .samples_per_line=(uint32_t)v->raster_fmt.samples_per_line,
+        .tap_count=SIGNAL_VHS_TAPS,.frame_seed=v->signal_frame_counter,
+        .delay_samples=t->chroma_delay_ns*fs*1e-9f,
+        .timebase_samples=t->timebase_ns*fs*1e-9f,
+        .phase_radians=t->chroma_phase_deg*(float)M_PI/180,.noise=t->noise,
+        .sample_rate=fs,.drift_frames=fmaxf(t->drift_ms>0 ? t->drift_ms : 180,frame_ms)/frame_ms,
+        .luma_noise_rms=t->luma_noise_rms,.chroma_noise_rms=t->chroma_noise_rms,
+        .head_switch_samples=t->head_switch_ns*fs*1e-9f,
+        .dropout_rate=t->dropout_rate,.dropout_depth=t->dropout_depth,
+        .frame_rate=1000/frame_ms};
     return p;
 }
 static GpuReceiverPLLParams receiver_pll_params(const VideoGPUChain *v) {
@@ -481,6 +491,7 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
         float taps[4*SIGNAL_VHS_TAPS];
         signal_design_vhs(taps,fsample,chain->vhs.luma_bandwidth>0 ? chain->vhs.luma_bandwidth : 2.5e6f,
                           chain->vhs.chroma_bandwidth>0 ? chain->vhs.chroma_bandwidth : .35e6f,p.delay_samples);
+        signal_vhs_luma_eq(taps,fsample,chain->vhs.luma_peaking,chain->vhs.luma_smear);
         int ti=chain_upload_taps(&vgc->sig_chain,gpu,taps,4*SIGNAL_VHS_TAPS);
         vgc->stage_vhs=chain_add_stage(&vgc->sig_chain,"VHS recording / playback",CHAIN_KERNEL_VHS,
                                       &p,sizeof(p),dispatch_x_256,1);
@@ -870,7 +881,7 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     vgc->sig_chain.stages[vgc->stage_post_pipeline].external[0] = vgc->buf_rgb2;
 
     update_video_amp(vgc);
-    vgc->sig_chain.first_stage=video_connection_uses_signal_decode(chain->connection) ? 0 : vgc->stage_post_pipeline;
+    vgc->sig_chain.first_stage=video_connection_uses_signal_decode(chain->connection) ? 0 : vgc->stage_osd;
 
     vgc->timing_enabled = false;
     vgc->frame_brightness = 0.0f;
@@ -1033,6 +1044,8 @@ bool video_gpu_update_fir_taps(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     signal_design_vhs(tape_taps,signal_format_sample_rate_hz(&vgc->signal_fmt),
         vgc->chain->vhs.luma_bandwidth>0 ? vgc->chain->vhs.luma_bandwidth : 2.5e6f,
         vgc->chain->vhs.chroma_bandwidth>0 ? vgc->chain->vhs.chroma_bandwidth : .35e6f,tp.delay_samples);
+    signal_vhs_luma_eq(tape_taps,signal_format_sample_rate_hz(&vgc->signal_fmt),
+                       vgc->chain->vhs.luma_peaking,vgc->chain->vhs.luma_smear);
     chain_update_params(sc,vgc->stage_vhs,&tp,sizeof(tp));
     chain_set_stage_enabled(sc,vgc->stage_vhs,vhs_active(vgc->chain));
     int tape_idx=sc->stages[vgc->stage_vhs].taps_index;
@@ -1155,7 +1168,7 @@ void video_gpu_reinit_stages(VideoGPUChain *vgc, const VideoChain *chain)
 {
     vgc->chain = chain;
     vgc->sig_chain.first_stage = video_connection_uses_signal_decode(chain->connection)
-        ? 0 : vgc->stage_post_pipeline;
+        ? 0 : vgc->stage_osd;
     int total_samples = vgc->raster_fmt.total_samples;
 
     /* Stage enables CAN be toggled at runtime — chain_run_cmd ping-pongs

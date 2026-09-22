@@ -63,8 +63,9 @@ typedef struct PPU {
 
     /* Master tick at which the NEXT PPU dot will start. The PPU's state
      * reflects all dots whose start tick is < next_dot_master_tick.
-     * Each ppu_step() processes one dot and advances by 4 master ticks. */
+     * Each ppu_step() processes one dot and advances by 4 NTSC or 5 PAL master ticks. */
     uint64_t next_dot_master_tick;
+    bool skipped_dot_read; /* Final pre-render dummy read continues at line 0 dot 0 */
 
     /* Internal registers (loopy) */
     uint16_t v;         /* Current VRAM address (15-bit) */
@@ -193,8 +194,10 @@ typedef struct PPU {
 
     /* Callbacks */
     uint8_t (*cart_read)(struct PPU *ppu, uint16_t addr);
+    bool cart_nametables; /* Cartridge supplies $2000-$3EFF (e.g. MMC5). */
     void (*cart_write)(struct PPU *ppu, uint16_t addr, uint8_t val);
     void (*cart_address)(struct PPU *ppu, uint16_t addr);
+    void (*cart_bus_read)(struct PPU *ppu, uint16_t addr); /* Actual /RD, not palette lookup */
     void *user_data;
 } PPU;
 
@@ -322,6 +325,8 @@ static inline uint8_t ppu_read(PPU *ppu, uint16_t addr) {
         return ppu->vram[addr];
     }
     else if (addr < 0x3F00) {
+        if (ppu->cart_nametables && ppu->cart_read)
+            return ppu->cart_read(ppu, addr);
         /* Nametables with mirroring
          * Mirroring modes:
          *   0 = Horizontal: $2000=$2400, $2800=$2C00
@@ -367,6 +372,10 @@ static inline void ppu_write(PPU *ppu, uint16_t addr, uint8_t val) {
             ppu->vram[addr] = val;
     }
     else if (addr < 0x3F00) {
+        if (ppu->cart_nametables && ppu->cart_write) {
+            ppu->cart_write(ppu, addr, val);
+            return;
+        }
         /* Nametables with mirroring */
         addr &= 0x0FFF;
         switch (ppu->mirroring) {
@@ -779,6 +788,10 @@ static inline void ppu_clock_bus(PPU *ppu, bool rendering, bool render_scanline)
     if (rendering && render_scanline) {
         ale = (ppu->dot & 1) || ppu->dot == 0;
         read = !ale;
+        if (ppu->skipped_dot_read && ppu->dot == 0) {
+            ale = false;
+            read = true;
+        }
         if ((ppu->dot >= 1 && ppu->dot <= 256) ||
             (ppu->dot >= 321 && ppu->dot <= 336))
             address = ppu_bg_address(ppu);
@@ -787,6 +800,7 @@ static inline void ppu_clock_bus(PPU *ppu, bool rendering, bool render_scanline)
         else
             address = 0x2000 | (ppu->v & 0x0FFF);
     }
+    ppu->skipped_dot_read = false;
     bool cpu_read = false;
     if (ppu->data_read_delay) {
         --ppu->data_read_delay;
@@ -818,6 +832,7 @@ static inline void ppu_clock_bus(PPU *ppu, bool rendering, bool render_scanline)
         }
         ppu->cart_address(ppu, cart_address);
     }
+    if (read && ppu->cart_bus_read) ppu->cart_bus_read(ppu, ppu->bus_address);
     if (read) ppu->bus_data = ppu_read(ppu, ppu->bus_address >= 0x3F00
         ? ppu->bus_address & 0x2FFF : ppu->bus_address);
     if (cpu_read) {
@@ -1052,8 +1067,8 @@ static inline void ppu_step(PPU *ppu) {
     ppu->oam_read_buffer = ppu->oam_latch;
     ppu->status |= ppu->sprite_flags_pending;
     ppu->sprite_flags_pending = 0;
-    /* Advance master tick — the next dot will start at next_dot_master_tick + 4. */
-    ppu->next_dot_master_tick += 4;
+    /* Hardware divider: NTSC /4, PAL /5. */
+    ppu->next_dot_master_tick += (ppu->region == PPU_REGION_PAL ? 5 : 4);
 
     /* Apply the synchronized NMI enable. */
     if (ppu->ctrl_nmi_delay > 0) {
@@ -1233,6 +1248,7 @@ static inline void ppu_step(PPU *ppu) {
     if (ppu->skip_odd_frames && prerender_scanline &&
         ppu->dot == 340 && ppu->odd_frame && rendering) {
         ppu->dot++;
+        ppu->skipped_dot_read = true;
     }
 
     if (ppu->dot > 340) {
@@ -1255,7 +1271,7 @@ static inline void ppu_step(PPU *ppu) {
  * `target` or later. After this call, all dots whose start tick is < target
  * have been processed.
  *
- * Convention: dot D's start tick = (D + frame_offset) * 4. The PPU's state
+ * Convention: dot D's start tick = (D + frame_offset) * divider (4 NTSC, 5 PAL). The PPU's state
  * (status flags, nmi_occurred, etc.) reflects all dots that have been
  * processed. CPU bus access at master tick T sees state with all dots
  * having start_tick < T processed.
@@ -1306,6 +1322,7 @@ static inline void ppu_reset(PPU *ppu) {
     ppu->mask = 0;
     ppu->w = false;
     ppu->odd_frame = false;
+    ppu->skipped_dot_read = false;
     ppu->read_buffer = 0;
     ppu->data_read_delay = ppu->address_write_delay = 0;
     ppu->sprite_flags_pending = 0;

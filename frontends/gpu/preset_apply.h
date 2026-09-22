@@ -57,6 +57,7 @@ typedef struct {
      * tap manager (which caches per-stage metadata tied to the old
      * chain). Cleared by the consumer. */
     bool              chain_rebuilt_flag;
+    bool              console_reset_requested; /* consumed by main at a frame boundary */
     Uint64            preset_notice_until;
 } PresetCtx;
 

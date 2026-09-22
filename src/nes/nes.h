@@ -86,6 +86,7 @@ struct NES {
      * Component dividers:
      *   - CPU: master / 12 → 1.789 MHz (1 CPU cycle = 12 master ticks)
      *   - PPU: master / 4  → 5.369 MHz (1 PPU dot = 4 master ticks, 3 dots/CPU cycle)
+     *   - PAL uses a 26.601712 MHz master: CPU /16 and PPU /5.
      *   - APU: same divider as CPU; runs in lockstep
      *
      * The master_tick counter is the canonical NES time. Within a single
@@ -165,10 +166,12 @@ static inline uint8_t nes_cpu_read(CPU *cpu, uint16_t addr) {
         /* PPUSTATUS latches VBlank at M2 rise, whereas OAMDATA and the
          * sprite status bits remain driven until M2 falls (~two dots). */
         if ((addr & 7) == 4 || (addr & 7) == 7)
-            ppu_advance_to_master_tick(&nes->ppu, nes->master_tick + nes->cpu_phase_offset + 7);
+            ppu_advance_to_master_tick(&nes->ppu, nes->master_tick + nes->cpu_phase_offset +
+                (nes->ppu.region == PPU_REGION_PAL ? 9 : 7));
         val = ppu_reg_read(&nes->ppu, addr);
         if ((addr & 7) == 2) {
-            ppu_advance_to_master_tick(&nes->ppu, nes->master_tick + nes->cpu_phase_offset + 7);
+            ppu_advance_to_master_tick(&nes->ppu, nes->master_tick + nes->cpu_phase_offset +
+                (nes->ppu.region == PPU_REGION_PAL ? 9 : 7));
             val = (val & 0x9F) | (nes->ppu.status & 0x60);
             ppu_refresh_decay(&nes->ppu, val);
         }
@@ -289,8 +292,8 @@ static inline void nes_cpu_write(CPU *cpu, uint16_t addr, uint8_t val) {
 static inline uint8_t nes_ppu_read(PPU *ppu, uint16_t addr) {
     NES *nes = (NES *)ppu->user_data;
 
-    if (addr < 0x2000) {
-        /* Pattern tables - handled by mapper */
+    if (addr < 0x2000 || (ppu->cart_nametables && addr < 0x3F00)) {
+        /* Pattern tables, plus cartridge-owned nametables. */
         if (nes->mapper_loaded) {
             nes->mapper.ppu_dot = ppu->dot;
             return mapper_ppu_read(&nes->mapper, addr);
@@ -308,8 +311,8 @@ static inline uint8_t nes_ppu_read(PPU *ppu, uint16_t addr) {
 static inline void nes_ppu_write(PPU *ppu, uint16_t addr, uint8_t val) {
     NES *nes = (NES *)ppu->user_data;
 
-    if (addr < 0x2000) {
-        /* Pattern tables - handled by mapper */
+    if (addr < 0x2000 || (ppu->cart_nametables && addr < 0x3F00)) {
+        /* Pattern tables, plus cartridge-owned nametables. */
         if (nes->mapper_loaded) {
             mapper_ppu_write(&nes->mapper, addr, val);
         } else if (!nes->chr_rom || nes->chr_rom_size == 0) {
@@ -317,6 +320,11 @@ static inline void nes_ppu_write(PPU *ppu, uint16_t addr, uint8_t val) {
             ppu->vram[addr] = val;
         }
     }
+}
+
+static inline void nes_ppu_bus_read(PPU *ppu, uint16_t addr) {
+    NES *nes = (NES *)ppu->user_data;
+    mapper_ppu_bus_read(&nes->mapper, addr);
 }
 
 static inline void nes_ppu_address(PPU *ppu, uint16_t addr) {
@@ -487,7 +495,9 @@ static inline void nes_step(NES *nes) {
      * Master-clock-driven CPU/PPU interleave
      * ============================================================
      *
-     * Each nes_step advances by 12 master ticks = 1 CPU cycle.
+     * Each nes_step advances one CPU cycle: 12 NTSC or 16 PAL master ticks.
+     * PAL PPU dots use five ticks, preserving the hardware 16:5 ratio.
+     * The following offsets describe the NTSC schedule:
      * Within these 12 ticks, components run at well-defined offsets:
      *   - PPU dot work at master tick offset 0, 4, 8 (3 dots per cycle)
      *   - CPU bus access at master tick offset cpu_phase_offset (0..11)
@@ -522,19 +532,23 @@ static inline void nes_step(NES *nes) {
                                nes->apu.dmc_irq_pending ||
                                (nes->mapper_loaded && nes->mapper.irq_pending);
 
+        if (nes->mapper_loaded && nes->mapper.number == 5)
+            mapper_cpu_clock(&nes->mapper);
+
         bool dma_cycle = nes_dma_step(nes);
         nes->cpu.rdy = !dma_cycle;
         nes_cpu_step_traced(nes);
         nes->cpu.rdy = !nes->dma.cpu_halted;
 
         /* DMA and CPU work share this single CPU cycle. */
-        nes->master_tick = cpu_cycle_start + 12;
+        nes->master_tick = cpu_cycle_start +
+            (nes->ppu.region == PPU_REGION_PAL ? 16 : 12);
         ppu_advance_to_master_tick(&nes->ppu, nes->master_tick);
     }
 
     /* Legacy once-per-scanline notification for mappers whose current
      * implementation uses it. MMC3 is driven separately by PPU A12. */
-    if (nes->mapper_loaded && nes->mapper.number != 4 &&
+    if (nes->mapper_loaded && nes->mapper.number != 4 && nes->mapper.number != 5 &&
         nes->ppu.scanline < 240 &&
         nes->ppu.dot >= 260 &&
         nes->ppu.scanline != nes->mapper_last_scanline &&
@@ -715,6 +729,8 @@ static inline void nes_load_mapper(NES *nes, uint8_t number,
     mapper_init(&nes->mapper, number, prg_rom, prg_size, chr_rom, chr_size, mirroring);
     nes->mapper.nes = nes;
     nes->mapper_loaded = true;
+    nes->ppu.cart_bus_read = number == 5 ? nes_ppu_bus_read : NULL;
+    nes->ppu.cart_nametables = number == 5;
 
     /* Also set legacy fields for compatibility */
     nes->prg_rom = prg_rom;

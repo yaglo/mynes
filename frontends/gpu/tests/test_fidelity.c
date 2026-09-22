@@ -196,6 +196,91 @@ static void tape_response(SDL_GPUDevice *gpu) {
     chain_destroy(&sc,gpu);
 }
 
+/* Actual GPU transport/noise tests at the physical NTSC sample rate, across
+ * non-workgroup-aligned scanlines. No screenshot brightness assumptions. */
+static void tape_transport(SDL_GPUDevice *gpu) {
+    enum {W=2728,H=240,N=W*H};
+    SignalChain sc;CHECK(chain_init(&sc,gpu,N,"shaders/compute"));
+    float taps[4*SIGNAL_VHS_TAPS];
+    signal_design_vhs(taps,42954540,2.5e6f,.35e6f,0);
+    int ti=chain_upload_taps(&sc,gpu,taps,4*SIGNAL_VHS_TAPS);
+    GpuVHSParams p={.count=N,.samples_per_line=W,.tap_count=SIGNAL_VHS_TAPS,
+        .sample_rate=42954540,.drift_frames=12,.frame_rate=60.0988f};
+    int st=chain_add_stage(&sc,"Tape transport",CHAIN_KERNEL_VHS,&p,sizeof(p),(N+255)/256,1);
+    sc.stages[st].taps_index=ti;
+    float *in=malloc(N*sizeof(float)),*a=malloc(N*sizeof(float)),*b=malloc(N*sizeof(float));
+    CHECK(in && a && b);if(!in || !a || !b) goto done;
+#define TAPE_RUN(dst) do { chain_update_params(&sc,st,&p,sizeof(p)); \
+    CHECK(chain_upload_input(&sc,gpu,in,N*sizeof(float)));CHECK(chain_run(&sc,gpu)); \
+    CHECK(chain_download_output(&sc,gpu,dst,N*sizeof(float))); } while(0)
+    for(int i=0;i<N;i++) in[i]=.35f;
+    p.luma_noise_rms=.01f;p.frame_seed=4;
+    TAPE_RUN(a);TAPE_RUN(b);CHECK(memcmp(a,b,N*sizeof(float))==0);
+    double mean=0,energy=0,cx=0,cy=0;
+    for(int i=W;i<N-W-1;i++) {
+        float n=a[i]-.35f;
+        mean+=n;energy+=n*n;cx+=n*(a[i+1]-.35f);cy+=n*(a[i+W]-.35f);
+    }
+    int count=N-2*W-1;float rms=sqrt(energy/count);
+    printf("VHS grain RMS %.5f, horizontal/vertical correlation %.3f/%.3f\n",rms,cx/energy,cy/energy);
+    CHECK(fabs(mean/count)<.0002);CHECK(rms>.0095 && rms<.0105);
+    CHECK(cx/energy>.8);CHECK(fabs(cy/energy)<.1);
+    p.frame_seed++;TAPE_RUN(b);
+    double ct=0;for(int i=W;i<N-W-1;i++) ct+=(a[i]-.35f)*(b[i]-.35f);
+    CHECK(fabs(ct/energy)<.1); // Grain changes each source frame, unlike drift.
+    p.luma_noise_rms=0;p.chroma_noise_rms=.01f;TAPE_RUN(a);
+    energy=0;mean=0;double carrier=0;
+    for(int i=W;i<N-W-12;i++) {
+        float n=a[i]-.35f;energy+=n*n;mean+=n;carrier+=n*(a[i+12]-.35f);
+    }
+    rms=sqrt(energy/(N-2*W-12));
+    CHECK(rms>.009 && rms<.011);CHECK(fabs(mean/(N-2*W-12))<.0001);
+    CHECK(carrier/energy>.8); // Narrow envelopes, not broadband RGB snow.
+    p.chroma_noise_rms=0;p.timebase_samples=12;p.frame_seed=4;
+    for(int i=0;i<N;i++) in[i]=(float)(i%W)/W;
+    TAPE_RUN(a);p.frame_seed=5;TAPE_RUN(b);
+    double adjacent=0,distant=0;
+    for(int y=0;y<H;y++) adjacent+=pow(a[y*W+1000]-b[y*W+1000],2);
+    p.frame_seed=40;TAPE_RUN(b);
+    for(int y=0;y<H;y++) distant+=pow(a[y*W+1000]-b[y*W+1000],2);
+    CHECK(adjacent>0 && adjacent<distant*.15);
+    p.timebase_samples=0;p.head_switch_samples=0;TAPE_RUN(a);
+    p.head_switch_samples=30;TAPE_RUN(b);
+    double band=0;
+    for(int y=0;y<H;y++) {
+        float delta=fabsf(a[y*W+1000]-b[y*W+1000]);
+        if(y<=234) CHECK(delta<1e-6f); else band+=delta;
+    }
+    CHECK(band>.001);
+    p.head_switch_samples=0;p.dropout_rate=p.frame_rate;p.dropout_depth=.8f;TAPE_RUN(b);
+    int affected=0;
+    for(int y=0;y<H;y++) {
+        bool changed=false;
+        for(int x=0;x<W;x++) if(fabsf(a[y*W+x]-b[y*W+x])>1e-5f) changed=true;
+        affected+=changed;
+    }
+    CHECK(affected==1); // A localized streak, not whole-frame static.
+    // Extreme supported offsets and nonaligned line/workgroup boundaries.
+    p.timebase_samples=32;p.head_switch_samples=32;p.delay_samples=-64;
+    TAPE_RUN(b);for(int i=0;i<N;i++) CHECK(isfinite(b[i]));
+    p.delay_samples=64;TAPE_RUN(b);for(int i=0;i<N;i++) CHECK(isfinite(b[i]));
+    // Playback EQ preserves DC and produces a causal tail, without bypassing
+    // the luma filter with an unfiltered sharpening impulse.
+    signal_vhs_luma_eq(taps,42954540,.2f,.3f);
+    double sum=0,moment=0;
+    for(int k=0;k<SIGNAL_VHS_TAPS;k++) {sum+=taps[4*k];moment+=(k-SIGNAL_VHS_TAPS/2)*taps[4*k];}
+    CHECK(fabs(sum-1)<1e-5);CHECK(moment<-.5);
+    sc.stages[st].taps_index=chain_upload_taps(&sc,gpu,taps,4*SIGNAL_VHS_TAPS);
+    CHECK(sc.stages[st].taps_index>=0);
+    p.timebase_samples=p.head_switch_samples=p.delay_samples=p.dropout_rate=0;
+    for(int i=0;i<N;i++) in[i]=.35f;
+    TAPE_RUN(b);for(int i=0;i<N;i++) CHECK(fabsf(b[i]-.35f)<1e-5f);
+
+#undef TAPE_RUN
+done:
+    free(in);free(a);free(b);chain_destroy(&sc,gpu);
+}
+
 static void rf(SDL_GPUDevice *gpu) {
     SignalChain sc;
     CHECK(chain_init(&sc, gpu, 256, "shaders/compute"));
@@ -438,13 +523,13 @@ static void composite_edge_phase(SDL_GPUDevice *gpu) {
  * Check the source against an independent 12-phase integral and verify a
  * phase change cannot introduce composite crawl into ideal RGB. */
 static void rgb_source(SDL_GPUDevice *gpu) {
-    for (int region=0;region<2;region++) for(int connection=VIDEO_CONN_COMPONENT;connection<=VIDEO_CONN_RGB;connection++) {
+    for (int region=0;region<2;region++) for(int connection=VIDEO_CONN_COMPONENT;connection<=VIDEO_CONN_DIRECT;connection++) {
         SignalPrecompute sp; VideoChain c; VideoGPUChain v;
         signal_precompute_init(&sp,region);
         video_chain_init_preset(&c,(VideoConnectionType)connection,VIDEO_COMB_NONE,region);
         c.tv.noise_level=0; c.cable.shield_effectiveness=1;
         CHECK(video_gpu_init(&v,gpu,&c,"shaders/compute",sp.fir_y,sp.fir_y_n,sp.fir_c,sp.fir_c_n,sp.fir_q,sp.fir_q_n));
-        CHECK(v.sig_chain.first_stage==v.stage_post_pipeline);
+        CHECK(v.sig_chain.first_stage==v.stage_osd);
         CHECK(!chain_get_stage_enabled(&v.sig_chain,v.stage_raster));
         CHECK(video_gpu_upload_signal_table(&v,gpu,(float *)sp.table,region ? (float *)sp.table_alt : NULL,SIG_TABLE_ENTRIES,SIG_TABLE_STRIDE));
         CHECK(video_gpu_set_beam_params(&v,gpu,32,960,4,.2f,.3f));
@@ -474,7 +559,7 @@ static void rgb_source(SDL_GPUDevice *gpu) {
         c.connection=VIDEO_CONN_COMPOSITE; video_gpu_reinit_stages(&v,&c);
         CHECK(v.sig_chain.first_stage==0);
         c.connection=(VideoConnectionType)connection; video_gpu_reinit_stages(&v,&c);
-        CHECK(v.sig_chain.first_stage==v.stage_post_pipeline);
+        CHECK(v.sig_chain.first_stage==v.stage_osd);
         CHECK(video_gpu_process_full(&v,gpu,indices,4,sp.phase_line_adv,0,other));
         for(int i=0;i<v.signal_fmt.total_samples*3;i++) CHECK(fabsf(rgb[i]-other[i])<.00001f);
         free(rgb);free(other);video_gpu_destroy(&v,gpu);
@@ -1192,6 +1277,7 @@ int main(void) {
     rf(gpu);
     rf_sidebands(gpu);
     tape_response(gpu);
+    tape_transport(gpu);
     rf_temporal_continuity(gpu);
     dac_equivalence(gpu, SIGNAL_REGION_NTSC);
     dac_equivalence(gpu, SIGNAL_REGION_PAL);

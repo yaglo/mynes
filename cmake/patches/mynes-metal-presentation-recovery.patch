@@ -1,0 +1,49 @@
+# Recover GPU presentation lead after short stalls and timing changes.
+--- a/src/gpu/metal/SDL_gpu_metal.m
++++ b/src/gpu/metal/SDL_gpu_metal.m
+@@ -20,6 +20,7 @@
+ */
+ 
+ #include "SDL_internal.h"
++#include "presentation_schedule.h"
+ 
+ #ifdef SDL_GPU_METAL
+ 
+@@ -466,6 +467,7 @@
+     SDL_GPUFence *inFlightFences[MAX_FRAMES_IN_FLIGHT];
+     Uint32 frameCounter;
+     CFTimeInterval mynesPresentTime;
++    Sint64 mynesPresentEpoch;
+     Sint64 mynesPresentInterval;
+     Sint64 mynesSourceFrame;
+ } MetalWindowData;
+@@ -4094,22 +4096,17 @@
+                 "mynes.gpu.metal.present_interval_ns", 0);
+             Sint64 sourceFrame = SDL_GetNumberProperty(SDL_GetWindowProperties(windowData->window),
+                 "mynes.gpu.metal.source_frame", 0);
++            Sint64 epoch = SDL_GetNumberProperty(SDL_GetWindowProperties(windowData->window),
++                "mynes.gpu.metal.present_epoch", 0);
+             if (intervalNS > 0) {
+-                CFTimeInterval interval = intervalNS * 1e-9;
+-                CFTimeInterval now = CACurrentMediaTime();
+-                /* Keep source skips as skipped intervals; rebase after a stall.
+-                 * Two intervals of startup lead cover encoding and GPU work. */
+-                Sint64 advance = sourceFrame > windowData->mynesSourceFrame
+-                    ? sourceFrame - windowData->mynesSourceFrame : 1;
+-                if (intervalNS != windowData->mynesPresentInterval || advance > 3 ||
+-                    windowData->mynesPresentTime < now - interval * 3) {
+-                    windowData->mynesPresentTime = now + interval * 2;
+-                } else {
+-                    windowData->mynesPresentTime += interval * advance;
+-                }
++                windowData->mynesPresentTime = mynes_presentation_target(
++                    windowData->mynesPresentTime, CACurrentMediaTime(), intervalNS * 1e-9,
++                    sourceFrame - windowData->mynesSourceFrame,
++                    intervalNS != windowData->mynesPresentInterval || epoch != windowData->mynesPresentEpoch);
+             } else {
+                 windowData->mynesPresentTime = 0;
+             }
++            windowData->mynesPresentEpoch = epoch;
+             windowData->mynesPresentInterval = intervalNS;
+             windowData->mynesSourceFrame = sourceFrame;
+             if (SDL_GetHintBoolean("MYNES_METAL_PRESENT_TRACE", false)) {
