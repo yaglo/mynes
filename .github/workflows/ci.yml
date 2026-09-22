@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  core-linux:
+    name: Core + tests (Ubuntu)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build libsdl2-dev glslc spirv-cross python3
+      # MYNES_PORTABLE_BINARY is what the release scripts use; building the
+      # core with it here keeps the x86-64-v3 path compiling.
+      - name: Configure (core, SDL2 frontend, tests; no GPU frontend)
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DNES_BUILD_TESTS=ON \
+            -DNES_BUILD_FRONTENDS=ON \
+            -DNES_BUILD_GPU_FRONTEND=OFF \
+            -DMYNES_PORTABLE_BINARY=ON
+      - name: Build
+        run: cmake --build build
+      - name: Unit tests, ROM tests and AccuracyCoin
+        run: ctest --test-dir build --output-on-failure
+      - name: Benchmark target builds
+        run: cmake --build build --target bench_core
+
+  gpu-linux:
+    name: GPU frontend (Ubuntu, bundled SDL3, software Vulkan)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build glslc spirv-cross python3 \
+            libvulkan-dev mesa-vulkan-drivers vulkan-tools
+      - name: Configure (GPU frontend with bundled SDL3, console build)
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DNES_BUILD_TESTS=ON \
+            -DNES_BUILD_FRONTENDS=ON \
+            -DNES_BUILD_GPU_FRONTEND=ON \
+            -DMYNES_BUNDLED_SDL3=ON \
+            -DSDL_UNIX_CONSOLE_BUILD=ON -DSDL_X11=OFF -DSDL_WAYLAND=OFF \
+            -DSDL_VULKAN=ON -DSDL_OFFSCREEN=ON
+      - name: Build
+        run: cmake --build build
+      # gpu_fidelity_tests crashes inside llvmpipe's shader JIT; it needs a
+      # real GPU and runs on the maintainer's Mac instead.
+      - name: All tests on lavapipe (software Vulkan)
+        env:
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
+          SDL_VIDEO_DRIVER: offscreen
+          SDL_AUDIO_DRIVER: dummy
+        run: ctest --test-dir build --output-on-failure -E '^gpu_fidelity_tests$'
+
+  macos:
+    name: Core + GPU frontend (macOS)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install build dependencies
+        run: brew install cmake ninja shaderc spirv-cross
+      - name: Configure (bundled SDL3 with Metal fence fixes)
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DNES_BUILD_TESTS=ON \
+            -DNES_BUILD_FRONTENDS=ON \
+            -DNES_BUILD_GPU_FRONTEND=ON
+      - name: Build
+        run: cmake --build build
+      - name: Core tests and device-free GPU tests
+        run: |
+          ctest --test-dir build --output-on-failure \
+            -E '^gpu_(pipeline_test|fidelity_tests|audio_tests|fence_tests|playback_tests|frame_capture_tests)$'

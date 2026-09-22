@@ -189,13 +189,49 @@ int test_unsupported_mapper(void) {
     int result = nes_rom_load(&rom, path);
 
     if (result == ROM_ERR_MAPPER) {
-        printf("TEST unsupported_mapper: PASS (correctly rejected mapper 99)\n");
+        /* The message must name the mapper so users can report it. */
+        const char *msg = nes_rom_error_str(result);
+        if (strcmp(msg, "Unsupported mapper 99") != 0) {
+            printf("TEST unsupported_mapper: FAIL (message \"%s\" does not name mapper 99)\n", msg);
+            return 0;
+        }
+        printf("TEST unsupported_mapper: PASS (correctly rejected: %s)\n", msg);
         return 1;
     } else {
         printf("TEST unsupported_mapper: FAIL (expected ROM_ERR_MAPPER, got %d)\n", result);
         nes_rom_free(&rom);
         return 0;
     }
+}
+
+/* The loader's gate and the dispatcher must agree for every number, so a
+ * ROM that loads always has an implementation behind it and vice versa. */
+static int test_mapper_gate(void) {
+    static uint8_t data[INES_HEADER_SIZE + INES_PRG_BANK_SIZE + INES_CHR_BANK_SIZE];
+    memcpy(data, "NES\x1A\x01\x01", 6);
+    int pass = 1;
+    for (int mapper = 0; mapper < 256; ++mapper) {
+        data[6] = (uint8_t)((mapper & 0x0F) << 4);
+        data[7] = (uint8_t)(mapper & 0xF0);
+        ROM rom;
+        int result = nes_rom_load_data(&rom, data, sizeof(data));
+        if ((result == ROM_OK) != mapper_supported((uint8_t)mapper)) {
+            printf("TEST mapper_gate: FAIL (mapper %d: loader %d, dispatcher %d)\n",
+                   mapper, result, mapper_supported((uint8_t)mapper));
+            pass = 0;
+        }
+        if (result == ROM_OK) nes_rom_free(&rom);
+    }
+    const uint8_t expected[] = {0, 1, 2, 3, 4, 5, 7, 9, 10, 11, 34, 66, 69, 71, 206, 227};
+    for (size_t i = 0; i < sizeof(expected) / sizeof(expected[0]); ++i) {
+        if (!mapper_supported(expected[i])) {
+            printf("TEST mapper_gate: FAIL (mapper %u not supported)\n", expected[i]);
+            pass = 0;
+        }
+    }
+    if (pass)
+        printf("TEST mapper_gate: PASS (loader and dispatcher agree for all 256 numbers)\n");
+    return pass;
 }
 
 int test_battery_flag(void) {
@@ -295,6 +331,7 @@ int main(void) {
     total++; passed += test_invalid_magic();
     total++; passed += test_file_not_found();
     total++; passed += test_unsupported_mapper();
+    total++; passed += test_mapper_gate();
     total++; passed += test_battery_flag();
     total++; passed += test_rom_free();
 

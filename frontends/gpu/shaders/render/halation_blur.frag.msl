@@ -65,13 +65,13 @@ struct main0_in
 };
 
 static inline __attribute__((always_inline))
-float3 light(thread const float2& p, constant BlurParams& _22, texture2d<float> tex_input, sampler tex_inputSmplr)
+float3 light(thread const float2& p, constant BlurParams& v_22, texture2d<float> tex_input, sampler tex_inputSmplr)
 {
     float3 v = fast::max(tex_input.sample(tex_inputSmplr, p).xyz, float3(0.0));
     float3 _103;
-    if (_22.input_gamma > 0.0)
+    if (v_22.input_gamma > 0.0)
     {
-        _103 = powr(v, float3(_22.input_gamma));
+        _103 = pow(v, float3(v_22.input_gamma));
     }
     else
     {
@@ -81,10 +81,10 @@ float3 light(thread const float2& p, constant BlurParams& _22, texture2d<float> 
 }
 
 static inline __attribute__((always_inline))
-float weight(thread const int& i, constant BlurParams& _22)
+float weight(thread const int& i, constant BlurParams& v_22)
 {
     float _31;
-    if (_22.extended_kernel > 0.0)
+    if (v_22.extended_kernel > 0.0)
     {
         _31 = _54[i];
     }
@@ -95,19 +95,19 @@ float weight(thread const int& i, constant BlurParams& _22)
     return _31;
 }
 
-fragment main0_out main0(main0_in in [[stage_in]], constant BlurParams& _22 [[buffer(0)]], texture2d<float> tex_input [[texture(0)]], sampler tex_inputSmplr [[sampler(0)]])
+fragment main0_out main0(main0_in in [[stage_in]], constant BlurParams& v_22 [[buffer(0)]], texture2d<float> tex_input [[texture(0)]], sampler tex_inputSmplr [[sampler(0)]])
 {
     main0_out out = {};
     float2 param = in.uv;
     int param_1 = 0;
-    float3 accum = light(param, _22, tex_input, tex_inputSmplr) * weight(param_1, _22);
+    float3 accum = light(param, v_22, tex_input, tex_inputSmplr) * weight(param_1, v_22);
     for (int i = 1; i <= 16; i++)
     {
-        float2 offset = _22.direction * float(i);
+        float2 offset = v_22.direction * float(i);
         float2 param_2 = in.uv + offset;
         float2 param_3 = in.uv - offset;
         int param_4 = i;
-        accum += ((light(param_2, _22, tex_input, tex_inputSmplr) + light(param_3, _22, tex_input, tex_inputSmplr)) * weight(param_4, _22));
+        accum += ((light(param_2, v_22, tex_input, tex_inputSmplr) + light(param_3, v_22, tex_input, tex_inputSmplr)) * weight(param_4, v_22));
     }
     out.frag_color = float4(accum, 1.0);
     return out;

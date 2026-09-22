@@ -77,24 +77,13 @@ In `src/nes/mapper.c`, add to `mapper_ops_for()`:
 case XX: return &mapperXX_ops;
 ```
 
-And update `mapper_supported()`:
-
-```c
-bool mapper_supported(uint8_t number) {
-    return number == 0 || number == 1 || ... || number == XX;
-}
-```
+`mapper_supported()` and the ROM loader's mapper gate both derive from that
+switch, so there is nothing else to register: a number the dispatcher knows
+is accepted, and any other number is reported as "Unsupported mapper N".
 
 ### 4. Update the ROM Loader
 
-In `src/nes/rom.h`, update the supported mapper check in `nes_rom_load()`:
-
-```c
-if (rom->mapper > 4 && rom->mapper != 7 && rom->mapper != 10
-    && rom->mapper != XX) {
-    return ROM_ERR_MAPPER;
-}
-```
+Nothing to do. Both loaders in `src/nes/rom.h` call `mapper_supported()`.
 
 ### 5. Add to CMakeLists.txt
 

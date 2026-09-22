@@ -63,7 +63,19 @@ typedef struct {
     bool            capture_accepted; /* written, or owned by the background writer */
     bool            capture_async, capture_failed;
     FrameCaptureJob *capture_job;
+    /* Synchronous consumer of the final display image (the clip recorder).
+     * While set, every rendered frame is downloaded and handed over before
+     * the next one starts; capture_path still writes files as before. */
+    bool          (*capture_sink)(void *user, const FrameCaptureImage *image);
+    void           *capture_sink_user;
     uint64_t        swap_wait_ns, submit_ns, capture_ns; /* diagnostics; not photon timestamps */
+    /* Submit-to-completion time of on-screen command buffers, the GPU cost
+     * the CPU encode timers cannot see. Accumulated until the caller resets
+     * both; frame_fence is the one submission still being timed. */
+    SDL_GPUFence   *frame_fence;
+    uint64_t        frame_fence_submit_ns;
+    uint64_t        gpu_frame_total_ns;
+    unsigned        gpu_frame_samples;
     SDL_GPUCommandBuffer *present_cmd;
     SDL_GPUTexture *present_texture;
     Uint32 present_w, present_h;
@@ -104,6 +116,9 @@ float gpu_render_headroom(const GPURenderCtx *ctx);
 /* Check display capacity before taking a picture from the playback queue.
  * Returns false when full so the caller can pump events and retry. */
 bool gpu_render_prepare(GPURenderCtx *ctx);
+/* Record the timed submission if the GPU has finished it. For waits that
+ * would otherwise leave the fence unexamined until the next submit. */
+void gpu_render_poll_frame_fence(GPURenderCtx *ctx);
 /* Refresh capability and reset cadence when the monitor or source changes. */
 void gpu_render_presentation_update(GPURenderCtx *ctx, float source_hz);
 /* Drains the writer before shutdown; reports any deferred write failure. */

@@ -2,7 +2,7 @@
 
 Native macOS editor for the SDL3 GPU frontend. The graph follows five physical sections: connection, decoder, beam, phosphor, and glass. Controls change the live emulator through the same update functions as its OSD. Remaining float parameters inherit the OSD targets, ranges and callbacks, including RF IF and VHS. Enums and toggles are available in the emulator OSD. The separate Audio controls button opens amplifier, mains-hum and noise controls; these values participate in preset save/load and dirty-state tracking.
 
-[See the rendered results](../../docs/nes-visual-showcase.md) · [Four CRT references and native close-ups](../../docs/gpu-beam-closeups.md)
+[See the rendered results](https://yaglo.github.io/mynes-web/gallery/showcase/) · [Four CRT references and native close-ups](https://yaglo.github.io/mynes-web/gallery/closeups/)
 
 ## Run
 

@@ -36,7 +36,7 @@ struct OutputBuf2
 
 constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
 
-kernel void main0(constant Params& _20 [[buffer(0)]], device InputBuf& _36 [[buffer(1)]], device Reference& _67 [[buffer(2)]], device OutputBuf& _130 [[buffer(3)]], device OutputBuf2& _179 [[buffer(4)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+kernel void main0(constant Params& _20 [[buffer(0)]], const device InputBuf& _36 [[buffer(1)]], const device Reference& _67 [[buffer(2)]], device OutputBuf& _130 [[buffer(3)]], device OutputBuf2& _179 [[buffer(4)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
     uint tid = gl_GlobalInvocationID.x;
     if (tid >= _20.count)

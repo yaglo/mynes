@@ -12,14 +12,6 @@ inline Tx mod(Tx x, Ty y)
     return x - y * floor(x / y);
 }
 
-// Implementation of signed integer mod accurate to SPIR-V specification
-template<typename Tx, typename Ty>
-inline Tx spvSMod(Tx x, Ty y)
-{
-    Tx remainder = x - y * (x / y);
-    return select(Tx(remainder + y), remainder, remainder == 0 || (x >= 0) == (y >= 0));
-}
-
 struct Params
 {
     uint count;
@@ -57,7 +49,7 @@ struct RasterY
 
 constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
 
-kernel void main0(constant Params& _24 [[buffer(0)]], device Active& _272 [[buffer(1)]], device Raster& _295 [[buffer(3)]], device SourceY& _362 [[buffer(2)]], device RasterY& _435 [[buffer(4)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+kernel void main0(constant Params& _24 [[buffer(0)]], const device Active& _272 [[buffer(1)]], device Raster& _295 [[buffer(3)]], const device SourceY& _362 [[buffer(2)]], device RasterY& _435 [[buffer(4)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
     uint i = gl_GlobalInvocationID.x;
     if (i >= _24.count)
@@ -117,11 +109,11 @@ kernel void main0(constant Params& _24 [[buffer(0)]], device Active& _272 [[buff
         float _199;
         if (_dot == 49u)
         {
-            _199 = _24.gray_backdrop[phase / 4][spvSMod(phase, 4)];
+            _199 = _24.gray_backdrop[phase / 4][phase % 4];
         }
         else
         {
-            _199 = _24.backdrop[phase / 4][spvSMod(phase, 4)];
+            _199 = _24.backdrop[phase / 4][phase % 4];
         }
         value = _199;
     }
@@ -246,7 +238,7 @@ kernel void main0(constant Params& _24 [[buffer(0)]], device Active& _272 [[buff
             y = 0.0;
             for (int k = 0; k < 12; k++)
             {
-                y += (_24.backdrop[k / 4][spvSMod(k, 4)] / 12.0);
+                y += (_24.backdrop[k / 4][k % 4] / 12.0);
             }
         }
         if (vertical_sync)

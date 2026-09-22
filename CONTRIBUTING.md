@@ -8,6 +8,13 @@ are meant to keep contributions focused and easy to review.
 1. Fork and clone the repo.
 2. Build it following [README.md](README.md). The SDL2 frontend is the
    simplest starting point — if that builds and runs a ROM, you're set.
+   You need a C11 compiler, CMake 3.16+ and SDL2 and/or SDL3; the GPU
+   frontend's shader tools (`glslc` from shaderc, `spirv-cross`, Python 3)
+   are optional because the compiled shaders are committed — install them
+   only if you edit a `.glsl`, then run the `shaders_regenerate` target
+   and commit the results. Chicken Scheme is likewise optional (the
+   generated CPU code is committed). Platform recipes are in
+   [docs/dev/commands.md](docs/dev/commands.md).
 3. Run the test suite: `ctest` from the build directory.
 
 ## Scope
@@ -45,9 +52,9 @@ Less welcome without discussion first:
 
 - One logical change per commit. Small, reviewable commits beat large
   omnibus ones.
-- Commit message format: `subsystem: short summary in imperative mood`.
-  Examples from recent history: `cpu: fix CLI delay on IRQ alignment`,
-  `gpu: mask pitch in pixels, not mm`.
+- Commit message: an imperative subject line, with an optional subsystem
+  prefix when it helps. Both `Fix CLI delay on IRQ alignment` and
+  `gpu: mask pitch in pixels, not mm` are fine.
 - The body explains *why* the change is needed if it isn't obvious
   from the subject line.
 - Reference the AccuracyCoin page or test ROM when a change affects

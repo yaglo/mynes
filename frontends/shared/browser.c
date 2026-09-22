@@ -181,7 +181,8 @@ BrowserResult browser_handle_key(Browser *b,BrowserKey key) {
         if(!b->recent_tab && b->entry_is_dir[i]) { cd_to(b,b->entries[i]); break; }
         if(key==BROWSER_KEY_RIGHT) break;
         if(b->recent_tab) snprintf(b->chosen_path,sizeof(b->chosen_path),"%s",b->config->recent_roms[i]);
-        else snprintf(b->chosen_path,sizeof(b->chosen_path),"%s/%s",b->current_dir,b->entries[i]);
+        else if(snprintf(b->chosen_path,sizeof(b->chosen_path),"%s/%s",b->current_dir,b->entries[i])
+                >=(int)sizeof(b->chosen_path)) { browser_set_error(b,"Path too long"); break; }
         struct stat st;
         if(stat(b->chosen_path,&st)!=0 || !S_ISREG(st.st_mode) || access(b->chosen_path,R_OK)!=0) {
             browser_set_error(b,"ROM missing or unreadable"); break;

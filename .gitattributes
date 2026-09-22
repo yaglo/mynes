@@ -1,0 +1,17 @@
+# Keep GitHub's language statistics about the emulator, not its test fixtures.
+tests/nes-test-roms/** linguist-vendored
+tests/accuracy_coin/** linguist-vendored
+generated/** linguist-generated
+frontends/gpu/shaders/**/*.msl linguist-generated
+frontends/gpu/shaders/**/*.spv binary
+docs/**/*.json linguist-generated
+
+# Binary fixtures and media
+*.nes binary
+*.NES binary
+*.pal binary
+*.png binary
+*.webp binary
+*.gif binary
+*.mp4 binary
+*.pcx binary

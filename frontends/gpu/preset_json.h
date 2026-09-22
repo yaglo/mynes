@@ -911,8 +911,8 @@ static inline int preset_json_scan_dir(const char *dir,
         memcpy(names[count], fname, name_len);
         names[count][name_len] = '\0';
 
-        /* Fill full path. */
-        snprintf(paths[count], 512, "%s/%s", dir, fname);
+        /* Fill full path; a name that does not fit cannot be opened later. */
+        if (snprintf(paths[count], 512, "%s/%s", dir, fname) >= 512) continue;
 
         count++;
     }

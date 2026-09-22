@@ -51,7 +51,7 @@ typedef struct Mapper {
     uint64_t mmc1_last_write_cycle;
     bool mmc1_last_write_valid;
 
-    /* MMC3 specific */
+    /* MMC3 specific; Namco 108 (mapper 206) shares the bank registers */
     uint8_t mmc3_bank_select;
     uint8_t mmc3_banks[8];
     uint8_t mmc3_irq_latch;
@@ -63,7 +63,7 @@ typedef struct Mapper {
     uint64_t mmc3_a12_last_low_cpu_cycle;
     uint8_t mmc3_a12_low_cpu_cycles;
 
-    /* MMC4 specific */
+    /* MMC2/MMC4 specific (MMC2's PRG bank is 8 KB, MMC4's 16 KB) */
     uint8_t mmc4_prg_bank;
     uint8_t mmc4_chr_bank0_fd;
     uint8_t mmc4_chr_bank0_fe;

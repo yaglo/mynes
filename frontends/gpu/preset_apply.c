@@ -648,8 +648,16 @@ static int menu_presets_video_idx = -1;
 /* Forward declarations — actual storage lives further down. The save
  * action callback (also further down) needs to update these tables. */
 static OSDMenuItem menu_video[15];
-OSDMenuItem preset_menu_root[9];   /* defined below; declared here so the
-                                    * save callback can update it. */
+OSDMenuItem preset_menu_root[PRESET_MENU_ROOT_MAX]; /* defined below; declared
+                                    * here so the save callback can update it. */
+
+/* The "Presets" submenu grows when a user preset is saved. Its root slot can
+ * move when feature submenus are inserted, so find it by table pointer. */
+static void preset_menu_sync_presets_count(void) {
+    for (int i = 0; i < preset_menu_root_count; i++)
+        if (preset_menu_root[i].submenu == menu_presets)
+            preset_menu_root[i].submenu_count = 1 + preset_count;
+}
 
 /* Public entry points used by main.c. */
 int  preset_load_index(int idx) {
@@ -767,14 +775,13 @@ static bool preset_save_user(char *out_path, int out_path_sz) {
     char ts_pretty[24], ts_filename[24];
     strftime(ts_pretty,   sizeof(ts_pretty),   "%Y-%m-%d %H:%M", &tmv);
     strftime(ts_filename, sizeof(ts_filename), "%Y%m%d_%H%M%S", &tmv);
-    snprintf(p.name, sizeof(p.name), "%s (custom %s)", base_name, ts_pretty);
+    /* The precisions keep the timestamp and the closing quote inside the
+     * fixed-size name/description fields even for the longest inputs. */
+    snprintf(p.name, sizeof(p.name), "%.90s (custom %s)", base_name, ts_pretty);
     if (preset_loaded.description[0]) {
-        char prev_desc[400];
-        snprintf(prev_desc, sizeof(prev_desc), "%s",
-                 preset_loaded.description);
         snprintf(p.description, sizeof(p.description),
-                 "Customised from \"%s\" — %s",
-                 base_name, prev_desc);
+                 "Customised from \"%.127s\" — %.360s",
+                 base_name, preset_loaded.description);
     } else {
         snprintf(p.description, sizeof(p.description),
                  "User-saved preset");
@@ -790,8 +797,11 @@ static bool preset_save_user(char *out_path, int out_path_sz) {
 
     char slug[64];
     slugify(base_name, slug, sizeof(slug));
-    snprintf(out_path, out_path_sz, "%s/%s_custom_%s.json",
-             dir, slug, ts_filename);
+    if (snprintf(out_path, out_path_sz, "%s/%s_custom_%s.json",
+                 dir, slug, ts_filename) >= (int)out_path_sz) {
+        fprintf(stderr, "preset_save_user: path too long under %s\n", dir);
+        return false;
+    }
 
     if (!preset_json_save(&p, out_path)) {
         fprintf(stderr, "preset_save_user: write failed for %s\n", out_path);
@@ -814,7 +824,7 @@ static void gpu_action_save_preset(void) {
     const char *base = strrchr(path, '/');
     const char *display = base ? base + 1 : path;
     char name_buf[128];
-    snprintf(name_buf, sizeof(name_buf), "%s", display);
+    snprintf(name_buf, sizeof(name_buf), "%.127s", display);
     char *dot = strrchr(name_buf, '.');
     if (dot) *dot = '\0';
 
@@ -838,7 +848,7 @@ static void gpu_action_save_preset(void) {
     /* Bump the Presets submenu count so the OSD picks up the new entry. */
     if (menu_presets_video_idx >= 0)
         menu_video[menu_presets_video_idx].submenu_count = 1 + preset_count;
-    preset_menu_root[2].submenu_count = 1 + preset_count;
+    preset_menu_sync_presets_count();
 }
 
 uint32_t preset_catalog_revision(void) { return catalog_revision; }
@@ -857,7 +867,7 @@ static void preset_refresh_menu(void) {
         menu_presets[i+1]=mi;
     }
     if(menu_presets_video_idx>=0) menu_video[menu_presets_video_idx].submenu_count=preset_count+1;
-    preset_menu_root[2].submenu_count=preset_count+1;
+    preset_menu_sync_presets_count();
     catalog_revision++;
     preset_remember_active();
 }
@@ -953,8 +963,50 @@ static OSDMenuItem menu_rf[7],menu_vhs[15];
  * declared near the top of this file so the save action can reach them. */
 static OSDMenuItem menu_audio_top[3];
 static OSDMenuItem menu_picture[9], menu_tube[5];
-static OSDMenuItem menu_diagnostics[1],menu_display[4];
+static OSDMenuItem menu_diagnostics[1],menu_display[PRESET_MENU_DISPLAY_MAX];
+static int  menu_display_count = 4;
+static OSDMenuItem menu_game[PRESET_MENU_GAME_MAX];
+static int  menu_game_count = 0;
 int         preset_menu_root_count = 9;
+
+/* Frontend features (input, saves, pacing) extend the OSD without editing
+ * the tables above. Appending re-points the parent submenu so counts stay
+ * in sync; the "Game" submenu is inserted before "Reset console" on first use. */
+bool preset_menu_root_append(OSDMenuItem item) {
+    if (preset_menu_root_count >= PRESET_MENU_ROOT_MAX) return false;
+    /* Keep the reset action last so the menu ends with the destructive item. */
+    preset_menu_root[preset_menu_root_count] = preset_menu_root[preset_menu_root_count - 1];
+    preset_menu_root[preset_menu_root_count - 1] = item;
+    preset_menu_root_count++;
+    return true;
+}
+bool preset_menu_game_append(OSDMenuItem item) {
+    if (menu_game_count >= PRESET_MENU_GAME_MAX) return false;
+    menu_game[menu_game_count++] = item;
+    for (int i = 0; i < preset_menu_root_count; i++)
+        if (preset_menu_root[i].submenu == menu_game) {
+            preset_menu_root[i].submenu_count = menu_game_count;
+            return true;
+        }
+    OSDMenuItem sub = {0};
+    sub.label = "Game"; sub.type = OSD_MI_SUBMENU;
+    sub.submenu = menu_game; sub.submenu_count = menu_game_count;
+    /* Put the game controls first: they are what a player opens the menu for. */
+    if (preset_menu_root_count >= PRESET_MENU_ROOT_MAX) return false;
+    memmove(&preset_menu_root[1], &preset_menu_root[0],
+            sizeof(preset_menu_root[0]) * preset_menu_root_count);
+    preset_menu_root[0] = sub;
+    preset_menu_root_count++;
+    return true;
+}
+bool preset_menu_display_append(OSDMenuItem item) {
+    if (menu_display_count >= PRESET_MENU_DISPLAY_MAX) return false;
+    menu_display[menu_display_count++] = item;
+    for (int i = 0; i < preset_menu_root_count; i++)
+        if (preset_menu_root[i].submenu == menu_display)
+            preset_menu_root[i].submenu_count = menu_display_count;
+    return true;
+}
 
 /* Helper to populate an OSDMenuItem. */
 static OSDMenuItem make_item(const char *label, OSDMenuItemType type,
@@ -1011,7 +1063,7 @@ void preset_ctx_init(PresetCtx *ctx) {
      * CMake places resources beside bin/; app bundles may put them in base. */
     char bundled_dir[1024] = {0};
     const char *base = SDL_GetBasePath();
-    const char *relative[] = {"../presets", "presets", "../../presets"};
+    const char *relative[] = {"../presets", "presets", "../Resources/presets", "../../presets"};
     bool found = false;
     for (size_t i=0; base && i<sizeof(relative)/sizeof(*relative); i++) {
         snprintf(bundled_dir,sizeof(bundled_dir),"%s%s",base,relative[i]);
@@ -1405,9 +1457,10 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_display[1] = make_item("Native fullscreen",OSD_MI_ACTION,NULL,0,0,0,NULL,NULL,0,gpu_cb_fullscreen,NULL);
     menu_display[2] = MI_CYCLIC("Presentation",&ctx->render_ctx->presentation_mode,0,2,NULL,"Hold|BFI (high Hz)|60 Hz hold");
     menu_display[3] = MI_FLOAT("Dark refresh",&ctx->render_ctx->dark_frame_level,.05f,0,1,NULL,"%.2f");
-    preset_menu_root[6] = MI_SUB("Host display",menu_display,4);
-    preset_menu_root[8] = MI_TOGGLE("Room reflections (G)", &ctx->render_ctx->room_reflections_enabled, gpu_cb_room_reflections);
-    preset_menu_root[7] = make_item("Reset console (R)",OSD_MI_ACTION,NULL,0,0,0,NULL,NULL,0,gpu_cb_console_reset,NULL);
+    preset_menu_root[6] = MI_SUB("Host display",menu_display,menu_display_count);
+    preset_menu_root[7] = MI_TOGGLE("Room reflections (G)", &ctx->render_ctx->room_reflections_enabled, gpu_cb_room_reflections);
+    /* Reset stays last: preset_menu_root_append() inserts before it. */
+    preset_menu_root[8] = make_item("Reset console (R)",OSD_MI_ACTION,NULL,0,0,0,NULL,NULL,0,gpu_cb_console_reset,NULL);
 }
 
 /* ============================================================================

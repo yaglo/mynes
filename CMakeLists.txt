@@ -24,13 +24,15 @@
 # Options:
 #   -DNES_BUILD_TESTS=ON/OFF      Build tests (default: ON)
 #   -DNES_BUILD_FRONTENDS=ON/OFF  Build frontends (default: ON)
+#   -DMYNES_PORTABLE_BINARY=ON    Fixed ISA baseline instead of -march=native
+#                                 (default: OFF; use for binaries you ship)
 
 cmake_minimum_required(VERSION 3.16)
 
 include(cmake/AppleSDK.cmake)
 
 project(MyNES
-    VERSION 0.2.0
+    VERSION 0.3.0
     DESCRIPTION "Cycle-accurate NES emulator with DSL-based CPU"
     LANGUAGES C
 )
@@ -60,11 +62,42 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 # AVX2 + FMA for the NTSC FIR inner loops (big speedup); on Apple Silicon
 # it uses the full NEON feature set. Guarded to Release so debug builds
 # stay portable.
+#
+# A binary built with -march=native dies with an illegal instruction on an
+# older machine, so distributions turn on MYNES_PORTABLE_BINARY: a fixed
+# baseline that still carries what the FIR loops need (AVX2/FMA via
+# x86-64-v3 on x86-64, the first Apple Silicon core on arm64 Macs).
+option(MYNES_PORTABLE_BINARY
+    "Target a fixed ISA baseline instead of -march=native (for binaries that run on other machines)" OFF)
+set(MYNES_ARCH_FLAGS "")
+set(MYNES_ARCH_NOTE "compiler default")
 if(CMAKE_BUILD_TYPE STREQUAL "Release" AND
    (CMAKE_C_COMPILER_ID STREQUAL "GNU" OR
     CMAKE_C_COMPILER_ID STREQUAL "Clang" OR
     CMAKE_C_COMPILER_ID STREQUAL "AppleClang"))
-    add_compile_options(-march=native)
+    if(NOT MYNES_PORTABLE_BINARY)
+        set(MYNES_ARCH_FLAGS -march=native)
+        set(MYNES_ARCH_NOTE "this machine only")
+    else()
+        set(_mynes_arch "${CMAKE_SYSTEM_PROCESSOR}")
+        if(CMAKE_OSX_ARCHITECTURES)
+            set(_mynes_arch "${CMAKE_OSX_ARCHITECTURES}")
+        endif()
+        if(APPLE AND _mynes_arch MATCHES "^(arm64|aarch64)$")
+            set(MYNES_ARCH_FLAGS -mcpu=apple-m1)
+            set(MYNES_ARCH_NOTE "Apple Silicon baseline")
+        elseif(_mynes_arch MATCHES "^(x86_64|AMD64|amd64)$")
+            set(MYNES_ARCH_FLAGS -march=x86-64-v3)
+            set(MYNES_ARCH_NOTE "x86-64-v3: AVX2/FMA, Haswell 2013 and later")
+        else()
+            # Universal or unusual targets: leave the compiler's own baseline.
+            set(MYNES_ARCH_NOTE "compiler default for ${_mynes_arch}")
+        endif()
+        unset(_mynes_arch)
+    endif()
+    if(MYNES_ARCH_FLAGS)
+        add_compile_options(${MYNES_ARCH_FLAGS})
+    endif()
 endif()
 
 # Options
@@ -150,6 +183,7 @@ add_library(nes_static STATIC
     src/nes/screen_dump.c
     src/nes/script.c
     src/nes/mapper.c
+    src/nes/state.c
     src/nes/mappers/mapper_nrom.c
     src/nes/mappers/mapper_mmc1.c
     src/nes/mappers/mapper_uxrom.c
@@ -160,6 +194,12 @@ add_library(nes_static STATIC
     src/nes/mappers/mapper_axrom.c
     src/nes/mappers/mapper_mmc4.c
     src/nes/mappers/mapper_227.c
+    src/nes/mappers/mapper_mmc2.c
+    src/nes/mappers/mapper_colordreams.c
+    src/nes/mappers/mapper_bnrom.c
+    src/nes/mappers/mapper_gxrom.c
+    src/nes/mappers/mapper_camerica.c
+    src/nes/mappers/mapper_namco108.c
     # Vendored LMP88959/PAL-CRT (permissive custom license) — provides
     # the authentic 2C07 PAL encoder/decoder used by the composite
     # pipeline when region = PAL. See src/nes/palcrt/README.md.
@@ -175,6 +215,13 @@ target_include_directories(nes_static PUBLIC
 )
 
 add_dependencies(nes_static generate_cpu)
+
+# The core uses libm (sin, exp, tanhf). macOS folds libm into libSystem, so a
+# missing link is invisible there but breaks every Linux test executable.
+find_library(NES_LIBM m)
+if(NES_LIBM)
+    target_link_libraries(nes_static PUBLIC ${NES_LIBM})
+endif()
 
 # Aliases
 add_library(NES::nes ALIAS nes)
@@ -241,6 +288,44 @@ if(NES_BUILD_TESTS)
     target_link_libraries(test_mapper5 PRIVATE nes_static)
     add_test(NAME mapper5_tests COMMAND test_mapper5)
 
+    # MMC2 latch semantics
+    add_executable(test_mapper9 tests/nes/test_mapper9.c)
+    target_link_libraries(test_mapper9 PRIVATE nes_static)
+    add_test(NAME mapper9_tests COMMAND test_mapper9)
+
+    # Color Dreams bus conflicts
+    add_executable(test_mapper11 tests/nes/test_mapper11.c)
+    target_link_libraries(test_mapper11 PRIVATE nes_static)
+    add_test(NAME mapper11_tests COMMAND test_mapper11)
+
+    # BNROM / NINA-001 selection by CHR type
+    add_executable(test_mapper34 tests/nes/test_mapper34.c)
+    target_link_libraries(test_mapper34 PRIVATE nes_static)
+    add_test(NAME mapper34_tests COMMAND test_mapper34)
+
+    # GxROM
+    add_executable(test_mapper66 tests/nes/test_mapper66.c)
+    target_link_libraries(test_mapper66 PRIVATE nes_static)
+    add_test(NAME mapper66_tests COMMAND test_mapper66)
+
+    # Camerica/Codemasters incl. Fire Hawk mirroring
+    add_executable(test_mapper71 tests/nes/test_mapper71.c)
+    target_link_libraries(test_mapper71 PRIVATE nes_static)
+    add_test(NAME mapper71_tests COMMAND test_mapper71)
+
+    # Namco 108 fixed layout, no IRQ/mirroring/PRG RAM
+    add_executable(test_mapper206 tests/nes/test_mapper206.c)
+    target_link_libraries(test_mapper206 PRIVATE nes_static)
+    add_test(NAME mapper206_tests COMMAND test_mapper206)
+
+    # Save-state round trips against the bundled AccuracyCoin ROM
+    add_executable(test_state tests/nes/test_state.c)
+    target_link_libraries(test_state PRIVATE nes_static)
+    add_test(NAME state_tests COMMAND test_state)
+    set_tests_properties(state_tests PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        TIMEOUT 120)
+
     # AccuracyCoin test runner
     add_executable(accuracy_coin tests/accuracy_coin/run_accuracy.c)
     target_link_libraries(accuracy_coin PRIVATE nes_static)
@@ -268,6 +353,7 @@ if(NES_BUILD_FRONTENDS)
     set(MYNES_SHARED_SOURCES
         frontends/shared/config.c
         frontends/shared/browser.c
+        frontends/shared/saves.c
     )
 
     if(NES_BUILD_TESTS)
@@ -275,6 +361,13 @@ if(NES_BUILD_FRONTENDS)
         target_include_directories(test_browser PRIVATE frontends/shared)
         target_link_libraries(test_browser PRIVATE nes_static)
         add_test(NAME browser_tests COMMAND test_browser)
+
+        # Battery-file naming, atomic writes and state slot paths
+        add_executable(test_saves frontends/shared/tests/test_saves.c
+            frontends/shared/saves.c frontends/shared/config.c)
+        target_include_directories(test_saves PRIVATE frontends/shared)
+        target_link_libraries(test_saves PRIVATE nes_static)
+        add_test(NAME saves_tests COMMAND test_saves)
     endif()
 
     # SDL2 Frontend
@@ -364,6 +457,7 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
             frontends/gpu/playback.c
             frontends/gpu/gpu_render.c
             frontends/gpu/frame_capture.c
+            frontends/gpu/recorder.c
             frontends/gpu/gpu_output.c
             frontends/gpu/preset_apply.c
             frontends/gpu/gpu_compute.c
@@ -394,38 +488,89 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
         endif()
         message(STATUS "SDL3 found - building GPU frontend")
 
-        # Compile GLSL shaders to SPIR-V + MSL at build time.
-        # Uses compile_shaders.sh which handles: glslc, spirv-cross, MSL buffer
-        # index fixing, and copying outputs to build/shaders/.
+        # GPU shaders: GLSL -> SPIR-V -> MSL into build/shaders/{compute,render}.
+        # compile_shaders.sh needs glslc (shaderc), spirv-cross and python3, and
+        # also repairs the Metal buffer indices in the MSL it writes. Every
+        # compiled shader is committed next to its .glsl, so a machine without
+        # the tools copies those instead of failing. Neither path writes into
+        # the source tree; the shaders_regenerate target below is the only
+        # thing that does, for maintainers who changed a .glsl.
         set(SHADER_SRC_DIR ${CMAKE_SOURCE_DIR}/frontends/gpu/shaders)
         set(SHADER_OUT_DIR ${CMAKE_BINARY_DIR}/shaders)
         file(MAKE_DIRECTORY ${SHADER_OUT_DIR}/compute)
         file(MAKE_DIRECTORY ${SHADER_OUT_DIR}/render)
+
+        find_program(GLSLC_EXECUTABLE glslc)
+        find_program(SPIRV_CROSS_EXECUTABLE spirv-cross)
+        find_program(MYNES_PYTHON3 NAMES python3)
 
         file(GLOB GLSL_COMPUTE_SOURCES CONFIGURE_DEPENDS ${SHADER_SRC_DIR}/compute/*.comp.glsl)
         file(GLOB GLSL_VERT_SOURCES CONFIGURE_DEPENDS ${SHADER_SRC_DIR}/render/*.vert.glsl)
         file(GLOB GLSL_FRAG_SOURCES CONFIGURE_DEPENDS ${SHADER_SRC_DIR}/render/*.frag.glsl)
         set(ALL_GLSL_SOURCES ${GLSL_COMPUTE_SOURCES} ${GLSL_VERT_SOURCES} ${GLSL_FRAG_SOURCES})
         list(APPEND ALL_GLSL_SOURCES ${SHADER_SRC_DIR}/compute/fw900_data.glsl ${SHADER_SRC_DIR}/compute/fw900_profile.glsl)
+        file(GLOB SHADER_PREBUILT CONFIGURE_DEPENDS
+            ${SHADER_SRC_DIR}/compute/*.spv ${SHADER_SRC_DIR}/compute/*.msl
+            ${SHADER_SRC_DIR}/render/*.spv ${SHADER_SRC_DIR}/render/*.msl)
 
-        # Stamp file tracks when shaders were last compiled.
-        set(SHADER_STAMP ${CMAKE_BINARY_DIR}/shaders/.compile_stamp)
-        add_custom_command(
-            OUTPUT ${SHADER_STAMP}
-            COMMAND ${SHADER_SRC_DIR}/compile_shaders.sh ${SHADER_OUT_DIR}
-            COMMAND ${CMAKE_COMMAND} -E touch ${SHADER_STAMP}
-            DEPENDS ${ALL_GLSL_SOURCES} ${SHADER_SRC_DIR}/compile_shaders.sh
-            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-            COMMENT "Compiling GPU shaders (GLSL -> SPIR-V -> MSL)"
-            VERBATIM
-        )
+        # Stamp file tracks when build/shaders was last populated.
+        set(SHADER_STAMP ${SHADER_OUT_DIR}/.compile_stamp)
+        if(GLSLC_EXECUTABLE AND SPIRV_CROSS_EXECUTABLE AND MYNES_PYTHON3)
+            set(MYNES_SHADER_SOURCE "compiled with ${GLSLC_EXECUTABLE}")
+            # Hand the script the exact tools CMake found rather than whatever
+            # PATH resolves to at build time.
+            set(SHADER_TOOL_ENV ${CMAKE_COMMAND} -E env
+                GLSLC=${GLSLC_EXECUTABLE}
+                SPIRV_CROSS=${SPIRV_CROSS_EXECUTABLE}
+                PYTHON3=${MYNES_PYTHON3})
+            add_custom_command(
+                OUTPUT ${SHADER_STAMP}
+                COMMAND ${SHADER_TOOL_ENV} ${SHADER_SRC_DIR}/compile_shaders.sh ${SHADER_OUT_DIR}
+                COMMAND ${CMAKE_COMMAND} -E touch ${SHADER_STAMP}
+                DEPENDS ${ALL_GLSL_SOURCES} ${SHADER_SRC_DIR}/compile_shaders.sh
+                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+                COMMENT "Compiling GPU shaders (GLSL -> SPIR-V -> MSL)"
+                VERBATIM
+            )
+            add_custom_target(shaders_regenerate
+                COMMAND ${SHADER_TOOL_ENV} ${SHADER_SRC_DIR}/compile_shaders.sh ${SHADER_SRC_DIR}
+                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+                COMMENT "Regenerating the committed SPIR-V/MSL shaders in the source tree"
+                VERBATIM
+            )
+        else()
+            set(MYNES_SHADER_SOURCE "committed SPIR-V/MSL (glslc, spirv-cross or python3 not found)")
+            message(STATUS "Shader tools not found (glslc: ${GLSLC_EXECUTABLE}, "
+                "spirv-cross: ${SPIRV_CROSS_EXECUTABLE}, python3: ${MYNES_PYTHON3}) "
+                "- using the committed SPIR-V/MSL shaders")
+            add_custom_command(
+                OUTPUT ${SHADER_STAMP}
+                COMMAND ${CMAKE_COMMAND}
+                    -DSHADER_SRC_DIR=${SHADER_SRC_DIR}
+                    -DSHADER_OUT_DIR=${SHADER_OUT_DIR}
+                    -P ${CMAKE_SOURCE_DIR}/cmake/CopyPrebuiltShaders.cmake
+                COMMAND ${CMAKE_COMMAND} -E touch ${SHADER_STAMP}
+                DEPENDS ${SHADER_PREBUILT} ${CMAKE_SOURCE_DIR}/cmake/CopyPrebuiltShaders.cmake
+                COMMENT "Copying committed GPU shaders (shader tools not installed)"
+                VERBATIM
+            )
+            add_custom_target(shaders_regenerate
+                COMMAND ${CMAKE_COMMAND} -E echo
+                    "shaders_regenerate needs glslc (shaderc), spirv-cross and python3; install them and re-run cmake"
+                COMMAND ${CMAKE_COMMAND} -E false
+                VERBATIM
+            )
+        endif()
         add_custom_target(gpu_shaders DEPENDS ${SHADER_STAMP})
         add_dependencies(mynes_gpu gpu_shaders)
-        # Keep presets with the executable, independent of the launch directory.
+        # Keep presets and palettes with the executable, independent of the
+        # launch directory (release trees and the app bundle use the same layout).
         add_custom_target(gpu_presets
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 ${CMAKE_SOURCE_DIR}/presets ${CMAKE_BINARY_DIR}/presets
-            COMMENT "Copying GPU preset library")
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                ${CMAKE_SOURCE_DIR}/palettes ${CMAKE_BINARY_DIR}/palettes
+            COMMENT "Copying GPU preset library and palettes")
         add_dependencies(mynes_gpu gpu_presets)
 
         if(NES_BUILD_TESTS)
@@ -470,7 +615,6 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
                 COMMAND test_presets
                 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
-            find_program(MYNES_PYTHON3 NAMES python3)
             if(MYNES_PYTHON3)
                 add_test(NAME gpu_fw900_measurements
                     COMMAND ${MYNES_PYTHON3} ${CMAKE_SOURCE_DIR}/tools/measurements/build_fw900_model.py --check)
@@ -509,6 +653,18 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
             target_link_libraries(test_playback PRIVATE nes_static ${MYNES_SDL3_TARGET} m)
             add_test(NAME gpu_playback_tests COMMAND test_playback)
 
+            # Clip recorder: frame arithmetic, ffmpeg command lines, the
+            # rawvideo/audio muxing helper (runs ffmpeg and ffprobe when they
+            # are on PATH), the worker's capture window and input recording.
+            add_executable(test_recorder frontends/gpu/tests/test_recorder.c
+                frontends/gpu/recorder.c frontends/gpu/frame_capture.c
+                frontends/gpu/playback.c frontends/gpu/audio_chain.c
+                frontends/gpu/audio_gpu.c frontends/gpu/gpu_compute.c frontends/gpu/gpu_log.c)
+            target_include_directories(test_recorder PRIVATE frontends/gpu)
+            target_link_libraries(test_recorder PRIVATE nes_static ${MYNES_SDL3_TARGET} m)
+            add_test(NAME gpu_recorder_tests COMMAND test_recorder)
+            set_tests_properties(gpu_recorder_tests PROPERTIES TIMEOUT 120)
+
             # GPU pipeline integration test (headless SDL3 GPU compute)
             add_executable(test_pipeline
                 frontends/gpu/tests/test_pipeline.c
@@ -534,7 +690,13 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
             add_dependencies(test_fidelity gpu_shaders)
             add_test(NAME gpu_fidelity_tests COMMAND test_fidelity)
 
-
+            # build/shaders must hold exactly the committed shader set, whichever
+            # way it was populated, because the frontend loads by file name.
+            add_test(NAME gpu_shader_layout_test
+                COMMAND ${CMAKE_COMMAND}
+                    -DSHADER_SRC_DIR=${SHADER_SRC_DIR}
+                    -DSHADER_OUT_DIR=${SHADER_OUT_DIR}
+                    -P ${CMAKE_SOURCE_DIR}/cmake/CheckShaderLayout.cmake)
         endif()
 
         # GPU image processor — run real pipeline on PNG screenshots
@@ -605,10 +767,19 @@ install(FILES
 
 message(STATUS "")
 message(STATUS "MyNES Configuration:")
-message(STATUS "  Version:        ${PROJECT_VERSION}")
-message(STATUS "  Build tests:    ${NES_BUILD_TESTS}")
+message(STATUS "  Version:         ${PROJECT_VERSION}")
+message(STATUS "  Build type:      ${CMAKE_BUILD_TYPE}")
+message(STATUS "  Build tests:     ${NES_BUILD_TESTS}")
 message(STATUS "  Build frontends: ${NES_BUILD_FRONTENDS}")
-message(STATUS "  CSI found:      ${CSI_EXECUTABLE}")
+message(STATUS "  CSI found:       ${CSI_EXECUTABLE}")
+if(MYNES_ARCH_FLAGS)
+    message(STATUS "  Portable binary: ${MYNES_PORTABLE_BINARY} (${MYNES_ARCH_FLAGS}: ${MYNES_ARCH_NOTE})")
+else()
+    message(STATUS "  Portable binary: ${MYNES_PORTABLE_BINARY} (${MYNES_ARCH_NOTE})")
+endif()
+if(MYNES_SHADER_SOURCE)
+    message(STATUS "  GPU shaders:     ${MYNES_SHADER_SOURCE}")
+endif()
 message(STATUS "")
 
 # Optional Tang Nano 20K USB output for the SDL frontend.

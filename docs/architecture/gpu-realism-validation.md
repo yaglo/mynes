@@ -91,7 +91,7 @@ chroma RMS, 180 ms transport correlation, 100 ns switching displacement,
 and 0.15 dropouts/second at 65% peak loss. Chroma delay is 250 ns. Receiver
 brightness 0.08 and luma contrast 0.94 make ordinary black grain visible while
 keeping the white patch within 1% of its previous output. These are authored
-preset choices; see the [before/after audit](../gpu-preset-audit.md). The noise is upstream of receiver
+preset choices; see the [before/after audit](https://yaglo.github.io/mynes-web/gallery/presets/). The noise is upstream of receiver
 clamping, bandwidth limits, and the tube's gun cutoff: below-black NES colours
 can remain visually quiet. A mandatory 10–15/255 black pedestal or 1–2 NES-pixel
 chroma displacement would not be a format-wide physical calibration.

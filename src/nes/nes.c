@@ -10,6 +10,7 @@
 #include "rom.h"
 #include "mapper.h"
 #include "nes.h"
+#include "state.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
@@ -462,8 +463,7 @@ size_t nes_save_state_size(const nes_t *nes) {
         return 0;
     }
 
-    /* TODO: Calculate actual save state size */
-    return sizeof(nes_t) + 4096;  /* Rough estimate */
+    return nes_state_size(&nes->core);
 }
 
 nes_error_t nes_save_state(const nes_t *nes, void *buffer, size_t size) {
@@ -471,13 +471,7 @@ nes_error_t nes_save_state(const nes_t *nes, void *buffer, size_t size) {
         return NES_ERROR_INVALID_ARGUMENT;
     }
 
-    if (size < nes_save_state_size(nes)) {
-        return NES_ERROR_INVALID_ARGUMENT;
-    }
-
-    /* TODO: Implement actual save state */
-    memset(buffer, 0, size);
-    return NES_OK;
+    return nes_state_save(&nes->core, buffer, size) ? NES_OK : NES_ERROR_INVALID_ARGUMENT;
 }
 
 nes_error_t nes_load_state(nes_t *nes, const void *buffer, size_t size) {
@@ -485,9 +479,9 @@ nes_error_t nes_load_state(nes_t *nes, const void *buffer, size_t size) {
         return NES_ERROR_INVALID_ARGUMENT;
     }
 
-    /* TODO: Implement actual load state */
-    (void)size;
-    return NES_OK;
+    /* The core reports why a state was refused; this API only has codes,
+     * so a header or cartridge mismatch maps to INVALID_STATE. */
+    return nes_state_load(&nes->core, buffer, size, NULL, 0) ? NES_OK : NES_ERROR_INVALID_STATE;
 }
 
 /* ============================================================================

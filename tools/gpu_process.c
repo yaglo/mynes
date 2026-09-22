@@ -92,8 +92,10 @@ int main(int argc, char **argv) {
     fseek(fin, 0, SEEK_SET);
     int spl = 2048;
     int num_lines = (int)(fsize / (spl * sizeof(float)));
-    float *waveform = (float *)malloc(fsize);
-    fread(waveform, 1, fsize, fin);
+    float *waveform = fsize > 0 ? (float *)malloc((size_t)fsize) : NULL;
+    if (!waveform || fread(waveform, 1, (size_t)fsize, fin) != (size_t)fsize) {
+        fprintf(stderr, "Cannot read %s\n", input_path); return 1;
+    }
     fclose(fin);
     printf("Loaded: %d lines × %d samples\n", num_lines, spl);
 

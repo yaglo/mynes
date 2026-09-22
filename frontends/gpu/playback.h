@@ -1,10 +1,12 @@
 /* Emulation/audio clock and a bounded three-picture queue. The main thread
- * owns the display and menus; this worker owns NES while playback is active. */
+ * owns the display and menus; this worker owns NES while playback is active.
+ * Low latency keeps at most one picture ahead of the display instead. */
 #ifndef GPU_PLAYBACK_H
 #define GPU_PLAYBACK_H
 #include "nes/nes.h"
 #include "nes/rom.h"
 #include "audio_gpu.h"
+#include <stdio.h>
 
 typedef struct Playback Playback;
 typedef struct {
@@ -15,7 +17,16 @@ typedef struct {
     int presentation_mode;
     bool display_paced;
     float display_hz;
-    uint8_t controller;
+    /* Fast-forward multiplier. Values below 1 (including a zero-initialised
+     * struct) run at normal speed; above 1 the worker stops queueing audio
+     * and stops waiting for the display. */
+    float speed;
+    /* Queue one picture ahead of a paced display instead of three, and hand
+     * a free-running renderer the newest picture rather than the oldest.
+     * Ignored by capture and review runs, whose frame sequences are compared
+     * bit-for-bit against the three-picture FIFO. */
+    bool low_latency;
+    uint8_t controller[2];
 } PlaybackControls;
 typedef struct {
     uint8_t rgb[256 * 240 * 3];
@@ -38,6 +49,32 @@ void playback_pause(Playback *p);
 void playback_load_cartridge(Playback *p, const ROM *rom, int region);
 void playback_reset_console(Playback *p);
 void playback_resume(Playback *p);
+/* Run fn on the console from the caller's thread while playback continues:
+ * waits for the frame in progress, holds the next one back, and returns
+ * once fn is done. This is the only safe way to read or replace console
+ * state (battery RAM, save states) without pausing. Returns the number of
+ * frames emulated when fn ran, so a new time line (a loaded state) can be
+ * numbered from there. */
+unsigned playback_with_console(Playback *p, void (*fn)(NES *nes, void *user), void *user);
+/* Frames whose controller input the worker has already sampled; the next
+ * controls change is first seen by frame number this plus one. */
+unsigned playback_frames_sampled(Playback *p);
+/* Scripted player-1 input (rows "frame hexmask", ascending, at most 128;
+ * the MYNES_REVIEW_INPUT_SCRIPT format), replacing any script loaded from
+ * the environment. Before the worker first resumes. False with SDL_GetError. */
+bool playback_load_input_script(Playback *p, const char *path);
+/* Arm a no-drop capture window for a recording: from picture `first` on
+ * the worker produces one picture at a time and waits for it to be read,
+ * writes the audio of pictures first..last to `audio` (float32 mono at
+ * AUDIO_STREAM_RATE) and stops after picture `last`. Scripted input rows
+ * count from `first` (row 1 is picture `first`). Call while paused, before
+ * those frames run. */
+void playback_arm_capture(Playback *p, unsigned first, unsigned last, FILE *audio);
+/* Drop queued pictures and audio and fade back in, for a console whose
+ * time line just jumped (a loaded save state). Playback stays as it was. */
+void playback_restart(Playback *p);
 bool playback_read(Playback *p, PlaybackFrame *frame);
+/* Pictures produced but not yet read; diagnostics and tests only. */
+unsigned playback_queued(Playback *p);
 void playback_destroy(Playback *p);
 #endif

@@ -7,6 +7,14 @@
 - Chicken Scheme (`csi`) -- for building from DSL source (optional; falls
   back to pre-generated code)
 - SDL2 -- for the desktop frontend (optional)
+- SDL3 -- for the GPU frontend (optional; on macOS a pinned copy is built
+  in by default via `MYNES_BUNDLED_SDL3`, elsewhere pass
+  `-DMYNES_BUNDLED_SDL3=ON` or install the system package)
+- `glslc` (from shaderc), `spirv-cross` and Python 3 -- only to recompile
+  the GPU shaders after editing a `.glsl`. Every compiled `.spv`/`.msl` is
+  committed under `frontends/gpu/shaders/`, and when the tools are missing
+  CMake prints a status line and copies those into `build/shaders/`
+  instead of failing.
 
 ## Building
 
@@ -21,10 +29,18 @@ cmake --build .
 ### Build Options
 
 ```bash
-cmake .. -DNES_BUILD_TESTS=ON        # Build test executables (default: ON)
-cmake .. -DNES_BUILD_FRONTENDS=ON    # Build SDL frontend (default: ON)
-cmake .. -DNES_BUILD_EXAMPLES=ON     # Build example apps (default: ON)
+cmake .. -DNES_BUILD_TESTS=ON          # Build test executables (default: ON)
+cmake .. -DNES_BUILD_FRONTENDS=ON      # Build frontends (default: ON)
+cmake .. -DNES_BUILD_GPU_FRONTEND=ON   # Build the SDL3 GPU frontend (default: ON)
+cmake .. -DMYNES_BUNDLED_SDL3=ON       # Build SDL3 in instead of finding it (default: ON on macOS)
+cmake .. -DMYNES_PORTABLE_BINARY=ON    # Fixed ISA baseline instead of -march=native (default: OFF)
 ```
+
+Release builds default to `-march=native`, which is fastest but ties the
+binary to the machine that built it. `MYNES_PORTABLE_BINARY=ON` uses
+`-march=x86-64-v3` (AVX2/FMA) on x86-64 and `-mcpu=apple-m1` on Apple
+Silicon instead; the configure summary prints which one was picked. The
+release scripts turn it on (see [release.md](release.md)).
 
 ### Disable Optional Components
 
@@ -38,6 +54,74 @@ cmake .. -DNES_BUILD_TESTS=OFF       # Skip test executables
 ```bash
 cmake --build . --target nes_static
 ```
+
+### GPU Shaders
+
+The GPU frontend loads SPIR-V (Vulkan) and MSL (Metal) from
+`build/shaders/{compute,render}/`. A build never writes into the source
+tree:
+
+- With `glslc`, `spirv-cross` and `python3` installed, the `gpu_shaders`
+  target compiles `frontends/gpu/shaders/**/*.glsl` into `build/shaders/`
+  (and repairs the Metal buffer indices in the MSL there).
+- Without them, CMake says so at configure time and copies the committed
+  `.spv`/`.msl` files into the same layout. Force this path for testing
+  with `-DGLSLC_EXECUTABLE=NOTFOUND`.
+
+After editing a `.glsl`, regenerate the committed copies and commit them
+together with the source:
+
+```bash
+cmake --build . --target shaders_regenerate
+```
+
+`ctest -R gpu_shader_layout_test` checks that `build/shaders/` holds exactly
+the committed set, whichever way it was populated.
+
+### Building on Linux
+
+Debian/Ubuntu packages for a full build:
+
+```bash
+sudo apt-get install cmake build-essential libsdl2-dev glslc spirv-cross \
+    libvulkan-dev mesa-vulkan-drivers
+```
+
+(`glslc` and `spirv-cross` are optional, see above; `mesa-vulkan-drivers`
+provides `lavapipe`, the software Vulkan device the headless tests use.)
+
+**Desktop build.** Use the distribution's SDL3 if it has one (Ubuntu 25.04+,
+Debian 13+, Fedora 41+, Arch), otherwise let CMake build the pinned copy:
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release            # system SDL3
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DMYNES_BUNDLED_SDL3=ON
+cmake --build build -j
+./build/bin/mynes_gpu game.nes
+```
+
+The bundled SDL3 build compiles SDL from source and needs its X11/Wayland
+and audio development packages (`libx11-dev libxext-dev libwayland-dev
+libxkbcommon-dev libdecor-0-dev libpulse-dev libasound2-dev libgl-dev`).
+
+**Headless CI build.** No display server, software Vulkan only. This is
+what `.github/workflows/ci.yml` runs:
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+    -DNES_BUILD_TESTS=ON -DNES_BUILD_FRONTENDS=ON -DNES_BUILD_GPU_FRONTEND=ON \
+    -DMYNES_BUNDLED_SDL3=ON -DSDL_UNIX_CONSOLE_BUILD=ON \
+    -DSDL_X11=OFF -DSDL_WAYLAND=OFF -DSDL_VULKAN=ON -DSDL_OFFSCREEN=ON
+cmake --build build -j
+VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
+SDL_VIDEO_DRIVER=offscreen SDL_AUDIO_DRIVER=dummy \
+    ctest --test-dir build --output-on-failure -E '^gpu_fidelity_tests$'
+```
+
+`SDL_UNIX_CONSOLE_BUILD` drops every windowing backend so SDL builds without
+X11/Wayland headers; `SDL_OFFSCREEN` keeps a display-less video driver that
+the GPU tests claim through `SDL_VIDEO_DRIVER=offscreen`, and
+`VK_ICD_FILENAMES` points the Vulkan loader at lavapipe.
 
 ## Test Commands
 
@@ -149,7 +233,7 @@ screen dumps.
 ## SDL Frontend
 
 ```bash
-./bin/nes_sdl <rom.nes>
+./build/bin/mynes <rom.nes>
 ```
 
 Requires SDL2 to be found at build time. If SDL2 is not available, the

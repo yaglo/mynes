@@ -28,6 +28,7 @@
 #include "nes/rom.h"
 #include "nes/mapper.h"
 #include "nes/osd.h"
+#include "nes/state.h"
 
 /* GPU signal chain (NO composite.h). */
 #include "signal_precompute.h"
@@ -51,10 +52,12 @@
 #include "test_signals.h"
 #include "gpu_log.h"
 #include "gpu_osd.h"
+#include "recorder.h"
 
 /* Shared frontend helpers. */
 #include "browser.h"
 #include "config.h"
+#include "saves.h"
 
 /* ============================================================================
  * Global emulator state
@@ -111,12 +114,74 @@ static SDL_Window      *window = NULL;
 static SDL_GPUDevice   *gpu = NULL;
 static SDL_AudioStream *audio_stream = NULL;
 
-/* Controller. */
-static uint8_t          controller_state = 0;
+/* Controllers: keyboard masks per player plus up to two hot-plugged
+ * gamepads. The first pad to arrive is player 1, the next player 2; a
+ * removed pad frees its slot for the next arrival. */
+typedef struct {
+    SDL_Gamepad   *pad;
+    SDL_JoystickID id;
+    uint8_t        buttons;      /* d-pad and face buttons */
+    uint8_t        stick;        /* left stick past the deadzone */
+    bool           fast_forward; /* right shoulder held */
+    char           name[48];
+} GamepadSlot;
+static uint8_t          keyboard_buttons[2];
+static GamepadSlot      gamepads[2];
+static bool             key_fast_forward;    /* Backquote held */
+static bool             paused;              /* Space / OSD Game menu */
+
+/* Battery RAM and save states (frontends/shared/saves.h). While the worker
+ * runs, the console is only touched through playback_with_console. */
+#define BATTERY_FLUSH_MS 2000
+static MynesSaves       saves;
+static int              state_slot = 1;      /* 1..MYNES_STATE_SLOTS, as shown to the player */
+static bool             state_save_requested, state_load_requested, battery_write_requested;
+static uint8_t          battery_image[MYNES_PRG_RAM_SIZE];
+static Uint64           battery_next_check;
+static unsigned         state_load_frame;    /* frames emulated when the last state was applied */
+
+/* --input-record: player-1 mask changes as replay rows, numbered from the
+ * frame after the most recent console start, reset or state load. */
+static InputRecord      input_record;
+static unsigned         input_record_base;
 
 /* Render and preset contexts. */
 static GPURenderCtx     render_ctx;
 static PresetCtx        preset_ctx;
+
+/* Internal CRT resolution. The beam and phosphor stages render at the tube
+ * viewport size times this factor and the display pass upsamples; the mask
+ * is still sampled at panel pitch. Auto starts at full size and only ever
+ * steps down. Offscreen captures and benchmarks pin the requested size. */
+enum { RENDER_SCALE_AUTO, RENDER_SCALE_FULL, RENDER_SCALE_3_4, RENDER_SCALE_HALF };
+static const float      render_scale_factor[] = { 1.0f, 1.0f, 0.75f, 0.5f };
+static const char *const render_scale_name[] = { "auto", "1.0", "0.75", "0.5" };
+static int              render_scale_mode;      /* OSD cyclic target, persisted */
+static int              render_scale_auto_level = RENDER_SCALE_FULL;
+static int              render_scale_over_windows;
+static bool             render_scale_fixed;     /* offscreen / benchmark */
+static int              low_latency;            /* OSD toggle target, persisted */
+
+static float render_scale_effective(void) {
+    if (render_scale_fixed) return 1.0f;
+    return render_scale_factor[render_scale_mode == RENDER_SCALE_AUTO
+                               ? render_scale_auto_level : render_scale_mode];
+}
+
+/* Fit the tube aspect into the drawable, then apply the render scale. Two
+ * device rows per scanline is the floor below which scanline structure
+ * cannot be represented; the drawable fit itself is the ceiling. */
+static void beam_target_size(int win_w, int win_h, int aspect_w, int aspect_h,
+                             float scale, int *out_w, int *out_h) {
+    int w = win_w, h = win_h;
+    if (w * aspect_h > h * aspect_w) w = h * aspect_w / aspect_h;
+    else h = w * aspect_h / aspect_w;
+    int scaled_h = (int)((float)h * scale);
+    if (scaled_h < 480) scaled_h = 480;
+    if (scaled_h > h) scaled_h = h;
+    *out_h = scaled_h;
+    *out_w = scaled_h == h ? w : scaled_h * aspect_w / aspect_h;
+}
 
 /* Browser + persistent config. Host UI is composited after the receiver. */
 static MynesConfig      mynes_config;
@@ -149,6 +214,20 @@ static int sdl_to_browser_key(int scancode) {
 static uint8_t raw_palette[64][3];
 static bool    raw_palette_loaded = false;
 
+/* Resources sit beside bin/ in a build tree or release tarball and in
+ * Contents/Resources of a macOS app bundle, where SDL_GetBasePath() is
+ * either Contents/MacOS/ or Resources/ itself. The first existing candidate
+ * wins; when none exists buf is left naming the conventional ../<sub> so
+ * the caller's error message stays meaningful. */
+static const char *resource_dir(char *buf, size_t n, const char *base, const char *sub) {
+    static const char *const prefixes[] = {"../Resources/", "", "../"};
+    for (size_t i = 0; i < sizeof(prefixes) / sizeof(*prefixes); i++) {
+        int len = snprintf(buf, n, "%s%s%s", base, prefixes[i], sub);
+        if (len > 0 && (size_t)len < n && SDL_GetPathInfo(buf, NULL)) break;
+    }
+    return buf;
+}
+
 /* Load a 192-byte (64 colors × RGB) palette file into raw_palette. */
 static bool load_raw_palette(const char *path) {
     FILE *fp = fopen(path, "rb");
@@ -171,6 +250,203 @@ static bool             osd_parameter_editing;
 static uint32_t         osd_pixels[GPU_OSD_PIXELS];
 static char             perf_text[128] = "";
 
+/* One transient host notice at a time; a newer one replaces the previous.
+ * Any feature can post one (gamepad hot-plug, room reflections, ...). */
+static char             notice_title[40], notice_value[96];
+static Uint64           notice_until;
+static void show_notice(const char *title, const char *value) {
+    snprintf(notice_title, sizeof(notice_title), "%s", title);
+    snprintf(notice_value, sizeof(notice_value), "%s", value);
+    notice_until = SDL_GetTicks() + 2000;
+}
+
+static void open_osd_menu(void) {
+    osd_parameter_editing = false;
+    osd_menu_open_root(preset_menu_root, preset_menu_root_count, "SETUP");
+}
+static void close_osd_menu(void) {
+    osd_parameter_editing = false;
+    osd_menu_close();
+}
+
+/* OSD Game submenu actions. Pausing from the menu closes it so the paused
+ * picture and its notice are what the player sees. */
+static void action_toggle_pause(void) {
+    if (!rom_loaded) return;
+    paused = !paused;
+    close_osd_menu();
+}
+static void action_quit(void) {
+    running = false;
+}
+
+/* Host display performance settings persist like mask alignment. Choosing
+ * Auto again restarts it from full size. */
+static void action_render_scale_changed(void) {
+    render_scale_auto_level = RENDER_SCALE_FULL;
+    render_scale_over_windows = 0;
+    mynes_config.gpu_render_scale = render_scale_mode;
+    mynes_config_save(&mynes_config);
+}
+static void action_low_latency_changed(void) {
+    mynes_config.gpu_low_latency = low_latency;
+    mynes_config_save(&mynes_config);
+}
+
+/* Reviews and captures compare frame sequences bit-for-bit; they keep the
+ * three-picture FIFO whatever the saved preference says. */
+static bool review_env_present(void) {
+    static const char *const names[] = {
+        "MYNES_REVIEW_FRAME", "MYNES_REVIEW_INPUT_SCRIPT", "MYNES_REVIEW_NO_INPUT",
+        "MYNES_REVIEW_OSD", "MYNES_REVIEW_PRESET", "MYNES_REVIEW_SIDE",
+        "MYNES_REVIEW_START_FRAME", "MYNES_REVIEW_TITLE" };
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++)
+        if (getenv(names[i])) return true;
+    return false;
+}
+
+/* ============================================================================
+ * Battery RAM and save states
+ * ============================================================================ */
+
+/* Console visitors for playback_with_console: the worker owns the NES while
+ * playback is active, so cartridge RAM and machine state cross over here. */
+static void console_copy_prg_ram(NES *console, void *user) {
+    memcpy(user, console->mapper.prg_ram, MYNES_PRG_RAM_SIZE);
+}
+static void console_restore_prg_ram(NES *console, void *user) {
+    memcpy(console->mapper.prg_ram, user, MYNES_PRG_RAM_SIZE);
+}
+typedef struct {
+    void  *data;
+    size_t size;
+    bool   ok;
+    char   error[96];   /* sized like a notice value, so it shows in full */
+} StateJob;
+static void console_save_state(NES *console, void *user) {
+    StateJob *job = user;
+    job->ok = nes_state_save(console, job->data, job->size);
+}
+static void console_load_state(NES *console, void *user) {
+    StateJob *job = user;
+    job->ok = nes_state_load(console, job->data, job->size, job->error, sizeof(job->error));
+}
+/* Until the worker exists (startup, benchmark) the main thread owns the
+ * console. Returns the frames emulated when fn ran (0 without a worker). */
+static unsigned with_console(void (*fn)(NES *console, void *user), void *user) {
+    if (playback) return playback_with_console(playback, fn, user);
+    fn(&nes, user);
+    return 0;
+}
+
+/* Bind the cartridge in `rom` to its save files and restore battery RAM.
+ * Runs right after a load, while the mapper's RAM is still blank. */
+static void saves_attach(const char *rom_path) {
+    uint32_t crc = nes_state_rom_crc(rom.prg_rom, rom.prg_size, rom.chr_rom, rom.chr_size);
+    mynes_saves_open(&saves, rom_path, crc, rom.has_battery);
+    battery_next_check = SDL_GetTicks() + BATTERY_FLUSH_MS;
+    if (!saves.battery) return;
+    with_console(console_copy_prg_ram, battery_image);
+    if (mynes_saves_restore(&saves, battery_image)) {
+        with_console(console_restore_prg_ram, battery_image);
+        fprintf(stderr, "Battery RAM restored from %s\n", saves.sav_path);
+    } else {
+        fprintf(stderr, "Battery RAM will be saved to %s\n", saves.sav_path);
+    }
+}
+
+/* Write battery RAM when it changed since the last write (always with force). */
+static bool saves_flush(bool force) {
+    if (!saves.battery || !nes.mapper_loaded) return true;
+    with_console(console_copy_prg_ram, battery_image);
+    return mynes_saves_flush(&saves, battery_image, force);
+}
+
+static void state_save_slot(void) {
+    char value[64];
+    StateJob job = { .size = nes_state_size(&nes) };
+    job.data = malloc(job.size);
+    if (job.data) with_console(console_save_state, &job);
+    bool written = job.ok && mynes_state_write(&saves, state_slot, job.data, job.size);
+    free(job.data);
+    if (written) {
+        snprintf(value, sizeof(value), "Slot %d", state_slot);
+        show_notice("STATE SAVED", value);
+        fprintf(stderr, "State saved to slot %d\n", state_slot);
+    } else {
+        snprintf(value, sizeof(value), "Slot %d: cannot write the state file", state_slot);
+        show_notice("SAVE STATE FAILED", value);
+        fprintf(stderr, "Save state to slot %d failed\n", state_slot);
+    }
+}
+
+/* Apply a state image; true when the console now runs it. `source` names
+ * where it came from for the notice and the log. Shared by the F7 / OSD
+ * slot load and --load-state, so both restart the worker's pictures and
+ * audio the same way; the caller resets the renderer's temporal state. */
+static bool state_load_image(void *data, size_t size, const char *source) {
+    StateJob job = { .data = data, .size = size };
+    state_load_frame = with_console(console_load_state, &job);
+    if (!job.ok) {
+        show_notice("LOAD STATE FAILED", job.error);
+        fprintf(stderr, "Load state from %s: %s\n", source, job.error);
+        return false;
+    }
+    if (playback) playback_restart(playback);
+    show_notice("STATE LOADED", source);
+    fprintf(stderr, "State loaded from %s\n", source);
+    return true;
+}
+
+/* Returns true when the console now runs the loaded state. */
+static bool state_load_slot(void) {
+    char value[64];
+    size_t size = 0;
+    void *data = mynes_state_read(&saves, state_slot, &size);
+    if (!data) {
+        snprintf(value, sizeof(value), "Slot %d is empty", state_slot);
+        show_notice("LOAD STATE FAILED", value);
+        fprintf(stderr, "Load state: slot %d is empty\n", state_slot);
+        return false;
+    }
+    snprintf(value, sizeof(value), "Slot %d", state_slot);
+    bool loaded = state_load_image(data, size, value);
+    free(data);
+    return loaded;
+}
+
+/* --load-state FILE: a state file from anywhere, not only the slots. */
+static bool state_load_file(const char *path) {
+    FILE *f = fopen(path, "rb");
+    long size = 0;
+    void *data = NULL;
+    if (f && !fseek(f, 0, SEEK_END) && (size = ftell(f)) > 0 && !fseek(f, 0, SEEK_SET))
+        data = malloc((size_t)size);
+    bool read = data && fread(data, 1, (size_t)size, f) == (size_t)size;
+    if (f) fclose(f);
+    if (!read) {
+        fprintf(stderr, "Load state from %s: cannot read the file\n", path);
+        free(data);
+        return false;
+    }
+    bool loaded = state_load_image(data, (size_t)size, path);
+    free(data);
+    return loaded;
+}
+
+static void cycle_state_slot(void) {
+    char value[32];
+    state_slot = state_slot % MYNES_STATE_SLOTS + 1;
+    snprintf(value, sizeof(value), "Slot %d", state_slot);
+    show_notice("STATE SLOT", value);
+}
+
+/* OSD Game submenu actions. The menu closes so the notice is what the
+ * player sees; the requests are honoured between frames in the main loop. */
+static void action_save_state(void) { state_save_requested = true; close_osd_menu(); }
+static void action_load_state(void) { state_load_requested = true; close_osd_menu(); }
+static void action_write_battery(void) { battery_write_requested = true; close_osd_menu(); }
+
 /* ============================================================================
  * Audio callback
  * ============================================================================ */
@@ -189,6 +465,7 @@ static bool frame_wanted(unsigned frame, const int *list, int n) {
 
 static void handle_key(SDL_Scancode sc, bool down) {
     uint8_t mask = 0;
+    int player = 0;
     switch (sc) {
         case SDL_SCANCODE_X:      mask = 0x01; break;  /* A */
         case SDL_SCANCODE_Z:      mask = 0x02; break;  /* B */
@@ -198,10 +475,182 @@ static void handle_key(SDL_Scancode sc, bool down) {
         case SDL_SCANCODE_DOWN:   mask = 0x20; break;
         case SDL_SCANCODE_LEFT:   mask = 0x40; break;
         case SDL_SCANCODE_RIGHT:  mask = 0x80; break;
+        /* Player 2 sits on the left hand: WASD plus J/H/U/Y. */
+        case SDL_SCANCODE_J:      mask = 0x01; player = 1; break;  /* A */
+        case SDL_SCANCODE_H:      mask = 0x02; player = 1; break;  /* B */
+        case SDL_SCANCODE_U:      mask = 0x04; player = 1; break;  /* Select */
+        case SDL_SCANCODE_Y:      mask = 0x08; player = 1; break;  /* Start */
+        case SDL_SCANCODE_W:      mask = 0x10; player = 1; break;
+        case SDL_SCANCODE_S:      mask = 0x20; player = 1; break;
+        case SDL_SCANCODE_A:      mask = 0x40; player = 1; break;
+        case SDL_SCANCODE_D:      mask = 0x80; player = 1; break;
         default: return;
     }
-    if (down) controller_state |= mask;
-    else      controller_state &= ~mask;
+    if (down) keyboard_buttons[player] |= mask;
+    else      keyboard_buttons[player] &= ~mask;
+}
+
+/* ============================================================================
+ * Gamepads (RetroArch convention: EAST = A, SOUTH = B)
+ * ============================================================================ */
+
+#define GAMEPAD_DEADZONE 16384  /* half of the axis range */
+
+static int gamepad_slot(SDL_JoystickID id) {
+    for (int i = 0; i < 2; i++)
+        if (gamepads[i].pad && gamepads[i].id == id) return i;
+    return -1;
+}
+
+static void gamepad_added(SDL_JoystickID id) {
+    if (gamepad_slot(id) >= 0) return;
+    for (int i = 0; i < 2; i++) {
+        if (gamepads[i].pad) continue;
+        SDL_Gamepad *pad = SDL_OpenGamepad(id);
+        if (!pad) { fprintf(stderr, "Gamepad open failed: %s\n", SDL_GetError()); return; }
+        const char *name = SDL_GetGamepadName(pad);
+        gamepads[i] = (GamepadSlot){ .pad = pad, .id = id };
+        snprintf(gamepads[i].name, sizeof(gamepads[i].name), "%s", name ? name : "Gamepad");
+        char value[80];
+        snprintf(value, sizeof(value), "%s (P%d)", gamepads[i].name, i + 1);
+        show_notice("GAMEPAD CONNECTED", value);
+        fprintf(stderr, "Gamepad connected: %s (P%d)\n", gamepads[i].name, i + 1);
+        return;
+    }
+}
+
+static void gamepad_removed(SDL_JoystickID id) {
+    int i = gamepad_slot(id);
+    if (i < 0) return;
+    char value[80];
+    snprintf(value, sizeof(value), "%s (P%d)", gamepads[i].name, i + 1);
+    show_notice("GAMEPAD REMOVED", value);
+    fprintf(stderr, "Gamepad removed: %s (P%d)\n", gamepads[i].name, i + 1);
+    SDL_CloseGamepad(gamepads[i].pad);
+    gamepads[i] = (GamepadSlot){0};
+}
+
+static uint8_t gamepad_button_mask(int button) {
+    switch (button) {
+        case SDL_GAMEPAD_BUTTON_EAST:
+        case SDL_GAMEPAD_BUTTON_NORTH:      return 0x01;  /* A */
+        case SDL_GAMEPAD_BUTTON_SOUTH:
+        case SDL_GAMEPAD_BUTTON_WEST:       return 0x02;  /* B */
+        case SDL_GAMEPAD_BUTTON_BACK:       return 0x04;  /* Select */
+        case SDL_GAMEPAD_BUTTON_START:      return 0x08;  /* Start */
+        case SDL_GAMEPAD_BUTTON_DPAD_UP:    return 0x10;
+        case SDL_GAMEPAD_BUTTON_DPAD_DOWN:  return 0x20;
+        case SDL_GAMEPAD_BUTTON_DPAD_LEFT:  return 0x40;
+        case SDL_GAMEPAD_BUTTON_DPAD_RIGHT: return 0x80;
+        default:                            return 0;
+    }
+}
+
+/* Menu/browser navigation equivalent of a pad button, or UNKNOWN. */
+static SDL_Scancode gamepad_nav_key(int button) {
+    switch (button) {
+        case SDL_GAMEPAD_BUTTON_DPAD_UP:    return SDL_SCANCODE_UP;
+        case SDL_GAMEPAD_BUTTON_DPAD_DOWN:  return SDL_SCANCODE_DOWN;
+        case SDL_GAMEPAD_BUTTON_DPAD_LEFT:  return SDL_SCANCODE_LEFT;
+        case SDL_GAMEPAD_BUTTON_DPAD_RIGHT: return SDL_SCANCODE_RIGHT;
+        case SDL_GAMEPAD_BUTTON_SOUTH:      return SDL_SCANCODE_RETURN;
+        case SDL_GAMEPAD_BUTTON_EAST:       return SDL_SCANCODE_ESCAPE;
+        default:                            return SDL_SCANCODE_UNKNOWN;
+    }
+}
+
+/* Direction bits (0x10..0x80) of the left stick after the deadzone. */
+static uint8_t gamepad_stick_mask(uint8_t stick, int axis, int value) {
+    if (axis == SDL_GAMEPAD_AXIS_LEFTX)
+        return (stick & ~0xc0) | (value < -GAMEPAD_DEADZONE ? 0x40 : value > GAMEPAD_DEADZONE ? 0x80 : 0);
+    if (axis == SDL_GAMEPAD_AXIS_LEFTY)
+        return (stick & ~0x30) | (value < -GAMEPAD_DEADZONE ? 0x10 : value > GAMEPAD_DEADZONE ? 0x20 : 0);
+    return stick;
+}
+
+static SDL_Scancode direction_nav_key(uint8_t bit) {
+    switch (bit) {
+        case 0x10: return SDL_SCANCODE_UP;
+        case 0x20: return SDL_SCANCODE_DOWN;
+        case 0x40: return SDL_SCANCODE_LEFT;
+        default:   return SDL_SCANCODE_RIGHT;
+    }
+}
+
+/* ============================================================================
+ * ROM browser and host UI navigation
+ * ============================================================================ */
+
+/* Feed one browser key; on selection replace the running console. The
+ * static frame buffer belongs to main, so it is handed in by reference. */
+static void browser_key(BrowserKey key, bool *console_changed, uint8_t **static_frame) {
+    BrowserResult r = browser_handle_key(&browser, key);
+    if (r == BROWSER_SELECTED) {
+        ROM new_rom;
+        int re = nes_rom_load(&new_rom, browser.chosen_path);
+        if (re == ROM_OK) {
+            /* The loader resolves header timing plus
+             * explicit legacy PAL filename tags. Flip the
+             * PPU + APU + GPU pipeline so PAL
+             * ROMs decode with the 2C07 table +
+             * correct per-line V-phase inversion. */
+            int new_region = (new_rom.tv_system == NES_TV_PAL)
+                             ? SIGNAL_REGION_PAL
+                             : SIGNAL_REGION_NTSC;
+            if (new_region != preset_ctx.region) {
+                bool rebuilt = preset_set_region(
+                    &preset_ctx, new_region);
+                if (rebuilt && tap_mgr) {
+                    /* tap_mgr caches per-stage
+                     * metadata that's stale
+                     * after the rebuild. */
+                    debug_tap_destroy(tap_mgr);
+                    tap_mgr = debug_tap_create(gpu,
+                        gpu_video_enabled ? &video_gpu_chain.sig_chain : NULL,
+                        NULL);
+                }
+                region = new_region;
+            }
+            /* The outgoing cartridge's battery RAM goes to disk first. */
+            saves_flush(false);
+            playback_load_cartridge(playback,&new_rom,new_region);
+            playback_active = false;
+            *console_changed = true;
+            nes_rom_free(&rom);
+            rom = new_rom;
+            rom_loaded = true;
+            saves_attach(browser.chosen_path);
+            free(*static_frame);
+            *static_frame = NULL;
+            mynes_config_add_recent(&mynes_config,
+                                    browser.chosen_path);
+            mynes_config_save(&mynes_config);
+            fprintf(stderr, "Loaded %s\n", browser.chosen_path);
+        } else {
+            fprintf(stderr, "Failed to load %s: %s\n",
+                browser.chosen_path, nes_rom_error_str(re));
+            browser_set_error(&browser,nes_rom_error_str(re));
+            r=BROWSER_BROWSING;
+        }
+    }
+    if (r == BROWSER_CANCELLED && !rom_loaded) {
+        /* Started without a ROM and the user cancelled — quit. */
+        running = false;
+    }
+    if (r != BROWSER_BROWSING) {
+        browser_active = false;
+        SDL_StopTextInput(window);
+    }
+}
+
+/* Gamepad navigation reuses the keyboard path of whichever host UI is open. */
+static void ui_navigate(SDL_Scancode sc, bool *console_changed, uint8_t **static_frame) {
+    if (browser_active) {
+        int bk = sdl_to_browser_key(sc);
+        if (bk >= 0) browser_key((BrowserKey)bk, console_changed, static_frame);
+    } else if (osd_menu_is_open) {
+        gpu_osd_handle_key(sc, &osd_parameter_editing);
+    }
 }
 
 /* ============================================================================
@@ -222,7 +671,7 @@ int main(int argc, char **argv) {
     bool debug_server_enabled = false;  /* --debug-server: ChainVisualiser IPC socket */
     bool benchmark = false, force_sdr = false, screenshot_requested = false, native_fullscreen = false;
     int room_reflections_override=-1;
-    int mask_alignment_override=-1,window_width=1280,window_height=960;
+    int mask_alignment_override=-1,render_scale_override=-1,window_width=1280,window_height=960;
     char manual_screenshot_path[256];
     int exit_status = 0;
     int offscreen_w=0,offscreen_h=0;
@@ -243,6 +692,12 @@ int main(int argc, char **argv) {
     int screenshot_after = 0;              /* --screenshot-after <N>: dump and exit */
     const char *screenshot_path = "/tmp/gpu_capture.ppm";
     uint8_t *static_frame_buf = NULL;      /* 256*240 palette indices when loaded */
+    /* Clip recording and scripted play; docs/gpu-controls.md, Recording clips. */
+    const char *record_path = NULL, *load_state_path = NULL;
+    const char *input_replay_path = NULL, *input_record_path = NULL;
+    double record_seconds = 0;
+    int record_after = 2;
+    Recorder *recorder = NULL;
     for (int i = 1; i < argc; i++) {
         if (strncmp(argv[i], "--debug-dump", 12) == 0
             && (argv[i][12] == '\0' || argv[i][12] == '=')) {
@@ -279,6 +734,13 @@ int main(int argc, char **argv) {
             if(strcmp(mode,"pixels")==0) mask_alignment_override=0;
             else if(strcmp(mode,"physical")==0) mask_alignment_override=1;
             else { fprintf(stderr,"Mask alignment must be pixels or physical\n");return 1; }
+        } else if (strcmp(argv[i], "--render-scale") == 0 && i+1<argc) {
+            const char *scale=argv[++i];
+            if(strcmp(scale,"auto")==0) render_scale_override=RENDER_SCALE_AUTO;
+            else if(strcmp(scale,"1")==0 || strcmp(scale,"1.0")==0) render_scale_override=RENDER_SCALE_FULL;
+            else if(strcmp(scale,"0.75")==0) render_scale_override=RENDER_SCALE_3_4;
+            else if(strcmp(scale,"0.5")==0) render_scale_override=RENDER_SCALE_HALF;
+            else { fprintf(stderr,"Render scale must be 1, 0.75, 0.5 or auto\n");return 1; }
         } else if (strcmp(argv[i], "--window-size") == 0 && i+1<argc) {
             if(sscanf(argv[++i],"%dx%d",&window_width,&window_height)!=2 || window_width<64 || window_height<64 || window_width>8192 || window_height>8192) {
                 fprintf(stderr,"Window size must be WIDTHxHEIGHT in window coordinates\n");return 1;
@@ -316,12 +778,33 @@ int main(int argc, char **argv) {
             }
         } else if (strcmp(argv[i], "--screenshot-path") == 0 && i + 1 < argc) {
             screenshot_path = argv[++i];
+        } else if (strcmp(argv[i], "--record") == 0 && i + 1 < argc) {
+            record_path = argv[++i];
+        } else if (strcmp(argv[i], "--record-seconds") == 0 && i + 1 < argc) {
+            char *end;
+            record_seconds = strtod(argv[++i], &end);
+            if (*end || !*argv[i] || !isfinite(record_seconds) || record_seconds <= 0) {
+                fprintf(stderr, "Record seconds must be a positive number\n"); return 1;
+            }
+        } else if (strcmp(argv[i], "--record-after") == 0 && i + 1 < argc) {
+            char *end;
+            long after = strtol(argv[++i], &end, 10);
+            if (*end || !*argv[i] || after < 0 || after > 1000000) {
+                fprintf(stderr, "Record-after must be a number of frames\n"); return 1;
+            }
+            record_after = (int)after;
+        } else if (strcmp(argv[i], "--load-state") == 0 && i + 1 < argc) {
+            load_state_path = argv[++i];
+        } else if (strcmp(argv[i], "--input-replay") == 0 && i + 1 < argc) {
+            input_replay_path = argv[++i];
+        } else if (strcmp(argv[i], "--input-record") == 0 && i + 1 < argc) {
+            input_record_path = argv[++i];
         } else if (strcmp(argv[i], "--verbose") == 0 || strcmp(argv[i], "-v") == 0) {
             gpu_verbose = true;
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             printf("Usage: %s [options] <rom.nes>\n"
                    "\n"
-                   "NES emulator — experimental GPU frontend (SDL3 + SDL_GPU).\n"
+                   "NES emulator — GPU frontend (SDL3 + SDL_GPU).\n"
                    "\n"
                    "Options:\n"
                    "  -v, --verbose         Print detailed startup info (shader loads,\n"
@@ -343,10 +826,40 @@ int main(int argc, char **argv) {
                    "  --room-reflections    Enable simulated room light and glare (G toggles)\n"
                    "  --no-room-reflections Disable simulated room light (default)\n"
                    "  --sdr                 Use SDR output for display comparisons\n"
-                   "  --native-fullscreen   Enter native panel mode (F toggles back)\n"
+                   "  --native-fullscreen   Enter native panel mode (F11 toggles back)\n"
                    "  --mask-alignment M    pixels (default) or physical CRT pitch\n"
+                   "  --render-scale S      Internal CRT resolution: 1, 0.75, 0.5 or auto\n"
+                   "                        (default auto: full size, steps down if the\n"
+                   "                        GPU cannot keep up; M > Host display)\n"
                    "  --window-size WxH     Initial window size (UI coordinates)\n"
-                   "  -h, --help            Show this help\n",
+                   "  --record OUT          Record every emulated frame to OUT (.mov or .mp4)\n"
+                   "                        with the APU audio; needs --offscreen and\n"
+                   "                        --record-seconds. ffmpeg from MYNES_FFMPEG or PATH;\n"
+                   "                        MYNES_RECORD_CODEC_ARGS replaces the video codec\n"
+                   "                        arguments (see docs/gpu-controls.md)\n"
+                   "  --record-seconds N    Clip length; frames = round(N x region rate)\n"
+                   "  --record-after F      Emulated frames run before the first recorded\n"
+                   "                        one (default 2)\n"
+                   "  --load-state FILE     Load a save-state file once the ROM is running\n"
+                   "  --input-replay FILE   Scripted player-1 input, rows \"frame hexmask\";\n"
+                   "                        with --record, row 1 is the first recorded frame\n"
+                   "  --input-record FILE   Write player-1 input changes in that format during\n"
+                   "                        windowed play, numbered from the last reset or\n"
+                   "                        state load\n"
+                   "  -h, --help            Show this help\n"
+                   "\n"
+                   "Controls (full table in docs/gpu-controls.md):\n"
+                   "  Player 1: arrows, X = A, Z = B, Tab = Select, Return = Start\n"
+                   "  Player 2: W/A/S/D, J = A, H = B, U = Select, Y = Start\n"
+                   "  Gamepads hot-plug as P1 then P2: d-pad/left stick, EAST = A,\n"
+                   "  SOUTH = B, BACK = Select, START = Start, GUIDE = menu,\n"
+                   "  right shoulder = fast-forward\n"
+                   "  Escape/M menu, Space pause, ` fast-forward, F11 or Alt+Return\n"
+                   "  fullscreen, R reset, G room reflections, O ROM browser, P presets,\n"
+                   "  F5 save state, F7 load state, F6 next state slot (4 slots),\n"
+                   "  F12 screenshot, Ctrl+Q quit. Developer keys sit behind Ctrl.\n"
+                   "  Battery RAM (.sav) and state slots are kept under the config\n"
+                   "  directory, e.g. ~/.config/mynes/saves and ~/.config/mynes/states.\n",
                    argv[0]);
             return 0;
         } else if (argv[i][0] == '-') {
@@ -359,6 +872,17 @@ int main(int argc, char **argv) {
             return 1;
         }
     }
+    /* Recording needs the exact-size hidden target and a fixed length; the
+     * other clip flags need a cartridge to act on before the loop starts. */
+    if (record_path && !offscreen_w) { fprintf(stderr, "--record requires --offscreen WxH\n"); return 1; }
+    if (record_path && record_seconds <= 0) { fprintf(stderr, "--record requires --record-seconds N\n"); return 1; }
+    if ((record_path || load_state_path || input_replay_path) && !rom_path) {
+        fprintf(stderr, "--record, --load-state and --input-replay need a ROM path\n"); return 1;
+    }
+    if (input_record_path && (offscreen_w || record_path || review_no_input)) {
+        fprintf(stderr, "--input-record needs windowed play with live input\n"); return 1;
+    }
+
     /* rom_path may be NULL — in that case the startup ROM browser runs
      * after the SDL/GPU init below, then sets rom_path before continuing. */
 
@@ -369,9 +893,12 @@ int main(int argc, char **argv) {
     render_ctx.room_reflections_enabled=room_reflections_override>=0
         ? room_reflections_override : mynes_config.gpu_room_reflections;
     render_ctx.mask_alignment=mask_alignment_override>=0 ? mask_alignment_override : mynes_config.gpu_mask_alignment;
+    render_scale_mode=render_scale_override>=0 ? render_scale_override : mynes_config.gpu_render_scale;
+    render_scale_fixed=benchmark || offscreen_w!=0;
+    low_latency=mynes_config.gpu_low_latency;
 
     /* --- SDL3 init --- */
-    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO)) {
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD)) {
         fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return 1;
     }
@@ -471,11 +998,16 @@ int main(int argc, char **argv) {
     analog_controls = nes.apu.analog;
 
     /* Try to load a realistic RGB palette for the raw-display path.
-     * Checked in priority order; first hit wins. */
+     * Checked in priority order; first hit wins. The last candidate is the
+     * copy shipped beside the executable (build tree, tarball, app bundle). */
+    char pal_bundled[1024];
+    const char *pal_base = SDL_GetBasePath();
     const char *pal_candidates[] = {
         "palettes/Digital Prime (FBX).pal",
         "../palettes/Digital Prime (FBX).pal",
         "../../palettes/Digital Prime (FBX).pal",
+        pal_base ? resource_dir(pal_bundled, sizeof(pal_bundled), pal_base,
+                                "palettes/Digital Prime (FBX).pal") : NULL,
         NULL
     };
     for (int i = 0; pal_candidates[i]; i++) {
@@ -528,6 +1060,7 @@ int main(int argc, char **argv) {
         nes_reset(&nes);
         rom_loaded = true;
         if (gpu_verbose) nes_rom_print_info(&rom);
+        saves_attach(rom_path);
     }
 
     /* --simulate-frame: load a 256*240 palette-index buffer. Main loop
@@ -575,6 +1108,42 @@ int main(int argc, char **argv) {
     preset_ctx.shader_dir = NULL; /* set after shader_dir_buf is resolved */
     preset_ctx.render_ctx = &render_ctx;
     preset_ctx_init(&preset_ctx);
+    {
+        /* Game submenu: play controls that are not television settings. */
+        OSDMenuItem item = {0};
+        item.type = OSD_MI_ACTION;
+        item.label = "Pause / Resume (Space)"; item.action = action_toggle_pause;
+        bool added = preset_menu_game_append(item);
+        OSDMenuItem slot = {0};
+        slot.type = OSD_MI_INT_CYCLIC; slot.label = "State slot (F6)";
+        slot.target = &state_slot; slot.step = 1;
+        slot.min_val = 1; slot.max_val = MYNES_STATE_SLOTS; slot.format = "%d";
+        added = preset_menu_game_append(slot) && added;
+        item.label = "Save state (F5)"; item.action = action_save_state;
+        added = preset_menu_game_append(item) && added;
+        item.label = "Load state (F7)"; item.action = action_load_state;
+        added = preset_menu_game_append(item) && added;
+        item.label = "Write battery save now"; item.action = action_write_battery;
+        added = preset_menu_game_append(item) && added;
+        item.label = "Quit (Ctrl+Q)"; item.action = action_quit;
+        added = preset_menu_game_append(item) && added;
+        if (!added) fprintf(stderr, "OSD Game submenu is full; some play actions are missing\n");
+    }
+    {
+        /* Host display: performance settings, not television settings. */
+        OSDMenuItem item = {0};
+        item.type = OSD_MI_INT_CYCLIC; item.label = "Render scale";
+        item.target = &render_scale_mode; item.step = 1;
+        item.min_val = RENDER_SCALE_AUTO; item.max_val = RENDER_SCALE_HALF;
+        item.on_change = action_render_scale_changed; item.format = "Auto|1.0|0.75|0.5";
+        bool added = preset_menu_display_append(item);
+        item = (OSDMenuItem){0};
+        item.type = OSD_MI_TOGGLE; item.label = "Low latency";
+        item.target = &low_latency; item.step = 1; item.max_val = 1;
+        item.on_change = action_low_latency_changed;
+        added = preset_menu_display_append(item) && added;
+        if (!added) fprintf(stderr, "OSD Host display submenu is full; performance settings are missing\n");
+    }
 
     /* Default preset selection. Apply once pre-GPU (populates FIR taps,
      * signal table, audio-chain sizing needed by video_gpu_init /
@@ -603,8 +1172,7 @@ int main(int argc, char **argv) {
     char shader_dir_buf[1024];
     const char *base = SDL_GetBasePath();
     if (base) {
-        snprintf(shader_dir_buf, sizeof(shader_dir_buf),
-                 "%s../shaders/compute", base);
+        resource_dir(shader_dir_buf, sizeof(shader_dir_buf), base, "shaders/compute");
     } else {
         snprintf(shader_dir_buf, sizeof(shader_dir_buf),
                  "frontends/gpu/shaders/compute");
@@ -663,30 +1231,22 @@ int main(int argc, char **argv) {
                  dp, fsc/1e6, fsample/1e6);
         }
 
-        /* Render beam deposition at the final tube viewport resolution.
-         * Offscreen captures use their requested pixel dimensions too. */
+        /* Render beam deposition at the tube viewport resolution times the
+         * render scale. Offscreen captures use their requested pixel
+         * dimensions exactly. */
         {
-            /* Pixel-perfect: match beam to window's physical pixel size.
-             * Tube viewport within the window — no stretching needed. */
             int win_pw, win_ph;
             SDL_GetWindowSizeInPixels(window, &win_pw, &win_ph);
             if(offscreen_w) { win_pw=offscreen_w;win_ph=offscreen_h; }
-            float aspect = video_chain.tv.monitor_model==1 ? 16.0f/10.0f : 4.0f/3.0f;
             int beam_w, beam_h, beam_rps;
-            if ((float)win_pw / (float)win_ph > aspect) {
-                /* Window wider than 4:3 — height-limited. */
-                beam_h = win_ph;
-                beam_w = (int)(beam_h * aspect);
-            } else {
-                /* Window taller than 4:3 — width-limited. */
-                beam_w = win_pw;
-                beam_h = (int)(beam_w / aspect);
-            }
+            beam_target_size(win_pw, win_ph, video_chain.tv.monitor_model==1 ? 16 : 4,
+                             video_chain.tv.monitor_model==1 ? 10 : 3,
+                             render_scale_effective(), &beam_w, &beam_h);
             beam_rps = beam_h / 240;
             if (beam_rps < 1) beam_rps = 1;
 
-            LOGV("Pixel-perfect beam: %dx%d (%d rps, window %dx%d)\n",
-                 beam_w, beam_h, beam_rps, win_pw, win_ph);
+            LOGV("Beam target: %dx%d (%d rps, window %dx%d, scale %.2f)\n",
+                 beam_w, beam_h, beam_rps, win_pw, win_ph, render_scale_effective());
             if (video_gpu_set_beam_params(&video_gpu_chain, gpu,
                                           beam_w, beam_h, beam_rps,
                                           0.20f, 0.70f)) {
@@ -718,8 +1278,7 @@ int main(int argc, char **argv) {
     {
         char render_shader_dir[1024];
         if (base) {
-            snprintf(render_shader_dir, sizeof(render_shader_dir),
-                     "%s../shaders/render", base);
+            resource_dir(render_shader_dir, sizeof(render_shader_dir), base, "shaders/render");
         } else {
             snprintf(render_shader_dir, sizeof(render_shader_dir),
                      "frontends/gpu/shaders/render");
@@ -761,7 +1320,8 @@ int main(int argc, char **argv) {
     preset_apply_gpu_push(&preset_ctx);
 
     if (benchmark) {
-        char render_path[1024];
+        /* shader_dir came out of shader_dir_buf; leave room for the suffix. */
+        char render_path[sizeof(shader_dir_buf) + 16];
         snprintf(render_path,sizeof(render_path),"%s/../render",shader_dir);
         printf("BENCH preset=%s\n",preset_path ? preset_path : preset_display_name(current_preset));
         if (!gpu_video_enabled || !gpu_benchmark(&video_gpu_chain,gpu,&sig_state,render_path,render_ctx.mask_alignment==0)) {
@@ -832,17 +1392,52 @@ int main(int argc, char **argv) {
                                audio_stream, screenshot_after ? screenshot_after + screenshot_count - 1 : playback_limit,
                                screenshot_count > 1 ? screenshot_after : 0);
     if (!playback) { fprintf(stderr, "Playback worker: %s\n", SDL_GetError()); return 1; }
+    /* Scripted input, the starting state and the recording are armed here,
+     * before the worker runs its first frame, so frame 1 of the clip is the
+     * first frame after the loaded state. A loaded state resets the picture
+     * history and temporal CRT state in the loop like an F7 load does. */
+    if (input_replay_path && !playback_load_input_script(playback, input_replay_path)) {
+        fprintf(stderr, "Input replay: %s\n", SDL_GetError());
+        exit_status = 1; goto cleanup;
+    }
+    bool state_loaded = false;
+    if (load_state_path) {
+        if (!state_load_file(load_state_path)) { exit_status = 1; goto cleanup; }
+        state_loaded = true;
+    }
+    if (record_path) {
+        RecorderOptions options = { .output = record_path, .seconds = record_seconds,
+            .after = (unsigned)record_after, .region = preset_ctx.region,
+            .width = offscreen_w, .height = offscreen_h };
+        char error[2048];
+        recorder = recorder_create(&options, error, sizeof(error));
+        if (!recorder) { fprintf(stderr, "Recording: %s\n", error); exit_status = 1; goto cleanup; }
+        playback_arm_capture(playback, recorder_first_frame(recorder), recorder_last_frame(recorder),
+                             recorder_audio_file(recorder));
+    }
+    if (input_record_path) {
+        if (!input_record_open(&input_record, input_record_path)) {
+            fprintf(stderr, "Input record: cannot create %s\n", input_record_path);
+            exit_status = 1; goto cleanup;
+        }
+        input_record_base = playback_frames_sampled(playback);
+        fprintf(stderr, "Input record: %s\n", input_record_path);
+    }
     const char *stall_env = getenv("MYNES_PRESENT_STALL_MS");
     int presentation_stall_ms = stall_env ? atoi(stall_env) : 0;
     const char *review_osd=getenv("MYNES_REVIEW_OSD");
     if (review_osd) {
         osd_menu_open_root(preset_menu_root,preset_menu_root_count,"Setup");
+        /* The Game submenu sits first; reviews capture the picture controls. */
+        for (int i = 0; i < preset_menu_root_count; i++)
+            if (!strcmp(preset_menu_root[i].label,"Picture")) osd_menu_current()->selected = i;
         if (!strcmp(review_osd,"adjust")) {
             gpu_osd_handle_key(SDL_SCANCODE_RETURN,&osd_parameter_editing);
             gpu_osd_handle_key(SDL_SCANCODE_RETURN,&osd_parameter_editing);
         }
     }
     if (browser_active) SDL_StartTextInput(window);
+    bool playback_fifo_forced = offscreen_w || screenshot_after > 0 || review_env_present();
     unsigned previous_picture = 0;
     Uint64 frame_deadline = 0;
     while (running) {
@@ -865,10 +1460,16 @@ int main(int argc, char **argv) {
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             /* Offline captures use explicit frame-script input only. Live
-             * keyboard events must not change the test ROM or its preset. */
+             * keyboard events must not change the test ROM or its preset.
+             * Hot-plug events are dropped too: SDL reports every pad already
+             * attached at startup, and its CONNECTED notice would land in
+             * the captured frames, which are compared bit-for-bit. */
             if ((screenshot_after > 0 || review_no_input) &&
                 (ev.type == SDL_EVENT_KEY_DOWN || ev.type == SDL_EVENT_KEY_UP ||
-                 ev.type == SDL_EVENT_TEXT_INPUT || ev.type == SDL_EVENT_MOUSE_WHEEL)) continue;
+                 ev.type == SDL_EVENT_TEXT_INPUT || ev.type == SDL_EVENT_MOUSE_WHEEL ||
+                 ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || ev.type == SDL_EVENT_GAMEPAD_BUTTON_UP ||
+                 ev.type == SDL_EVENT_GAMEPAD_AXIS_MOTION ||
+                 ev.type == SDL_EVENT_GAMEPAD_ADDED || ev.type == SDL_EVENT_GAMEPAD_REMOVED)) continue;
             switch (ev.type) {
                 case SDL_EVENT_QUIT:
                     running = false;
@@ -892,73 +1493,20 @@ int main(int argc, char **argv) {
                     if (browser_active) {
                         int bk = sdl_to_browser_key(ev.key.scancode);
                         /* Quietly ignore unmapped keys when browsing. */
-                        if (bk < 0) break;
-
-                        BrowserResult r = browser_handle_key(&browser,
-                                                             (BrowserKey)bk);
-                        if (r == BROWSER_SELECTED) {
-                            ROM new_rom;
-                            int re = nes_rom_load(&new_rom, browser.chosen_path);
-                            if (re == ROM_OK) {
-                                /* The loader resolves header timing plus
-                                 * explicit legacy PAL filename tags. Flip the
-                                 * PPU + APU + GPU pipeline so PAL
-                                 * ROMs decode with the 2C07 table +
-                                 * correct per-line V-phase inversion. */
-                                int new_region = (new_rom.tv_system == NES_TV_PAL)
-                                                 ? SIGNAL_REGION_PAL
-                                                 : SIGNAL_REGION_NTSC;
-                                if (new_region != preset_ctx.region) {
-                                    bool rebuilt = preset_set_region(
-                                        &preset_ctx, new_region);
-                                    if (rebuilt && tap_mgr) {
-                                        /* tap_mgr caches per-stage
-                                         * metadata that's stale
-                                         * after the rebuild. */
-                                        debug_tap_destroy(tap_mgr);
-                                        tap_mgr = debug_tap_create(gpu,
-                                            gpu_video_enabled ? &video_gpu_chain.sig_chain : NULL,
-                                            NULL);
-                                    }
-                                    region = new_region;
-                                }
-                                playback_load_cartridge(playback,&new_rom,new_region);
-                                playback_active = false;
-                                console_changed = true;
-                                nes_rom_free(&rom);
-                                rom = new_rom;
-                                rom_loaded = true;
-                                free(static_frame_buf);
-                                static_frame_buf = NULL;
-                                mynes_config_add_recent(&mynes_config,
-                                                        browser.chosen_path);
-                                mynes_config_save(&mynes_config);
-                                fprintf(stderr, "Loaded %s\n", browser.chosen_path);
-                            } else {
-                                fprintf(stderr, "Failed to load %s: %s\n",
-                                    browser.chosen_path, nes_rom_error_str(re));
-                                browser_set_error(&browser,nes_rom_error_str(re));
-                                r=BROWSER_BROWSING;
-                            }
-                        }
-                        if (r == BROWSER_CANCELLED && !rom_loaded) {
-                            /* Started without a ROM and the user cancelled — quit. */
-                            running = false;
-                        }
-                        if (r != BROWSER_BROWSING) {
-                            browser_active = false;
-                            SDL_StopTextInput(window);
-                        }
+                        if (bk >= 0) browser_key((BrowserKey)bk, &console_changed, &static_frame_buf);
                         break;
                     }
+                    bool ctrl = (ev.key.mod & SDL_KMOD_CTRL) != 0;
+                    bool alt = (ev.key.mod & SDL_KMOD_ALT) != 0;
+                    /* Ctrl+Q: quit through the normal cleanup path. */
+                    if (ctrl && ev.key.scancode == SDL_SCANCODE_Q) { running = false; break; }
                     /* O: reopen the browser mid-session. */
                     if (ev.key.scancode == SDL_SCANCODE_O) {
                         if (!browser.current_dir[0]) browser_init(&browser, NULL, &mynes_config);
                         else browser_refresh(&browser);
                         browser.can_resume=rom_loaded;
-                        osd_menu_close();
-                        osd_parameter_editing=false;
-                        controller_state=0;
+                        close_osd_menu();
+                        memset(keyboard_buttons, 0, sizeof(keyboard_buttons));
                         playback_pause(playback);
                         playback_active = false;
                         browser_active = true;
@@ -975,23 +1523,32 @@ int main(int argc, char **argv) {
                         if (!ev.key.repeat) preset_toggle_room_reflections();
                         break;
                     }
-                    /* L: toggle chain visualiser. */
-                    if (ev.key.scancode == SDL_SCANCODE_L) {
+                    /* Ctrl+L: toggle chain visualiser. */
+                    if (ctrl && ev.key.scancode == SDL_SCANCODE_L) {
                         chain_vis_toggle(chain_vis);
                         break;
                     }
                     /* Chain vis consumes navigation keys when open. */
                     if (chain_vis_handle_key(chain_vis, ev.key.scancode, true))
                         break;
-                    /* OSD menu navigation. */
+                    /* OSD menu navigation (Escape backs out and closes it). */
                     if (gpu_osd_handle_key(ev.key.scancode, &osd_parameter_editing)) break;
-                    /* Escape: quit. */
-                    if (ev.key.scancode == SDL_SCANCODE_ESCAPE) { running = false; break; }
-                    /* M: open OSD menu. */
-                    if (ev.key.scancode == SDL_SCANCODE_M) {
-                        osd_parameter_editing=false;
-                        osd_menu_open_root(preset_menu_root,
-                                           preset_menu_root_count, "SETUP");
+                    /* Escape or M: open the OSD menu. Escape never quits play;
+                     * the menu's Quit action and Ctrl+Q do. Ignore key repeat so
+                     * a held key does not flap the menu open and closed. */
+                    if (ev.key.scancode == SDL_SCANCODE_ESCAPE ||
+                        ev.key.scancode == SDL_SCANCODE_M) {
+                        if (!ev.key.repeat) open_osd_menu();
+                        break;
+                    }
+                    /* Space: pause / resume. */
+                    if (ev.key.scancode == SDL_SCANCODE_SPACE) {
+                        if (!ev.key.repeat && rom_loaded) paused = !paused;
+                        break;
+                    }
+                    /* Backquote: fast-forward while held. */
+                    if (ev.key.scancode == SDL_SCANCODE_GRAVE) {
+                        key_fast_forward = true;
                         break;
                     }
                     /* Shift+C: toggle split-view (left CRT, right raw palette).
@@ -1012,14 +1569,16 @@ int main(int argc, char **argv) {
                                    render_ctx.crt_shader_enabled ? "on" : "off");
                         }
                     }
-                    /* F11 or F: toggle fullscreen + hide cursor. */
+                    /* F11 or Alt+Return: toggle fullscreen + hide cursor. Plain F
+                     * is free so it cannot collide with player 2's keys. */
                     if (ev.key.scancode == SDL_SCANCODE_F11 ||
-                        ev.key.scancode == SDL_SCANCODE_F) {
-                        if(!gpu_output_toggle_fullscreen(window,render_ctx.mask_alignment==0))
+                        (alt && ev.key.scancode == SDL_SCANCODE_RETURN)) {
+                        if(!ev.key.repeat && !gpu_output_toggle_fullscreen(window,render_ctx.mask_alignment==0))
                             fprintf(stderr,"Fullscreen: %s\n",SDL_GetError());
+                        break;
                     }
-                    /* D: dump GPU pipeline output as PPM for debugging. */
-                    if (ev.key.scancode == SDL_SCANCODE_D) {
+                    /* Ctrl+D: dump GPU pipeline output as PPM for debugging. */
+                    if (ctrl && ev.key.scancode == SDL_SCANCODE_D) {
                         if (gpu_rgb_out && gpu_video_enabled &&
                             gpu_buffer_download(gpu, video_gpu_chain.buf_rgb, gpu_rgb_out,
                                                 video_gpu_chain.rgb_size)) {
@@ -1074,9 +1633,10 @@ int main(int argc, char **argv) {
                         } else {
                             printf("No GPU output to dump (composite disabled?)\n");
                         }
+                        break;
                     }
-                    /* B: toggle temporal blend (dot crawl cancel). */
-                    if (ev.key.scancode == SDL_SCANCODE_B) {
+                    /* Ctrl+B: toggle temporal blend (dot crawl cancel). */
+                    if (ctrl && ev.key.scancode == SDL_SCANCODE_B) {
                         if (video_gpu_chain.temporal_blend < 0.01f) {
                             video_gpu_chain.temporal_blend = 0.5f;
                             printf("Temporal blend: ON (dot crawl cancelled)\n");
@@ -1084,9 +1644,24 @@ int main(int argc, char **argv) {
                             video_gpu_chain.temporal_blend = 0.0f;
                             printf("Temporal blend: OFF (dot crawl visible)\n");
                         }
+                        break;
                     }
-                    /* F5 captures the actual display pass, including mask/glass. */
-                    if (ev.key.scancode == SDL_SCANCODE_F5) screenshot_requested = true;
+                    /* F5/F7 save and load the current state slot, F6 picks the
+                     * next slot; none repeat while held. */
+                    if (ev.key.scancode == SDL_SCANCODE_F5) {
+                        if (!ev.key.repeat) state_save_requested = true;
+                        break;
+                    }
+                    if (ev.key.scancode == SDL_SCANCODE_F7) {
+                        if (!ev.key.repeat) state_load_requested = true;
+                        break;
+                    }
+                    if (ev.key.scancode == SDL_SCANCODE_F6) {
+                        if (!ev.key.repeat) cycle_state_slot();
+                        break;
+                    }
+                    /* F12 captures the actual display pass, including mask/glass. */
+                    if (ev.key.scancode == SDL_SCANCODE_F12) screenshot_requested = true;
                     /* P: cycle presets (scanned from presets/). */
                     if (ev.key.scancode == SDL_SCANCODE_P) {
                         int n = preset_total_count();
@@ -1095,15 +1670,15 @@ int main(int argc, char **argv) {
                             preset_load_index(next);
                         }
                     }
-                    /* T: cycle test signal patterns. */
-                    if (ev.key.scancode == SDL_SCANCODE_T) {
+                    /* Ctrl+T: cycle test signal patterns. */
+                    if (ctrl && ev.key.scancode == SDL_SCANCODE_T) {
                         test_signal_mode = (test_signal_mode + 1) % 3;
                         const char *names[] = {"NES", "Color Bars", "Sine Sweep"};
                         printf("Test signal: %s\n", names[test_signal_mode]);
                         break;
                     }
-                    /* A: toggle between CPU and GPU audio. */
-                    if (ev.key.scancode == SDL_SCANCODE_A) {
+                    /* Ctrl+A: toggle between CPU and GPU audio. */
+                    if (ctrl && ev.key.scancode == SDL_SCANCODE_A) {
                         if (gpu_audio_enabled) {
                             use_gpu_audio = !use_gpu_audio;
                             printf("Audio: %s\n",
@@ -1117,12 +1692,65 @@ int main(int argc, char **argv) {
                         printf("Perf overlay: %s\n", perf_overlay ? "ON" : "OFF");
                         break;
                     }
-                    handle_key(ev.key.scancode, true);
+                    /* Ctrl chords are hotkeys, never game input (D is P2 right). */
+                    if (!ctrl) handle_key(ev.key.scancode, true);
                     break;
 
                 case SDL_EVENT_KEY_UP:
                     handle_key(ev.key.scancode, false);
+                    if (ev.key.scancode == SDL_SCANCODE_GRAVE) key_fast_forward = false;
                     break;
+
+                case SDL_EVENT_GAMEPAD_ADDED:
+                    gamepad_added(ev.gdevice.which);
+                    break;
+                case SDL_EVENT_GAMEPAD_REMOVED:
+                    gamepad_removed(ev.gdevice.which);
+                    break;
+                case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+                case SDL_EVENT_GAMEPAD_BUTTON_UP: {
+                    int slot = gamepad_slot(ev.gbutton.which);
+                    if (slot < 0) break;
+                    GamepadSlot *g = &gamepads[slot];
+                    bool down = ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+                    if (ev.gbutton.button == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER) {
+                        g->fast_forward = down;
+                        break;
+                    }
+                    if (ev.gbutton.button == SDL_GAMEPAD_BUTTON_GUIDE) {
+                        if (down && !browser_active) {
+                            if (osd_menu_is_open) close_osd_menu(); else open_osd_menu();
+                        }
+                        break;
+                    }
+                    /* With a host UI open, presses navigate it instead of the
+                     * game. Releases always clear so no button sticks when the
+                     * UI closes underneath a held finger. */
+                    if (down && (browser_active || osd_menu_is_open)) {
+                        SDL_Scancode nav = gamepad_nav_key(ev.gbutton.button);
+                        if (nav != SDL_SCANCODE_UNKNOWN)
+                            ui_navigate(nav, &console_changed, &static_frame_buf);
+                        break;
+                    }
+                    uint8_t mask = gamepad_button_mask(ev.gbutton.button);
+                    if (down) g->buttons |= mask; else g->buttons &= ~mask;
+                    break;
+                }
+                case SDL_EVENT_GAMEPAD_AXIS_MOTION: {
+                    int slot = gamepad_slot(ev.gaxis.which);
+                    if (slot < 0) break;
+                    GamepadSlot *g = &gamepads[slot];
+                    uint8_t before = g->stick;
+                    g->stick = gamepad_stick_mask(before, ev.gaxis.axis, ev.gaxis.value);
+                    /* Only a fresh deflection navigates; holding the stick
+                     * past the deadzone repeats nothing. */
+                    uint8_t pressed = g->stick & ~before;
+                    if (pressed && (browser_active || osd_menu_is_open))
+                        for (uint8_t bit = 0x10; bit; bit <<= 1)
+                            if (pressed & bit)
+                                ui_navigate(direction_nav_key(bit), &console_changed, &static_frame_buf);
+                    break;
+                }
 
                 case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
                     if(offscreen_w) break;
@@ -1140,29 +1768,49 @@ int main(int argc, char **argv) {
                 playback_reset_console(playback);
                 playback_active = false;
                 console_changed = true;
-                osd_menu_close();
-                osd_parameter_editing = false;
+                close_osd_menu();
                 fprintf(stderr,"Console reset (cartridge retained)\n");
             }
         }
-        if (console_changed) {
-            controller_state = 0;
+        if (state_save_requested || state_load_requested || battery_write_requested) {
+            bool console_ready = rom_loaded && nes.mapper_loaded && !static_frame_buf;
+            if (state_save_requested && console_ready) state_save_slot();
+            if (state_load_requested && console_ready) state_loaded = state_load_slot();
+            if (battery_write_requested && console_ready) {
+                if (!saves.battery) show_notice("BATTERY SAVE", "This cartridge has no battery RAM");
+                else if (saves_flush(true)) show_notice("BATTERY SAVE", "Written");
+                else show_notice("BATTERY SAVE FAILED", saves.sav_path);
+            }
+            state_save_requested = state_load_requested = battery_write_requested = false;
+        }
+        if (console_changed) memset(keyboard_buttons, 0, sizeof(keyboard_buttons));
+        if (console_changed || state_loaded) {
+            /* A fresh console starts playing; a stale pause would freeze it
+             * behind the previous cartridge's last picture. A loaded state is
+             * a new time line as well: the picture history and the temporal
+             * CRT state (persistence, supply sag) must not blend across it. */
+            paused = false;
             previous_picture = 0;
             frame_deadline = 0;
             render_ctx.presentation_slot = 0;
             render_ctx.pacing_deadline_ns = 0;
             render_ctx.presentation_epoch++;
             if (gpu_video_enabled) video_gpu_reset_temporal_state(&video_gpu_chain,gpu);
+            /* Input rows count from the frame after the new time line began. */
+            input_record_base = state_loaded ? state_load_frame : playback_frames_sampled(playback);
+            if (input_record.file && !input_record_restart(&input_record))
+                fprintf(stderr, "Input record: cannot restart %s\n", input_record_path);
         }
+        state_loaded = false;
         if (!rom_loaded && !browser_active) { SDL_Delay(10); continue; }
-        // Check viewport after events and preset changes, including offscreen mode.
+        // Check viewport after events, preset changes and render scale steps,
+        // including offscreen mode.
         if (gpu_video_enabled && video_gpu_chain.beam_out_w>0) {
             int w,h;
             SDL_GetWindowSizeInPixels(window,&w,&h);
             if(offscreen_w) { w=offscreen_w;h=offscreen_h; }
-            int aw=video_chain.tv.monitor_model==1 ? 16 : 4;
-            int ah=video_chain.tv.monitor_model==1 ? 10 : 3;
-            if(w*ah>h*aw) w=h*aw/ah; else h=w*ah/aw;
+            beam_target_size(w,h,video_chain.tv.monitor_model==1 ? 16 : 4,
+                             video_chain.tv.monitor_model==1 ? 10 : 3,render_scale_effective(),&w,&h);
             if(w>0 && h>0 && (w!=video_gpu_chain.beam_out_w || h!=video_gpu_chain.beam_out_h)) {
                 if(!render_ctx.owns_display_tex) render_ctx.display_tex=NULL;
                 if(!video_gpu_set_beam_params(&video_gpu_chain,gpu,w,h,h/240>0 ? h/240 : 1,
@@ -1170,19 +1818,41 @@ int main(int argc, char **argv) {
                     fprintf(stderr,"Could not resize CRT beam: %s\n",SDL_GetError());
             }
         }
-        bool live = rom_loaded && !browser_active && !static_frame_buf;
+        bool live = rom_loaded && !browser_active && !static_frame_buf && !paused;
+        /* Host UI captures every controller; nothing leaks into the game
+         * while a menu or the browser is up. */
+        bool ui_open = browser_active || osd_menu_is_open;
+        bool fast_forward = live && (key_fast_forward ||
+            gamepads[0].fast_forward || gamepads[1].fast_forward);
         gpu_render_presentation_update(&render_ctx, 1000.0f / signal_region_frame_ms(preset_ctx.region));
         PlaybackControls controls = { .audio = audio_chain, .analog = analog_controls,
             .region = preset_ctx.region, .gpu_audio = use_gpu_audio != 0,
             .presentation_mode = render_ctx.presentation_mode,
             .display_paced = render_ctx.vsync_paced,
             .display_hz = render_ctx.presentation_hz,
-            .controller = controller_state };
+            .low_latency = low_latency && !playback_fifo_forced,
+            .speed = fast_forward ? 8.0f : 1.0f };
+        for (int i = 0; i < 2; i++)
+            controls.controller[i] = ui_open ? 0 :
+                keyboard_buttons[i] | gamepads[i].buttons | gamepads[i].stick;
         playback_controls(playback, &controls);
+        /* The mask just handed over is first sampled by the frame after the
+         * ones already started; that is the row's frame number. */
+        if (input_record.file && rom_loaded && !static_frame_buf &&
+            !input_record_update(&input_record, playback_frames_sampled(playback) - input_record_base + 1,
+                                 controls.controller[0])) {
+            fprintf(stderr, "Input record: cannot write %s\n", input_record_path);
+            input_record_close(&input_record);
+        }
         if (live != playback_active) {
             if (live) playback_resume(playback); else playback_pause(playback);
             playback_active = live;
         }
+        /* Battery RAM reaches disk shortly after a game changes it, so a
+         * crash loses at most a couple of seconds of progress. A failing
+         * disk is retried less often than it is reported. */
+        if (saves.battery && SDL_GetTicks() >= battery_next_check)
+            battery_next_check = SDL_GetTicks() + (saves_flush(false) ? BATTERY_FLUSH_MS : 15 * BATTERY_FLUSH_MS);
         if (render_ctx.presentation_slot > 0) {
             /* Re-present phosphor light only. Do not advance the PPU, audio,
              * signal phase, beam history, CRT load or diagnostic frame count. */
@@ -1218,7 +1888,17 @@ int main(int argc, char **argv) {
             period = gpu_presentation_playback_period(render_ctx.presentation_mode, period,
                 render_ctx.presentation_hz, render_ctx.vsync_paced);
             if (!frame_deadline || now > frame_deadline + period * 3) frame_deadline = now;
-            if (now < frame_deadline) SDL_DelayPrecise(frame_deadline - now);
+            /* Wait in short steps and sample the frame fence on each one.
+             * Nothing else looks at the fence until the next submit, so one
+             * long sleep would time every frame here at a full period
+             * whatever the GPU cost, and Auto render scale would step down
+             * while the browser, the menu or a pause is up. */
+            while (now < frame_deadline) {
+                gpu_render_poll_frame_fence(&render_ctx);
+                Uint64 remaining = frame_deadline - now;
+                SDL_DelayPrecise(remaining < 1000000 ? remaining : 1000000);
+                now = SDL_GetTicksNS();
+            }
             frame_deadline += period;
             if (static_frame_buf) {
                 const uint8_t (*pal)[3] = display_ppu.color_palette ? display_ppu.color_palette : ppu_palette_2c02;
@@ -1227,6 +1907,13 @@ int main(int argc, char **argv) {
                     display_ppu.index_framebuffer[i] = idx;
                     memcpy(display_ppu.framebuffer + i * 3, pal[idx], 3);
                 }
+            } else {
+                /* The raw RGB paths blend the OSD into this buffer in place,
+                 * so repaint the retained picture every frame or a menu, an
+                 * expired notice and the PAUSED backdrop accumulate on the
+                 * frozen picture for as long as the pause lasts. */
+                memcpy(display_ppu.framebuffer, picture.rgb, sizeof(picture.rgb));
+                memcpy(display_ppu.index_framebuffer, picture.codes, sizeof(picture.codes));
             }
         }
 
@@ -1253,12 +1940,23 @@ int main(int argc, char **argv) {
             osd_visible=true;
         } else {
             const char *notice=preset_cycle_notice();
-            if (SDL_GetTicks()<render_ctx.room_reflections_notice_until) {
-                gpu_osd_notice(osd_pixels,"ROOM REFLECTIONS (G)",
-                    render_ctx.room_reflections_enabled ? "ON" : "OFF");
+            /* preset_apply.c raises this from both the G key and the OSD
+             * toggle; consume it as a request for the shared notice. */
+            if (render_ctx.room_reflections_notice_until) {
+                render_ctx.room_reflections_notice_until=0;
+                show_notice("ROOM REFLECTIONS (G)",render_ctx.room_reflections_enabled ? "ON" : "OFF");
+            }
+            if (SDL_GetTicks()<notice_until) {
+                gpu_osd_notice(osd_pixels,notice_title,notice_value);
                 osd_visible=true;
             } else if (notice && *notice) {
                 gpu_osd_preset_notice(osd_pixels,notice);
+                osd_visible=true;
+            } else if (paused && rom_loaded && !static_frame_buf) {
+                gpu_osd_notice(osd_pixels,"PAUSED","Space resumes");
+                osd_visible=true;
+            } else if (fast_forward) {
+                gpu_osd_notice(osd_pixels,"FAST FORWARD","Up to 8x while held");
                 osd_visible=true;
             } else if (perf_overlay && perf_text[0]) {
                 gpu_osd_performance(osd_pixels,perf_text);
@@ -1473,10 +2171,26 @@ int main(int argc, char **argv) {
         // Batch captures finish on this frame; interactive captures write
         // owned pixels in the background and are drained before shutdown.
         render_ctx.capture_async = screenshot_after <= 0;
+        /* A recorded picture is handed over from inside the render, before
+         * the worker may produce the next one; a frame that did not arrive
+         * is a failed recording, never a skipped one. */
+        bool record_frame = recorder && live && recorder_want_frame(recorder, picture.number);
+        unsigned recorded_before = recorder ? recorder_frames_written(recorder) : 0;
+        render_ctx.capture_sink = record_frame ? recorder_push_frame : NULL;
+        render_ctx.capture_sink_user = recorder;
         Uint64 t_render0 = SDL_GetPerformanceCounter();
         render_ctx.source_phase = signal_frame_phase(&sig_state, frame_count - 1);
         gpu_render_frame(&render_ctx, &video_chain);
         Uint64 t_render1 = SDL_GetPerformanceCounter();
+        if (record_frame) {
+            if (recorder_frames_written(recorder) != recorded_before + 1) {
+                fprintf(stderr, "Recording: frame %u was not captured\n", picture.number);
+                exit_status = 1;
+                running = false;
+            } else if (recorder_complete(recorder)) {
+                running = false;
+            }
+        }
         if (render_ctx.submit_ns && render_ctx.presentation_slots > 1)
             render_ctx.presentation_slot = 1;
         if(live && playback_trace && render_ctx.submit_ns) {
@@ -1512,6 +2226,7 @@ int main(int argc, char **argv) {
         {
             static Uint64 perf_emu_total = 0, perf_gpu_total = 0, perf_render_total = 0;
             static int perf_frames = 0;
+            static bool perf_fast_window = false, perf_idle_window = false;
             static Uint64 perf_last_print = 0;
 
             perf_emu_total += t_emu1 - t_emu0;
@@ -1519,6 +2234,8 @@ int main(int argc, char **argv) {
                 perf_gpu_total += t_gpu1 - t_gpu0;
             perf_render_total += t_render1 - t_render0;
             perf_frames++;
+            perf_fast_window = perf_fast_window || fast_forward;
+            perf_idle_window = perf_idle_window || !live;
 
             Uint64 freq = SDL_GetPerformanceFrequency();
             if (!perf_last_print) perf_last_print = t_render1;
@@ -1526,11 +2243,51 @@ int main(int argc, char **argv) {
                 double emu_ms = (double)perf_emu_total * 1000.0 / (double)freq / perf_frames;
                 double gpu_ms = (double)perf_gpu_total * 1000.0 / (double)freq / perf_frames;
                 double ren_ms = (double)perf_render_total * 1000.0 / (double)freq / perf_frames;
+                /* ENC and PRESENT are CPU encode times; GPU is the fenced
+                 * submit-to-completion time, the number a GPU-bound Retina
+                 * frame actually shows up in. */
+                unsigned gpu_samples = render_ctx.gpu_frame_samples;
+                double gpu_frame_ms = gpu_samples ? render_ctx.gpu_frame_total_ns / 1e6 / gpu_samples : 0;
+                render_ctx.gpu_frame_total_ns = 0;
+                render_ctx.gpu_frame_samples = 0;
+                float scale = render_scale_effective();
                 snprintf(perf_text, sizeof(perf_text),
-                         "EMU %.1f ENC %.1f PRESENT %.1f",
-                         emu_ms, gpu_ms, ren_ms);
+                         "EMU %.1f ENC %.1f PRESENT %.1f GPU %.1f%s%s",
+                         emu_ms, gpu_ms, ren_ms, gpu_frame_ms,
+                         scale < 1 ? " SCALE " : "",
+                         scale < 1 ? render_scale_name[render_scale_mode == RENDER_SCALE_AUTO
+                                                      ? render_scale_auto_level : render_scale_mode] : "");
+                /* Auto render scale: a GPU that needs more than 90% of the
+                 * presentation interval for two consecutive windows has no
+                 * margin for a heavier scene, so drop one notch before frames
+                 * start to drop. Fast-forward windows queue GPU work on
+                 * purpose and are not evidence; neither is a window with a
+                 * frame that was not live (browser, menu, pause, static
+                 * review), where no game frame can drop and the CPU-paced
+                 * wait shapes the timing. It never steps back up. */
+                double native_ms = signal_region_frame_ms(preset_ctx.region);
+                double budget_ms = gpu_presentation_playback_period(render_ctx.presentation_mode,
+                    (uint64_t)(native_ms * 1000000.0), render_ctx.presentation_hz,
+                    render_ctx.vsync_paced) / 1e6;
+                if (render_ctx.presentation_slots > 1) budget_ms /= render_ctx.presentation_slots;
+                if (render_scale_mode == RENDER_SCALE_AUTO && !render_scale_fixed &&
+                    render_scale_auto_level < RENDER_SCALE_HALF && gpu_samples >= 10 &&
+                    !perf_fast_window && !perf_idle_window && gpu_frame_ms > 0.9 * budget_ms) {
+                    if (++render_scale_over_windows >= 2) {
+                        render_scale_over_windows = 0;
+                        render_scale_auto_level++;
+                        char value[40];
+                        snprintf(value, sizeof(value), "%s (auto)", render_scale_name[render_scale_auto_level]);
+                        show_notice("RENDER SCALE", value);
+                        fprintf(stderr, "Render scale %s (auto): GPU %.1f ms of %.1f ms per frame\n",
+                                render_scale_name[render_scale_auto_level], gpu_frame_ms, budget_ms);
+                    }
+                } else {
+                    render_scale_over_windows = 0;
+                }
                 perf_emu_total = perf_gpu_total = perf_render_total = 0;
                 perf_frames = 0;
+                perf_fast_window = perf_idle_window = false;
                 perf_last_print = t_render1;
             }
         }
@@ -1543,8 +2300,22 @@ int main(int argc, char **argv) {
 cleanup:
     if(playback_trace) fclose(playback_trace);
     if(render_ctx.presentation_trace) fclose(render_ctx.presentation_trace);
+    saves_flush(false);
     playback_destroy(playback);
     if (!gpu_render_release_pending(&render_ctx)) exit_status=1;
+    /* The worker has stopped writing audio, so the clip can be muxed. */
+    if (recorder) {
+        char error[2048];
+        if (!recorder_finish(recorder, error, sizeof(error))) {
+            fprintf(stderr, "Recording failed: %s\n", error);
+            exit_status = 1;
+        }
+        recorder_destroy(recorder);
+    }
+    if (input_record.file && !input_record_close(&input_record)) {
+        fprintf(stderr, "Input record: cannot write %s\n", input_record_path);
+        exit_status = 1;
+    }
     if (debug_srv) debug_server_destroy(debug_srv);
     if (tap_mgr) debug_tap_destroy(tap_mgr);
     chain_vis_destroy(chain_vis);
@@ -1556,6 +2327,8 @@ cleanup:
     if (render_ctx.display_tex && render_ctx.owns_display_tex)
         SDL_ReleaseGPUTexture(gpu, render_ctx.display_tex);
     nes_rom_free(&rom);
+    for (int i = 0; i < 2; i++)
+        if (gamepads[i].pad) SDL_CloseGamepad(gamepads[i].pad);
     if (audio_stream) SDL_DestroyAudioStream(audio_stream);
     SDL_ReleaseWindowFromGPUDevice(gpu, window);
     SDL_DestroyWindow(window);

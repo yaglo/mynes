@@ -1,18 +1,65 @@
 # GPU signal and CRT controls
 
-**M** opens the translucent TV menu. Use Up/Down to choose a row and Enter to
-open a submenu or enter adjustment mode. On a parameter, Left/Right also starts
-adjustment immediately. The menu then collapses to a bottom strip with only the
+## Controls
+
+Two players share the keyboard, up to two gamepads hot-plug in the order they
+arrive (first pad is player 1, second is player 2, a removed pad frees its
+slot), and every developer key sits behind Ctrl so single letters stay free for
+player 2.
+
+| Input | Action |
+|---|---|
+| **Player 1 keyboard** | |
+| Arrow keys | D-pad |
+| X / Z | A / B |
+| Tab / Return | Select / Start |
+| **Player 2 keyboard** | |
+| W / A / S / D | D-pad |
+| J / H | A / B |
+| U / Y | Select / Start |
+| **Gamepad (P1 = first connected, P2 = second)** | |
+| D-pad, left stick past half deflection | D-pad |
+| EAST / SOUTH (Xbox B / A, PlayStation Circle / Cross) | A / B. NORTH is an alias of A, WEST of B. |
+| BACK / START | Select / Start |
+| GUIDE | Open or close the OSD menu |
+| RIGHT SHOULDER (held) | Fast-forward, up to 8x |
+| D-pad or stick while the menu or ROM browser is open | Navigate: SOUTH = Enter, EAST = Escape/back. Nothing reaches the game. |
+| **Play hotkeys** | |
+| Escape or M | Open the OSD menu; inside it Escape backs out (closing at the top) and M closes. Escape never quits during play. |
+| Space, or **M → Game → Pause / Resume** | Pause / resume. The picture stays on screen with a PAUSED notice; audio continues cleanly on resume. |
+| ` (backquote, held) | Fast-forward, up to 8x. Audio is muted while held and restarts cleanly on release. |
+| F11 or Alt+Return, or **M → Host display → Native fullscreen** | Toggle fullscreen |
+| R, or **M → Reset console (R)** | Reset the console with its cartridge and RAM retained |
+| G, or **M → Room reflections (G)** | Toggle simulated room reflections and glare |
+| F5 / F7, or **M → Game → Save state / Load state** | Save to / load from the current state slot (see [Saves and save states](#saves-and-save-states)) |
+| F6, or **M → Game → State slot** | Next state slot (1–4); the notice shows the slot in use |
+| F12 | Screenshot of the final display pass to `/tmp/nes_screenshot_<frame>.ppm` (plus linear PFM) |
+| P | Next CRT preset |
+| O | ROM browser |
+| C / Shift+C | Composite decode vs raw RGB / split view |
+| V | Performance overlay |
+| Ctrl+Q, or **M → Game → Quit** | Quit through the normal shutdown path |
+| **Developer hotkeys** | |
+| Ctrl+D | Dump per-stage pipeline buffers to /tmp |
+| Ctrl+T | Cycle test signals (NES, colour bars, sine sweep) |
+| Ctrl+B | Toggle temporal blend (dot-crawl cancel) |
+| Ctrl+A | Switch CPU / GPU audio processing |
+| Ctrl+L | Chain visualiser |
+
+The frontend started without a ROM quits when the startup browser is
+cancelled; that is the only Escape that exits.
+
+Inside the menu, Up/Down chooses a row and Enter opens a submenu or enters
+adjustment mode. On a parameter, Left/Right also starts adjustment
+immediately. The menu then collapses to a bottom strip with only the
 parameter, value and range bar; the rest of the game stays visible. Up/Down
 moves to the previous/next setting while staying in adjustment mode. Enter or
-Escape returns to the same row. M closes either view.
+Escape returns to the same row. A gamepad drives the same navigation.
 
-**M → Reset console (R)** or **R** restarts the loaded console with its cartridge
-and RAM retained. **O** opens the ROM browser; selecting another ROM initializes
-a fresh console and clears the old picture history before playback resumes.
+Selecting another ROM in the browser initializes a fresh console and clears
+the old picture history (and any pause) before playback resumes.
 
-**G** or **M → Room reflections (G)** switches simulated ambient reflections
-and glare on/off. They start **off** and the choice is saved as a host setting,
+Room reflections start **off** and the choice is saved as a host setting,
 independent of the preset. Switching off retains each preset's light strengths
 and leaves bloom/internal glass scatter intact. The same toggle is also in
 **CRT / room → Glass / geometry** beside the glare controls. While browsing ROMs, R and G
@@ -47,9 +94,9 @@ Sharpness cannot restore detail lost in the source/cable or narrow the tube's
 beam spot. Its visible effect is deliberately limited by the rest of the chain;
 Basement TV remains soft even at high settings. This is currently a generic
 aperture-correction approximation, not each manufacturer's control curve.
-See the [sharpening audit and hardware worklist](gpu-sharpening-audit.md).
+See the [sharpening audit and hardware worklist](https://yaglo.github.io/mynes-web/research/sharpening/).
 
-Audio starts in **GPU + fallback** mode. Use **M → Audio → Processing** or **A**
+Audio starts in **GPU + fallback** mode. Use **M → Audio → Processing** or **Ctrl+A**
 to switch to CPU processing for the session. `MYNES_GPU_AUDIO=0` selects CPU
 at startup. A late GPU block falls back to CPU without delaying playback;
 unavailable GPU audio also falls back automatically.
@@ -63,7 +110,7 @@ the translucent display readable over bright game content. The overlay pass is
 skipped when closed; unchanged overlays reuse their uploaded pixels.
 
 
-[Hardware evidence](gpu-hardware-research.md) · [Preset audit](gpu-preset-audit.md)
+[Hardware evidence](https://yaglo.github.io/mynes-web/research/hardware/) · [Preset audit](https://yaglo.github.io/mynes-web/gallery/presets/)
 
 Controls describe several different things: source electronics, receiver response,
 CRT behavior, and adaptation to the host display. A working control is not by
@@ -95,6 +142,142 @@ Legacy `num_sections` and RF `carrier_freq` values still round-trip when importi
 old presets, but are not operative GPU controls. They are retained for file
 compatibility, not exposed as adjustable hardware capabilities. Other conditional
 legacy fields remain readable so older custom presets retain their interpretation.
+
+## Saves and save states
+
+Battery-backed cartridge RAM and save states live next to `config.json` in
+the config directory (`$XDG_CONFIG_HOME/mynes`, else `~/.config/mynes`, else
+`~/.mynes`):
+
+| File | Contents |
+|---|---|
+| `saves/<name>.sav` | The 8 KB PRG RAM window (`$6000-$7FFF`) of a cartridge whose iNES header sets the battery bit |
+| `states/<name>.s1` … `states/<name>.s4` | Save-state slots 1–4 |
+
+`<name>` is the ROM file's name without its extension followed by the ROM's
+CRC-32 (PRG then CHR), for example `Zelda (U)-9e7f1a3c`. Two dumps that share
+a file name therefore never share a save, and renaming a ROM keeps its files
+findable by the CRC in their names.
+
+**Battery RAM** is restored when a cartridge with the battery bit loads, from
+the command line or the ROM browser, and written back whenever it has changed:
+about every two seconds during play, before another ROM loads, and on quit.
+**M → Game → Write battery save now** forces a write. Files are replaced
+atomically (written to a `.tmp` file and renamed), so an interrupted write
+keeps the previous save. Cartridges without the battery bit never create a
+file. Console reset (R) keeps the RAM, so resetting loses nothing.
+
+**Save states** capture the whole machine: CPU, PPU (VRAM, OAM, palette),
+APU, mapper registers, work RAM, PRG RAM, CHR RAM and the master clock, so a
+loaded state resumes cycle-exact. F5 saves to the current slot, F7 loads it
+and F6 selects the next slot; **M → Game** offers the same as State slot,
+Save state and Load state. Loading unpauses, resets the picture history and
+the CRT's temporal state (phosphor persistence, supply sag) so the restored
+picture does not blend with the one it replaces, and restarts audio cleanly.
+A load that fails leaves the running game untouched and says why, in a notice
+and on stderr: an empty slot, a state from another ROM (CRC or mapper
+mismatch), a different region, a corrupted file, or a state written by a
+different MyNES build. States are deliberately not portable between builds:
+the file embeds the core's state layout, checked by size, and the format
+version changes when the layout changes on purpose.
+
+Not saved: the CRT preset and its temporal state, queued audio, controller
+mappings and other host settings. A state includes the PRG RAM it was taken
+with, so loading one rewinds battery-backed progress along with the rest of
+the machine, and the periodic write then stores that older RAM.
+
+Limitations: MMC5 is emulated with one 8 KB PRG RAM bank at `$6000-$7FFF`;
+banked PRG RAM beyond that is not emulated, and ExRAM is not part of the
+`.sav` file (it is part of a save state). Mapper 227 multicarts have no PRG
+RAM. The SDL2 frontend restores and writes battery RAM the same way but has
+no save-state keys.
+
+## Recording clips
+
+`--record OUT` turns a hidden playback run into a video file: one video frame
+per emulated frame, with the APU audio of exactly those frames. It needs
+`--offscreen WxH` (every frame is the final display target, mask and glass
+included, read back as RGB8 the way `--screenshot-after` captures it) and
+`--record-seconds N`. `--sdr` keeps the target 8-bit sRGB like the file; an
+EDR target is tone-mapped the way the PPM screenshot is.
+
+```
+mynes_gpu --offscreen 1920x1440 --sdr --preset presets/sony_pvm_14l2.json \
+    --load-state ~/.config/mynes/states/Contra-3ec0cad1.s1 \
+    --input-replay clip.input --record contra.mov --record-seconds 12 contra.nes
+```
+
+| Flag | Meaning |
+|---|---|
+| `--record OUT` | Output path; the container follows the extension, `.mov` or `.mp4`. Requires `--offscreen`. |
+| `--record-seconds N` | Clip length. Frames = round(N × rate) with the region's exact rate, 60.0988 (NTSC) or 50.007 (PAL), which is also the stream's frame rate. |
+| `--record-after F` | Emulated frames run before the first recorded one (default 2), so a loaded state's first pictures are left out. |
+| `--load-state FILE` | Load a save-state file once the ROM is running, before the first frame. Useful outside recording too. It is the F7 load path: the picture history, audio and the CRT's temporal state restart, and a rejected file (wrong ROM, region or build) stops the run with the loader's reason. |
+| `--input-replay FILE` | Scripted player-1 input for the run; see below. |
+
+The playback worker produces one picture at a time and waits until the
+renderer has taken it (the backpressure `--screenshot-pair` uses), so nothing
+is dropped or duplicated however slow the render is; the emulation itself
+still runs in real time, so a clip takes at least its own length to record.
+Each final frame is read back and piped as rgb24 rawvideo into an `ffmpeg`
+child that encodes it beside the output (`OUT.video.<ext>`), while the worker
+writes the same frames' audio as float32 mono 44100 Hz (`OUT.audio.f32le`).
+When the frame count is reached, a second `ffmpeg` run muxes both into OUT
+with AAC at 256 kb/s, cut to the shorter stream, and the temporary files are
+removed. Progress is printed every 60 frames and a final line gives the frame
+count, seconds and path. Any ffmpeg failure exits non-zero and prints the
+tail of ffmpeg's messages.
+
+`ffmpeg` is taken from `MYNES_FFMPEG` or found on `PATH`. The video codec
+arguments default to a portable near-lossless master:
+
+```
+-c:v libx264 -preset veryfast -crf 12 -pix_fmt yuv444p
+```
+
+`MYNES_RECORD_CODEC_ARGS` replaces that whole string (split on whitespace).
+On a Mac the hardware encoder is much faster and the result plays anywhere:
+
+```
+MYNES_RECORD_CODEC_ARGS="-c:v h264_videotoolbox -b:v 90M -pix_fmt yuv420p"
+```
+
+The exact commands, for reference (WxH is the offscreen size, the rate is the
+region's):
+
+```
+ffmpeg -y -loglevel error -f rawvideo -pix_fmt rgb24 -video_size WxH -r 60.0988 -i - <codec args> -an OUT.video.mov
+ffmpeg -y -nostdin -loglevel error -i OUT.video.mov -f f32le -ar 44100 -ac 1 -i OUT.audio.f32le -c:v copy -c:a aac -b:a 256k -shortest -movflags +faststart OUT
+```
+
+### Scripted and recorded input
+
+`--input-replay FILE` reads the [review replay format](../tools/review/README.md):
+rows of an emulated frame number and a hexadecimal player-1 mask (A=01, B=02,
+Select=04, Start=08, Up=10, Down=20, Left=40, Right=80), each held until the
+next row, strictly ascending, at most 128 rows. With `--record`, frame numbers
+count from the first recorded frame: row `1 08` presses Start on the first
+frame of the clip whatever `--record-after` is. Without `--record` they count
+from the first emulated frame, like `MYNES_REVIEW_INPUT_SCRIPT`.
+
+`--input-record FILE` writes that format during ordinary windowed play: a row
+whenever the player-1 mask changes, numbered from the frame after the most
+recent console start, reset (R) or state load (F7), so the file replays from
+that same point; a reset or load starts the file over. A change pressed and
+released within one frame is not written, rows are flushed as they are
+written, and the file is closed at exit. The workflow for a clip:
+
+1. Play to the start of the clip and press F5. The state file is
+   `states/<name>.s<slot>` under the config directory (see above).
+2. Run again with `--load-state <that file> --input-record clip.input` and
+   play the clip.
+3. Render it: `--offscreen WxH --sdr --load-state <that file> --input-replay
+   clip.input --record clip.mov --record-seconds N`. Use `--record-after 0`
+   for the rows to land on the frames they were recorded on; with the
+   default of 2 they play two frames later.
+
+Recorded rows carry a human's timing, including the usual frame of input
+latency, and the loader accepts at most 128 rows, so trim a long session.
 
 ## Grille and HDR
 
@@ -157,7 +340,8 @@ Neither option freezes or averages the composite carrier phase.
 
 On a matching fixed-refresh panel, both hold modes use ordinary vsync with one
 frame allowed in flight. The emulation worker follows the panel rate and waits
-when its three-picture queue is full, preserving consecutive composite phases.
+when its picture queue is full (one picture with **Low latency** on, three with
+it off; see [Performance](#performance)), preserving consecutive composite phases.
 There is no second CPU or Metal presentation deadline racing against vblank.
 The small wall-clock speed adjustment is compensated in audio resampling;
 emulated CPU/APU/PPU cycle ratios are unchanged. A sustained rendering stall
@@ -178,10 +362,13 @@ intermittent shimmer. `MYNES_PRESENT_TRACE=/tmp/presentation.csv` records each
 submission's source frame, carrier phase, presentation mode and refresh slot.
 This helps distinguish missed pictures from normal phase changes; submission
 timestamps alone cannot establish what the panel actually displayed.
-The playback handoff retains three consecutive pictures rather than replacing
-an unread picture immediately. This absorbs brief scheduling jitter without
-discarding alternating carrier phases. Sustained overload still drops the
-oldest picture; emulation and audio never wait for the renderer.
+With **Low latency** off, the playback handoff retains three consecutive
+pictures rather than replacing an unread picture immediately. This absorbs
+brief scheduling jitter without discarding alternating carrier phases.
+Sustained overload still drops the oldest picture; emulation and audio never
+wait for the renderer. With it on (the default), a free-running renderer takes
+the newest picture instead and a display-paced one holds the worker at a
+single queued picture.
 The bundled Metal backend also supports `MYNES_METAL_PRESENT_TRACE=1`, which
 logs actual drawable presentation timestamps, deadlines and source frames.
 `frontends/gpu/tests/test_metal_presentation.py` runs a windowed composite/GPU
@@ -237,6 +424,81 @@ high-speed-camera validation of physical scanout.
 It preserves scanline structure in residual emission; use ambient light for a
 room-lit glass pedestal. Raising black floor does not illuminate blanked raster.
 
+
+## Performance
+
+**M → Host display** holds two host-side performance settings. Neither is a
+television setting; both are saved to `config.json` beside the mask sampling
+choice and apply to every preset.
+
+### Render scale
+
+The beam and phosphor stages render into a target sized from the tube
+viewport in drawable pixels, and the final display pass samples that target
+into the swapchain at the drawable size. On an M5 the PVM preset costs about
+7 ms at 2560×1920 and the consumer presets about 11 ms (see
+[benchmark results](gpu-benchmark-results.md)); an M1 Air cannot hold 60 fps
+at Retina resolution. **Render scale** (`--render-scale <1|0.75|0.5|auto>`)
+multiplies the beam target instead: the internal picture becomes 1.0, 0.75 or
+0.5 of the viewport, never below 480 rows (two device rows per scanline) and
+never above the drawable, and the display pass upsamples it with linear
+filtering.
+
+What it trades away: the beam spot, scanline profile and gun landing are
+resolved at the lower size, so scanline edges and fine beam detail soften, and
+the phosphor light that the mask modulates is that softer picture. What it
+keeps: the mask itself is still sampled at panel pitch in output pixels, and
+geometry, glass scatter, the HDR shoulder, audio, PPU timing and carrier phase
+are unchanged. Emulation cost does not change either; only the GPU stages
+sized by the target get cheaper.
+
+**Auto** (the default) starts at 1.0. Every second the frontend averages the
+GPU's submit-to-completion time for the on-screen frame; it is the `GPU`
+figure in the V performance overlay, next to the CPU encode times `ENC` and
+`PRESENT`, which cannot see a GPU-bound frame. When that average exceeds 90%
+of the presentation interval for two consecutive one-second windows, Auto
+steps down one notch, shows "Render scale 0.75 (auto)", and the overlay adds
+`SCALE 0.75`. It never steps back up on its own: choose Auto again, or a fixed
+value, in the menu to restart from full size. Fast-forward windows are not
+counted, and neither is a window in which the game was not running (the ROM
+browser, the menu, a pause or a static review frame). `--offscreen` captures
+and `--benchmark` always render at exactly the requested size, so
+measurements and screenshots stay comparable.
+
+### Low latency
+
+The playback worker hands pictures to the renderer through a three-picture
+queue. With **Low latency** on (the default), a display-paced session
+(matched-refresh hold) keeps at most one emulated frame waiting: the worker
+emulates the next frame as soon as the renderer takes the previous one, so
+the controller state read by that frame is at most one interval old when the
+frame is presented. In free-running modes (an unmatched refresh rate, or
+fast-forward) the renderer takes the newest queued picture and drops the
+older ones rather than showing a stale frame; phosphor decay is advanced by
+the frames skipped, so persistence is unaffected. Switching it off restores
+the three-picture FIFO, which absorbs brief renderer stalls without
+discarding alternating carrier phases at the price of up to three frames of
+added latency. Captures (`--screenshot-after`), offscreen playback and
+scripted reviews (any `MYNES_REVIEW_*` variable) always keep the FIFO because
+their frame sequences are compared bit-for-bit.
+
+### Where the latency goes
+
+Roughly, from a button press to light on the panel:
+
+| Stage | Adds |
+|---|---|
+| Input sampling | Up to one emulated frame (16.7 ms NTSC, 20 ms PAL): the controller is read when the frame runs. |
+| Emulation and audio | 1–3 ms of CPU per frame. |
+| Picture queue | Low latency on: at most one presentation interval. Off: up to three intervals under sustained backpressure. |
+| GPU signal chain and display pass | 7–11 ms at 2560×1920 on an M5; less at a lower render scale. |
+| Presentation | **Hold, or the default 60 Hz hold, on a panel within 0.5% of the source rate is lowest**: vsync paced, one frame in flight, the drawable scans out at the next vblank (0–1 refresh). 60 Hz hold on an unmatched panel with the bundled Metal backend: timed presentation with two source intervals of lead. CPU-paced 60 Hz hold on other backends: one interval of startup lead plus the deadline wait. BFI: the bright refresh is the first slot, so no extra frame, but only on 2–8× panels. |
+| Panel | Its own scanout and pixel response, about one refresh. |
+
+The lowest-latency configuration is therefore Low latency on with Hold (or
+60 Hz hold, which behaves identically there) for NTSC on a 60 Hz panel, where
+presentation is paced by vsync with no independent deadline. The Metal
+presentation scheduling itself is not changed by either setting.
 
 ## Recording, advanced controls and validation
 

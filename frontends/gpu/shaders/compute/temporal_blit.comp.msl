@@ -39,18 +39,18 @@ struct HistoryBuf
 constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(16u, 16u, 1u);
 
 static inline __attribute__((always_inline))
-float3 current(thread const uint& i, device CurBuf& _20)
+float3 current(thread const uint& i, const device CurBuf& v_20)
 {
-    return float3(float2(as_type<half2>(_20.cur_buf[i])), float2(as_type<half2>(_20.cur_buf[i + 1u])).x);
+    return float3(float2(as_type<half2>(v_20.cur_buf[i])), float2(as_type<half2>(v_20.cur_buf[i + 1u])).x);
 }
 
 static inline __attribute__((always_inline))
-float3 previous(thread const uint& i, device PrevBuf& _45)
+float3 previous(thread const uint& i, const device PrevBuf& v_45)
 {
-    return float3(float2(as_type<half2>(_45.prev_buf[i])), float2(as_type<half2>(_45.prev_buf[i + 1u])).x);
+    return float3(float2(as_type<half2>(v_45.prev_buf[i])), float2(as_type<half2>(v_45.prev_buf[i + 1u])).x);
 }
 
-kernel void main0(device CurBuf& _20 [[buffer(1)]], device PrevBuf& _45 [[buffer(2)]], constant Params& _74 [[buffer(0)]], device HistoryBuf& _266 [[buffer(3)]], texture2d<float, access::write> out_tex [[texture(0)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+kernel void main0(const device CurBuf& v_20 [[buffer(1)]], const device PrevBuf& v_45 [[buffer(2)]], constant Params& _74 [[buffer(0)]], device HistoryBuf& _266 [[buffer(3)]], texture2d<float, access::write> out_tex [[texture(0)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
     uint2 p = gl_GlobalInvocationID.xy;
     bool _77 = p.x >= _74.width;
@@ -69,7 +69,7 @@ kernel void main0(device CurBuf& _20 [[buffer(1)]], device PrevBuf& _45 [[buffer
     }
     uint i = ((p.y * _74.width) + p.x) * 2u;
     uint param = i;
-    float3 drive = current(param, _20);
+    float3 drive = current(param, v_20);
     bool _110 = _74.history_valid != 0u;
     bool _119;
     if (_110)
@@ -94,14 +94,14 @@ kernel void main0(device CurBuf& _20 [[buffer(1)]], device PrevBuf& _45 [[buffer
                     uint j = ((uint(q.y) * _74.width) + uint(q.x)) * 2u;
                     uint param_1 = j;
                     uint param_2 = j;
-                    float3 d = abs(current(param_1, _20) - previous(param_2, _45));
+                    float3 d = abs(current(param_1, v_20) - previous(param_2, v_45));
                     delta = fast::max(delta, fast::max(d.x, fast::max(d.y, d.z)));
                 }
             }
             motion = 1.0 - smoothstep(_74.motion_threshold * 0.5, _74.motion_threshold * 1.5, delta);
         }
         uint param_3 = i;
-        drive = mix(drive, previous(param_3, _45), float3(fast::clamp(_74.blend_factor * motion, 0.0, 0.5)));
+        drive = mix(drive, previous(param_3, v_45), float3(fast::clamp(_74.blend_factor * motion, 0.0, 0.5)));
     }
     float3 light = fast::max(drive, float3(0.0));
     float3 decay = fast::clamp(float3(_74.blend_r, _74.blend_g, _74.blend_b), float3(0.0), float3(0.99989998340606689453125));

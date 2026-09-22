@@ -97,10 +97,14 @@ float fw900_grid(spvUnsafeArray<float, 9> grid, thread const float2& uv)
     int2 i = min(int2(floor(q)), int2(1));
     float2 f = q - float2(i);
     int a = (i.y * 3) + i.x;
-    spvUnsafeArray<float, 9> indexable = grid;
-    spvUnsafeArray<float, 9> indexable_1 = grid;
-    spvUnsafeArray<float, 9> indexable_2 = grid;
-    spvUnsafeArray<float, 9> indexable_3 = grid;
+    spvUnsafeArray<float, 9> indexable;
+    indexable = grid;
+    spvUnsafeArray<float, 9> indexable_1;
+    indexable_1 = grid;
+    spvUnsafeArray<float, 9> indexable_2;
+    indexable_2 = grid;
+    spvUnsafeArray<float, 9> indexable_3;
+    indexable_3 = grid;
     return mix(mix(indexable[a], indexable_1[a + 1], f.x), mix(indexable_2[a + 3], indexable_3[a + 4], f.x), f.y);
 }
 
@@ -130,13 +134,13 @@ float fw900_eotf(thread const float& voltage)
 }
 
 static inline __attribute__((always_inline))
-float3 fw900_pixel(thread const int& x, thread const int& source_y, thread const bool& native_raster, constant Params& _81, device RGBIn& _136)
+float3 fw900_pixel(thread const int& x, thread const int& source_y, thread const bool& native_raster, constant Params& v_81, const device RGBIn& v_136)
 {
     bool _586 = source_y < 0;
     bool _596;
     if (!_586)
     {
-        _596 = source_y >= int(_81.source_h);
+        _596 = source_y >= int(v_81.source_h);
     }
     else
     {
@@ -161,14 +165,14 @@ float3 fw900_pixel(thread const int& x, thread const int& source_y, thread const
         {
             return float3(0.0);
         }
-        sx = (((float(x - 160) + 0.5) * float(_81.signal_w)) / 1600.0) - 0.5;
+        sx = (((float(x - 160) + 0.5) * float(v_81.signal_w)) / 1600.0) - 0.5;
     }
-    sx = fast::clamp(sx, 0.0, float(_81.signal_w - 1u));
+    sx = fast::clamp(sx, 0.0, float(v_81.signal_w - 1u));
     uint x0 = uint(sx);
-    uint x1 = min((x0 + 1u), (_81.signal_w - 1u));
-    uint a = ((uint(source_y) * _81.signal_w) + x0) * 3u;
-    uint b = ((uint(source_y) * _81.signal_w) + x1) * 3u;
-    float3 v = mix(float3(_136.rgb_in[a], _136.rgb_in[a + 1u], _136.rgb_in[a + 2u]), float3(_136.rgb_in[b], _136.rgb_in[b + 1u], _136.rgb_in[b + 2u]), float3(fract(sx)));
+    uint x1 = min((x0 + 1u), (v_81.signal_w - 1u));
+    uint a = ((uint(source_y) * v_81.signal_w) + x0) * 3u;
+    uint b = ((uint(source_y) * v_81.signal_w) + x1) * 3u;
+    float3 v = mix(float3(v_136.rgb_in[a], v_136.rgb_in[a + 1u], v_136.rgb_in[a + 2u]), float3(v_136.rgb_in[b], v_136.rgb_in[b + 1u], v_136.rgb_in[b + 2u]), float3(fract(sx)));
     float param = v.x;
     float param_1 = v.y;
     float param_2 = v.z;
@@ -207,10 +211,10 @@ float fw900_horizontal_weight(thread const float& d, thread const float& sigma, 
 }
 
 static inline __attribute__((always_inline))
-float3 fw900_deposit(thread const float2& uv, constant Params& _81, device RGBIn& _136)
+float3 fw900_deposit(thread const float2& uv, constant Params& v_81, const device RGBIn& v_136)
 {
     float2 xy = (uv * float2(1920.0, 1200.0)) - float2(0.5);
-    float2 width = float2(1920.0 / float(_81.out_w), 1200.0 / float(_81.out_h));
+    float2 width = float2(1920.0 / float(v_81.out_w), 1200.0 / float(v_81.out_h));
     float2 param = uv;
     float sx = fw900_grid(_832, param);
     float2 param_1 = uv;
@@ -219,11 +223,11 @@ float3 fw900_deposit(thread const float2& uv, constant Params& _81, device RGBIn
     int xhi = int(floor(((xy.x + (0.5 * width.x)) + (4.0 * sx)) + 0.5));
     int ylo = max(0, int(ceil((xy.y - (0.5 * width.y)) - (4.0 * sy))));
     int yhi = min(1199, int(floor((xy.y + (0.5 * width.y)) + (4.0 * sy))));
-    bool _908 = _81.source_h == 1200u;
+    bool _908 = v_81.source_h == 1200u;
     bool _915;
     if (_908)
     {
-        _915 = _81.signal_w == 1920u;
+        _915 = v_81.signal_w == 1920u;
     }
     else
     {
@@ -272,7 +276,7 @@ float3 fw900_deposit(thread const float2& uv, constant Params& _81, device RGBIn
             float param_8 = xy.x - float(x);
             float param_9 = sx;
             float param_10 = width.x;
-            horizontal += (fw900_pixel(param_5, param_6, param_7, _81, _136) * fw900_horizontal_weight(param_8, param_9, param_10));
+            horizontal += (fw900_pixel(param_5, param_6, param_7, v_81, v_136) * fw900_horizontal_weight(param_8, param_9, param_10));
         }
         light += (horizontal * wy);
         y = end + 1;
@@ -282,40 +286,40 @@ float3 fw900_deposit(thread const float2& uv, constant Params& _81, device RGBIn
 }
 
 static inline __attribute__((always_inline))
-float3 fw900_render(thread const uint& pix, constant Params& _81, device RGBIn& _136, device DeflectionX& _1048, device DeflectionY& _1066)
+float3 fw900_render(thread const uint& pix, constant Params& v_81, const device RGBIn& v_136, const device DeflectionX& v_1048, const device DeflectionY& v_1066)
 {
     uint d = pix * 4u;
-    float dwell = fast::max(_1048.deflection_x[d + 3u], 0.0);
+    float dwell = fast::max(v_1048.deflection_x[d + 3u], 0.0);
     if (dwell <= 0.0)
     {
         return float3(0.0);
     }
-    float2 r = float2(_1048.deflection_x[d], _1066.deflection_y[d]) / float2(float(_81.signal_w), float(_81.out_h));
-    float2 g = float2(_1048.deflection_x[d + 1u], _1066.deflection_y[d + 1u]) / float2(float(_81.signal_w), float(_81.out_h));
-    float2 b = float2(_1048.deflection_x[d + 2u], _1066.deflection_y[d + 2u]) / float2(float(_81.signal_w), float(_81.out_h));
+    float2 r = float2(v_1048.deflection_x[d], v_1066.deflection_y[d]) / float2(float(v_81.signal_w), float(v_81.out_h));
+    float2 g = float2(v_1048.deflection_x[d + 1u], v_1066.deflection_y[d + 1u]) / float2(float(v_81.signal_w), float(v_81.out_h));
+    float2 b = float2(v_1048.deflection_x[d + 2u], v_1066.deflection_y[d + 2u]) / float2(float(v_81.signal_w), float(v_81.out_h));
     float2 param = g;
-    float3 light = fw900_deposit(param, _81, _136);
+    float3 light = fw900_deposit(param, v_81, v_136);
     if (any(r != g))
     {
         float2 param_1 = r;
-        light.x = fw900_deposit(param_1, _81, _136).x;
+        light.x = fw900_deposit(param_1, v_81, v_136).x;
     }
     if (any(b != g))
     {
         float2 param_2 = b;
-        light.z = fw900_deposit(param_2, _81, _136).z;
+        light.z = fw900_deposit(param_2, v_81, v_136).z;
     }
     return light * dwell;
 }
 
 static inline __attribute__((always_inline))
-float sample_rgb_channel_linear(thread const float& sx, thread const int& sy, thread const uint& channel, constant Params& _81, device RGBIn& _136)
+float sample_rgb_channel_linear(thread const float& sx, thread const int& sy, thread const uint& channel, constant Params& v_81, const device RGBIn& v_136)
 {
     if ((sy < 0) || (sy >= 240))
     {
         return 0.0;
     }
-    int signal_w_i = max(int(_81.signal_w), 1);
+    int signal_w_i = max(int(v_81.signal_w), 1);
     float sx_max = float(signal_w_i - 1);
     bool _94 = sx < (-0.5);
     bool _103;
@@ -335,21 +339,21 @@ float sample_rgb_channel_linear(thread const float& sx, thread const int& sy, th
     int x0 = int(floor(sx_clamped));
     int x1 = min((x0 + 1), (signal_w_i - 1));
     float tx = sx_clamped - float(x0);
-    uint base = uint(sy) * _81.signal_w;
-    float a = _136.rgb_in[((base + uint(x0)) * 3u) + channel];
-    float b = _136.rgb_in[((base + uint(x1)) * 3u) + channel];
+    uint base = uint(sy) * v_81.signal_w;
+    float a = v_136.rgb_in[((base + uint(x0)) * 3u) + channel];
+    float b = v_136.rgb_in[((base + uint(x1)) * 3u) + channel];
     return mix(a, b, tx);
 }
 
-kernel void main0(constant Params& _81 [[buffer(0)]], device RGBIn& _136 [[buffer(1)]], device DeflectionX& _1048 [[buffer(2)]], device DeflectionY& _1066 [[buffer(3)]], device RGBAOut& _1192 [[buffer(4)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+kernel void main0(constant Params& v_81 [[buffer(0)]], const device RGBIn& v_136 [[buffer(1)]], const device DeflectionX& v_1048 [[buffer(2)]], const device DeflectionY& v_1066 [[buffer(3)]], device RGBAOut& _1192 [[buffer(4)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
     uint ox = gl_GlobalInvocationID.x;
     uint oy = gl_GlobalInvocationID.y;
-    bool _1160 = ox >= _81.out_w;
+    bool _1160 = ox >= v_81.out_w;
     bool _1168;
     if (!_1160)
     {
-        _1168 = oy >= _81.out_h;
+        _1168 = oy >= v_81.out_h;
     }
     else
     {
@@ -359,24 +363,24 @@ kernel void main0(constant Params& _81 [[buffer(0)]], device RGBIn& _136 [[buffe
     {
         return;
     }
-    uint pix = (oy * _81.out_w) + ox;
-    if (_81.monitor_model == 1u)
+    uint pix = (oy * v_81.out_w) + ox;
+    if (v_81.monitor_model == 1u)
     {
         uint param = pix;
-        float3 light = fw900_render(param, _81, _136, _1048, _1066);
+        float3 light = fw900_render(param, v_81, v_136, v_1048, v_1066);
         _1192.rgba_out[pix * 2u] = as_type<uint>(half2(light.xy));
         _1192.rgba_out[(pix * 2u) + 1u] = as_type<uint>(half2(float2(light.z, 1.0)));
         return;
     }
     uint didx = pix * 4u;
-    float r_center = _1048.deflection_x[didx + 0u];
-    float g_center = _1048.deflection_x[didx + 1u];
-    float b_center = _1048.deflection_x[didx + 2u];
-    float dwell = _1048.deflection_x[didx + 3u];
-    float r_vy = _1066.deflection_y[didx + 0u];
-    float g_vy = _1066.deflection_y[didx + 1u];
-    float b_vy = _1066.deflection_y[didx + 2u];
-    float focus_scale = _1066.deflection_y[didx + 3u];
+    float r_center = v_1048.deflection_x[didx + 0u];
+    float g_center = v_1048.deflection_x[didx + 1u];
+    float b_center = v_1048.deflection_x[didx + 2u];
+    float dwell = v_1048.deflection_x[didx + 3u];
+    float r_vy = v_1066.deflection_y[didx + 0u];
+    float g_vy = v_1066.deflection_y[didx + 1u];
+    float b_vy = v_1066.deflection_y[didx + 2u];
+    float focus_scale = v_1066.deflection_y[didx + 3u];
     if (dwell <= 9.9999997473787516355514526367188e-05)
     {
         uint idx0 = pix * 2u;
@@ -384,8 +388,8 @@ kernel void main0(constant Params& _81 [[buffer(0)]], device RGBIn& _136 [[buffe
         _1192.rgba_out[idx0 + 1u] = as_type<uint>(half2(float2(0.0, 1.0)));
         return;
     }
-    float rows_per_line = float(_81.out_h) / 240.0;
-    uint out_h_clamped = max(_81.out_h, 1u);
+    float rows_per_line = float(v_81.out_h) / 240.0;
+    uint out_h_clamped = max(v_81.out_h, 1u);
     float r_vy_clamped = fast::clamp(r_vy, 0.0, float(out_h_clamped - 1u));
     float g_vy_clamped = fast::clamp(g_vy, 0.0, float(out_h_clamped - 1u));
     float b_vy_clamped = fast::clamp(b_vy, 0.0, float(out_h_clamped - 1u));
@@ -401,7 +405,7 @@ kernel void main0(constant Params& _81 [[buffer(0)]], device RGBIn& _136 [[buffe
     float R = 0.0;
     float G = 0.0;
     float B = 0.0;
-    int radius = min(4, int(ceil((3.0 * fast::clamp(fast::max(_81.sigma_narrow, (2.0 * _81.sigma_wide) - _81.sigma_narrow) * focus_scale, 0.0500000007450580596923828125, 1.0)) + (0.5 / rows_per_line))));
+    int radius = min(4, int(ceil((3.0 * fast::clamp(fast::max(v_81.sigma_narrow, (2.0 * v_81.sigma_wide) - v_81.sigma_narrow) * focus_scale, 0.0500000007450580596923828125, 1.0)) + (0.5 / rows_per_line))));
     int _1364 = -radius;
     for (int soff = _1364; soff <= radius; soff++)
     {
@@ -414,18 +418,18 @@ kernel void main0(constant Params& _81 [[buffer(0)]], device RGBIn& _136 [[buffe
         float param_1 = r_center;
         int param_2 = r_line;
         uint param_3 = 0u;
-        lR = sample_rgb_channel_linear(param_1, param_2, param_3, _81, _136);
+        lR = sample_rgb_channel_linear(param_1, param_2, param_3, v_81, v_136);
         float param_4 = g_center;
         int param_5 = g_line;
         uint param_6 = 1u;
-        lG = sample_rgb_channel_linear(param_4, param_5, param_6, _81, _136);
+        lG = sample_rgb_channel_linear(param_4, param_5, param_6, v_81, v_136);
         float param_7 = b_center;
         int param_8 = b_line;
         uint param_9 = 2u;
-        lB = sample_rgb_channel_linear(param_7, param_8, param_9, _81, _136);
-        float3 exponent = float3(_81.bloom_gamma) / fast::max(float3(_81.gamma) + float3(_81.gamma_r, _81.gamma_g, _81.gamma_b), float3(1.0));
-        float3 bloom_t = fast::min(powr(fast::max(float3(lR, lG, lB), float3(0.0)), exponent), float3(2.0));
-        float3 sv = fast::clamp(mix(float3(_81.sigma_narrow), float3(_81.sigma_wide), bloom_t) * focus_scale, float3(0.0500000007450580596923828125), float3(1.0));
+        lB = sample_rgb_channel_linear(param_7, param_8, param_9, v_81, v_136);
+        float3 exponent = float3(v_81.bloom_gamma) / fast::max(float3(v_81.gamma) + float3(v_81.gamma_r, v_81.gamma_g, v_81.gamma_b), float3(1.0));
+        float3 bloom_t = fast::min(pow(fast::max(float3(lR, lG, lB), float3(0.0)), exponent), float3(2.0));
+        float3 sv = fast::clamp(mix(float3(v_81.sigma_narrow), float3(v_81.sigma_wide), bloom_t) * focus_scale, float3(0.0500000007450580596923828125), float3(1.0));
         float pixel_width = 1.0 / rows_per_line;
         float rd = r_d - float(soff);
         float gd = g_d - float(soff);
@@ -447,11 +451,11 @@ kernel void main0(constant Params& _81 [[buffer(0)]], device RGBIn& _136 [[buffe
     G *= dwell;
     B *= dwell;
     uint sy = g_sy;
-    if (_81.hum_bar_amplitude > 0.0)
+    if (v_81.hum_bar_amplitude > 0.0)
     {
-        float hum_phase = ((float(sy) / 240.0) * 6.28318500518798828125) + (float(_81.frame_counter) * 0.006000000052154064178466796875);
+        float hum_phase = ((float(sy) / 240.0) * 6.28318500518798828125) + (float(v_81.frame_counter) * 0.006000000052154064178466796875);
         float hum_wave = (sin(hum_phase) + (0.4000000059604644775390625 * sin((2.0 * hum_phase) + 0.800000011920928955078125))) + (0.1500000059604644775390625 * sin((3.0 * hum_phase) + 1.5));
-        float hum = 1.0 - (_81.hum_bar_amplitude * (0.5 + (0.3499999940395355224609375 * hum_wave)));
+        float hum = 1.0 - (v_81.hum_bar_amplitude * (0.5 + (0.3499999940395355224609375 * hum_wave)));
         R *= hum;
         G *= hum;
         B *= hum;

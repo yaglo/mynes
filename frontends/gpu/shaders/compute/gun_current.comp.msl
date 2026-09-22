@@ -42,7 +42,7 @@ float _noise(thread uint& seed)
     return (float(seed & 65535u) / 65535.0) - 0.5;
 }
 
-kernel void main0(constant Params& _54 [[buffer(0)]], device Voltage& _71 [[buffer(1)]], device Current& _189 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+kernel void main0(constant Params& _54 [[buffer(0)]], const device Voltage& _71 [[buffer(1)]], device Current& _189 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
     uint i = gl_GlobalInvocationID.x;
     if (i >= _54.count)
@@ -63,7 +63,7 @@ kernel void main0(constant Params& _54 [[buffer(0)]], device Voltage& _71 [[buff
         v = fast::max(v + float3(_54.noise_level * n), float3(0.0));
     }
     float3 drive = fast::max(fast::max(v, float3(fast::max(_54.black_floor, 0.0))) + float3(_54.apl_bias), float3(0.0));
-    float3 light = powr(drive, float3(_54.gamma_r, _54.gamma_g, _54.gamma_b));
+    float3 light = pow(drive, float3(_54.gamma_r, _54.gamma_g, _54.gamma_b));
     _189.current[i * 3u] = light.x;
     _189.current[(i * 3u) + 1u] = light.y;
     _189.current[(i * 3u) + 2u] = light.z;

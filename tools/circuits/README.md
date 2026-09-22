@@ -92,4 +92,4 @@ summary. An independent complex-impedance divider checks every SPICE point.
 The CXA1739S active transfer and output injection branch are absent. Neither
 the ideal LC resonance nor a peak in these partial curves is the television's
 aperture peak. Nothing in this sweep changes renderer coefficients. See the
-[source and uncertainty record](../../docs/pvm-14l2-model.md).
+[source and uncertainty record](https://yaglo.github.io/mynes-web/research/pvm-14l2/).

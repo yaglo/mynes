@@ -12,6 +12,52 @@ struct FrameCaptureJob {
     char *path;
 };
 
+/* Half values form a finite domain: encode each value once instead of
+ * evaluating the transfer function millions of times per image. `encoded`
+ * is the sRGB byte a stored value becomes, `decoded` (optional) its linear
+ * value for the PFM. */
+static void build_tables(const FrameCaptureImage *image, uint8_t *encoded, float *decoded) {
+    int n = image->hdr ? 65536 : 256;
+    for (int i = 0; i < n; i++) {
+        if (image->hdr) {
+            float v = gpu_half_to_float((uint16_t)i) / fmaxf(image->white_level, .001f);
+            float linear = isfinite(v) ? v : 0;
+            if (decoded) decoded[i] = linear;
+            v = fminf(fmaxf(linear, 0), 1);
+            v = v <= .0031308f ? 12.92f*v : 1.055f*powf(v, 1/2.4f)-.055f;
+            encoded[i] = (uint8_t)lrintf(v*255);
+        } else {
+            float v = i/255.0f;
+            encoded[i] = (uint8_t)i;
+            if (decoded) decoded[i] = v <= .04045f ? v/12.92f : powf((v+.055f)/1.055f, 2.4f);
+        }
+    }
+}
+
+bool frame_capture_rgb24(const FrameCaptureImage *image, uint8_t *rgb) {
+    int w = image->width, h = image->height;
+    if (!image->pixels || !rgb || w <= 0 || h <= 0) return false;
+    size_t count = (size_t)w * h;
+    if (!image->hdr) {
+        /* SDR bytes are already sRGB; only the channel order can differ. */
+        const uint8_t *px = image->pixels;
+        for (size_t i = 0; i < count; i++) {
+            rgb[i*3+0] = px[i*4 + (image->bgra ? 2 : 0)];
+            rgb[i*3+1] = px[i*4 + 1];
+            rgb[i*3+2] = px[i*4 + (image->bgra ? 0 : 2)];
+        }
+        return true;
+    }
+    uint8_t *encoded = malloc(65536);
+    if (!encoded) return false;
+    build_tables(image, encoded, NULL);
+    const uint16_t *px = image->pixels;
+    for (size_t i = 0; i < count; i++)
+        for (int c = 0; c < 3; c++) rgb[i*3+c] = encoded[px[i*4+c]];
+    free(encoded);
+    return true;
+}
+
 bool frame_capture_write(const FrameCaptureImage *image, const char *path) {
     Uint64 start = SDL_GetTicksNS();
     int w = image->width, h = image->height;
@@ -23,22 +69,7 @@ bool frame_capture_write(const FrameCaptureImage *image, const char *path) {
     FILE *f = NULL, *linear = NULL;
     if (image->pixels && encoded && decoded && row && linear_row && linear_path) {
         sprintf(linear_path, "%s.linear.pfm", path);
-        /* Half values form a finite domain: encode each value once instead
-         * of evaluating the transfer function millions of times per image. */
-        int n = image->hdr ? 65536 : 256;
-        for (int i = 0; i < n; i++) {
-            if (image->hdr) {
-                float v = gpu_half_to_float((uint16_t)i) / fmaxf(image->white_level, .001f);
-                decoded[i] = isfinite(v) ? v : 0;
-                v = fminf(fmaxf(decoded[i], 0), 1);
-                v = v <= .0031308f ? 12.92f*v : 1.055f*powf(v, 1/2.4f)-.055f;
-                encoded[i] = (uint8_t)lrintf(v*255);
-            } else {
-                float v = i/255.0f;
-                encoded[i] = (uint8_t)i;
-                decoded[i] = v <= .04045f ? v/12.92f : powf((v+.055f)/1.055f, 2.4f);
-            }
-        }
+        build_tables(image, encoded, decoded);
         f = fopen(path, "wb");
         linear = fopen(linear_path, "wb");
         if (f && linear) {

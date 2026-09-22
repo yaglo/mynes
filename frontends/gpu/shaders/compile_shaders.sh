@@ -6,12 +6,26 @@
 #   readonly storage buffers: buffer(U)   .. buffer(U+R-1)
 #   readwrite storage buffers: buffer(U+R) .. buffer(U+R+W-1)
 #
-# Requires: glslc (shaderc), spirv-cross
+# Requires: glslc (shaderc), spirv-cross, python3. The GLSLC, SPIRV_CROSS
+# and PYTHON3 environment variables override the tool locations (CMake
+# passes the ones it found).
+#
 # Usage: ./compile_shaders.sh [output-directory]
+#
+# Everything is written under <output-directory>/{compute,render}/ and
+# nowhere else. CMake passes build/shaders, so a normal build leaves the
+# source tree untouched. Without an argument the script regenerates the
+# committed .spv/.msl files beside their .glsl sources; that is what the
+# shaders_regenerate target does and the only time the checkout changes.
 
 set -euo pipefail
+
+GLSLC="${GLSLC:-glslc}"
+SPIRV_CROSS="${SPIRV_CROSS:-spirv-cross}"
+PYTHON3="${PYTHON3:-python3}"
+
 # Fail once, before touching outputs, with the package name that supplies glslc.
-for tool in glslc spirv-cross python3; do
+for tool in "$GLSLC" "$SPIRV_CROSS" "$PYTHON3"; do
     if ! command -v "$tool" >/dev/null 2>&1; then
         printf 'Missing shader build tool: %s\n' "$tool" >&2
         printf 'On macOS: brew install shaderc spirv-cross python\n' >&2
@@ -21,9 +35,9 @@ for tool in glslc spirv-cross python3; do
 done
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-
-# CMake passes its build tree; standalone invocation retains the default.
-BUILD_SHADER_DIR="${1:-$SCRIPT_DIR/../../../build/shaders}"
+OUT_DIR="${1:-$SCRIPT_DIR}"
+mkdir -p "$OUT_DIR/compute" "$OUT_DIR/render"
+OUT_DIR="$(cd "$OUT_DIR" && pwd)"
 
 ERRORS=0
 COMPILED=0
@@ -63,33 +77,40 @@ get_resources() {
     esac
 }
 
+# ── Output path for a GLSL source: <OUT_DIR>/<subdir>/<name>.<ext> ──
+out_path() {
+    local name
+    name=$(basename "$2")
+    echo "$OUT_DIR/$1/${name%.glsl}.$3"
+}
+
 # ── Compile one shader ──
 compile_shader() {
     local glsl="$1"
     local stage="$2"
-    local spv="${glsl%.glsl}.spv"
-    local msl="${glsl%.glsl}.msl"
+    local spv="$3"
+    local msl="$4"
     local base
     base=$(basename "$glsl")
 
     printf "  %s\n" "$base"
     # Aliased descriptors can silently turn unrelated Metal buffers into one
     # argument. Reject them before cross-compiling or repairing indices.
-    python3 - "$glsl" <<'PY'
+    "$PYTHON3" - "$glsl" <<'PY'
 import re, sys
 source = re.sub(r'/\*.*?\*/|//[^\n]*', '', open(sys.argv[1]).read(), flags=re.S)
 bindings = re.findall(r'layout\s*\(\s*set\s*=\s*(\d+)\s*,\s*binding\s*=\s*(\d+)', source)
 if len(bindings) != len(set(bindings)):
     sys.exit('Duplicate descriptor binding: ' + sys.argv[1])
 PY
-    if ! glslc -fshader-stage="$stage" "$glsl" -o "$spv" 2>&1; then
+    if ! "$GLSLC" -fshader-stage="$stage" "$glsl" -o "$spv" 2>&1; then
         echo "    ERROR: glslc failed"
         ERRORS=$((ERRORS + 1))
         return 1
     fi
     echo "    -> $(basename "$spv")"
 
-    if ! spirv-cross --msl "$spv" --output "$msl" 2>/dev/null; then
+    if ! "$SPIRV_CROSS" --msl "$spv" --output "$msl" 2>/dev/null; then
         echo "    ERROR: spirv-cross failed"
         ERRORS=$((ERRORS + 1))
         return 1
@@ -156,7 +177,7 @@ fix_msl_buffers() {
                 uniform_names="${uniform_names:+$uniform_names }$name"
                 ;;
         esac
-    done < <(python3 -c '
+    done < <("$PYTHON3" -c '
 import re, sys
 records=[]
 for line in open(sys.argv[1]):
@@ -265,7 +286,8 @@ for _,_,line in sorted(records): print(line)
     done
 
     if [ -n "$sed_cmd" ]; then
-        sed -i '' "$sed_cmd" "$msl"
+        # In-place editing differs between BSD and GNU sed; go through a temp file.
+        sed "$sed_cmd" "$msl" > "$msl.tmp" && mv "$msl.tmp" "$msl"
         FIXED=$((FIXED + 1))
         echo "    buffers: FIXED (U=$U R=$R W=$W)"
         for entry in $remaps; do
@@ -284,12 +306,13 @@ for _,_,line in sorted(records): print(line)
 echo "=== Compute Shaders ==="
 for glsl in "$SCRIPT_DIR"/compute/*.comp.glsl; do
     [ -f "$glsl" ] || continue
-    compile_shader "$glsl" compute || continue
+    spv=$(out_path compute "$glsl" spv)
+    msl=$(out_path compute "$glsl" msl)
+    compile_shader "$glsl" compute "$spv" "$msl" || continue
 
     kernel_name=$(basename "$glsl" .comp.glsl)
-    msl="${glsl%.glsl}.msl"
     fix_msl_buffers "$msl" "$glsl" "$kernel_name"
-    python3 - "$msl" <<'PY'
+    "$PYTHON3" - "$msl" <<'PY'
 import re, sys
 signature = next(line for line in open(sys.argv[1]) if 'kernel void main0(' in line)
 indices = re.findall(r'\[\[buffer\((\d+)\)\]\]', signature)
@@ -302,17 +325,18 @@ echo ""
 echo "=== Render Shaders (vertex) ==="
 for glsl in "$SCRIPT_DIR"/render/*.vert.glsl; do
     [ -f "$glsl" ] || continue
-    compile_shader "$glsl" vertex
+    compile_shader "$glsl" vertex "$(out_path render "$glsl" spv)" "$(out_path render "$glsl" msl)"
 done
 
 echo ""
 echo "=== Render Shaders (fragment) ==="
 for glsl in "$SCRIPT_DIR"/render/*.frag.glsl; do
     [ -f "$glsl" ] || continue
-    compile_shader "$glsl" fragment
+    msl=$(out_path render "$glsl" msl)
+    compile_shader "$glsl" fragment "$(out_path render "$glsl" spv)" "$msl"
     # SPIRV-Cross can assign Metal textures in first-use order. SDL binds
     # by declared slot, so preserve each sampler's GLSL binding explicitly.
-    python3 - "$glsl" "${glsl%.glsl}.msl" <<'PYRENDER'
+    "$PYTHON3" - "$glsl" "$msl" <<'PYRENDER'
 import re, sys
 from pathlib import Path
 source=Path(sys.argv[1]).read_text()
@@ -327,38 +351,18 @@ PYRENDER
 done
 
 # spirv-cross adds a trailing empty line; keep generated assets stable.
-python3 - "$SCRIPT_DIR" <<'PYMSL'
+"$PYTHON3" - "$OUT_DIR/compute" "$OUT_DIR/render" <<'PYMSL'
 from pathlib import Path
 import sys
-for path in Path(sys.argv[1]).rglob("*.msl"):
-    path.write_text("\n".join(line.rstrip() for line in path.read_text().rstrip().splitlines()) + "\n")
+for root in sys.argv[1:]:
+    for path in Path(root).glob("*.msl"):
+        path.write_text("\n".join(line.rstrip() for line in path.read_text().rstrip().splitlines()) + "\n")
 PYMSL
-
-# ── Copy to build directory ──
-echo ""
-if [ -d "$BUILD_SHADER_DIR" ]; then
-    echo "=== Copying to build directory ==="
-    mkdir -p "$BUILD_SHADER_DIR/compute" "$BUILD_SHADER_DIR/render"
-
-    copied=0
-    for f in "$SCRIPT_DIR"/compute/*.spv "$SCRIPT_DIR"/compute/*.msl; do
-        [ -f "$f" ] || continue
-        cp "$f" "$BUILD_SHADER_DIR/compute/"
-        copied=$((copied + 1))
-    done
-    for f in "$SCRIPT_DIR"/render/*.spv "$SCRIPT_DIR"/render/*.msl; do
-        [ -f "$f" ] || continue
-        cp "$f" "$BUILD_SHADER_DIR/render/"
-        copied=$((copied + 1))
-    done
-    echo "  Copied $copied files to $BUILD_SHADER_DIR"
-else
-    echo "(Build directory $BUILD_SHADER_DIR not found -- skipping copy)"
-fi
 
 # ── Summary ──
 echo ""
 echo "=== Summary ==="
+echo "  Output: $OUT_DIR"
 echo "  Compiled: $COMPILED shaders"
 echo "  Buffer fixes applied: $FIXED"
 echo "  Errors: $ERRORS"

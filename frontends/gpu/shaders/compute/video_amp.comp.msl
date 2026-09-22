@@ -26,7 +26,7 @@ struct RGBOut
 
 constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
 
-kernel void main0(constant Params& _23 [[buffer(0)]], device RGBIn& _124 [[buffer(1)]], device RGBOut& _342 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+kernel void main0(constant Params& _23 [[buffer(0)]], const device RGBIn& _124 [[buffer(1)]], device RGBOut& _342 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
     uint tid = gl_GlobalInvocationID.x;
     if (tid >= _23.total_pixels)

@@ -116,7 +116,15 @@ bool preset_manage(uint32_t operation, int index, uint32_t revision,
 void preset_composite_overlays(PresetCtx *ctx);
 
 /* OSD menu root table and its size (populated by preset_ctx_init). */
+#define PRESET_MENU_ROOT_MAX    12
+#define PRESET_MENU_GAME_MAX    16
+#define PRESET_MENU_DISPLAY_MAX 12
 extern OSDMenuItem preset_menu_root[];
 extern int         preset_menu_root_count;
+/* Extension points for frontend features. Call after preset_ctx_init().
+ * Items are copied; labels/targets must stay valid for the process lifetime. */
+bool preset_menu_root_append(OSDMenuItem item);     /* before "Reset console" */
+bool preset_menu_game_append(OSDMenuItem item);     /* "Game" submenu, created on first use */
+bool preset_menu_display_append(OSDMenuItem item);  /* "Host display" submenu */
 
 #endif /* PRESET_APPLY_H */

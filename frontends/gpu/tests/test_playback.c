@@ -1,4 +1,5 @@
-/* Exercise exclusive core ownership, picture queue bounds, and ROM replacement. */
+/* Exercise exclusive core ownership, picture queue bounds, low-latency
+ * queueing, and ROM replacement. */
 #define _POSIX_C_SOURCE 200809L
 #include "playback.h"
 #include <unistd.h>
@@ -8,6 +9,19 @@
 
 static int failures;
 #define CHECK(x) do { if (!(x)) { fprintf(stderr,"Playback FAIL %d: %s\n",__LINE__,#x); failures++; } } while (0)
+
+/* Console visitors for playback_with_console. The delay is longer than two
+ * frame periods, so a worker that ignored the hold would advance the frame. */
+typedef struct { uint64_t frame_at_entry, frame_at_exit; bool complete; } Visit;
+static void visit_console(NES *nes, void *user) {
+    Visit *v = user;
+    v->complete = nes->ppu.frame_complete;
+    v->frame_at_entry = nes->ppu.frame;
+    nes->ram[42] = 0x5a;
+    SDL_Delay(40);
+    v->frame_at_exit = nes->ppu.frame;
+}
+static void read_ram(NES *nes, void *user) { *(uint8_t *)user = nes->ram[42]; }
 
 static bool next(Playback *p, PlaybackFrame *frame) {
     Uint64 timeout=SDL_GetTicks()+2000;
@@ -60,12 +74,12 @@ int main(void) {
         CHECK(!nes->dma.oam_active && !nes->prev_nmi);
         CHECK(!playback_read(p,&latest));
         free(prg); prg=replacement;
-        controls.region=1; controls.controller=0x81;
+        controls.region=1; controls.controller[0]=0x81; controls.controller[1]=0x42;
         playback_controls(p,&controls); playback_resume(p);
         CHECK(next(p,&latest)); CHECK(latest.number>first.number);
         playback_pause(p);
         CHECK((latest.codes[120*256+128]&63)==0x21); // new cartridge reached the screen
-        CHECK(nes->controller[0]==0x81);
+        CHECK(nes->controller[0]==0x81 && nes->controller[1]==0x42); // both ports, independently
         CHECK(nes->ppu.region==PPU_REGION_PAL);
         CHECK(SDL_GetAudioStreamQueued(stream)==0);
         nes->ram[42]=0x73; nes->mapper.prg_ram[23]=0x51; nes->ppu.vram[19]=0x62;
@@ -113,13 +127,147 @@ int main(void) {
             SDL_Delay(25); /* Deliberately consume slower than production. */
         }
         SDL_Delay(100); /* Leave the worker blocked on a full queue. */
+        CHECK(playback_queued(p)==3); /* low latency off: three pictures ahead */
         playback_pause(p);
         CHECK(!playback_read(p,&frame));
         playback_resume(p);
         SDL_Delay(100);
         playback_destroy(p);
     }
-    /* Replay must hold buttons across frames and release at the exact event. */
+    /* Low latency under matched-refresh hold: the worker queues one picture
+     * and waits for the renderer to take it, so the picture shown was
+     * emulated right after the previous one was read. Consecutive numbers
+     * prove no phase was dropped; the queue never exceeds one while the
+     * renderer stalls, and the worker resumes as soon as it is read. */
+    p=playback_create(nes,NULL,NULL,stream,0,0);
+    CHECK(p!=NULL);
+    if(p) {
+        PlaybackControls controls={.analog=nes->apu.analog,.display_paced=true,.display_hz=60,.low_latency=true};
+        audio_chain_init_preset(&controls.audio,0,0,0);
+        playback_controls(p,&controls); playback_resume(p);
+        SDL_Delay(150); /* Renderer stalled. */
+        unsigned peak=0;
+        for(int i=0;i<20;i++) { unsigned queued=playback_queued(p); if(queued>peak) peak=queued; SDL_Delay(5); }
+        CHECK(peak==1);
+        PlaybackFrame frame;
+        unsigned previous=0;
+        for(unsigned n=1;n<=6;n++) {
+            CHECK(next(p,&frame));
+            if(previous) CHECK(frame.number==previous+1);
+            previous=frame.number;
+            Uint64 timeout=SDL_GetTicks()+200;
+            while(playback_queued(p)==0 && SDL_GetTicks()<timeout) SDL_Delay(1);
+            CHECK(playback_queued(p)==1); /* resumed promptly after the read */
+            SDL_Delay(25);
+            CHECK(playback_queued(p)==1); /* and stopped again at one */
+        }
+        /* Switching low latency off mid-session releases the worker to refill
+         * the FIFO without a pause/resume. */
+        controls.low_latency=false;
+        playback_controls(p,&controls);
+        SDL_Delay(150);
+        CHECK(playback_queued(p)==3);
+        playback_pause(p); playback_destroy(p);
+    }
+    /* Low latency without display pacing: the emulation clock runs freely and
+     * a renderer that stalled gets the newest picture, discarding the stale
+     * ones behind it. The frame limit makes the newest number exact. */
+    p=playback_create(nes,NULL,NULL,stream,12,0);
+    CHECK(p!=NULL);
+    if(p) {
+        PlaybackControls controls={.analog=nes->apu.analog,.low_latency=true};
+        audio_chain_init_preset(&controls.audio,0,0,0);
+        playback_controls(p,&controls); playback_resume(p);
+        SDL_Delay(400); /* 12 frames take about 200 ms; the ring holds 10..12. */
+        CHECK(playback_queued(p)==3);
+        PlaybackFrame frame;
+        CHECK(next(p,&frame)); CHECK(frame.number==12);
+        CHECK(playback_queued(p)==0);
+        CHECK(!playback_read(p,&frame));
+        playback_pause(p); playback_destroy(p);
+    }
+    /* Fast-forward runs more emulated frames per wall-clock interval than
+     * normal speed, never queues audio while active, and hands the stream back
+     * to the resampler afterwards. Frame counts come from the worker itself. */
+    p=playback_create(nes,NULL,NULL,stream,0,0);
+    CHECK(p!=NULL);
+    if(p) {
+        PlaybackControls controls={.analog=nes->apu.analog,.speed=1};
+        audio_chain_init_preset(&controls.audio,0,0,0);
+        playback_controls(p,&controls); playback_resume(p);
+        PlaybackFrame frame;
+        CHECK(next(p,&frame));
+        unsigned normal_start=frame.number;
+        SDL_Delay(400);
+        CHECK(next(p,&frame));
+        unsigned normal_frames=frame.number-normal_start;
+        playback_pause(p);
+        CHECK(SDL_GetAudioStreamQueued(stream)==0);
+        controls.speed=8;
+        playback_controls(p,&controls); playback_resume(p);
+        CHECK(next(p,&frame));
+        unsigned fast_start=frame.number;
+        bool queued_while_fast=false;
+        for(int i=0;i<8;i++) {
+            SDL_Delay(50);
+            if(SDL_GetAudioStreamQueued(stream)!=0) queued_while_fast=true;
+        }
+        CHECK(next(p,&frame));
+        unsigned fast_frames=frame.number-fast_start;
+        CHECK(!queued_while_fast);
+        CHECK(fast_frames>normal_frames*3/2); /* 8x requested; the host decides how close it gets */
+        controls.speed=1;
+        playback_controls(p,&controls);
+        Uint64 timeout=SDL_GetTicks()+2000;
+        while(SDL_GetAudioStreamQueued(stream)==0 && SDL_GetTicks()<timeout) SDL_Delay(1);
+        CHECK(SDL_GetAudioStreamQueued(stream)>0); /* audio flows again after fast-forward */
+        playback_pause(p);
+        playback_destroy(p);
+        printf("Playback speed: %u frames at 1x, %u at 8x over equal intervals\n",normal_frames,fast_frames);
+    }
+    /* A main-thread visit runs between frames, holds the next frame back for
+     * as long as it lasts and may change the console; playback then goes on. */
+    p=playback_create(nes,NULL,NULL,stream,0,0);
+    CHECK(p!=NULL);
+    if(p) {
+        PlaybackControls controls={.analog=nes->apu.analog};
+        audio_chain_init_preset(&controls.audio,0,0,0);
+        playback_controls(p,&controls); playback_resume(p);
+        PlaybackFrame frame;
+        CHECK(next(p,&frame));
+        unsigned before=frame.number;
+        Visit v={0};
+        playback_with_console(p,visit_console,&v);
+        CHECK(v.complete);                          /* never inside nes_run_frame */
+        CHECK(v.frame_at_exit==v.frame_at_entry);   /* no frame ran during the visit */
+        uint8_t seen=0;
+        playback_with_console(p,read_ram,&seen);
+        CHECK(seen==0x5a);
+        SDL_Delay(60);
+        CHECK(next(p,&frame)); CHECK(frame.number>before);
+        playback_pause(p); playback_destroy(p);
+    }
+    /* A restart discards the pictures queued before it: the next picture read
+     * was produced afterwards. Matched-refresh hold fills the queue deterministically. */
+    p=playback_create(nes,NULL,NULL,stream,0,0);
+    CHECK(p!=NULL);
+    if(p) {
+        PlaybackControls controls={.analog=nes->apu.analog,.display_paced=true,.display_hz=60};
+        audio_chain_init_preset(&controls.audio,0,0,0);
+        playback_controls(p,&controls); playback_resume(p);
+        SDL_Delay(150);
+        PlaybackFrame frame;
+        CHECK(next(p,&frame));
+        unsigned k=frame.number;
+        SDL_Delay(100);            /* k+1..k+3 queued, worker blocked on backpressure */
+        playback_restart(p);
+        CHECK(next(p,&frame)); CHECK(frame.number==k+4);
+        CHECK(SDL_GetAudioStreamQueued(stream)>=0);
+        playback_pause(p); playback_destroy(p);
+    }
+    /* Replay must hold buttons across frames and release at the exact event.
+     * Captures and reviews are compared bit-for-bit, so the paired-frame
+     * FIFO must survive a low-latency request: frames arrive in order. */
     char path[] = "/tmp/mynes-playback-XXXXXX";
     int fd = mkstemp(path);
     CHECK(fd >= 0);
@@ -131,7 +279,7 @@ int main(void) {
             p = playback_create(nes, NULL, NULL, stream, limit, 1);
             CHECK(p != NULL);
             if (!p) continue;
-            PlaybackControls controls = {.analog = nes->apu.analog};
+            PlaybackControls controls = {.analog = nes->apu.analog, .low_latency = true};
             audio_chain_init_preset(&controls.audio, 0, 0, 0);
             playback_controls(p, &controls); playback_resume(p);
             PlaybackFrame frame;

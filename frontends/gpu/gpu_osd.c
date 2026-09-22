@@ -143,7 +143,7 @@ void gpu_osd_render(uint32_t *rgba, const OSDMenuLevel *level, bool editing,
         : "DRAWABLE PIXELS / PANEL UNKNOWN");
     if (render->presentation_mode == GPU_PRESENT_BFI) {
         if (render->presentation_slots>1)
-            snprintf(line,sizeof(line),"BFI %DX / %.1f HZ / DIM %.2f",render->presentation_slots,
+            snprintf(line,sizeof(line),"BFI %dX / %.1f HZ / DIM %.2f",render->presentation_slots,
                 render->presentation_hz,render->dark_frame_level);
         else
             snprintf(line,sizeof(line),"BFI INACTIVE / %s",render->presentation_blocked ? "CADENCE TOO SLOW" : "NEEDS MATCHED HIGH HZ");

@@ -39,6 +39,10 @@ static void config_dir(char *out, int out_sz) {
     snprintf(out, out_sz, ".mynes");
 }
 
+void mynes_config_dir(char *out, int out_sz) {
+    config_dir(out, out_sz);
+}
+
 void mynes_config_path(char *out, int out_sz) {
     char dir[MYNES_PATH_MAX];
     config_dir(dir, sizeof(dir));
@@ -124,6 +128,9 @@ static bool json_take_string(const char **cursor, char *out, int out_sz) {
 bool mynes_config_load(MynesConfig *cfg) {
     if (!cfg) return false;
     memset(cfg, 0, sizeof(*cfg));
+    /* Absent from older files, and on is the better default: the key is
+     * only written as 0 when the user switched it off. */
+    cfg->gpu_low_latency = 1;
 
     char path[MYNES_PATH_MAX];
     mynes_config_path(path, sizeof(path));
@@ -172,6 +179,13 @@ bool mynes_config_load(MynesConfig *cfg) {
         } else if (strstr(s, "\"gpu_room_reflections\"")) {
             const char *colon=strchr(s, ':');
             cfg->gpu_room_reflections=colon && atoi(colon+1)==1 ? 1 : 0;
+        } else if (strstr(s, "\"gpu_render_scale\"")) {
+            const char *colon=strchr(s, ':');
+            int scale=colon ? atoi(colon+1) : 0;
+            cfg->gpu_render_scale=scale>=0 && scale<=3 ? scale : 0;
+        } else if (strstr(s, "\"gpu_low_latency\"")) {
+            const char *colon=strchr(s, ':');
+            cfg->gpu_low_latency=colon && atoi(colon+1)==0 ? 0 : 1;
         } else if (strstr(s, "\"last_preset\"")) {
             const char *colon = strchr(s, ':');
             if (colon) {
@@ -216,6 +230,8 @@ bool mynes_config_save(const MynesConfig *cfg) {
     fprintf(f, "    ],\n");
     fprintf(f, "    \"gpu_mask_alignment\": %d,\n",cfg->gpu_mask_alignment==1 ? 1 : 0);
     fprintf(f, "    \"gpu_room_reflections\": %d,\n",cfg->gpu_room_reflections==1 ? 1 : 0);
+    fprintf(f, "    \"gpu_render_scale\": %d,\n",cfg->gpu_render_scale>=0 && cfg->gpu_render_scale<=3 ? cfg->gpu_render_scale : 0);
+    fprintf(f, "    \"gpu_low_latency\": %d,\n",cfg->gpu_low_latency==0 ? 0 : 1);
     fprintf(f, "    \"last_preset\": ");
     json_escape(f, cfg->last_preset);
     fprintf(f, "\n}\n");

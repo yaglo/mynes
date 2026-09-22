@@ -96,7 +96,7 @@ float hashSigned(thread const uint& x)
     return (_55 * 2.0) - 1.0;
 }
 
-kernel void main0(constant Params& _108 [[buffer(0)]], device CRTLoad& _254 [[buffer(1)]], device DeflectionX& _1161 [[buffer(2)]], device DeflectionY& _1185 [[buffer(3)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+kernel void main0(constant Params& _108 [[buffer(0)]], const device CRTLoad& _254 [[buffer(1)]], device DeflectionX& _1161 [[buffer(2)]], device DeflectionY& _1185 [[buffer(3)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
     uint ox = gl_GlobalInvocationID.x;
     uint oy = gl_GlobalInvocationID.y;

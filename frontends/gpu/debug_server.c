@@ -13,6 +13,11 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/socket.h>
+#ifdef MSG_NOSIGNAL
+#define DEBUG_SERVER_MSG_NOSIGNAL MSG_NOSIGNAL
+#else
+#define DEBUG_SERVER_MSG_NOSIGNAL 0
+#endif
 #include <sys/un.h>
 #include <pthread.h>
 #include <errno.h>
@@ -102,7 +107,8 @@ static bool flush_output(DebugServerState *state) {
     if (state->client_sock < 0) return false;
     while (state->output_start < state->output_end) {
         ssize_t n = send(state->client_sock, state->output + state->output_start,
-                         state->output_end - state->output_start, MSG_DONTWAIT);
+                         state->output_end - state->output_start,
+                         MSG_DONTWAIT | DEBUG_SERVER_MSG_NOSIGNAL);
         if (n < 0 && errno == EINTR) continue;
         if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return true;
         if (n <= 0) {
@@ -165,8 +171,12 @@ static void *listen_thread_main(void *arg) {
             continue;
         }
 
+#ifdef SO_NOSIGPIPE
+        /* macOS/BSD: a vanished editor must not kill the emulator with SIGPIPE.
+         * Linux has no socket option for this; send() uses MSG_NOSIGNAL instead. */
         int no_sigpipe = 1;
         setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &no_sigpipe, sizeof(no_sigpipe));
+#endif
         int send_buffer = 65536;
         setsockopt(client, SOL_SOCKET, SO_SNDBUF, &send_buffer, sizeof(send_buffer));
         printf("Visualiser connected\n");

@@ -4,8 +4,13 @@
 
 NES cartridges use mapper chips to extend the console's 32KB PRG ROM and 8KB
 CHR ROM address spaces via bank switching. The dispatcher supports mapper
-numbers 0, 1, 2, 3, 4, 5, 7, 10, 69 and 227. Support depth varies; in
-particular, MMC5 still has unimplemented features listed below.
+numbers 0, 1, 2, 3, 4, 5, 7, 9, 10, 11, 34, 66, 69, 71, 206 and 227. Support
+depth varies; in particular, MMC5 still has unimplemented features listed
+below, and [Known Gaps](#known-gaps) collects what is known not to work.
+
+A ROM with any other mapper number is refused by the loader with an error
+message that names the number ("Unsupported mapper 24"), so it can be
+reported as-is.
 
 ## Mapper Interface
 
@@ -26,14 +31,19 @@ typedef struct MapperOps {
 } MapperOps;
 ```
 
-The dispatcher in `src/nes/mapper.c` resolves the vtable by mapper number:
+The dispatcher in `src/nes/mapper.c` resolves the vtable by mapper number.
+Its switch is the single list of implemented mappers: `mapper_supported()`
+returns whether the lookup finds an entry, and the ROM loader in
+`src/nes/rom.h` gates on `mapper_supported()`, so the two cannot disagree
+(`rom_tests` checks this for all 256 numbers).
 
 ```c
-static const MapperOps *mapper_ops_for(uint8_t number) {
+static const MapperOps *mapper_ops_lookup(uint8_t number) {
     switch (number) {
     case 0: return &mapper0_ops;
     case 1: return &mapper1_ops;
     // ...
+    default: return NULL;
     }
 }
 ```
@@ -107,6 +117,17 @@ Writes to $8000-$FFFF select the PRG bank (bits 0-2) and nametable
 
 **Games**: Battletoads, Marble Madness
 
+### Mapper 9: MMC2 (`mapper_mmc2.c`)
+
+PxROM. Shares the MMC4 CHR latch state: one switchable 8KB PRG bank at
+$8000-$9FFF with the last three 8KB banks fixed at $A000-$FFFF; two 4KB CHR
+windows, each with a $FD and an $FE bank ($B000/$C000 for $0000, $D000/$E000
+for $1000). Latch 0 only reacts to the exact fetches $0FD8 and $0FE8, latch 1
+to the rows $1FD8-$1FDF and $1FE8-$1FEF; the triggering fetch still returns
+the old bank. $F000 bit 0 selects vertical (0) or horizontal (1) mirroring.
+
+**Games**: Punch-Out!!, Mike Tyson's Punch-Out!!
+
 ### Mapper 10: MMC4 (`mapper_mmc4.c`)
 
 Similar to MMC2 (PxROM). Features latch-triggered CHR bank switching: PPU
@@ -118,15 +139,87 @@ reads of specific tile addresses ($FD/$FE) automatically switch CHR banks.
 
 **Games**: Fire Emblem, Fire Emblem Gaiden
 
+### Mapper 11: Color Dreams (`mapper_colordreams.c`)
+
+One latch at $8000-$FFFF: bits 0-1 select the 32KB PRG bank, bits 4-7 the
+8KB CHR bank. The board has no write protection, so the latch receives the
+written value ANDed with the ROM byte at that address (bus conflict).
+Mirroring is hard-wired.
+
+**Games**: Crystal Mines, Bible Adventures
+
+### Mapper 34: BNROM / NINA-001 (`mapper_bnrom.c`)
+
+Two boards under one number, told apart by the CHR type. With CHR RAM it is
+BNROM: writes to $8000-$FFFF select the 32KB PRG bank. With CHR ROM it is
+NINA-001: $7FFD selects the 32KB PRG bank, $7FFE and $7FFF the 4KB CHR banks
+at $0000 and $1000; the registers sit inside PRG RAM ($6000-$7FFF) and read
+back as RAM.
+
+**Games**: Deadly Towers (BNROM), Impossible Mission II (NINA-001)
+
+### Mapper 66: GxROM (`mapper_gxrom.c`)
+
+One latch at $8000-$FFFF: bits 4-5 select the 32KB PRG bank, bits 0-1 the
+8KB CHR bank. Mirroring is hard-wired.
+
+**Games**: Super Mario Bros. / Duck Hunt, Dragon Power
+
 ### Mapper 69: FME-7 (`mapper_fme7.c`)
 
 Command/parameter registers select 1KB CHR and 8KB PRG banks, mirroring and
 the IRQ counter. Sunsoft 5B expansion audio is not implemented.
 
+### Mapper 71: Camerica/Codemasters (`mapper_camerica.c`)
+
+UxROM-like: writes to $C000-$FFFF select the 16KB PRG bank at $8000, the
+last bank is fixed at $C000, CHR is 8KB RAM. Writes to $8000-$9FFF set
+single-screen mirroring from bit 4 (0 = low, 1 = high). Only the BF9097
+board (Fire Hawk) has that latch, but no other mapper 71 game writes there,
+so it is decoded unconditionally. $A000-$BFFF is not decoded.
+
+**Games**: Micro Machines, Bee 52, Fire Hawk
+
+### Mapper 206: Namco 108 / DxROM (`mapper_namco108.c`)
+
+The MMC3's predecessor, implemented separately rather than aliased: the
+$8000/$8001 bank-select/bank-data pair with a fixed layout. R0/R1 are 2KB
+CHR banks at $0000/$0800, R2-R5 1KB banks at $1000-$1C00, R6/R7 8KB PRG
+banks at $8000/$A000, with the last two PRG banks fixed. CHR values are six
+bits wide, the mode bits of the bank-select value are ignored, and there is
+no IRQ counter, mirroring control or PRG RAM. Only A0 is decoded within
+$8000-$FFFF, so the pair repeats across the whole range. The `mmc3_banks`
+registers are reused as state.
+
+**Games**: Gauntlet, Pac-Mania, Karnov, Dragon Spirit
+
 ### Mapper 227: multicart (`mapper_227.c`)
 
 Address-latched PRG banking and mirroring: the CPU write address selects
 the bank/mode and the written value is ignored. Includes 1200-in-1 layouts.
+
+## Known Gaps
+
+- **MMC5**: extended attributes, vertical split, PCM and banked PRG RAM
+  above $8000 (see the mapper 5 section).
+- **FME-7**: Sunsoft 5B expansion audio is silent.
+- **Mapper 34**: iNES 1.0 headers cannot say which board a ROM is; the CHR
+  type heuristic is wrong for the rare BNROM dump that carries CHR ROM, and
+  submapper hints in NES 2.0 headers are not read.
+- **Mapper 71**: the mirroring latch is decoded for every mapper 71 ROM. A
+  homebrew or hack that writes to $8000-$9FFF for another purpose would
+  switch to single-screen mirroring.
+- **Mapper 206**: the DRROM board (Gauntlet) carries four-screen VRAM. The
+  loader ignores the header's four-screen bit and the core has no cartridge
+  nametable RAM outside MMC5, so Gauntlet falls back to the header's H/V
+  mirroring.
+- **Bus conflicts** are emulated only where the track called for them
+  (mapper 11). UxROM, CNROM, AxROM, BNROM and GxROM boards also have them on
+  real hardware; a program that relies on the conflict for its result will
+  differ.
+- No mapper handles NES 2.0 submapper numbers or PRG/CHR RAM sizes; every
+  board gets 8KB PRG RAM at $6000 (except mappers 206 and 227) and 8KB CHR RAM when
+  the header lists no CHR ROM.
 
 ## Shared Mapper State
 
@@ -144,6 +237,10 @@ Common fields:
 | `mirroring` | Current nametable mirroring mode |
 
 Mapper-specific fields use prefixed names (`mmc1_shift`, `mmc3_banks`, etc.).
+Related boards share them rather than adding one field per mapper: MMC2 uses
+the `mmc4_*` latch state and Namco 108 the `mmc3_bank_select`/`mmc3_banks`
+registers, and the discrete-logic boards (11, 34, 66, 71) only need the
+generic `prg_bank*`/`chr_bank*` fields.
 
 ## How to Add a New Mapper
 
@@ -155,19 +252,25 @@ Mapper-specific fields use prefixed names (`mmc1_shift`, `mmc3_banks`, etc.).
    extern const MapperOps mapperXX_ops;
    ```
 
-3. Add the case to `mapper_ops_for()` in `src/nes/mapper.c`:
+3. Add the case to `mapper_ops_lookup()` in `src/nes/mapper.c`:
    ```c
    case XX: return &mapperXX_ops;
    ```
+   `mapper_supported()` and the ROM loader's gate follow from that switch;
+   nothing else needs updating for the number to be accepted.
 
-4. Add the mapper number to `mapper_supported()` in `mapper.c`.
+4. Add the source file to `CMakeLists.txt` under `nes_static`.
 
-5. Add the source file to `CMakeLists.txt` under `nes_static`.
+5. If the mapper needs new state, prefer an existing generic field
+   (`prg_bank*`, `chr_bank*`, `mmc3_banks`, the `mmc4_*` latches) before
+   adding one to the `Mapper` struct in `mapper.h`.
 
-6. If the mapper needs new state, add fields to the `Mapper` struct in
-   `mapper.h` with an appropriate prefix.
+6. Add `tests/nes/test_mapperXX.c` in the style of the existing mapper tests
+   (synthetic PRG/CHR filled with bank numbers, write the registers, check
+   `mapper_cpu_read`, `mapper_ppu_read` and `mapper_get_mirroring`) and
+   register it with `add_executable`/`add_test` in `CMakeLists.txt`.
 
-7. Update the supported mapper check in `src/nes/rom.h` if needed.
+7. Document the board and anything known not to work in this file.
 
 ## Related Files
 
@@ -175,4 +278,6 @@ Mapper-specific fields use prefixed names (`mmc1_shift`, `mmc3_banks`, etc.).
 - `src/nes/mapper.c` -- Dispatcher and lifecycle
 - `src/nes/mappers/mapper_ops.h` -- MapperOps vtable definition
 - `src/nes/mappers/mapper_*.c` -- Per-mapper implementations
-- `src/nes/rom.h` -- iNES ROM parser (mapper detection)
+- `src/nes/rom.h` -- iNES ROM parser (mapper detection, gated on
+  `mapper_supported()`)
+- `tests/nes/test_mapper*.c` -- Per-mapper register/banking tests

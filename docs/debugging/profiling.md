@@ -151,6 +151,7 @@ being handled separately and no GPU performance conclusions are drawn here.
 
 Profiling exposed a build issue: shader compilation always copied output into
 `build/shaders`, leaving `build-profile/shaders` empty. CMake now supplies the
-selected shader output directory to `compile_shaders.sh`; direct script invocation
-retains its old default. A rebuilt profiling frontend successfully loaded its
+selected shader output directory to `compile_shaders.sh`, which writes only
+there (invoked by hand without an argument it regenerates the committed copies
+in the source tree). A rebuilt profiling frontend successfully loaded its
 shaders. This is independent of the core hotspot findings.

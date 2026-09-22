@@ -1,28 +1,38 @@
-# MyNES picture, sound and internals
+# MyNES documentation
 
-Start with the [game showcase](nes-visual-showcase.md): Darkwing Duck gameplay,
-Kirby's Adventure, Little Samson, Super Mario Bros. 3 and Mega Man 2, recorded
-through MyNES's GPU signal path with individual NTSC phases intact.
+Developer documentation lives here. Galleries, preset reviews, hardware
+research notes and the blog series moved to the project site:
+[yaglo.github.io/mynes-web](https://yaglo.github.io/mynes-web/).
 
-[![Castlevania through the PVM model](images/showcase/4k/castlevania-pvm-gameplay.png)](images/showcase/4k/castlevania-pvm-gameplay.png)
+## Using the emulator
 
-The linked image contains a complete **3840×2880 game viewport**. The page preview
-is scaled to fit; open the original to inspect its pixels.
+- [Controls, menus, saves and performance settings](gpu-controls.md)
+- [Signal Studio, the macOS chain editor](../tools/visualiser/README.md)
+- [Build and test commands](dev/commands.md), including Linux and headless recipes
+- [Play on a real CRT over USB](crt-usb.md)
+- [Release and packaging](dev/release.md)
 
-## Explore the picture
+## How it works
 
-- [Watch the five-game reel](images/showcase/showcase-reel.mp4) — 20 seconds at 60.1 fps.
-- [Gameplay close-ups and beam height](gpu-beam-closeups.md) — native crops, four CRT profiles, measurements and calibration limits.
-- [Preset guide and audit](gpu-preset-audit.md) — connections, tube identities and estimated parameters.
-- [Signal Studio](../tools/visualiser/README.md) — edit the running chain and manage presets.
+- [Architecture overview](architecture/overview.md)
+- [Timing and the master clock](architecture/timing.md)
+- [CPU](architecture/cpu.md), [PPU](architecture/ppu.md), [APU](architecture/apu.md),
+  [mappers](architecture/mappers.md), [memory map](architecture/memory-map.md)
+- [CPU DSL design](dsl-design.md) and [DSL reference](dsl-reference.md)
+- [GPU pipeline design](gpu-pipeline-design.md) and [pipeline reference](gpu-pipeline-reference.md)
+- [GPU frontend design notes](gpu-frontend-design.md)
+- [Interactive pipeline diagram](gpu-pipeline-interactive.html)
 
-## Understand and reproduce it
+## Measurements
 
-- [GPU pipeline reference](gpu-pipeline-reference.md) — waveform, receiver, beam, phosphors and host display.
-- [Hardware research](gpu-hardware-research.md) — published evidence and remaining approximations.
-- [Performance measurements](gpu-benchmark-results.md) — full-path benchmarks and their conditions.
-- [Capture workflow](../tools/review/README.md) — deterministic controller replay and linear-light beam measurements.
-- [Phase and motion diagnostics](gpu-motion-review.md) and [all-preset Contra comparison](contra-preset-gallery.md) — controlled test scenes, separate from the showcase.
+- [GPU benchmark results](gpu-benchmark-results.md) with the raw JSON beside it
+- [Presentation validation](architecture/gpu-realism-validation.md)
+- [Reproducible captures](../tools/review/README.md)
 
-For emulator development, see [architecture](architecture/overview.md),
-[developer conventions](dev/conventions.md), and [commands](dev/commands.md).
+## Working on the code
+
+- [Conventions](dev/conventions.md), [adding features](dev/adding-features.md)
+- [Testing infrastructure](architecture/testing.md)
+- [Debugging workflows](debugging/common-workflows.md), [hooks](debugging/hooks.md),
+  [traces](debugging/traces.md), [CPU trace](debugging/cpu-trace.md),
+  [state inspection](debugging/state-inspection.md), [profiling](debugging/profiling.md)

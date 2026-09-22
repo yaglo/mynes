@@ -253,9 +253,11 @@ static int vis_glyph(uint8_t *buf, int x, int y, char ch, uint8_t pal) {
     return 5; /* 4px glyph + 1px spacing */
 }
 
-/* Draw a string. Returns the X position after the last character. */
+/* Draw a string. Returns the X position after the last character.
+ * Stops at the right edge: nothing past it is visible, and an unbounded
+ * string would otherwise advance x without limit. */
 static int vis_text(uint8_t *buf, int x, int y, const char *s, uint8_t pal) {
-    while (*s) {
+    while (*s && x < VIS_W) {
         x += vis_glyph(buf, x, y, *s, pal);
         s++;
     }

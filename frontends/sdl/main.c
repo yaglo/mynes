@@ -3,8 +3,8 @@
  *
  * Controls:
  *   Arrow keys - D-pad
- *   Z          - A button
- *   X          - B button
+ *   X          - A button
+ *   Z          - B button
  *   Enter      - Start
  *   Shift      - Select
  *   Escape     - Quit
@@ -37,6 +37,8 @@ static int crt_capture_failed;
  * recent/last-preset config). */
 #include "browser.h"
 #include "config.h"
+#include "saves.h"
+#include "nes/state.h"
 
 static int scale = 3;
 static bool composite_enabled = true;
@@ -52,6 +54,17 @@ static MynesConfig mynes_config;
 static Browser     browser;
 static bool        browser_active = false;
 static bool        rom_loaded     = false;
+
+/* Battery-backed cartridge RAM (frontends/shared/saves.h). This frontend
+ * runs the console on the main thread, so its RAM is read directly. */
+static MynesSaves  saves;
+static Uint32      battery_next_check;
+static void saves_attach(const char *rom_path) {
+    uint32_t crc = nes_state_rom_crc(rom.prg_rom, rom.prg_size, rom.chr_rom, rom.chr_size);
+    mynes_saves_open(&saves, rom_path, crc, rom.has_battery);
+    if (saves.battery && mynes_saves_restore(&saves, nes.mapper.prg_ram))
+        printf("Battery RAM restored from %s\n", saves.sav_path);
+}
 
 /* Translate SDL2 scancode → BrowserKey, or -1 if not handled. */
 static int sdl_to_browser_key(int scancode) {
@@ -1892,6 +1905,53 @@ static int screenshot_after_frames = 0;  /* 0 = disabled */
 static int frame_counter = 0;
 static int screenshot_num = 0;
 
+/* Hot-plugged game controllers: the first to arrive is player 1, the next
+ * player 2, and a removed pad frees its slot. Same mapping as the GPU
+ * frontend (RetroArch convention: EAST = A, SOUTH = B, 0.5 stick deadzone). */
+static SDL_GameController *controllers[2];
+
+static void controller_added(int device_index) {
+    for (int i = 0; i < 2; i++) {
+        if (controllers[i]) continue;
+        controllers[i] = SDL_GameControllerOpen(device_index);
+        if (controllers[i])
+            printf("Game controller connected: %s (P%d)\n",
+                   SDL_GameControllerName(controllers[i]), i + 1);
+        return;
+    }
+}
+
+static void controller_removed(SDL_JoystickID instance_id) {
+    for (int i = 0; i < 2; i++) {
+        if (!controllers[i] || SDL_JoystickInstanceID(
+                SDL_GameControllerGetJoystick(controllers[i])) != instance_id) continue;
+        printf("Game controller removed (P%d)\n", i + 1);
+        SDL_GameControllerClose(controllers[i]);
+        controllers[i] = NULL;
+    }
+}
+
+static uint8_t controller_buttons(int slot) {
+    SDL_GameController *c = controllers[slot];
+    if (!c) return 0;
+    uint8_t b = 0;
+    if (SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_B) ||
+        SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_Y))          b |= BTN_A;
+    if (SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_A) ||
+        SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_X))          b |= BTN_B;
+    if (SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_BACK))       b |= BTN_SELECT;
+    if (SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_START))      b |= BTN_START;
+    if (SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_DPAD_UP))    b |= BTN_UP;
+    if (SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_DPAD_DOWN))  b |= BTN_DOWN;
+    if (SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_DPAD_LEFT))  b |= BTN_LEFT;
+    if (SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) b |= BTN_RIGHT;
+    int x = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTX);
+    int y = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTY);
+    if (x < -16384) b |= BTN_LEFT;  else if (x > 16384) b |= BTN_RIGHT;
+    if (y < -16384) b |= BTN_UP;    else if (y > 16384) b |= BTN_DOWN;
+    return b;
+}
+
 void save_screenshot(void) {
     char filename[64];
     snprintf(filename, sizeof(filename), "screenshot_%03d.ppm", screenshot_num++);
@@ -1993,6 +2053,13 @@ void handle_input(void) {
                 }
                 break;
 
+            case SDL_CONTROLLERDEVICEADDED:
+                controller_added(event.cdevice.which);
+                break;
+            case SDL_CONTROLLERDEVICEREMOVED:
+                controller_removed(event.cdevice.which);
+                break;
+
             case SDL_TEXTINPUT:
                 if (browser_active) browser_handle_text(&browser,event.text.text);
                 break;
@@ -2008,6 +2075,7 @@ void handle_input(void) {
                         ROM new_rom;
                         int re = nes_rom_load(&new_rom, browser.chosen_path);
                         if (re == ROM_OK) {
+                            mynes_saves_flush(&saves, nes.mapper.prg_ram, false);
                             nes_load_mapper(&nes, new_rom.mapper,
                                 new_rom.prg_rom, new_rom.prg_size,
                                 new_rom.chr_rom, new_rom.chr_size,
@@ -2015,6 +2083,7 @@ void handle_input(void) {
                             nes_reset(&nes);
                             rom = new_rom;
                             rom_loaded = true;
+                            saves_attach(browser.chosen_path);
                             mynes_config_add_recent(&mynes_config,
                                                     browser.chosen_path);
                             mynes_config_save(&mynes_config);
@@ -2191,6 +2260,7 @@ void handle_input(void) {
      * is open — arrow keys belong to the menu. */
     if (menu_open) {
         nes_set_controller(&nes, 0, 0);
+        nes_set_controller(&nes, 1, 0);
         return;
     }
 
@@ -2211,7 +2281,8 @@ void handle_input(void) {
         if ((frame_counter % 12) < 2) buttons |= BTN_START;
     }
 
-    nes_set_controller(&nes, 0, buttons);
+    nes_set_controller(&nes, 0, buttons | controller_buttons(0));
+    nes_set_controller(&nes, 1, controller_buttons(1));
 }
 
 void toggle_composite(void) {
@@ -2538,7 +2609,7 @@ int main(int argc, char *argv[]) {
         printf("  --simulate-frame <bin>   Replace emulation with a fixed\n");
         printf("                           256x240 palette-index frame (uint8)\n\n");
         printf("Controls (see README for the full list):\n");
-        printf("  Arrow keys - D-pad   Z=A   X=B   Shift=Select   Enter=Start\n");
+        printf("  Arrow keys - D-pad   X=A   Z=B   Shift=Select   Enter=Start\n");
         printf("  M=menu  P=palette  C=composite  S=screenshot  O=open ROM browser\n");
         printf("  F=fullscreen  Tab=fast  Space=pause  Esc=quit\n");
         return 0;
@@ -2658,7 +2729,7 @@ int main(int argc, char *argv[]) {
     /* Nearest-neighbor scaling: avoids linear-filtering moire when
      * stretching the 480-row composite texture to window height. */
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) < 0) {
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) < 0) {
         printf("SDL init failed: %s\n", SDL_GetError());
         return 1;
     }
@@ -2781,6 +2852,7 @@ int main(int argc, char *argv[]) {
                         rom.prg_rom, rom.prg_size,
                         rom.chr_rom, rom.chr_size,
                         rom.mirroring);
+        saves_attach(rom_path);
     }
 
     apu_set_audio_callback(&nes.apu, apu_sample_callback, NULL);
@@ -2910,6 +2982,11 @@ int main(int argc, char *argv[]) {
 
     while (running) {
         handle_input();
+        /* Battery RAM reaches disk within a couple of seconds of a change. */
+        if (saves.battery && SDL_GetTicks() >= battery_next_check) {
+            battery_next_check = SDL_GetTicks() + 2000;
+            mynes_saves_flush(&saves, nes.mapper.prg_ram, false);
+        }
 
         Uint64 now = SDL_GetPerformanceCounter();
 
@@ -3066,12 +3143,15 @@ int main(int argc, char *argv[]) {
     }
 
     comp_destroy(&composite);
+    for (int i = 0; i < 2; i++)
+        if (controllers[i]) SDL_GameControllerClose(controllers[i]);
     if (composite_texture) SDL_DestroyTexture(composite_texture);
     SDL_DestroyTexture(texture);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
 
+    if (saves.battery) mynes_saves_flush(&saves, nes.mapper.prg_ram, false);
     nes_rom_free(&rom);
 
 #ifdef MYNES_CRT_CAPTURE

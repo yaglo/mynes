@@ -23,7 +23,7 @@ struct Measurement
 
 constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(32u, 1u, 1u);
 
-kernel void main0(constant Params& _19 [[buffer(0)]], device Raster& _62 [[buffer(1)]], device Measurement& _153 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+kernel void main0(constant Params& _19 [[buffer(0)]], const device Raster& _62 [[buffer(1)]], device Measurement& _153 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
     uint line = gl_GlobalInvocationID.x;
     if (line >= _19.count)

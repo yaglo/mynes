@@ -5,7 +5,7 @@ not the current implementation. In particular, its distributed cable ladder,
 coupling-capacitor path, preset identities and claims of complete physical
 modeling are superseded. Use the [current pipeline reference](gpu-pipeline-reference.md),
 [model validation](architecture/gpu-realism-validation.md) and
-[23-preset audit](gpu-preset-audit.md) for implemented behavior and evidence.
+[23-preset audit](https://yaglo.github.io/mynes-web/gallery/presets/) for implemented behavior and evidence.
 
 ## The Problem
 
@@ -221,7 +221,7 @@ Console variants have different component values from the actual hardware schema
 
 **DebugTap.** GPU buffer readback at any stage. Each tap point captures the float buffer contents after a specific signal processing stage, along with metadata (frame number, timing, stage parameters). Zero cost when disabled. The SwiftUI visualiser enables tap points it wants to monitor; the emulator captures them after each `chain_run()`.
 
-**ChainVis.** A real-time overlay (toggled with F8) showing both video and audio signal chains in a two-column layout. Per-stage timing, enabled/bypassed state, and keyboard navigation to toggle bypass on individual stages (B key).
+**ChainVis.** A real-time overlay (toggled with Ctrl+L) showing both video and audio signal chains in a two-column layout. Per-stage timing, enabled/bypassed state, and keyboard navigation to toggle bypass on individual stages (B key).
 
 **Debug Server.** A Unix domain socket server that the SwiftUI visualiser app connects to. Binary protocol with message types: snapshot (per-stage timing), parameter update, preset change, tap request, and tap data. The server listens on a background thread; all message processing happens on the emulator's main thread via `debug_server_frame()` to avoid threading issues.
 

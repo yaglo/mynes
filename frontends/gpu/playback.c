@@ -18,19 +18,34 @@ struct Playback {
     SDL_Mutex *mutex;
     SDL_Condition *condition;
     bool active, busy, stop;
+    /* `busy` stays set from the first frame after resume until pause is
+     * acknowledged; `emulating` covers only the unlocked stretch in which a
+     * frame runs, and `hold` counts main-thread visits waiting for the
+     * console (see playback_with_console). */
+    bool emulating;
+    unsigned hold;
     PlaybackControls controls;
     PlaybackFrame frames[PLAYBACK_PICTURES];
     unsigned first_picture, picture_count;
     unsigned number, limit, capture_from;
+    /* `number` advances outside the lock while a frame runs; `produced` is
+     * its copy taken under the lock once the picture is queued. */
+    unsigned produced;
     unsigned review_start_frame;
     struct { unsigned frame, buttons; } review_events[128];
     unsigned review_event_count, review_event_index, review_buttons;
+    /* Added to every script row: a recording's rows count from its first
+     * captured picture rather than from power-on. */
+    unsigned replay_offset;
     float input[AUDIO_BLOCK_CAPACITY], output[AUDIO_BLOCK_CAPACITY];
     int count, fade;
     float energy;
     AudioState state;
     AudioRateCtrl rate;
-    FILE *capture, *trace;
+    /* capture takes every frame (MYNES_AUDIO_CAPTURE); capture_window only
+     * the frames from capture_from on, for a recording. Both owned elsewhere
+     * except capture, which this file opened. */
+    FILE *capture, *capture_window, *trace;
 };
 
 /* Deterministic controller replay for offscreen visual reviews. Each row is
@@ -41,6 +56,7 @@ static bool load_review_input(Playback *p, const char *path) {
     if (!file) return SDL_SetError("Cannot open review input: %s", path);
     unsigned frame, buttons, previous = 0;
     int fields;
+    p->review_event_count = p->review_event_index = p->review_buttons = 0;
     while ((fields = fscanf(file, "%u %x", &frame, &buttons)) == 2) {
         if (frame <= previous || buttons > 255 || p->review_event_count == 128) {
             fclose(file);
@@ -54,6 +70,19 @@ static bool load_review_input(Playback *p, const char *path) {
     bool valid = fields == EOF && !ferror(file) && p->review_event_count != 0;
     fclose(file);
     return valid || SDL_SetError("Malformed or empty review input: %s", path);
+}
+
+/* Captures and scripted reviews compare frame sequences bit-for-bit, so
+ * they always keep the three-picture FIFO whatever the controls ask for. */
+static bool low_latency_active(const Playback *p) {
+    return p->controls.low_latency && !p->capture_from &&
+           !p->review_event_count && !p->review_start_frame;
+}
+
+/* Matched-refresh hold lets the display clock the worker; every other
+ * pacing mode runs the emulation clock freely and the renderer catches up. */
+static bool display_backpressure(const Playback *p) {
+    return p->controls.display_paced && p->controls.speed <= 1;
 }
 
 static void sample(void *user, float value) {
@@ -76,10 +105,14 @@ static void reset_audio(Playback *p) {
 static void submit_audio(Playback *p, const PlaybackControls *c, Uint64 deadline) {
     if (!p->count) return;
     bool processed = false;
+    /* Fast-forward keeps the filter state moving on the CPU but never queues:
+     * the device drains in real time, so anything queued at 8x would only
+     * pile up as latency. The GPU block's deadline wait is skipped as well. */
+    bool fast = c->speed > 1;
     /* An expired GPU block never enters the stream. Reuse its buffers only
      * after the fence signals; CPU fallback starts with the same input state. */
     if (p->audio && p->audio->pending) audio_gpu_poll(p->audio, p->gpu, NULL, NULL);
-    if (c->gpu_audio && p->audio && !p->audio->pending) {
+    if (c->gpu_audio && !fast && p->audio && !p->audio->pending) {
         if (audio_gpu_begin(p->audio, p->gpu, &c->audio, &p->state, p->input, p->count)) {
             Uint64 latest = SDL_GetTicksNS() + 3000000;
             if (deadline > 2000000 && deadline - 2000000 < latest) latest = deadline - 2000000;
@@ -92,7 +125,7 @@ static void submit_audio(Playback *p, const PlaybackControls *c, Uint64 deadline
         }
     }
     if (!processed) audio_chain_process(&c->audio, &p->state, p->input, p->output, p->count);
-    if (p->stream) {
+    if (p->stream && !fast) {
         int queued = SDL_GetAudioStreamQueued(p->stream) / (int)sizeof(float);
         if (audio_sync_stale(queued, p->count)) {
             SDL_ClearAudioStream(p->stream);
@@ -107,17 +140,21 @@ static void submit_audio(Playback *p, const PlaybackControls *c, Uint64 deadline
         p->output[i] = v;
     }
     if (p->capture) fwrite(p->output, sizeof(float), p->count, p->capture);
+    /* number already counts the frame these samples belong to. */
+    if (p->capture_window && p->number >= p->capture_from)
+        fwrite(p->output, sizeof(float), p->count, p->capture_window);
     if (p->trace) fprintf(p->trace, "%u,%d,%d,%.7f,%d,%llu\n", p->number, p->count,
         p->stream ? SDL_GetAudioStreamQueued(p->stream) / (int)sizeof(float) : 0,
         p->stream ? SDL_GetAudioStreamFrequencyRatio(p->stream) : 1, processed,
         (unsigned long long)SDL_GetTicksNS());
-    if (p->stream) SDL_PutAudioStreamData(p->stream, p->output, p->count * sizeof(float));
+    if (p->stream && !fast) SDL_PutAudioStreamData(p->stream, p->output, p->count * sizeof(float));
 }
 
 static int run(void *user) {
     Playback *p = user;
     Uint64 deadline = 0;
     int last_region = -1;
+    bool last_fast = false;
     SDL_LockMutex(p->mutex);
     while (!p->stop) {
         if (!p->active) {
@@ -125,16 +162,27 @@ static int run(void *user) {
             p->busy = false;
             deadline = 0;
             last_region = -1;
+            last_fast = false;
             SDL_BroadcastCondition(p->condition);
+            SDL_WaitCondition(p->condition, p->mutex);
+            continue;
+        }
+        /* A main-thread visit owns the console until it releases the hold;
+         * the deadline logic below absorbs the few milliseconds it takes. */
+        if (p->hold) {
             SDL_WaitCondition(p->condition, p->mutex);
             continue;
         }
         /* Offline paired screenshots must consume both actual PPU frames.
          * Normal playback retains a few consecutive phases across short UI stalls.
-         * Matched-refresh hold applies backpressure instead of dropping a phase.
+         * Matched-refresh hold applies backpressure instead of dropping a phase;
+         * low latency tightens that to one picture so the frame the renderer
+         * takes was emulated right after the previous one was shown.
+         * Fast-forward outruns the display on purpose and overwrites the oldest.
          * Pause/stop still wake this wait; other modes keep the audio clock free. */
+        unsigned hold = low_latency_active(p) ? 1 : PLAYBACK_PICTURES;
         if ((p->capture_from && p->number >= p->capture_from && p->picture_count) ||
-            (p->controls.display_paced && p->picture_count == PLAYBACK_PICTURES)) {
+            (display_backpressure(p) && p->picture_count >= hold)) {
             /* After display backpressure, the next audio block gets a fresh
              * deadline too; an expired producer deadline must not persist. */
             deadline = 0;
@@ -146,6 +194,8 @@ static int run(void *user) {
         Uint64 native_period = (Uint64)(signal_region_frame_ms(c.region) * 1000000.0);
         Uint64 period = gpu_presentation_playback_period(c.presentation_mode, native_period,
             c.display_hz, c.display_paced);
+        bool fast = c.speed > 1;
+        if (fast) period = (Uint64)((double)period / c.speed);
         if (!deadline || now > deadline + 3 * period) deadline = now;
         if (now < deadline) {
             Sint32 remaining_ms=(Sint32)((deadline-now+999999)/1000000);
@@ -154,6 +204,7 @@ static int run(void *user) {
         }
         deadline += period;
         p->busy = true;
+        p->emulating = true;
         SDL_UnlockMutex(p->mutex);
         if (c.region != last_region) {
             ppu_set_region(&p->nes->ppu, c.region ? PPU_REGION_PAL : PPU_REGION_NTSC);
@@ -161,10 +212,11 @@ static int run(void *user) {
             last_region = c.region;
         }
         while (p->review_event_index < p->review_event_count &&
-               p->review_events[p->review_event_index].frame <= p->number + 1) {
+               p->review_events[p->review_event_index].frame + p->replay_offset <= p->number + 1) {
             p->review_buttons = p->review_events[p->review_event_index++].buttons;
         }
-        p->nes->controller[0] = p->review_event_count ? p->review_buttons : c.controller;
+        p->nes->controller[0] = p->review_event_count ? p->review_buttons : c.controller[0];
+        p->nes->controller[1] = c.controller[1];
         if (p->review_start_frame && p->number+1 >= p->review_start_frame
             && p->number+1 < p->review_start_frame+2) p->nes->controller[0] |= 0x08;
         bool dac_changed = p->nes->apu.analog.dac_nonlinearity != c.analog.dac_nonlinearity;
@@ -172,7 +224,17 @@ static int run(void *user) {
         if (dac_changed) apu_build_dac_tables(&p->nes->apu);
         p->nes->apu.filter_config = (APUFilterConfig){1, 1, 1};
         p->nes->apu.sample_rate = AUDIO_STREAM_RATE;
-        if (p->stream) {
+        if (p->stream && last_fast && !fast) {
+            /* Whatever was queued before fast-forward is stale by now. Restart
+             * the rate controller and fade so the resampler settles from 1.0
+             * rather than chasing the emptied queue. */
+            SDL_ClearAudioStream(p->stream);
+            SDL_SetAudioStreamFrequencyRatio(p->stream, 1);
+            memset(&p->rate, 0, sizeof(p->rate));
+            p->fade = AUDIO_STREAM_RATE / 200;
+        }
+        last_fast = fast;
+        if (p->stream && !fast) {
             int queued = SDL_GetAudioStreamQueued(p->stream);
             if (queued >= 0) SDL_SetAudioStreamFrequencyRatio(p->stream,
                 audio_sync_ratio(&p->rate, queued / (int)sizeof(float), period / 1e9)
@@ -187,6 +249,8 @@ static int run(void *user) {
         submit_audio(p, &c, deadline);
         Uint64 ready_ns=SDL_GetTicksNS();
         SDL_LockMutex(p->mutex);
+        p->emulating = false;
+        p->produced = p->number;
         if (p->capture_from && p->number <= p->capture_from)
             p->picture_count = p->first_picture = 0;
         if (p->picture_count == PLAYBACK_PICTURES) {
@@ -240,7 +304,12 @@ Playback *playback_create(NES *nes, SDL_GPUDevice *gpu, AudioGPUChain *audio,
 
 void playback_controls(Playback *p, const PlaybackControls *controls) {
     SDL_LockMutex(p->mutex);
-    bool pacing_changed = p->controls.display_paced != controls->display_paced;
+    /* Backpressure and the deadline wait both depend on these; wake the
+     * worker so a speed change takes effect on the next frame, not the next
+     * picture read. */
+    bool pacing_changed = p->controls.display_paced != controls->display_paced ||
+                          p->controls.speed != controls->speed ||
+                          p->controls.low_latency != controls->low_latency;
     p->controls = *controls;
     if (pacing_changed) SDL_BroadcastCondition(p->condition);
     SDL_UnlockMutex(p->mutex);
@@ -256,6 +325,47 @@ void playback_pause(Playback *p) {
 void playback_resume(Playback *p) {
     SDL_LockMutex(p->mutex);
     p->active = !p->limit || p->number < p->limit;
+    SDL_BroadcastCondition(p->condition);
+    SDL_UnlockMutex(p->mutex);
+}
+unsigned playback_with_console(Playback *p, void (*fn)(NES *nes, void *user), void *user) {
+    SDL_LockMutex(p->mutex);
+    p->hold++;
+    while (p->emulating) SDL_WaitCondition(p->condition, p->mutex);
+    fn(p->nes, user);
+    unsigned frames = p->produced;
+    p->hold--;
+    SDL_BroadcastCondition(p->condition);
+    SDL_UnlockMutex(p->mutex);
+    return frames;
+}
+unsigned playback_frames_sampled(Playback *p) {
+    SDL_LockMutex(p->mutex);
+    /* A frame in progress took its controls before emulating was set. */
+    unsigned frames = p->produced + (p->emulating ? 1 : 0);
+    SDL_UnlockMutex(p->mutex);
+    return frames;
+}
+bool playback_load_input_script(Playback *p, const char *path) {
+    return load_review_input(p, path);
+}
+void playback_arm_capture(Playback *p, unsigned first, unsigned last, FILE *audio) {
+    SDL_LockMutex(p->mutex);
+    p->capture_from = first;
+    p->limit = last;
+    p->capture_window = audio;
+    p->replay_offset = first ? first - 1 : 0;
+    SDL_UnlockMutex(p->mutex);
+}
+void playback_restart(Playback *p) {
+    SDL_LockMutex(p->mutex);
+    p->hold++;
+    while (p->emulating) SDL_WaitCondition(p->condition, p->mutex);
+    /* Pictures already queued show the time line before the jump; the audio
+     * queued for them would play over the restored machine's first frames. */
+    p->picture_count = p->first_picture = 0;
+    reset_audio(p);
+    p->hold--;
     SDL_BroadcastCondition(p->condition);
     SDL_UnlockMutex(p->mutex);
 }
@@ -302,6 +412,15 @@ bool playback_read(Playback *p, PlaybackFrame *frame) {
     SDL_LockMutex(p->mutex);
     bool fresh = p->picture_count != 0;
     if (fresh) {
+        /* A free-running worker may be several pictures ahead of a renderer
+         * that stalled. Low latency shows the newest and drops the rest; the
+         * renderer's elapsed-frame count keeps phosphor decay honest. Under
+         * display backpressure the queue never holds a stale picture, so
+         * oldest-first keeps consecutive carrier phases there. */
+        unsigned skip = low_latency_active(p) && !display_backpressure(p)
+                      ? p->picture_count - 1 : 0;
+        p->first_picture = (p->first_picture + skip) % PLAYBACK_PICTURES;
+        p->picture_count -= skip;
         *frame = p->frames[p->first_picture];
         p->first_picture = (p->first_picture + 1) % PLAYBACK_PICTURES;
         p->picture_count--;
@@ -309,6 +428,12 @@ bool playback_read(Playback *p, PlaybackFrame *frame) {
     }
     SDL_UnlockMutex(p->mutex);
     return fresh;
+}
+unsigned playback_queued(Playback *p) {
+    SDL_LockMutex(p->mutex);
+    unsigned queued = p->picture_count;
+    SDL_UnlockMutex(p->mutex);
+    return queued;
 }
 void playback_destroy(Playback *p) {
     if (!p) return;

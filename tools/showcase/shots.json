@@ -1,0 +1,167 @@
+{
+  "version": 1,
+  "defaults": {
+    "seconds": {"hero": 6, "feature": 15},
+    "presets": ["sony_pvm_14l2", "jvc_d_series_2000", "toshiba_14af43",
+                "stass_favourite", "vhs_sp_consumer", "reference_composite"],
+    "flicker_crop": [64, 72, 128, 96],
+    "record_after": 2,
+    "offscreen": "3840x2880",
+    "thumbnail_frame": 0,
+    "region": "ntsc",
+    "readme_seconds": 6,
+    "record_args": [],
+    "state_source": "{config}/states/{rom_stem}-{crc}.s{slot}",
+    "state_slot": 1,
+    "font": null
+  },
+  "presets": {
+    "sony_pvm_14l2": {"name": "Sony PVM-14L2", "blurb": "Focused beam, fine aperture grille, D65, composite"},
+    "jvc_d_series_2000": {"name": "JVC D-Series", "blurb": "Cooler whites, curved slot mask, two-line comb, composite"},
+    "toshiba_14af43": {"name": "Toshiba 14AF", "blurb": "Softer beam, broad bright spot, three-line comb, composite"},
+    "stass_favourite": {"name": "Stas's Favourite", "blurb": "Worn slot-mask set over channel-3 RF, imperfect convergence, horizontal recovery"},
+    "vhs_sp_consumer": {"name": "VHS SP playback", "blurb": "Slightly noisy SP tape on a slot-mask consumer set: soft delayed colour, luma grain, dropouts"},
+    "reference_composite": {"name": "Reference composite", "blurb": "Neutral NTSC receiver and CRT in a dark room, no simulated wear"}
+  },
+  "shots": [
+    {
+      "id": "super-mario-bros",
+      "title": "Super Mario Bros.",
+      "scene": "World 1-1, running right past the first blocks",
+      "rom": "*Super Mario Bros*.nes",
+      "rom_exclude": ["*Bros*2*", "*Bros*3*", "*Duck Hunt*", "*Track*"],
+      "state": "super-mario-bros.s1",
+      "replay": "super-mario-bros.replay",
+      "kind": "hero",
+      "flicker_crop": [48, 104, 128, 96],
+      "caption": "The frame everyone knows, through four televisions.",
+      "readme": ["sony_pvm_14l2", "stass_favourite"]
+    },
+    {
+      "id": "legend-of-zelda",
+      "title": "The Legend of Zelda",
+      "scene": "Overworld start screen, Link walks up",
+      "rom": "*Legend of Zelda*.nes",
+      "state": "legend-of-zelda.s1",
+      "replay": "legend-of-zelda.replay",
+      "kind": "hero",
+      "flicker_crop": [64, 96, 128, 96],
+      "caption": "Brown rock, green bush, the tunic: composite colour at its most familiar."
+    },
+    {
+      "id": "punch-out",
+      "title": "Punch-Out!!",
+      "scene": "First fight, crowd visible behind the ring",
+      "rom": "*Punch-Out*.nes",
+      "state": "punch-out.s1",
+      "kind": "feature",
+      "flicker_crop": [64, 8, 128, 96],
+      "caption": "The dithered crowd resolves into a texture on a real tube.",
+      "readme": ["sony_pvm_14l2"]
+    },
+    {
+      "id": "journey-to-silius",
+      "title": "Journey to Silius",
+      "scene": "Stage 1 with the dithered sky",
+      "rom": "*Journey to Silius*.nes",
+      "state": "journey-to-silius.s1",
+      "replay": "journey-to-silius.replay",
+      "kind": "feature",
+      "flicker_crop": [64, 16, 128, 96],
+      "caption": "Dither meant for composite blending: raw, PVM and RF side by side."
+    },
+    {
+      "id": "castlevania-3",
+      "title": "Castlevania III",
+      "scene": "Clock tower (or the first stage)",
+      "rom": "*Castlevania III*.nes",
+      "state": "castlevania-3.s1",
+      "replay": "castlevania-3.replay",
+      "kind": "hero",
+      "flicker_crop": [64, 64, 128, 96],
+      "caption": "Fine sprite work and dark backgrounds: beam width and phosphor decay."
+    },
+    {
+      "id": "blaster-master",
+      "title": "Blaster Master",
+      "scene": "Area 1, driving right",
+      "rom": "*Blaster Master*.nes",
+      "state": "blaster-master.s1",
+      "replay": "blaster-master.replay",
+      "kind": "hero",
+      "flicker_crop": [64, 96, 128, 96],
+      "caption": "Smooth horizontal scrolling: dot crawl and comb filtering in motion."
+    },
+    {
+      "id": "ninja-gaiden",
+      "title": "Ninja Gaiden",
+      "scene": "Opening cutscene panel, then gameplay",
+      "rom": "*Ninja Gaiden*.nes",
+      "rom_exclude": ["*II*", "*III*", "*2*", "*3*"],
+      "state": "ninja-gaiden.s1",
+      "kind": "feature",
+      "flicker_crop": [64, 64, 128, 96],
+      "caption": "Cinematic panels and a hard cut to gameplay."
+    },
+    {
+      "id": "mega-man-2",
+      "title": "Mega Man 2",
+      "scene": "Stage select flashing, then a boss intro",
+      "rom": "*Mega Man 2*.nes",
+      "state": "mega-man-2.s1",
+      "replay": "mega-man-2.replay",
+      "kind": "feature",
+      "flicker_crop": [64, 64, 128, 96],
+      "caption": "Flashing tiles and a boss portrait: the same seconds on five televisions."
+    },
+    {
+      "id": "metroid",
+      "title": "Metroid",
+      "scene": "Brinstar start, bright shots on black",
+      "rom": "*Metroid*.nes",
+      "state": "metroid.s1",
+      "replay": "metroid.replay",
+      "kind": "hero",
+      "flicker_crop": [64, 96, 128, 96],
+      "caption": "Bright shots on black: bloom, halation and beam growth."
+    },
+    {
+      "id": "batman",
+      "title": "Batman",
+      "scene": "Stage 1",
+      "rom": "*Batman*.nes",
+      "rom_exclude": ["*Return*", "*Joker*", "*Robin*"],
+      "state": "batman.s1",
+      "replay": "batman.replay",
+      "kind": "hero",
+      "flicker_crop": [64, 96, 128, 96],
+      "caption": "Dark palettes and purple skies: black level and grey tracking."
+    }
+  ],
+  "features": [
+    {
+      "id": "five-televisions",
+      "type": "five-televisions",
+      "shot": "mega-man-2",
+      "presets": ["sony_pvm_14l2", "jvc_d_series_2000", "toshiba_14af43", "stass_favourite", "vhs_sp_consumer"],
+      "seconds_per_preset": 3,
+      "caption": "One game, fifteen seconds, five televisions."
+    },
+    {
+      "id": "raw-vs-pvm-vs-rf",
+      "type": "side-by-side",
+      "shot": "journey-to-silius",
+      "presets": ["reference_composite", "sony_pvm_14l2", "stass_favourite"],
+      "labels": ["Reference composite", "Sony PVM-14L2", "Channel-3 RF"],
+      "caption": "Left to right: neutral composite, a studio monitor, a worn RF set."
+    },
+    {
+      "id": "push-in",
+      "type": "push-in",
+      "shot": "punch-out",
+      "preset": "sony_pvm_14l2",
+      "seconds": 12,
+      "caption": "From the whole 4K frame into the crowd, one master pixel per pixel."
+    }
+  ]
+}

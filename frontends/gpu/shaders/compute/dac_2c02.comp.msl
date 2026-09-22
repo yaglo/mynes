@@ -45,7 +45,7 @@ struct LumaBuf
 
 constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
 
-kernel void main0(device IndexBuf& _41 [[buffer(1)]], constant Params& _73 [[buffer(0)]], device SignalTable& _107 [[buffer(2)]], device WaveformBuf& _193 [[buffer(4)]], device SignalTableAlt& _286 [[buffer(3)]], device LumaBuf& _324 [[buffer(5)]], uint3 gl_LocalInvocationID [[thread_position_in_threadgroup]], uint3 gl_WorkGroupID [[threadgroup_position_in_grid]])
+kernel void main0(const device IndexBuf& _41 [[buffer(1)]], constant Params& _73 [[buffer(0)]], const device SignalTable& _107 [[buffer(2)]], device WaveformBuf& _193 [[buffer(4)]], const device SignalTableAlt& _286 [[buffer(3)]], device LumaBuf& _324 [[buffer(5)]], uint3 gl_LocalInvocationID [[thread_position_in_threadgroup]], uint3 gl_WorkGroupID [[threadgroup_position_in_grid]])
 {
     uint px = gl_LocalInvocationID.x;
     uint sy = gl_WorkGroupID.y;

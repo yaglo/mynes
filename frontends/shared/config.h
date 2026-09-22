@@ -22,12 +22,18 @@ typedef struct {
     int  recent_count;
     int  gpu_room_reflections; /* host setting: simulated room light, off by default */
     int  gpu_mask_alignment; /* host setting: 0=panel pixels, 1=CRT pitch */
+    int  gpu_render_scale;   /* host setting: 0=auto, 1=full, 2=3/4, 3=half drawable */
+    int  gpu_low_latency;    /* host setting: 1=one picture queued ahead of the display */
     char last_preset[MYNES_PRESET_MAX];                  /* slug or filename */
 } MynesConfig;
 
 /* Resolve the config-file path into `out` (size `out_sz`). Always succeeds,
  * even if the directory doesn't exist yet — call this before save/load. */
 void mynes_config_path(char *out, int out_sz);
+
+/* The directory config.json lives in (see the resolution order above).
+ * Saves and states sit in subdirectories of it. */
+void mynes_config_dir(char *out, int out_sz);
 
 /* Resolve the directory MyNES uses for user-saved presets:
  *   <config-dir>/presets   — created lazily by callers via mkdir if missing.
@@ -38,7 +44,8 @@ void mynes_user_presets_dir(char *out, int out_sz);
 bool mynes_mkdir_p(const char *path);
 
 /* Load config from disk; returns true if a file was found and parsed.
- * On false, `cfg` is zero-initialised and safe to use. */
+ * On false, `cfg` holds the defaults and is safe to use: every field is
+ * zero except gpu_low_latency, which is on unless the file turns it off. */
 bool mynes_config_load(MynesConfig *cfg);
 
 /* Write config to disk, creating the parent directory if needed.

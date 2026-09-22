@@ -1,8 +1,8 @@
 /*
  * NES ROM Loader (iNES Format)
  *
- * Parses iNES format ROM files (.nes) and loads PRG/CHR data.
- * Supports mappers: 0, 1, 2, 3, 4, 5, 7, 10, 69, and 227.
+ * Parses iNES format ROM files (.nes) and loads PRG/CHR data. Which mapper
+ * numbers are accepted is decided by mapper_supported() in mapper.c.
  */
 
 #ifndef NES_ROM_H
@@ -13,6 +13,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
+
+#include "mapper.h"
 
 /* ============================================================================
  * iNES Header Format
@@ -39,6 +41,17 @@
 #define ROM_ERR_HEADER       -2  /* Invalid iNES header */
 #define ROM_ERR_MAPPER       -3  /* Unsupported mapper */
 #define ROM_ERR_ALLOC        -4  /* Memory allocation failed */
+
+/* nes_rom_error_str() only receives the code, but an unsupported-mapper
+ * report is useless without the number. The loaders record the last mapper
+ * they rejected so that the ROM_ERR_MAPPER message can name it. The record
+ * is per translation unit, which matches how every caller loads and reports
+ * from the same file; a unit that never rejected anything gets the plain
+ * message. */
+static inline int *nes_rom_rejected_mapper(void) {
+    static int mapper = -1;
+    return &mapper;
+}
 
 /* ============================================================================
  * ROM Structure
@@ -169,9 +182,8 @@ static inline int nes_rom_load(ROM *rom, const char *path) {
         rom->region_from_filename = true;
     }
 
-    /* Check for supported mappers. */
-    if (rom->mapper > 5 && rom->mapper != 7 && rom->mapper != 10 &&
-        rom->mapper != 69 && rom->mapper != 227) {
+    if (!mapper_supported(rom->mapper)) {
+        *nes_rom_rejected_mapper() = rom->mapper;
         fclose(fp);
         return ROM_ERR_MAPPER;
     }
@@ -257,9 +269,10 @@ static inline int nes_rom_load_data(ROM *rom, const uint8_t *data, size_t size) 
         rom->tv_system = NES_TV_NTSC;
     }
 
-    if (rom->mapper > 5 && rom->mapper != 7 && rom->mapper != 10 &&
-        rom->mapper != 69 && rom->mapper != 227)
+    if (!mapper_supported(rom->mapper)) {
+        *nes_rom_rejected_mapper() = rom->mapper;
         return ROM_ERR_MAPPER;
+    }
 
     size_t offset = INES_HEADER_SIZE;
     if (rom->has_trainer) offset += INES_TRAINER_SIZE;
@@ -299,13 +312,21 @@ static inline void nes_rom_free(ROM *rom) {
  * ROM Info
  * ============================================================================ */
 
-/* Get error message for error code */
+/* Get error message for error code. For ROM_ERR_MAPPER the message names
+ * the mapper the last load in this translation unit rejected, so users can
+ * report it. */
 static inline const char *nes_rom_error_str(int err) {
     switch (err) {
         case ROM_OK:         return "Success";
         case ROM_ERR_FILE:   return "File not found or read error";
         case ROM_ERR_HEADER: return "Invalid iNES header";
-        case ROM_ERR_MAPPER: return "Unsupported mapper";
+        case ROM_ERR_MAPPER: {
+            static char msg[32];
+            int mapper = *nes_rom_rejected_mapper();
+            if (mapper < 0) return "Unsupported mapper";
+            snprintf(msg, sizeof(msg), "Unsupported mapper %d", mapper);
+            return msg;
+        }
         case ROM_ERR_ALLOC:  return "Memory allocation failed";
         default:             return "Unknown error";
     }

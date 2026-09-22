@@ -41,7 +41,7 @@ float prng(thread uint& x)
     return float(x >> uint(8)) * 5.9604644775390625e-08;
 }
 
-kernel void main0(constant Params& _53 [[buffer(0)]], device CompositeIn& _68 [[buffer(1)]], device CarrierOut& _172 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+kernel void main0(constant Params& _53 [[buffer(0)]], const device CompositeIn& _68 [[buffer(1)]], device CarrierOut& _172 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
     uint tid = gl_GlobalInvocationID.x;
     if (tid >= _53.count)

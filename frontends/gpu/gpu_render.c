@@ -176,7 +176,8 @@ void gpu_render_update_dynamic_state(GPURenderCtx *ctx) {
 }
 
 /* Opt-in capture of our final CRT render, independent of OS screen-recording
- * permissions. PPM is an SDR preview: EDR values above reference white clip. */
+ * permissions. PPM is an SDR preview: EDR values above reference white clip.
+ * A NULL path hands the image to the capture sink only. */
 static bool capture_display(GPURenderCtx *ctx, const GPUDisplayParams *params,
                             int w, int h, const SDL_GPUViewport *viewport, const char *path) {
     // At most one owned image/writer: a slow disk cannot grow a queue.
@@ -214,12 +215,18 @@ static bool capture_display(GPURenderCtx *ctx, const GPUDisplayParams *params,
             FrameCaptureImage image = {.pixels=data, .width=w, .height=h,
                 .hdr=ctx->hdr_enabled, .bgra=ci.format==SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM,
                 .white_level=params->sdr_white_level};
-            if (ctx->capture_async) {
-                ctx->capture_job=frame_capture_start(&image,path);
-                saved=ctx->capture_job!=NULL;
-            }
-            // Allocation/thread failure falls back to a synchronous write.
-            if (!saved) saved=frame_capture_write(&image,path);
+            /* The sink reads the mapped download directly; a file writer
+             * copies it, so both can take the same frame. */
+            bool delivered = !ctx->capture_sink || ctx->capture_sink(ctx->capture_sink_user, &image);
+            if (path) {
+                if (ctx->capture_async) {
+                    ctx->capture_job=frame_capture_start(&image,path);
+                    saved=ctx->capture_job!=NULL;
+                }
+                // Allocation/thread failure falls back to a synchronous write.
+                if (!saved) saved=frame_capture_write(&image,path);
+            } else saved=true;
+            saved=saved && delivered;
         }
         if(data) SDL_UnmapGPUTransferBuffer(ctx->gpu,tb);
     }
@@ -286,7 +293,24 @@ void gpu_render_presentation_update(GPURenderCtx *ctx, float source_hz) {
         ctx->frames_in_flight = in_flight;
 }
 
+/* Polled from the main loop, never waited for. A fence still pending when
+ * its successor is submitted has already cost at least the elapsed time, so
+ * that lower bound is recorded rather than losing the overloaded sample. */
+static void poll_frame_fence(GPURenderCtx *ctx, bool replace) {
+    if (!ctx->frame_fence) return;
+    if (!replace && !SDL_QueryGPUFence(ctx->gpu, ctx->frame_fence)) return;
+    ctx->gpu_frame_total_ns += SDL_GetTicksNS() - ctx->frame_fence_submit_ns;
+    ctx->gpu_frame_samples++;
+    SDL_ReleaseGPUFence(ctx->gpu, ctx->frame_fence);
+    ctx->frame_fence = NULL;
+}
+
+void gpu_render_poll_frame_fence(GPURenderCtx *ctx) {
+    poll_frame_fence(ctx, false);
+}
+
 bool gpu_render_prepare(GPURenderCtx *ctx) {
+    poll_frame_fence(ctx, false);
     if(ctx->present_cmd) return true;
     ctx->swap_wait_ns=0;
     if(ctx->offscreen_w) {
@@ -337,6 +361,7 @@ bool gpu_render_release_pending(GPURenderCtx *ctx) {
         SDL_WaitForGPUFences(ctx->gpu,true,&ctx->offscreen_fence,1);
         SDL_ReleaseGPUFence(ctx->gpu,ctx->offscreen_fence);ctx->offscreen_fence=NULL;
     }
+    poll_frame_fence(ctx, true);
     if(ctx->offscreen_target) SDL_ReleaseGPUTexture(ctx->gpu,ctx->offscreen_target);
     ctx->offscreen_target=NULL;
     return !ctx->capture_failed;
@@ -509,7 +534,11 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
     if(ctx->offscreen_w) {
         ctx->offscreen_fence=SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
         if(ctx->offscreen_fence) ctx->submit_ns=SDL_GetTicksNS();
-    } else if(SDL_SubmitGPUCommandBuffer(cmd)) ctx->submit_ns=SDL_GetTicksNS();
+    } else {
+        poll_frame_fence(ctx, true);
+        ctx->frame_fence=SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
+        if(ctx->frame_fence) ctx->submit_ns=ctx->frame_fence_submit_ns=SDL_GetTicksNS();
+    }
     if (ctx->submit_ns && ctx->presentation_mode == GPU_PRESENT_60HZ)
         ctx->pacing_deadline_ns = gpu_presentation_next_ns(ctx->pacing_deadline_ns, ctx->submit_ns);
     if (ctx->submit_ns && ctx->presentation_trace)
@@ -537,13 +566,14 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
     const char *capture_frame_env = SDL_getenv("MYNES_CAPTURE_FRAME");
     unsigned capture_frame = capture_frame_env ? (unsigned)atoi(capture_frame_env) : 180;
     static bool captured = false;
-    if(can_capture && capture_path && (ctx->capture_path || (!captured && ctx->frame_counter >= capture_frame))) {
+    bool want_file = capture_path && (ctx->capture_path || (!captured && ctx->frame_counter >= capture_frame));
+    if(can_capture && (want_file || ctx->capture_sink)) {
         SDL_GPUViewport viewport = {.x=vp_x,.y=vp_y,.w=vp_w,.h=vp_h,.min_depth=0,.max_depth=1};
         Uint64 start=SDL_GetTicksNS();
-        ctx->capture_accepted = capture_display(ctx,&capture_params,sw,sh,&viewport,capture_path);
+        ctx->capture_accepted = capture_display(ctx,&capture_params,sw,sh,&viewport,want_file ? capture_path : NULL);
         ctx->capture_ns=SDL_GetTicksNS()-start;
         if (!ctx->capture_accepted) ctx->capture_failed=true;
-        captured = ctx->capture_accepted;
+        if (want_file) captured = ctx->capture_accepted;
     }
 }
 

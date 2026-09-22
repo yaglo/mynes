@@ -1,6 +1,6 @@
 # GPU signal, receiver, and CRT model
 
-[Gameplay showcase](nes-visual-showcase.md) · [4K gameplay and beam-height measurements](gpu-beam-closeups.md)
+[Gameplay showcase](https://yaglo.github.io/mynes-web/gallery/showcase/) · [4K gameplay and beam-height measurements](https://yaglo.github.io/mynes-web/gallery/closeups/)
 
 This describes the SDL3 `mynes_gpu` frontend. The SDL2 composite renderer is a separate implementation. Frontend work is isolated from CPU/PPU accuracy changes.
 
@@ -49,7 +49,7 @@ RF uses negative-AM complex envelopes, complex Gaussian channel noise, a 97-tap 
 
 The optional VHS stage filters recovered luma and chroma separately before the TV receiver, with chroma-envelope delay, DC-preserving playback peaking/tail, continuous transport timing/phase drift, separate horizontally correlated luma/chroma noise, and optional localized dropouts and bottom-of-picture head switching. It applies only to NTSC composite/RF. The separate VHS SP preset uses estimated recovered bandwidths rather than a magnetic recording or particular VCR simulation. [Model details, measurements and limitations](architecture/gpu-realism-validation.md).
 
-Component and RGB use the ideal source-modification path: integrate the DAC voltage cycle, decode colour and drive the complete CRT. Component no longer reads stale/zero composite chroma buffers. This is an ideal colour-difference roundtrip, without component cable/ADC losses; an unmodified NES has no component output. See the [complete preset audit](gpu-preset-audit.md).
+Component and RGB use the ideal source-modification path: integrate the DAC voltage cycle, decode colour and drive the complete CRT. Component no longer reads stale/zero composite chroma buffers. This is an ideal colour-difference roundtrip, without component cable/ADC losses; an unmodified NES has no component output. See the [complete preset audit](https://yaglo.github.io/mynes-web/gallery/presets/).
 
 Backdrop outside the picture uses the core's frame-handoff palette/mask snapshot. Per-dot border palette writes and exact odd-frame raster pulse duration are not exported by this frontend. Core accuracy work remains separate.
 
@@ -109,7 +109,7 @@ Signal Studio exposes active preset, modified state, save-as/save/rename/delete,
 
 `F5` and `--screenshot-after N` capture the **final CRT display**, including mask, glass and margins. Each PPM has a `.linear.pfm` sidecar preserving relative linear HDR values. `--screenshot-pair` captures actual frames N and N+1, retaining both phases. `review_captures.py` averages those floats in linear light for a still exposure, then makes PNG overviews/crops. It does not enable a playback smoothing filter. SDR previews clip highlights above reference white. Interactive captures copy the readback into one owned CPU image for background encoding/writing; shutdown joins the writer and reports errors. Another capture waits for the previous writer, bounding memory. `--screenshot-after` and paired/sequence batch captures remain synchronous. Hidden capture reads the existing final target, avoiding a second glass/mask render.
 
-For reproducible game captures, `MYNES_REVIEW_START_FRAME=N` presses Start for two emulated frames beginning at N. `MYNES_REVIEW_OSD=1` opens the setup menu. These diagnostics are opt-in. See the [visual review](gpu-visual-review.md) for paired captures and remaining limits.
+For reproducible game captures, `MYNES_REVIEW_START_FRAME=N` presses Start for two emulated frames beginning at N. `MYNES_REVIEW_OSD=1` opens the setup menu. These diagnostics are opt-in. See the [visual review](https://yaglo.github.io/mynes-web/gallery/visual-review/) for paired captures and remaining limits.
 
 ```sh
 ctest --test-dir build -R '^gpu_' --output-on-failure
@@ -123,7 +123,7 @@ python3 frontends/gpu/tests/test_rf_temporal.py build/bin/mynes_gpu /tmp/rf-revi
 python3 frontends/gpu/tests/benchmark_pipeline.py build/bin/mynes_gpu /tmp/gpu-bench
 ```
 
-The [hardware research](gpu-hardware-research.md) records sources and stage-by-stage assumptions. The image review script requires NumPy and Pillow. Its overviews resize linear light before sRGB encoding; `--exposure 0.5` preserves more EDR highlight detail in an SDR review. Native crops are not resampled. Tests cover voltage rails, CPU/GPU DAC equivalence, raster/retrace, delayed sync, burst dropout and reacquisition, AGC, PAL separation, causal bright/dark recovery, deflection sign/focus, beam energy, decay, mask/HDR output, asynchronous audio cancellation, playback pause/ROM replacement, and preset round trips. AccuracyCoin is outside this frontend validation.
+The [hardware research](https://yaglo.github.io/mynes-web/research/hardware/) records sources and stage-by-stage assumptions. The image review script requires NumPy and Pillow. Its overviews resize linear light before sRGB encoding; `--exposure 0.5` preserves more EDR highlight detail in an SDR review. Native crops are not resampled. Tests cover voltage rails, CPU/GPU DAC equivalence, raster/retrace, delayed sync, burst dropout and reacquisition, AGC, PAL separation, causal bright/dark recovery, deflection sign/focus, beam energy, decay, mask/HDR output, asynchronous audio cancellation, playback pause/ROM replacement, and preset round trips. AccuracyCoin is outside this frontend validation.
 
 `--benchmark` runs the actual selected preset from code upload through the final offscreen CRT pass at four fixed resolutions. Twelve warmups precede sixty individually fenced frames. It reports median, mean, p95 and maximum CPU-submission-to-GPU-completion time. Emulation/audio/vsync/capture are excluded; driver scheduling and host contention are included. Validation is off for performance runs and opt-in in playback with `MYNES_GPU_VALIDATION=1`. See [measured results](gpu-benchmark-results.md).
 

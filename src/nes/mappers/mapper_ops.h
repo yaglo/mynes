@@ -26,8 +26,14 @@ extern const MapperOps mapper3_ops;
 extern const MapperOps mapper4_ops;
 extern const MapperOps mapper7_ops;
 extern const MapperOps mapper5_ops;
+extern const MapperOps mapper9_ops;
 extern const MapperOps mapper10_ops;
+extern const MapperOps mapper11_ops;
+extern const MapperOps mapper34_ops;
+extern const MapperOps mapper66_ops;
 extern const MapperOps mapper69_ops;
+extern const MapperOps mapper71_ops;
+extern const MapperOps mapper206_ops;
 extern const MapperOps mapper227_ops;
 
 #endif /* NES_MAPPER_OPS_H */

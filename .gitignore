@@ -7,6 +7,7 @@ Makefile
 Testing/
 build/
 /build-*/
+/dist/
 
 # Output directories
 bin/
@@ -68,3 +69,7 @@ coverage/
 
 # Optional CRT USB build
 /build-crt/
+
+# Showcase pipeline: save states copied from the emulator and the rendered outputs
+tools/showcase/states/
+tools/showcase/out/

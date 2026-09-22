@@ -62,7 +62,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant ReduceParams& _25 [[
             float3 v = fast::max(tex_input.read(uint2(int2(x_1, y_1)), 0).xyz, float3(0.0));
             if (_25.input_gamma > 0.0)
             {
-                v = powr(v, float3(_25.input_gamma));
+                v = pow(v, float3(_25.input_gamma));
             }
             light_1 += (v * (overlap.x * overlap.y));
         }

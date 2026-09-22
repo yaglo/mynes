@@ -14,6 +14,11 @@
 #include <string.h>
 #include <math.h>
 
+/* Strict C11 hides M_PI (it is a POSIX extension). */
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 /* Hook macros are defined in nes/hooks.h (included before this file by nes.h).
  * Provide no-op fallbacks if used standalone. */
 #ifndef HOOK_APU_REG

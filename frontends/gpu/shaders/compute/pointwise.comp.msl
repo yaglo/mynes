@@ -68,11 +68,11 @@ kernel void main0(constant Params& _20 [[buffer(0)]], device InputBuf& _36 [[buf
             float _99;
             if (x >= 0.0)
             {
-                _99 = powr(x, exponent);
+                _99 = pow(x, exponent);
             }
             else
             {
-                _99 = -powr(-x, exponent);
+                _99 = -pow(-x, exponent);
             }
             y = _99;
             break;

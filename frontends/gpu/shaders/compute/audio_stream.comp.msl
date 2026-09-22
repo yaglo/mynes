@@ -69,24 +69,24 @@ struct Output
 constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(1u);
 
 static inline __attribute__((always_inline))
-float filter_rc(thread const int& i, thread const float& x, constant Params& _24, thread spvUnsafeArray<float, 14>& state)
+float filter_rc(thread const int& i, thread const float& x, constant Params& v_24, thread spvUnsafeArray<float, 14>& state)
 {
     float _34;
-    if (_24.rc[i].z != 0.0)
+    if (v_24.rc[i].z != 0.0)
     {
-        _34 = _24.rc[i].x * ((state[(2 * i) + 1] + x) - state[2 * i]);
+        _34 = v_24.rc[i].x * ((state[(2 * i) + 1] + x) - state[2 * i]);
     }
     else
     {
-        _34 = (_24.rc[i].x * state[(2 * i) + 1]) + (_24.rc[i].y * x);
+        _34 = (v_24.rc[i].x * state[(2 * i) + 1]) + (v_24.rc[i].y * x);
     }
     float y = _34;
     state[2 * i] = x;
     state[(2 * i) + 1] = y;
-    return (_24.rc[i].w != 0.0) ? y : x;
+    return (v_24.rc[i].w != 0.0) ? y : x;
 }
 
-kernel void main0(constant Params& _24 [[buffer(0)]], device Input& _112 [[buffer(1)]], device Output& _347 [[buffer(2)]])
+kernel void main0(constant Params& v_24 [[buffer(0)]], const device Input& _112 [[buffer(1)]], device Output& _347 [[buffer(2)]])
 {
     spvUnsafeArray<float, 14> state;
     for (int i = 0; i < 14; i++)
@@ -99,25 +99,25 @@ kernel void main0(constant Params& _24 [[buffer(0)]], device Input& _112 [[buffe
     {
         rng = 42u;
     }
-    for (uint n = 0u; n < _24.count; n++)
+    for (uint n = 0u; n < v_24.count; n++)
     {
         float y = _112.src[16u + n];
         for (int i_1 = 0; i_1 < 3; i_1++)
         {
             int param = i_1;
             float param_1 = y;
-            float _163 = filter_rc(param, param_1, _24, state);
+            float _163 = filter_rc(param, param_1, v_24, state);
             y = _163;
         }
-        if ((_24.flags & 1u) != 0u)
+        if ((v_24.flags & 1u) != 0u)
         {
-            y = precise::tanh(y * _24.effects.x) / _24.effects.x;
+            y = precise::tanh(y * v_24.effects.x) / v_24.effects.x;
         }
-        if ((_24.flags & 2u) != 0u)
+        if ((v_24.flags & 2u) != 0u)
         {
-            y += (_24.effects.y * ((sin(phase) + (_24.harmonics.x * sin(2.0 * phase))) + (_24.harmonics.y * sin(3.0 * phase))));
+            y += (v_24.effects.y * ((sin(phase) + (v_24.harmonics.x * sin(2.0 * phase))) + (v_24.harmonics.y * sin(3.0 * phase))));
         }
-        phase += _24.effects.z;
+        phase += v_24.effects.z;
         if (phase >= 6.283185482025146484375)
         {
             phase -= 6.283185482025146484375;
@@ -125,25 +125,25 @@ kernel void main0(constant Params& _24 [[buffer(0)]], device Input& _112 [[buffe
         rng ^= (rng << uint(13));
         rng ^= (rng >> uint(17));
         rng ^= (rng << uint(5));
-        if ((_24.flags & 4u) != 0u)
+        if ((v_24.flags & 4u) != 0u)
         {
-            y += (((float(rng >> uint(8)) / 8388608.0) - 1.0) * _24.effects.w);
+            y += (((float(rng >> uint(8)) / 8388608.0) - 1.0) * v_24.effects.w);
         }
         for (int i_2 = 3; i_2 < 5; i_2++)
         {
             int param_2 = i_2;
             float param_3 = y;
-            float _268 = filter_rc(param_2, param_3, _24, state);
+            float _268 = filter_rc(param_2, param_3, v_24, state);
             y = _268;
         }
-        if ((_24.flags & 8u) != 0u)
+        if ((v_24.flags & 8u) != 0u)
         {
             for (int i_3 = 0; i_3 < 2; i_3++)
             {
-                float4 b = _24.speaker[2 * i_3];
+                float4 b = v_24.speaker[2 * i_3];
                 float z = (b.x * y) + state[10 + (2 * i_3)];
                 state[10 + (2 * i_3)] = ((b.y * y) - (b.w * z)) + state[11 + (2 * i_3)];
-                state[11 + (2 * i_3)] = (b.z * y) - (_24.speaker[(2 * i_3) + 1].x * z);
+                state[11 + (2 * i_3)] = (b.z * y) - (v_24.speaker[(2 * i_3) + 1].x * z);
                 y = z;
             }
         }
