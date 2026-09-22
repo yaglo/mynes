@@ -5,6 +5,9 @@ void gpu_output_geometry(SDL_Window *window, GPUOutputGeometry *out) {
     (void)window;
     *out=(GPUOutputGeometry){.scale_x=1,.scale_y=1};
 }
+void gpu_output_disable_desktop_spaces(void) {}
+void gpu_output_watch_globe(void) {}
+bool gpu_output_globe_key(const SDL_KeyboardEvent *key) { (void)key; return false; }
 #endif
 
 bool gpu_output_toggle_fullscreen(SDL_Window *window, bool native) {

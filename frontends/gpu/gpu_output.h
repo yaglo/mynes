@@ -10,4 +10,14 @@ typedef struct {
 } GPUOutputGeometry;
 void gpu_output_geometry(SDL_Window *window, GPUOutputGeometry *out);
 bool gpu_output_toggle_fullscreen(SDL_Window *window, bool native);
+/* Keep macOS from moving the window into a Space of its own (Globe+F, the
+ * green button): that fullscreen runs at the scaled desktop size, which the
+ * compositor resamples. Call before SDL_Init. */
+void gpu_output_disable_desktop_spaces(void);
+/* Globe (fn) chords. SDL reports no modifier for the Globe key and the text
+ * system still types the letter, so Globe+F would reach text fields as "f".
+ * After SDL_Init, the filter drops text typed with Globe held and marks the
+ * key event; gpu_output_globe_key() tells whether a key-down was a chord. */
+void gpu_output_watch_globe(void);
+bool gpu_output_globe_key(const SDL_KeyboardEvent *key);
 #endif

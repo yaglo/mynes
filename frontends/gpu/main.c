@@ -464,6 +464,15 @@ static bool frame_wanted(unsigned frame, const int *list, int n) {
  * Input handling
  * ============================================================================ */
 
+/* F (alone or with Globe), F11 and Alt+Return. Panel-pixel mask alignment
+ * asks for the panel's native mode so the desktop scaler never touches the
+ * picture. */
+static void toggle_fullscreen(void) {
+    render_scale_settle = 2;
+    if (!gpu_output_toggle_fullscreen(window, render_ctx.mask_alignment == 0))
+        fprintf(stderr, "Fullscreen: %s\n", SDL_GetError());
+}
+
 static void handle_key(SDL_Scancode sc, bool down) {
     uint8_t mask = 0;
     int player = 0;
@@ -827,7 +836,7 @@ int main(int argc, char **argv) {
                    "  --room-reflections    Enable simulated room light and glare (G toggles)\n"
                    "  --no-room-reflections Disable simulated room light (default)\n"
                    "  --sdr                 Use SDR output for display comparisons\n"
-                   "  --native-fullscreen   Enter native panel mode (F11 toggles back)\n"
+                   "  --native-fullscreen   Enter native panel mode (F toggles back)\n"
                    "  --mask-alignment M    pixels (default) or physical CRT pitch\n"
                    "  --render-scale S      Internal CRT resolution: 1, 0.75, 0.5 or auto\n"
                    "                        (default 1; auto starts at 1 and steps down\n"
@@ -855,10 +864,11 @@ int main(int argc, char **argv) {
                    "  Gamepads hot-plug as P1 then P2: d-pad/left stick, EAST = A,\n"
                    "  SOUTH = B, BACK = Select, START = Start, GUIDE = menu,\n"
                    "  right shoulder = fast-forward\n"
-                   "  Escape/M menu, Space pause, ` fast-forward, F11 or Alt+Return\n"
-                   "  fullscreen, R reset, G room reflections, O ROM browser, P presets,\n"
-                   "  F5 save state, F7 load state, F6 next state slot (4 slots),\n"
-                   "  F12 screenshot, Ctrl+Q quit. Developer keys sit behind Ctrl.\n"
+                   "  Escape/M menu, Space pause, ` fast-forward, F, Globe+F, F11 or\n"
+                   "  Alt+Return fullscreen, R reset, G room reflections, O ROM browser,\n"
+                   "  P presets, F5 save state, F7 load state, F6 next state slot\n"
+                   "  (4 slots), F12 screenshot, Ctrl+Q quit. Developer keys sit behind\n"
+                   "  Ctrl.\n"
                    "  Battery RAM (.sav) and state slots are kept under the config\n"
                    "  directory, e.g. ~/.config/mynes/saves and ~/.config/mynes/states.\n",
                    argv[0]);
@@ -899,10 +909,12 @@ int main(int argc, char **argv) {
     low_latency=mynes_config.gpu_low_latency;
 
     /* --- SDL3 init --- */
+    gpu_output_disable_desktop_spaces();
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD)) {
         fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return 1;
     }
+    gpu_output_watch_globe();
 
     gpu = SDL_CreateGPUDevice(
         SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_MSL | SDL_GPU_SHADERFORMAT_METALLIB,
@@ -1498,6 +1510,11 @@ int main(int argc, char **argv) {
                 case SDL_EVENT_KEY_DOWN:
                     /* Browser input must not reach emulator hotkeys. */
                     if (browser_active) {
+                        /* Globe+F toggles fullscreen here too; plain F types. */
+                        if (ev.key.scancode == SDL_SCANCODE_F && gpu_output_globe_key(&ev.key)) {
+                            if (!ev.key.repeat) toggle_fullscreen();
+                            break;
+                        }
                         int bk = sdl_to_browser_key(ev.key.scancode);
                         /* Quietly ignore unmapped keys when browsing. */
                         if (bk >= 0) browser_key((BrowserKey)bk, &console_changed, &static_frame_buf);
@@ -1576,12 +1593,11 @@ int main(int argc, char **argv) {
                                    render_ctx.crt_shader_enabled ? "on" : "off");
                         }
                     }
-                    /* F11 or Alt+Return: toggle fullscreen + hide cursor. Plain F
-                     * is free so it cannot collide with player 2's keys. */
-                    if (ev.key.scancode == SDL_SCANCODE_F11 ||
+                    /* F (also with Globe), F11 or Alt+Return: toggle fullscreen
+                     * and hide the cursor. */
+                    if (ev.key.scancode == SDL_SCANCODE_F || ev.key.scancode == SDL_SCANCODE_F11 ||
                         (alt && ev.key.scancode == SDL_SCANCODE_RETURN)) {
-                        if(!ev.key.repeat && !gpu_output_toggle_fullscreen(window,render_ctx.mask_alignment==0))
-                            fprintf(stderr,"Fullscreen: %s\n",SDL_GetError());
+                        if (!ev.key.repeat) toggle_fullscreen();
                         break;
                     }
                     /* Ctrl+D: dump GPU pipeline output as PPM for debugging. */
