@@ -1,10 +1,11 @@
 /* Clip recorder without a GPU: frame arithmetic, ffmpeg command lines, the
- * rgb24 conversion against the PPM writer, the rawvideo/audio muxing helper
- * end to end (frames piped through ffmpeg and read back with ffmpeg and
- * ffprobe), an HDR clip through ProRes and back with its colour tags, the
- * OUT.json sidecar, the HDR flags, the worker's capture window with a
- * replay offset, and input recording. The ffmpeg parts are skipped, not failed, when ffmpeg or
- * ffprobe is missing from PATH. */
+ * rgb24 conversion against the PPM writer, the OUT.json sidecar and the
+ * clip's light levels with a stand-in ffmpeg, the rawvideo/audio muxing
+ * helper end to end (frames piped through ffmpeg and read back with ffmpeg
+ * and ffprobe), an HDR clip through ProRes and back with its colour tags,
+ * the HDR flags, the worker's capture window with a replay offset, and
+ * input recording. The parts that need the real ffmpeg are skipped, not
+ * failed, when ffmpeg or ffprobe is missing from PATH. */
 #define _POSIX_C_SOURCE 200809L
 #define _DARWIN_C_SOURCE
 #include "recorder.h"
@@ -15,6 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 static int failures;
@@ -489,16 +491,93 @@ static void test_end_to_end(const char *directory) {
     CHECK(strstr(error, "at least one frame") != NULL);
 }
 
-/* Four 16-pixel columns: SDR white, 4x white, BT.709 red and black, as the
- * half-float target holds them. ProRes codes flat 8x8 blocks closely. */
-static void fill_hdr_frame(uint16_t *rgba) {
-    const uint16_t columns[4][3] = { { 0x3c00, 0x3c00, 0x3c00 }, { 0x4400, 0x4400, 0x4400 },
-                                     { 0x3c00, 0, 0 }, { 0, 0, 0 } };
-    for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) {
-        uint16_t *px = rgba + ((size_t)y * W + x) * 4;
-        memcpy(px, columns[x / 16], sizeof(columns[0]));
-        px[3] = 0x3c00;
+/* An HDR clip of six frames, each four 16-pixel columns of half floats as
+ * the target holds them; ProRes codes flat 8x8 blocks closely. The first
+ * is SDR white, 4x white, BT.709 red and black. The clip's brightest pixel (5.0, 1015 nits) and its brightest
+ * frame average (1.5, 1.5, 1.5 and 1.25: 291.8 nits) sit in two other
+ * frames, and the last frame is dark, so neither the last frame's levels
+ * nor an average over frames gives OUT.json's values. */
+enum { HDR_FRAMES = 6 };
+static const uint16_t hdr_columns[HDR_FRAMES][4][3] = {
+    { { 0x3c00, 0x3c00, 0x3c00 }, { 0x4400, 0x4400, 0x4400 }, { 0x3c00, 0, 0 }, { 0, 0, 0 } },
+    { { 0x3800, 0x3800, 0x3800 }, { 0x3400, 0x3400, 0x3400 }, { 0, 0, 0 }, { 0, 0, 0 } },
+    { { 0, 0, 0 }, { 0, 0, 0 }, { 0x4500, 0x4500, 0x4500 }, { 0, 0, 0 } },
+    { { 0x3e00, 0x3e00, 0x3e00 }, { 0x3e00, 0x3e00, 0x3e00 }, { 0x3e00, 0x3e00, 0x3e00 },
+      { 0x3d00, 0x3d00, 0x3d00 } },
+    { { 0x3800, 0x3800, 0x3800 }, { 0x3400, 0x3400, 0x3400 }, { 0, 0, 0 }, { 0, 0, 0 } },
+    { { 0x3800, 0x3800, 0x3800 }, { 0x3400, 0x3400, 0x3400 }, { 0, 0, 0 }, { 0, 0, 0 } } };
+static void push_hdr_clip(Recorder *r) {
+    static uint16_t rgba[W * H * 4];
+    for (unsigned f = 0; f < HDR_FRAMES; f++) {
+        for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) {
+            uint16_t *px = rgba + ((size_t)y * W + x) * 4;
+            memcpy(px, hdr_columns[f][x / 16], sizeof(hdr_columns[f][0]));
+            px[3] = 0x3c00;
+        }
+        FrameCaptureImage image = { .pixels = rgba, .width = W, .height = H, .hdr = true, .white_level = 1 };
+        CHECK(recorder_push_frame(r, &image));
     }
+}
+
+/* OUT.json of that clip at 203 nits and headroom 5: max_cll 5 x 203 and
+ * max_fall 203 x (1.5 x 3 + 1.25) / 4. */
+static const char hdr_json[] =
+    "{\n  \"frames\": 6,\n  \"rate\": 60.0988,\n  \"width\": 64,\n  \"height\": 48,\n"
+    "  \"hdr\": true,\n  \"white_nits\": 203,\n  \"headroom\": 5,\n"
+    "  \"max_cll\": 1015,\n  \"max_fall\": 292\n}\n";
+
+/* The sidecar needs no real ffmpeg: a stand-in that drains its stdin and
+ * creates its last argument, the encode's video or the mux's output, lets
+ * a recording run to OUT.json. */
+static void test_sidecar(const char *directory) {
+    char stub[512], output[512], json[512], text[1024], error[2048];
+    snprintf(stub, sizeof(stub), "%s/ffmpeg-stub", directory);
+    FILE *f = fopen(stub, "w");
+    CHECK(f != NULL);
+    if (!f) return;
+    fputs("#!/bin/sh\ncat >/dev/null\nfor last; do :; done\n: > \"$last\"\n", f);
+    fclose(f);
+    CHECK(chmod(stub, 0755) == 0);
+
+    snprintf(output, sizeof(output), "%s/stub.mov", directory);
+    snprintf(json, sizeof(json), "%s/stub.json", directory);
+    RecorderOptions options = { .output = output, .ffmpeg = stub, .seconds = 0.5, .region = 0,
+        .width = W, .height = H, .headroom = 1.6 };
+    Recorder *r = recorder_create(&options, error, sizeof(error));
+    CHECK(r != NULL);
+    if (!r) { fprintf(stderr, "  %s\n", error); return; }
+    static uint8_t rgba[W * H * 4];
+    for (unsigned n = 0; n < FRAMES; n++) {
+        fill_frame(rgba, n, false);
+        FrameCaptureImage image = { .pixels = rgba, .width = W, .height = H, .white_level = 1 };
+        CHECK(recorder_push_frame(r, &image));
+    }
+    write_sine(recorder_audio_file(r), (unsigned)lround(FRAMES * 44100 / 60.0988));
+    bool finished = recorder_finish(r, error, sizeof(error));
+    if (!finished) fprintf(stderr, "  finish: %s\n", error);
+    CHECK(finished);
+    recorder_destroy(r);
+    /* An SDR clip: no light levels, the render's headroom. */
+    CHECK(!strcmp(read_text(json, text, sizeof(text)),
+        "{\n  \"frames\": 30,\n  \"rate\": 60.0988,\n  \"width\": 64,\n  \"height\": 48,\n"
+        "  \"hdr\": false,\n  \"white_nits\": 100,\n  \"headroom\": 1.6\n}\n"));
+
+    snprintf(output, sizeof(output), "%s/stub-hdr.mov", directory);
+    snprintf(json, sizeof(json), "%s/stub-hdr.json", directory);
+    options = (RecorderOptions){ .output = output, .ffmpeg = stub, .seconds = 0.1, .region = 0,
+        .width = W, .height = H, .hdr = true, .headroom = 5 };
+    r = recorder_create(&options, error, sizeof(error));
+    CHECK(r != NULL);
+    if (!r) { fprintf(stderr, "  %s\n", error); return; }
+    CHECK(recorder_frames(r) == HDR_FRAMES);
+    push_hdr_clip(r);
+    write_sine(recorder_audio_file(r), 4410);
+    finished = recorder_finish(r, error, sizeof(error));
+    if (!finished) fprintf(stderr, "  finish: %s\n", error);
+    CHECK(finished);
+    recorder_destroy(r);
+    CHECK(!strcmp(read_text(json, text, sizeof(text)), hdr_json));
+    if (strcmp(text, hdr_json)) fprintf(stderr, "  %s", text);
 }
 
 /* BT.2020 non-constant-luminance Y'CbCr of a PQ R'G'B' triple in 10-bit
@@ -518,15 +597,13 @@ static void test_hdr_end_to_end(const char *directory) {
     snprintf(decoded, sizeof(decoded), "%s/hdr.yuv", directory);
     snprintf(json, sizeof(json), "%s/hdr.json", directory);
     RecorderOptions options = { .output = output, .seconds = 0.1, .after = 0, .region = 0,
-        .width = W, .height = H, .hdr = true, .headroom = 4 };
+        .width = W, .height = H, .hdr = true, .headroom = 5 };
     Recorder *r = recorder_create(&options, error, sizeof(error));
     CHECK(r != NULL);
     if (!r) { fprintf(stderr, "  %s\n", error); return; }
-    static uint16_t rgba[W * H * 4];
     static uint8_t sdr[W * H * 4];
-    fill_hdr_frame(rgba);
-    FrameCaptureImage image = { .pixels = rgba, .width = W, .height = H, .hdr = true, .white_level = 1 };
-    for (unsigned f = 0; f < recorder_frames(r); f++) CHECK(recorder_push_frame(r, &image));
+    CHECK(recorder_frames(r) == HDR_FRAMES);
+    push_hdr_clip(r);
     write_sine(recorder_audio_file(r), 4410);
     bool finished = recorder_finish(r, error, sizeof(error));
     if (!finished) fprintf(stderr, "  finish: %s\n", error);
@@ -552,7 +629,7 @@ static void test_hdr_end_to_end(const char *directory) {
     CHECK(probe(output, "a:0", "codec_name", info, sizeof(info)));
     CHECK(probe_value(info, "codec_name", value, sizeof(value)) && !strcmp(value, "aac"));
 
-    /* The codes the file stores, as a player reads them: decoded in the
+    /* The codes of the first frame as a player reads them: decoded in the
      * ProRes 4444 decoder's own 12 bits with no colour conversion, against
      * BT.2020 limited range worked out here. Black is 64/512/512, SDR white
      * Y' 573 and 4x white Y' 703 in 10 bits. A conversion back to RGB
@@ -593,15 +670,8 @@ static void test_hdr_end_to_end(const char *directory) {
     fprintf(stderr, "recorder: HDR ProRes codes within %.2f of a 10-bit code, column means within %.2f\n",
             worst, worst_mean);
 
-    /* Brightest pixel 4 x 203 nits; frame average of the largest component
-     * of white, 4x white, red and black. */
-    char expected_json[512];
-    snprintf(expected_json, sizeof(expected_json),
-        "{\n  \"frames\": 6,\n  \"rate\": 60.0988,\n  \"width\": 64,\n  \"height\": 48,\n"
-        "  \"hdr\": true,\n  \"white_nits\": 203,\n  \"headroom\": 4,\n"
-        "  \"max_cll\": 812,\n  \"max_fall\": %.0f\n}\n", (203 + 812 + 203 * red[0]) / 4);
-    CHECK(!strcmp(read_text(json, text, sizeof(text)), expected_json));
-    if (strcmp(text, expected_json)) fprintf(stderr, "  %s", text);
+    CHECK(!strcmp(read_text(json, text, sizeof(text)), hdr_json));
+    if (strcmp(text, hdr_json)) fprintf(stderr, "  %s", text);
 
     /* An 8-bit target cannot feed an HDR recording. */
     snprintf(output, sizeof(output), "%s/hdr-from-sdr.mov", directory);
@@ -780,6 +850,7 @@ int main(void) {
     test_rgb24(directory);
     test_flags();
     test_hdr_options(directory);
+    test_sidecar(directory);
     if (tool_available("ffmpeg") && tool_available("ffprobe")) {
         test_end_to_end(directory);
         test_hdr_end_to_end(directory);
