@@ -12,9 +12,7 @@ bool gpu_output_globe_key(const SDL_KeyboardEvent *key) { (void)key; return fals
 
 bool gpu_output_toggle_fullscreen(SDL_Window *window, bool native) {
     if (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) {
-        if (!SDL_SetWindowFullscreen(window,false)) return false;
-        SDL_ShowCursor();
-        return true;
+        return SDL_SetWindowFullscreen(window,false);
     }
     GPUOutputGeometry geometry;
     gpu_output_geometry(window,&geometry);
@@ -35,8 +33,6 @@ bool gpu_output_toggle_fullscreen(SDL_Window *window, bool native) {
         SDL_free(modes);
         if (!found) return SDL_SetError("No native fullscreen mode for this panel");
     }
-    if (!SDL_SetWindowFullscreenMode(window,found ? &chosen : NULL) ||
-        !SDL_SetWindowFullscreen(window,true)) return false;
-    SDL_HideCursor();
-    return true;
+    return SDL_SetWindowFullscreenMode(window,found ? &chosen : NULL) &&
+           SDL_SetWindowFullscreen(window,true);
 }

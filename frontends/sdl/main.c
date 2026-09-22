@@ -2435,13 +2435,10 @@ static void apply_display_for_nes_region(int nes_region) {
 
 void toggle_fullscreen(void) {
     Uint32 flags = SDL_GetWindowFlags(window);
-    if (flags & SDL_WINDOW_FULLSCREEN_DESKTOP) {
+    if (flags & SDL_WINDOW_FULLSCREEN_DESKTOP)
         SDL_SetWindowFullscreen(window, 0);
-        SDL_ShowCursor(SDL_ENABLE);
-    } else {
+    else
         SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
-        SDL_ShowCursor(SDL_DISABLE);
-    }
     /* Recreate the composite texture so its vertical resolution
      * matches the new display size — prevents moiré scanline banding. */
     comp_reconfigure_for_window();
@@ -2764,6 +2761,9 @@ int main(int argc, char *argv[]) {
         SDL_Quit();
         return 1;
     }
+    /* The pointer stays hidden over the picture, windowed or fullscreen,
+     * while MyNES is the active app. */
+    SDL_ShowCursor(SDL_DISABLE);
 
     /*
      * Vsync ON by default — kills horizontal tearing on content with

@@ -942,6 +942,11 @@ int main(int argc, char **argv) {
         SDL_Quit();
         return 1;
     }
+    /* Nothing is clicked; the pointer stays hidden over the picture in a
+     * window and in fullscreen while MyNES is the active app. macOS lets
+     * the frontmost app set the pointer, so it shows over a background
+     * window. The title bar keeps it. */
+    SDL_HideCursor();
 
     /* Optional native side-by-side review, sized in UI coordinates while
      * the renderer still resolves the mask in actual drawable pixels. */
@@ -1593,8 +1598,7 @@ int main(int argc, char **argv) {
                                    render_ctx.crt_shader_enabled ? "on" : "off");
                         }
                     }
-                    /* F (also with Globe), F11 or Alt+Return: toggle fullscreen
-                     * and hide the cursor. */
+                    /* F (also with Globe), F11 or Alt+Return: toggle fullscreen. */
                     if (ev.key.scancode == SDL_SCANCODE_F || ev.key.scancode == SDL_SCANCODE_F11 ||
                         (alt && ev.key.scancode == SDL_SCANCODE_RETURN)) {
                         if (!ev.key.repeat) toggle_fullscreen();
