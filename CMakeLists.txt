@@ -671,6 +671,14 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
             add_test(NAME gpu_recorder_tests COMMAND test_recorder)
             set_tests_properties(gpu_recorder_tests PROPERTIES TIMEOUT 120)
 
+            # HDR recording conversion: PQ curve, BT.2020 matrix, lookup
+            # accuracy, every half-float input and the frame light statistics.
+            add_executable(test_frame_pq frontends/gpu/tests/test_frame_pq.c
+                frontends/gpu/frame_pq.c)
+            target_include_directories(test_frame_pq PRIVATE frontends/gpu)
+            target_link_libraries(test_frame_pq PRIVATE m pthread)
+            add_test(NAME gpu_frame_pq_tests COMMAND test_frame_pq)
+
             # GPU pipeline integration test (headless SDL3 GPU compute)
             add_executable(test_pipeline
                 frontends/gpu/tests/test_pipeline.c
