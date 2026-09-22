@@ -1,8 +1,8 @@
 /* HDR recording conversion: the ST 2084 curve at its published points, the
  * BT.709 to BT.2020 matrix, the table lookup against the exact curve, every
- * half-float input through a whole-frame conversion, the frame light
- * statistics and the threaded bands. Prints the time of one 3840x2880
- * conversion. */
+ * half-float input through a whole-frame conversion to limited-range
+ * Y'CbCr, the frame light statistics and the threaded bands. Prints the
+ * time of one 3840x2880 conversion. */
 #define _POSIX_C_SOURCE 200809L
 #include "frame_pq.h"
 #include "gpu_half.h"
@@ -22,10 +22,32 @@ static uint16_t half_bits(float v) {
     return 0;
 }
 
-static uint16_t code(double signal) { return (uint16_t)lround(signal * 65535); }
+/* BT.2020 non-constant-luminance Y'CbCr of a PQ R'G'B' triple as BT.2100
+ * limited-range 16-bit codes, in double precision: Y' 4096..60160, Cb and
+ * Cr 4096..61440 around 32768. */
+static void ycbcr(const double e[3], double out[3]) {
+    double y = 0.2627 * e[0] + 0.6780 * e[1] + 0.0593 * e[2];
+    out[0] = 4096 + 56064 * y;
+    out[1] = 32768 + 57344 * (e[2] - y) / 1.8814;
+    out[2] = 32768 + 57344 * (e[0] - y) / 1.4746;
+}
+
+static double luma_code(double nits) {
+    double e[3] = { frame_pq_encode(nits), frame_pq_encode(nits), frame_pq_encode(nits) }, out[3];
+    ycbcr(e, out);
+    return out[0];
+}
+
 /* Within one 16-bit code: the matrix rows sum to 1 only within float
  * rounding, and the lookup sits 0.06 of a code from the exact curve. */
-static bool near(uint16_t got, uint16_t want) { return abs((int)got - (int)want) <= 1; }
+static bool near(uint16_t got, double want) { return fabs(got - want) <= 1; }
+
+/* Sample i of plane p (0 Y', 1 Cb, 2 Cr) in a frame of n pixels. */
+static uint16_t sample(const uint16_t *yuv, size_t n, int p, size_t i) { return yuv[(size_t)p * n + i]; }
+
+static bool is_grey(const uint16_t *yuv, size_t n, size_t i, double luma) {
+    return near(sample(yuv, n, 0, i), luma) && sample(yuv, n, 1, i) == 32768 && sample(yuv, n, 2, i) == 32768;
+}
 
 static void test_curve(void) {
     /* BT.2100 / BT.2408: SDR reference white at 203 nits is PQ 0.5806. */
@@ -44,6 +66,14 @@ static void test_matrix(void) {
     CHECK(fabsf(out[0] - 0.6274f) < 5e-5f && fabsf(out[1] - 0.0691f) < 5e-5f && fabsf(out[2] - 0.0164f) < 5e-5f);
     frame_pq_bt2020(white, out);
     CHECK(fabsf(out[0] - 1) < 1e-6f && fabsf(out[1] - 1) < 1e-6f && fabsf(out[2] - 1) < 1e-6f);
+    /* The limited-range codes at 10 bits (16-bit / 64): white 940, BT.2020
+     * blue at the peak Y' 116, Cb 960, Cr 476. */
+    const double peak_white[3] = { 1, 1, 1 }, blue[3] = { 0, 0, 1 };
+    double c[3];
+    ycbcr(peak_white, c);
+    CHECK(c[0] == 60160 && c[1] == 32768 && c[2] == 32768);
+    ycbcr(blue, c);
+    CHECK(lround(c[0] / 64) == 116 && c[1] == 61440 && lround(c[2] / 64) == 476);
 }
 
 /* The lookup against the exact curve from 1e-9 nits to the 10000 peak. */
@@ -57,13 +87,14 @@ static void test_lookup(const FramePQ *pq) {
     fprintf(stderr, "frame_pq: largest lookup error %.2e (%.3f of a 10-bit code, %.3f of a 16-bit code) at %.3g nits\n",
             worst, worst * 1023, worst * 65535, worst_nits);
     CHECK(worst < 1.0 / 1023);
-    CHECK(worst < 1.0 / 65535);   /* finer than the rgb48 output */
+    CHECK(worst < 1.0 / 65535);   /* finer than a 16-bit code */
     CHECK(frame_pq_lookup(pq, 0) < 1e-5f && frame_pq_lookup(pq, -1) == frame_pq_lookup(pq, 0));
     CHECK(frame_pq_lookup(pq, 10000) == 1 && frame_pq_lookup(pq, 1e9f) == 1);
 }
 
 /* Every half value as a grey pixel: grey stays grey through the matrix, so
- * each channel is PQ(value * 203) or black for negative and non-finite. */
+ * Y' is PQ(value * 203), or black for negative and non-finite, and Cb and
+ * Cr are 32768. */
 static void test_every_half(const FramePQ *pq) {
     enum { N = 65536 };
     uint16_t *px = malloc(N * 4 * sizeof(uint16_t)), *out = malloc(N * 3 * sizeof(uint16_t));
@@ -75,17 +106,17 @@ static void test_every_half(const FramePQ *pq) {
     FrameCaptureImage image = { .pixels = px, .width = 256, .height = 256, .hdr = true, .white_level = 1 };
     FramePQLight light;
     CHECK(frame_pq_convert(pq, &image, out, &light));
-    int worst = 0;
+    double worst = 0;
+    bool neutral = true;
     for (unsigned i = 0; i < N; i++) {
         float v = gpu_half_to_float((uint16_t)i);
-        double expected = isfinite(v) && v > 0 ? frame_pq_encode(v * 203.0) : frame_pq_encode(0);
-        for (int c = 0; c < 3; c++) {
-            int diff = abs((int)out[i*3+c] - (int)code(expected));
-            if (diff > worst) worst = diff;
-        }
+        double expected = luma_code(isfinite(v) && v > 0 ? v * 203.0 : 0);
+        worst = fmax(worst, fabs(sample(out, N, 0, i) - expected));
+        neutral = neutral && sample(out, N, 1, i) == 32768 && sample(out, N, 2, i) == 32768;
     }
-    CHECK(worst <= 1);
-    CHECK(out[0] == 0 && near(out[0x3c00*3], 38055));   /* 0 and 1.0 */
+    CHECK(worst <= 1 && neutral);
+    /* 0 and 1.0: 4096 + 56064 x 0.580689 = 36651.74. */
+    CHECK(out[0] == 4096 && out[0x3c00] == 36652);
     CHECK(fabs(light.max_nits - 10000) < 1e-6);   /* 65504 * 203 clamps to the peak */
     free(px); free(out);
 }
@@ -105,19 +136,21 @@ static void test_frame(const FramePQ *pq) {
     uint16_t out[6 * 3];
     FramePQLight light;
     CHECK(frame_pq_convert(pq, &image, out, &light));
-    uint16_t white = code(frame_pq_encode(203)), bright = code(frame_pq_encode(812));
-    CHECK(white == 38055);
-    CHECK(near(out[0], white) && near(out[1], white) && near(out[2], white));
-    CHECK(near(out[3], bright) && near(out[4], bright) && near(out[5], bright));
-    CHECK(out[6] == 65535 && out[7] == 65535 && out[8] == 65535);
-    CHECK(out[9] == 0 && out[10] == 0 && out[11] == 0);
+    CHECK(fabs(luma_code(203) - 36651.74) < 0.01);
+    CHECK(is_grey(out, 6, 0, luma_code(203)) && is_grey(out, 6, 1, luma_code(812)));
+    CHECK(out[2] == 60160 && is_grey(out, 6, 2, 60160));   /* the 10000-nit peak */
+    CHECK(out[3] == 4096 && is_grey(out, 6, 3, 4096));
     /* Outside BT.709 but inside BT.2020: every component stays positive. */
     float in[3] = { -0.25f, 1, -0.0625f }, wide[3];
     frame_pq_bt2020(in, wide);
     CHECK(wide[0] > 0 && wide[1] > 0 && wide[2] > 0);
     float wide_max = fmaxf(wide[0], fmaxf(wide[1], wide[2]));
-    for (int c = 0; c < 3; c++) CHECK(near(out[12+c], code(frame_pq_encode(wide[c] * 203.0))));
-    CHECK(out[15] == 0 && out[16] == 0 && out[17] == 0);
+    double e[3], want[3];
+    for (int c = 0; c < 3; c++) e[c] = frame_pq_encode(wide[c] * 203.0);
+    ycbcr(e, want);
+    for (int c = 0; c < 3; c++) CHECK(near(sample(out, 6, c, 4), want[c]));
+    CHECK(want[1] < 32768 - 1000 && want[2] < 32768 - 1000);   /* a green, not a grey */
+    CHECK(out[5] == 4096 && is_grey(out, 6, 5, 4096));
     /* Largest component per pixel: 203, 812, 10000, 0, 203 * wide_max, 0. */
     CHECK(fabs(light.max_nits - 10000) < 1e-6);
     double mean = (203 + 812 + 10000 + 203.0 * wide_max) / 6;
@@ -125,8 +158,7 @@ static void test_frame(const FramePQ *pq) {
     /* The stored values are divided by the image's white level. */
     image.white_level = 2;
     CHECK(frame_pq_convert(pq, &image, out, &light));
-    uint16_t half_white = code(frame_pq_encode(101.5));
-    CHECK(near(out[0], half_white) && near(out[3], code(frame_pq_encode(406))));
+    CHECK(is_grey(out, 6, 0, luma_code(101.5)) && is_grey(out, 6, 1, luma_code(406)));
     CHECK(fabs(light.max_nits - 25 * 203) < 1e-3);
     /* Unusable input. */
     image.hdr = false;
@@ -165,14 +197,17 @@ static void time_large_frame(const FramePQ *pq) {
     fprintf(stderr, "frame_pq: 3840x2880 conversion %.1f ms (best of 5)\n", best);
     CHECK(fabs(light.max_nits - 3.75 * 203) < 1e-3);
     /* The threaded bands cover every row once: each row converted on its
-     * own (one thread) gives the same codes and the same light. */
+     * own (one thread) gives the same codes in each plane and the same
+     * light. */
     uint16_t *row = malloc((size_t)W * 6);
     double max_nits = 0, sum = 0;
     bool same = row != NULL;
     for (int y = 0; y < H && same; y++) {
         FrameCaptureImage one = { .pixels = px + (size_t)y * W * 4, .width = W, .height = 1, .hdr = true, .white_level = 1 };
         FramePQLight row_light;
-        same = frame_pq_convert(pq, &one, row, &row_light) && !memcmp(row, out + (size_t)y * W * 3, (size_t)W * 6);
+        same = frame_pq_convert(pq, &one, row, &row_light);
+        for (int p = 0; p < 3 && same; p++)
+            same = !memcmp(row + (size_t)p * W, out + (size_t)p * n + (size_t)y * W, (size_t)W * 2);
         max_nits = fmax(max_nits, row_light.max_nits);
         sum += row_light.mean_nits;
     }

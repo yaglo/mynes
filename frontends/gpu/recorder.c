@@ -159,16 +159,20 @@ bool recorder_encode_command(RecorderCommand *cmd, const RecorderOptions *option
         "-f", "rawvideo", "-pix_fmt", "rgb24", "-video_size", size,
         "-r", recorder_rate_string(options->region), "-i", "-", NULL };
     const char *const tail[] = { "-an", video_path, NULL };
-    /* HDR: the input tags make the frames themselves BT.2020 PQ. prores_ks
-     * takes its colour fields, and the .mov its 'colr' atom, from the
-     * frames; the output tags alone leave primaries and transfer unknown.
-     * The scale filter names the RGB to YCbCr matrix, since swscale's
-     * default is BT.601; it does not change the size. */
+    /* HDR: the frames arrive as BT.2020 PQ Y'CbCr in limited range, so
+     * ffmpeg only reduces the 16-bit samples to the codec's depth. Its own
+     * RGB to YCbCr step (scale=out_color_matrix=bt2020:out_range=tv on
+     * rgb48 in ffmpeg 9.0.2) scales the limited-range excursions by
+     * 257/256: PQ 1.0 became Y' 943 of 10 bits in place of 940, and every
+     * level decoded about 2% too bright. The input tags make the frames
+     * themselves BT.2020 PQ; prores_ks takes its colour fields, and the .mov
+     * its 'colr' atom, from the frames, and the output tags alone leave
+     * primaries and transfer unknown. */
     const char *const hdr_head[] = { options->ffmpeg, "-y", "-loglevel", "error",
         "-f", "rawvideo", "-pix_fmt", FRAME_PQ_PIX_FMT, "-video_size", size,
         "-r", recorder_rate_string(options->region),
-        "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-i", "-",
-        "-vf", "scale=out_color_matrix=bt2020:out_range=tv", NULL };
+        "-color_primaries", "bt2020", "-color_trc", "smpte2084",
+        "-colorspace", "bt2020nc", "-color_range", "tv", "-i", "-", NULL };
     const char *const hdr_tail[] = { "-color_primaries", "bt2020", "-color_trc", "smpte2084",
         "-colorspace", "bt2020nc", "-color_range", "tv", "-an", video_path, NULL };
     return add_all(cmd, options->hdr ? hdr_head : head) &&
@@ -316,7 +320,7 @@ struct Recorder {
     Child    encoder;
     FILE    *audio;
     uint8_t *rgb;
-    uint16_t *rgb48;          /* HDR frames */
+    uint16_t *yuv;            /* HDR frames */
     FramePQ  *pq;
     double   max_nits, max_mean_nits;   /* over all frames so far */
     uint64_t convert_ns;
@@ -395,14 +399,14 @@ Recorder *recorder_create(const RecorderOptions *options, char *error, size_t er
             goto fail;
         }
         r->pq = frame_pq_create(white);
-        r->rgb48 = malloc(pixels * 3 * sizeof(uint16_t));
+        r->yuv = malloc(pixels * 3 * sizeof(uint16_t));
     } else {
         r->rgb = malloc(pixels * 3);
     }
     FILE *log = fopen(r->log_path, "w");
     if (log) fclose(log);
     r->audio = fopen(r->audio_path, "wb");
-    if (!(r->rgb || (r->rgb48 && r->pq)) || !log || !r->audio) {
+    if (!(r->rgb || (r->yuv && r->pq)) || !log || !r->audio) {
         snprintf(error, error_size, "cannot create %s: %s", r->audio_path, strerror(errno));
         goto fail;
     }
@@ -430,7 +434,7 @@ fail:
     if (r->audio) fclose(r->audio);
     remove_temps(r);
     free(r->rgb);
-    free(r->rgb48);
+    free(r->yuv);
     frame_pq_destroy(r->pq);
     free(r);
     return NULL;
@@ -470,7 +474,7 @@ bool recorder_push_frame(void *user, const FrameCaptureImage *image) {
         FramePQLight light;
         struct timespec start, end;
         clock_gettime(CLOCK_MONOTONIC, &start);
-        bool converted = frame_pq_convert(r->pq, image, r->rgb48, &light);
+        bool converted = frame_pq_convert(r->pq, image, r->yuv, &light);
         clock_gettime(CLOCK_MONOTONIC, &end);
         if (!converted) {
             snprintf(r->error, sizeof(r->error), "cannot convert frame %u", r->written + 1);
@@ -479,7 +483,7 @@ bool recorder_push_frame(void *user, const FrameCaptureImage *image) {
         r->convert_ns += (uint64_t)((end.tv_sec - start.tv_sec) * 1000000000LL + (end.tv_nsec - start.tv_nsec));
         r->max_nits = fmax(r->max_nits, light.max_nits);
         r->max_mean_nits = fmax(r->max_mean_nits, light.mean_nits);
-        data = (const uint8_t *)r->rgb48;
+        data = (const uint8_t *)r->yuv;
         bytes *= 2;
     } else if (!frame_capture_rgb24(image, r->rgb)) {
         snprintf(r->error, sizeof(r->error), "cannot convert frame %u", r->written + 1);
@@ -550,7 +554,7 @@ void recorder_destroy(Recorder *r) {
         remove_temps(r);
     }
     free(r->rgb);
-    free(r->rgb48);
+    free(r->yuv);
     frame_pq_destroy(r->pq);
     free(r);
 }

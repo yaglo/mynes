@@ -303,18 +303,25 @@ above, 392,000 pixels had a negative BT.709 component and none was negative
 in BT.2020. Values are scaled to nits (1.0 = `--record-hdr-white`), clamped
 at 10000 and encoded with SMPTE ST 2084 through a table indexed by the
 float's exponent and top mantissa bits, within 1e-6 of the exact curve. The
-result is 16-bit rgb48le. A 3840x2880 frame takes 27 ms on one idle M5
-performance core and up to 52 ms with other work running, so large frames
-are split into row bands across up to eight threads, about 6 ms per frame;
-the final log line gives the average.
+BT.2020 non-constant-luminance matrix then gives Y'CbCr, stored as
+limited-range 16-bit codes in three planes (yuv444p16le): 64 times the
+10-bit codes, so Y' runs from 4096 to 60160 and Cb and Cr from 4096 to
+61440. A 3840x2880 frame takes 27 ms on one idle M5 performance core and up
+to 52 ms with other work running, so large frames are split into row bands
+across up to eight threads, about 6 ms per frame; the final log line gives
+the average.
 
-ffmpeg reads the frames as rgb48le rawvideo tagged BT.2020 and ST 2084,
-converts them to YCbCr with the BT.2020 non-constant-luminance matrix in
-limited range (swscale would otherwise use BT.601) and tags the stream
-`bt2020`, `smpte2084`, `bt2020nc`, `tv`. The input tags are needed: ProRes
-and the `.mov` `colr` atom take primaries and transfer from the frames, and
-with output tags alone ffprobe reports both as unknown. The default master
-is ProRes 4444, 10-bit 4:4:4, and needs a `.mov` output:
+ffmpeg reads the frames as yuv444p16le rawvideo tagged `bt2020`,
+`smpte2084`, `bt2020nc` and `tv`, reduces the samples to the codec's depth
+with no colour conversion and tags the stream the same way. The recorder
+does the Y'CbCr step itself because ffmpeg's own, from rgb48le through
+`scale=out_color_matrix=bt2020:out_range=tv`, scales the limited-range
+excursions by 257/256 in ffmpeg 9.0.2: PQ 1.0 was stored as Y' 943 of 10
+bits in place of 940, and every level decoded about 2% too bright. The input
+tags are needed: ProRes and the `.mov` `colr` atom take primaries and
+transfer from the frames, and with output tags alone ffprobe reports both as
+unknown. The default master is ProRes 4444, 10-bit 4:4:4, and needs a `.mov`
+output:
 
 ```
 -c:v prores_ks -profile:v 4 -pix_fmt yuv444p10le -vendor apl0
@@ -323,9 +330,9 @@ is ProRes 4444, 10-bit 4:4:4, and needs a `.mov` output:
 `MYNES_RECORD_HDR_CODEC_ARGS` replaces that string and must choose a 10-bit
 or deeper pixel format. HDR recordings ignore `MYNES_RECORD_CODEC_ARGS`: a
 typical SDR override such as 8-bit 4:2:0 H.264 would carry PQ with visible
-banding. The scale filter and the colour tags stay around whatever codec
-arguments are given. The hardware HEVC encoder, for example, writes Main 10
-with the same tags:
+banding. The colour tags stay around whatever codec arguments are given; a
+4:2:0 format such as p010le only subsamples the chroma. The hardware HEVC
+encoder, for example, writes Main 10 with the same tags and codes:
 
 ```
 MYNES_RECORD_HDR_CODEC_ARGS="-c:v hevc_videotoolbox -profile:v main10 -pix_fmt p010le -b:v 120M -tag:v hvc1"
@@ -335,7 +342,7 @@ The encode command (the mux is the same as for SDR; stream copy keeps the
 tags):
 
 ```
-ffmpeg -y -loglevel error -f rawvideo -pix_fmt rgb48le -video_size WxH -r 60.0988 -color_primaries bt2020 -color_trc smpte2084 -i - -vf scale=out_color_matrix=bt2020:out_range=tv <codec args> -color_primaries bt2020 -color_trc smpte2084 -colorspace bt2020nc -color_range tv -an OUT.video.mov
+ffmpeg -y -loglevel error -f rawvideo -pix_fmt yuv444p16le -video_size WxH -r 60.0988 -color_primaries bt2020 -color_trc smpte2084 -colorspace bt2020nc -color_range tv -i - <codec args> -color_primaries bt2020 -color_trc smpte2084 -colorspace bt2020nc -color_range tv -an OUT.video.mov
 ```
 
 ffprobe lists a ProRes 4444 stream as `yuv444p12le`, the decoder's format,

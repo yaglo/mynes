@@ -89,7 +89,8 @@ void frame_pq_destroy(FramePQ *pq) { free(pq); }
 typedef struct {
     const FramePQ  *pq;
     const uint16_t *pixels;   /* RGBA half */
-    uint16_t       *out;      /* RGB */
+    uint16_t       *out;      /* Y', Cb, Cr planes */
+    size_t          plane;    /* samples per plane */
     int             width, height;
     float           scale;    /* stored value to Y = nits / 10000 */
     atomic_int      next_row;
@@ -102,14 +103,23 @@ typedef struct {
     double    sum_y;
 } Worker;
 
+/* BT.2020 non-constant luminance (Kr 0.2627, Kb 0.0593) in the BT.2100
+ * limited-range codes at 16 bits: Y' = 4096 + 56064 E'y and
+ * Cb, Cr = 32768 + 57344 E'c. */
+#define LUMA_R  0.2627f
+#define LUMA_G  0.6780f
+#define LUMA_B  0.0593f
+#define CB_GAIN (57344.0f / 1.8814f)   /* 1.8814 = 2 (1 - Kb) */
+#define CR_GAIN (57344.0f / 1.4746f)   /* 1.4746 = 2 (1 - Kr) */
+
 static void convert_pixels(Worker *w, size_t first, size_t count) {
     const float *half = w->job->pq->half, *table = w->job->pq->pq;
     const uint16_t *px = w->job->pixels + first * 4;
-    uint16_t *out = w->job->out + first * 3;
+    uint16_t *luma = w->job->out + first, *cb = luma + w->job->plane, *cr = cb + w->job->plane;
     float scale = w->job->scale, max_y = w->max_y;
     double sum_y = 0;
-    for (size_t i = 0; i < count; i++, px += 4, out += 3) {
-        float in[3] = { half[px[0]], half[px[1]], half[px[2]] }, c[3];
+    for (size_t i = 0; i < count; i++, px += 4) {
+        float in[3] = { half[px[0]], half[px[1]], half[px[2]] }, c[3], e[3];
         frame_pq_bt2020(in, c);
         float pixel_max = 0;
         for (int k = 0; k < 3; k++) {
@@ -117,8 +127,12 @@ static void convert_pixels(Worker *w, size_t first, size_t count) {
              * turns a NaN from out-of-range inputs into black. */
             float y = c[k] > 0 ? fminf(c[k] * scale, 1) : 0;
             pixel_max = fmaxf(pixel_max, y);
-            out[k] = (uint16_t)(pq_signal(table, y) * 65535.0f + 0.5f);
+            e[k] = pq_signal(table, y);
         }
+        float ey = LUMA_R * e[0] + LUMA_G * e[1] + LUMA_B * e[2];
+        luma[i] = (uint16_t)(4096.0f + 56064.0f * ey + 0.5f);
+        cb[i] = (uint16_t)(32768.0f + CB_GAIN * (e[2] - ey) + 0.5f);
+        cr[i] = (uint16_t)(32768.0f + CR_GAIN * (e[0] - ey) + 0.5f);
         max_y = fmaxf(max_y, pixel_max);
         sum_y += pixel_max;
     }
@@ -139,12 +153,12 @@ static void *convert_bands(void *user) {
 }
 
 bool frame_pq_convert(const FramePQ *pq, const FrameCaptureImage *image,
-                      uint16_t *rgb48, FramePQLight *light) {
-    if (!pq || !image->pixels || !image->hdr || !rgb48 || image->width <= 0 || image->height <= 0)
+                      uint16_t *yuv, FramePQLight *light) {
+    if (!pq || !image->pixels || !image->hdr || !yuv || image->width <= 0 || image->height <= 0)
         return false;
     size_t count = (size_t)image->width * image->height;
     float white = image->white_level > 0 ? image->white_level : 1;
-    Job job = { .pq = pq, .pixels = image->pixels, .out = rgb48,
+    Job job = { .pq = pq, .pixels = image->pixels, .out = yuv, .plane = count,
                 .width = image->width, .height = image->height,
                 .scale = pq->white_nits / white / (float)FRAME_PQ_PEAK_NITS };
     atomic_init(&job.next_row, 0);

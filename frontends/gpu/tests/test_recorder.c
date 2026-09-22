@@ -186,14 +186,15 @@ static void test_paths_and_commands(void) {
     CHECK(!strcmp(env.codec_args, "-c:v prores_ks"));
     unsetenv("MYNES_FFMPEG"); unsetenv("MYNES_RECORD_CODEC_ARGS"); unsetenv("MYNES_RECORD_HDR_CODEC_ARGS");
 
-    /* HDR: rgb48 PQ in, explicit BT.2020 matrix, tagged in and out. */
+    /* HDR: 16-bit PQ Y'CbCr in, tagged BT.2020 limited range in and out,
+     * and no scale filter to convert it again. */
     options = (RecorderOptions){ .output = "out/clip.mov", .ffmpeg = "ffmpeg-test", .hdr = true,
         .seconds = 2, .codec_args = RECORDER_HDR_CODEC_ARGS, .region = 1, .width = 1920, .height = 1440 };
     CHECK(recorder_encode_command(&cmd, &options, "out/clip.mov.video.mov"));
     const char *const encode_hdr[] = { "ffmpeg-test", "-y", "-loglevel", "error",
-        "-f", "rawvideo", "-pix_fmt", "rgb48le", "-video_size", "1920x1440", "-r", "50.007",
-        "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-i", "-",
-        "-vf", "scale=out_color_matrix=bt2020:out_range=tv",
+        "-f", "rawvideo", "-pix_fmt", "yuv444p16le", "-video_size", "1920x1440", "-r", "50.007",
+        "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc",
+        "-color_range", "tv", "-i", "-",
         "-c:v", "prores_ks", "-profile:v", "4", "-pix_fmt", "yuv444p10le", "-vendor", "apl0",
         "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc",
         "-color_range", "tv", "-an", "out/clip.mov.video.mov", NULL };
@@ -500,12 +501,21 @@ static void fill_hdr_frame(uint16_t *rgba) {
     }
 }
 
-/* An HDR clip through the default ProRes master and back: the decoded
- * BT.2020 PQ values, the stream tags, the frame count and the sidecar. */
+/* BT.2020 non-constant-luminance Y'CbCr of a PQ R'G'B' triple in 10-bit
+ * limited-range codes (ITU-R BT.2100): Y' 64..940, Cb and Cr 64..960. */
+static void ycbcr10(const double e[3], double out[3]) {
+    double y = 0.2627 * e[0] + 0.6780 * e[1] + 0.0593 * e[2];
+    out[0] = 64 + 876 * y;
+    out[1] = 512 + 896 * (e[2] - y) / 1.8814;
+    out[2] = 512 + 896 * (e[0] - y) / 1.4746;
+}
+
+/* An HDR clip through the default ProRes master and back: the stored
+ * BT.2020 PQ codes, the stream tags, the frame count and the sidecar. */
 static void test_hdr_end_to_end(const char *directory) {
     char output[512], decoded[600], json[600], text[1024], error[2048];
     snprintf(output, sizeof(output), "%s/hdr.mov", directory);
-    snprintf(decoded, sizeof(decoded), "%s/hdr.rgb48", directory);
+    snprintf(decoded, sizeof(decoded), "%s/hdr.yuv", directory);
     snprintf(json, sizeof(json), "%s/hdr.json", directory);
     RecorderOptions options = { .output = output, .seconds = 0.1, .after = 0, .region = 0,
         .width = W, .height = H, .hdr = true, .headroom = 4 };
@@ -542,11 +552,14 @@ static void test_hdr_end_to_end(const char *directory) {
     CHECK(probe(output, "a:0", "codec_name", info, sizeof(info)));
     CHECK(probe_value(info, "codec_name", value, sizeof(value)) && !strcmp(value, "aac"));
 
-    /* Back to RGB with the BT.2020 matrix: each column within 2/1023 of the
-     * PQ value it went in as. */
+    /* The codes the file stores, as a player reads them: decoded in the
+     * ProRes 4444 decoder's own 12 bits with no colour conversion, against
+     * BT.2020 limited range worked out here. Black is 64/512/512, SDR white
+     * Y' 573 and 4x white Y' 703 in 10 bits. A conversion back to RGB
+     * through ffmpeg would undo a gain error in ffmpeg's forward step. */
     char command[2048];
     snprintf(command, sizeof(command), "ffmpeg -y -loglevel error -i '%s' -frames:v 1 "
-             "-vf scale=in_color_matrix=bt2020:in_range=tv -f rawvideo -pix_fmt rgb48le '%s'", output, decoded);
+             "-f rawvideo -pix_fmt yuv444p12le '%s'", output, decoded);
     CHECK(system(command) == 0);
     FILE *f = fopen(decoded, "rb");
     static uint8_t got[W * H * 6];
@@ -554,19 +567,31 @@ static void test_hdr_end_to_end(const char *directory) {
     if (f) fclose(f);
     float red[3], one[3] = { 1, 0, 0 };
     frame_pq_bt2020(one, red);
-    const double expected[4][3] = {
+    const double pq[4][3] = {
         { frame_pq_encode(203), frame_pq_encode(203), frame_pq_encode(203) },
         { frame_pq_encode(812), frame_pq_encode(812), frame_pq_encode(812) },
         { frame_pq_encode(203 * red[0]), frame_pq_encode(203 * red[1]), frame_pq_encode(203 * red[2]) },
         { 0, 0, 0 } };
-    double worst = 0;
-    for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) for (int c = 0; c < 3; c++) {
-        size_t i = (((size_t)y * W + x) * 3 + c) * 2;
-        double v = (got[i] | got[i + 1] << 8) / 65535.0;
-        worst = fmax(worst, fabs(v - expected[x / 16][c]));
+    double expected[4][3];
+    for (int x = 0; x < 4; x++) ycbcr10(pq[x], expected[x]);
+    CHECK(lround(expected[0][0]) == 573 && lround(expected[1][0]) == 703);
+    CHECK(lround(expected[3][0]) == 64 && lround(expected[3][1]) == 512 && lround(expected[3][2]) == 512);
+    /* ProRes leaves up to about one code of noise in these flat columns;
+     * the column means carry the level. */
+    double worst = 0, worst_mean = 0;
+    for (int c = 0; c < 3; c++) for (int column = 0; column < 4; column++) {
+        double sum = 0;
+        for (int y = 0; y < H; y++) for (int x = column * 16; x < column * 16 + 16; x++) {
+            size_t i = (((size_t)c * H + y) * W + x) * 2;
+            double error = (got[i] | got[i + 1] << 8) / 4.0 - expected[column][c];
+            worst = fmax(worst, fabs(error));
+            sum += error;
+        }
+        worst_mean = fmax(worst_mean, fabs(sum / (16 * H)));
     }
-    CHECK(worst < 2.0 / 1023);
-    fprintf(stderr, "recorder: HDR ProRes round trip within %.2f of a 10-bit code\n", worst * 1023);
+    CHECK(worst_mean < 0.5 && worst < 1.5);
+    fprintf(stderr, "recorder: HDR ProRes codes within %.2f of a 10-bit code, column means within %.2f\n",
+            worst, worst_mean);
 
     /* Brightest pixel 4 x 203 nits; frame average of the largest component
      * of white, 4x white, red and black. */

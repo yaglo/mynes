@@ -1,8 +1,10 @@
 /* PQ encoding of the half-float display target for HDR recording. The
  * offscreen target holds extended-linear BT.709 light with 1.0 at SDR white
  * and highlights above it up to the render headroom; negative components
- * are colours outside BT.709. Each pixel becomes BT.2020 SMPTE ST 2084 code
- * values, 16 bits per channel (rgb48 in host byte order). */
+ * are colours outside BT.709. Each pixel becomes BT.2020 SMPTE ST 2084
+ * R'G'B', then Y'CbCr with the BT.2020 non-constant-luminance matrix in
+ * limited range, 16 bits per sample in three planes (yuv444p16 in host byte
+ * order). */
 #ifndef FRAME_PQ_H
 #define FRAME_PQ_H
 
@@ -12,11 +14,11 @@
 
 #define FRAME_PQ_PEAK_NITS 10000.0
 
-/* The ffmpeg rawvideo name of the rgb48 frames frame_pq_convert writes. */
+/* The ffmpeg rawvideo name of the frames frame_pq_convert writes. */
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-#define FRAME_PQ_PIX_FMT "rgb48be"
+#define FRAME_PQ_PIX_FMT "yuv444p16be"
 #else
-#define FRAME_PQ_PIX_FMT "rgb48le"
+#define FRAME_PQ_PIX_FMT "yuv444p16le"
 #endif
 
 typedef struct FramePQ FramePQ;
@@ -32,11 +34,13 @@ typedef struct {
  * (0, 10000] or memory is short. */
 FramePQ *frame_pq_create(double white_nits);
 void     frame_pq_destroy(FramePQ *pq);
-/* Converts a half-float image (image->hdr) into rgb48, width * height * 3
- * values top row first. Rows are split across threads for large frames.
- * False when the image is not half-float or has no pixels. */
+/* Converts a half-float image (image->hdr) into three planes of
+ * width * height samples, Y' then Cb then Cr, top row first. The codes are
+ * the BT.2100 limited-range ones at 16 bits: Y' 4096 to 60160, Cb and Cr
+ * 4096 to 61440 around 32768. Rows are split across threads for large
+ * frames. False when the image is not half-float or has no pixels. */
 bool     frame_pq_convert(const FramePQ *pq, const FrameCaptureImage *image,
-                          uint16_t *rgb48, FramePQLight *light);
+                          uint16_t *yuv, FramePQLight *light);
 
 /* --- The steps, for tests --- */
 

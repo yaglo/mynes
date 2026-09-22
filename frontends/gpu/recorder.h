@@ -1,7 +1,7 @@
 /* Pixel-exact clip recorder for hidden (--offscreen) playback. Every
  * emulated frame becomes one rawvideo frame on an ffmpeg child's stdin
- * (rgb24, or rgb48 BT.2020 PQ for an HDR recording), the worker writes the
- * audio of the same frames to a temporary file, and a second ffmpeg run
+ * (rgb24, or 16-bit BT.2020 PQ Y'CbCr for an HDR recording), the worker
+ * writes the audio of the same frames to a temporary file, and a second ffmpeg run
  * muxes both into the requested .mov/.mp4. OUT.json beside the clip records
  * its frame count, rate, size and light levels. The ffmpeg command lines,
  * the frame arithmetic and the input recorder are plain functions so they
@@ -88,8 +88,8 @@ bool recorder_command_add(RecorderCommand *cmd, const char *arg);
 /* Append a whitespace-separated argument string; false when it is empty. */
 bool recorder_command_add_split(RecorderCommand *cmd, const char *args);
 /* The encode run: rgb24 frames on stdin at the region rate, no audio. HDR
- * takes rgb48 PQ frames tagged BT.2020, converts them to YCbCr with the
- * BT.2020 matrix in limited range and tags the stream the same way. */
+ * takes frame_pq's limited-range BT.2020 PQ Y'CbCr, tagged that way on the
+ * input and on the stream, with no colour conversion in ffmpeg. */
 bool recorder_encode_command(RecorderCommand *cmd, const RecorderOptions *options,
                              const char *video_path);
 /* The mux run: the encoded video plus float32 mono 44100 Hz audio into the
@@ -122,7 +122,7 @@ FILE     *recorder_audio_file(Recorder *r);
 /* True when the worker's picture `number` (1-based) is part of the clip. */
 bool      recorder_want_frame(const Recorder *r, unsigned number);
 /* GPURenderCtx capture sink: converts one final display image to rgb24, or
- * to rgb48 PQ for HDR, and writes it to the encoder. user is the Recorder. */
+ * to PQ Y'CbCr for HDR, and writes it to the encoder. user is the Recorder. */
 bool      recorder_push_frame(void *user, const FrameCaptureImage *image);
 bool      recorder_complete(const Recorder *r);
 /* Ends the encoder, muxes with the audio, writes OUT.json and removes the
