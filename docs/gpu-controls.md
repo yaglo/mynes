@@ -199,7 +199,9 @@ per emulated frame, with the APU audio of exactly those frames. It needs
 `--offscreen WxH` (every frame is the final display target, mask and glass
 included, read back as RGB8 the way `--screenshot-after` captures it) and
 `--record-seconds N`. `--sdr` keeps the target 8-bit sRGB like the file; an
-EDR target is tone-mapped the way the PPM screenshot is.
+EDR target is tone-mapped the way the PPM screenshot is. `--record-hdr` keeps
+the EDR highlights instead and records BT.2020 PQ (see
+[HDR recordings](#hdr-recordings)).
 
 ```
 mynes_gpu --offscreen 1920x1440 --sdr --preset presets/sony_pvm_14l2.json \
@@ -212,6 +214,9 @@ mynes_gpu --offscreen 1920x1440 --sdr --preset presets/sony_pvm_14l2.json \
 | `--record OUT` | Output path; the container follows the extension, `.mov` or `.mp4`. Requires `--offscreen`. |
 | `--record-seconds N` | Clip length. Frames = round(N × rate) with the region's exact rate, 60.0988 (NTSC) or 50.007 (PAL), which is also the stream's frame rate. |
 | `--record-after F` | Emulated frames run before the first recorded one (default 2), so a loaded state's first pictures are left out. |
+| `--record-hdr` | Record BT.2020 PQ from a half-float target instead of 8-bit sRGB. Requires `--record`; not with `--sdr`. |
+| `--record-headroom H` | Headroom over SDR white for the recorded render, 1 to 10000. Overrides `MYNES_OFFSCREEN_HEADROOM`; the default is 1.6, or 4.0 with `--record-hdr`. Not with `--sdr`, whose target has none. |
+| `--record-hdr-white NITS` | Luminance of SDR white (1.0) in an HDR recording, default 203 (ITU-R BT.2408). Headroom × white must stay within the 10000-nit PQ peak. |
 | `--load-state FILE` | Load a save-state file once the ROM is running, before the first frame. Useful outside recording too. It is the F7 load path: the picture history, audio and the CRT's temporal state restart, and a rejected file (wrong ROM, region or build) stops the run with the loader's reason. |
 | `--input-replay FILE` | Scripted player-1 input for the run; see below. |
 
@@ -223,7 +228,7 @@ Each final frame is read back and piped as rgb24 rawvideo into an `ffmpeg`
 child that encodes it beside the output (`OUT.video.<ext>`), while the worker
 writes the same frames' audio as float32 mono 44100 Hz (`OUT.audio.f32le`).
 When the frame count is reached, a second `ffmpeg` run muxes both into OUT
-with AAC at 256 kb/s, cut to the shorter stream, and the temporary files are
+with AAC at 256 kb/s, cut at the video's length, and the temporary files are
 removed. Progress is printed every 60 frames and a final line gives the frame
 count, seconds and path. Any ffmpeg failure exits non-zero and prints the
 tail of ffmpeg's messages.
@@ -247,8 +252,116 @@ region's):
 
 ```
 ffmpeg -y -loglevel error -f rawvideo -pix_fmt rgb24 -video_size WxH -r 60.0988 -i - <codec args> -an OUT.video.mov
-ffmpeg -y -nostdin -loglevel error -i OUT.video.mov -f f32le -ar 44100 -ac 1 -i OUT.audio.f32le -c:v copy -c:a aac -b:a 256k -shortest -movflags +faststart OUT
+ffmpeg -y -nostdin -loglevel error -i OUT.video.mov -f f32le -ar 44100 -ac 1 -i OUT.audio.f32le -c:v copy -c:a aac -b:a 256k -t <frames / rate> -movflags +faststart OUT
 ```
+
+`-t` is the clip's exact length (1.996712 for 120 NTSC frames). The muxed
+AAC track ends 0.7 ms before the video, so `-shortest` in its place drops
+the last one to four video frames.
+
+After the mux the recorder writes `OUT.json` beside the clip (`contra.mov`
+gives `contra.json`; a failed run writes none):
+
+```json
+{
+  "frames": 721,
+  "rate": 60.0988,
+  "width": 1920,
+  "height": 1440,
+  "hdr": false,
+  "white_nits": 100,
+  "headroom": 1
+}
+```
+
+`headroom` is what the CRT shader rendered with: 1 with `--sdr`, otherwise
+the offscreen headroom, whose highlights the SDR file clips at white.
+`white_nits` of an SDR clip is the BT.709 studio reference of 100 nits; the
+file itself is display-relative. An HDR clip adds `max_cll` and `max_fall`.
+
+### HDR recordings
+
+```
+mynes_gpu --offscreen 1920x1440 --record-hdr --preset presets/sony_pvm_14l2.json \
+    --record smb-hdr.mov --record-seconds 2 "Super Mario Bros (JU) (PRG 0).nes"
+```
+
+With `--record-hdr` the hidden target is RGBA16F whatever the window's
+swapchain offers. It holds extended-linear light with BT.709 primaries (on
+macOS the extended linear sRGB of an EDR layer): 1.0 is SDR white,
+highlights run above it up to the headroom, and colours outside BT.709 have
+small negative components. Measured on a 1920x1440 Sony PVM-14L2 render of
+Super Mario Bros.: below the output shoulder the values match the `--sdr`
+render within 8-bit rounding and do not change with the headroom; the
+largest component was 1.54 at headroom 1.6 and 3.33 at 4.0, and reds had
+blue components down to -0.0056.
+
+Each frame is converted on the CPU. A 65536-entry table turns the half
+floats into floats. The ITU-R BT.2087 matrix takes BT.709 primaries to
+BT.2020, and negative components are clamped to 0 after it: in the frame
+above, 392,000 pixels had a negative BT.709 component and none was negative
+in BT.2020. Values are scaled to nits (1.0 = `--record-hdr-white`), clamped
+at 10000 and encoded with SMPTE ST 2084 through a table indexed by the
+float's exponent and top mantissa bits, within 1e-6 of the exact curve. The
+result is 16-bit rgb48le. A 3840x2880 frame takes 27 ms on one idle M5
+performance core and up to 52 ms with other work running, so large frames
+are split into row bands across up to eight threads, about 6 ms per frame;
+the final log line gives the average.
+
+ffmpeg reads the frames as rgb48le rawvideo tagged BT.2020 and ST 2084,
+converts them to YCbCr with the BT.2020 non-constant-luminance matrix in
+limited range (swscale would otherwise use BT.601) and tags the stream
+`bt2020`, `smpte2084`, `bt2020nc`, `tv`. The input tags are needed: ProRes
+and the `.mov` `colr` atom take primaries and transfer from the frames, and
+with output tags alone ffprobe reports both as unknown. The default master
+is ProRes 4444, 10-bit 4:4:4, and needs a `.mov` output:
+
+```
+-c:v prores_ks -profile:v 4 -pix_fmt yuv444p10le -vendor apl0
+```
+
+`MYNES_RECORD_HDR_CODEC_ARGS` replaces that string and must choose a 10-bit
+or deeper pixel format. HDR recordings ignore `MYNES_RECORD_CODEC_ARGS`: a
+typical SDR override such as 8-bit 4:2:0 H.264 would carry PQ with visible
+banding. The scale filter and the colour tags stay around whatever codec
+arguments are given. The hardware HEVC encoder, for example, writes Main 10
+with the same tags:
+
+```
+MYNES_RECORD_HDR_CODEC_ARGS="-c:v hevc_videotoolbox -profile:v main10 -pix_fmt p010le -b:v 120M -tag:v hvc1"
+```
+
+The encode command (the mux is the same as for SDR; stream copy keeps the
+tags):
+
+```
+ffmpeg -y -loglevel error -f rawvideo -pix_fmt rgb48le -video_size WxH -r 60.0988 -color_primaries bt2020 -color_trc smpte2084 -i - -vf scale=out_color_matrix=bt2020:out_range=tv <codec args> -color_primaries bt2020 -color_trc smpte2084 -colorspace bt2020nc -color_range tv -an OUT.video.mov
+```
+
+ffprobe lists a ProRes 4444 stream as `yuv444p12le`, the decoder's format,
+although the encoder was given 10-bit samples.
+
+`OUT.json` of the clip above:
+
+```json
+{
+  "frames": 120,
+  "rate": 60.0988,
+  "width": 1920,
+  "height": 1440,
+  "hdr": true,
+  "white_nits": 203,
+  "headroom": 4,
+  "max_cll": 617,
+  "max_fall": 223
+}
+```
+
+`max_cll` and `max_fall` are the CTA-861.3 content light levels in whole
+nits: the brightest pixel and the brightest frame average over the clip,
+each pixel measured by its largest BT.2020 component after the 10000-nit
+clamp. The `.mov` carries no HDR10 metadata of its own; an HEVC or AV1
+encode of the master takes these values (x265 `max-cll`).
 
 ### Scripted and recorded input
 
