@@ -70,9 +70,13 @@ bool playback_load_input_script(Playback *p, const char *path);
  * count from `first` (row 1 is picture `first`). Call while paused, before
  * those frames run. */
 void playback_arm_capture(Playback *p, unsigned first, unsigned last, FILE *audio);
-/* Drop queued pictures and audio and fade back in, for a console whose
- * time line just jumped (a loaded save state). Playback stays as it was. */
-void playback_restart(Playback *p);
+/* playback_with_console for a visit that starts a new time line (a loaded
+ * save state). When fn returns true, the pictures and audio queued before
+ * the visit are dropped and the audio fades back in, all before the hold
+ * is released, so the first frame the worker emulates afterwards is the
+ * next picture read, numbered one past the return value. When fn returns
+ * false nothing is dropped. Playback stays paused or running as it was. */
+unsigned playback_restart(Playback *p, bool (*fn)(NES *nes, void *user), void *user);
 bool playback_read(Playback *p, PlaybackFrame *frame);
 /* Pictures produced but not yet read; diagnostics and tests only. */
 unsigned playback_queued(Playback *p);

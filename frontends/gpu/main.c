@@ -337,9 +337,11 @@ static void console_save_state(NES *console, void *user) {
     StateJob *job = user;
     job->ok = nes_state_save(console, job->data, job->size);
 }
-static void console_load_state(NES *console, void *user) {
+/* For playback_restart: a state that loaded starts a new time line. */
+static bool console_load_state(NES *console, void *user) {
     StateJob *job = user;
     job->ok = nes_state_load(console, job->data, job->size, job->error, sizeof(job->error));
+    return job->ok;
 }
 /* Until the worker exists (startup, benchmark) the main thread owns the
  * console. Returns the frames emulated when fn ran (0 without a worker). */
@@ -396,13 +398,17 @@ static void state_save_slot(void) {
  * audio the same way; the caller resets the renderer's temporal state. */
 static bool state_load_image(void *data, size_t size, const char *source) {
     StateJob job = { .data = data, .size = size };
-    state_load_frame = with_console(console_load_state, &job);
+    if (playback) {
+        state_load_frame = playback_restart(playback, console_load_state, &job);
+    } else {
+        console_load_state(&nes, &job);
+        state_load_frame = 0;
+    }
     if (!job.ok) {
         show_notice("LOAD STATE FAILED", job.error);
         fprintf(stderr, "Load state from %s: %s\n", source, job.error);
         return false;
     }
-    if (playback) playback_restart(playback);
     show_notice("STATE LOADED", source);
     fprintf(stderr, "State loaded from %s\n", source);
     return true;

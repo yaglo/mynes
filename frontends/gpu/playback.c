@@ -338,16 +338,24 @@ void playback_resume(Playback *p) {
     SDL_BroadcastCondition(p->condition);
     SDL_UnlockMutex(p->mutex);
 }
-unsigned playback_with_console(Playback *p, void (*fn)(NES *nes, void *user), void *user) {
+/* Returns with the mutex locked and no frame in progress; the hold keeps
+ * the worker from starting one while the wait releases the mutex. */
+static void hold_console(Playback *p) {
     SDL_LockMutex(p->mutex);
     p->hold++;
     while (p->emulating) SDL_WaitCondition(p->condition, p->mutex);
-    fn(p->nes, user);
+}
+static unsigned release_console(Playback *p) {
     unsigned frames = p->produced;
     p->hold--;
     SDL_BroadcastCondition(p->condition);
     SDL_UnlockMutex(p->mutex);
     return frames;
+}
+unsigned playback_with_console(Playback *p, void (*fn)(NES *nes, void *user), void *user) {
+    hold_console(p);
+    fn(p->nes, user);
+    return release_console(p);
 }
 unsigned playback_frames_sampled(Playback *p) {
     SDL_LockMutex(p->mutex);
@@ -367,17 +375,17 @@ void playback_arm_capture(Playback *p, unsigned first, unsigned last, FILE *audi
     p->replay_offset = first ? first - 1 : 0;
     SDL_UnlockMutex(p->mutex);
 }
-void playback_restart(Playback *p) {
-    SDL_LockMutex(p->mutex);
-    p->hold++;
-    while (p->emulating) SDL_WaitCondition(p->condition, p->mutex);
+unsigned playback_restart(Playback *p, bool (*fn)(NES *nes, void *user), void *user) {
+    hold_console(p);
     /* Pictures already queued show the time line before the jump; the audio
-     * queued for them would play over the restored machine's first frames. */
-    p->picture_count = p->first_picture = 0;
-    reset_audio(p);
-    p->hold--;
-    SDL_BroadcastCondition(p->condition);
-    SDL_UnlockMutex(p->mutex);
+     * queued for them would play over the restored machine's first frames.
+     * Both go before the hold is released: a frame the worker ran in
+     * between would come from the new time line and be dropped with them. */
+    if (fn(p->nes, user)) {
+        p->picture_count = p->first_picture = 0;
+        reset_audio(p);
+    }
+    return release_console(p);
 }
 void playback_load_cartridge(Playback *p, const ROM *rom, int region) {
     playback_pause(p);

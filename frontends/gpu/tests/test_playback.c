@@ -4,6 +4,7 @@
 #define _DARWIN_C_SOURCE /* proc_pid_rusage */
 #include "playback.h"
 #include "signal_format.h"
+#include "nes/state.h"
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,6 +32,18 @@ static void visit_console(NES *nes, void *user) {
     v->frame_at_exit = nes->ppu.frame;
 }
 static void read_ram(NES *nes, void *user) { *(uint8_t *)user = nes->ram[42]; }
+static void set_backdrop(NES *nes, void *user) { nes->ppu.palette[0] = *(uint8_t *)user; }
+static bool jump(NES *nes, void *user) { (void)nes; (void)user; return true; }
+static bool jump_refused(NES *nes, void *user) { (void)nes; (void)user; return false; }
+typedef struct { void *data; size_t size; bool ok; } StateImage;
+static void save_image(NES *nes, void *user) {
+    StateImage *s = user;
+    s->ok = nes_state_save(nes, s->data, s->size);
+}
+static bool load_image(NES *nes, void *user) {
+    StateImage *s = user;
+    return s->ok = nes_state_load(nes, s->data, s->size, NULL, 0);
+}
 
 static bool next(Playback *p, PlaybackFrame *frame) {
     Uint64 timeout=SDL_GetTicks()+2000;
@@ -384,7 +397,8 @@ int main(void) {
         playback_pause(p); playback_destroy(p);
     }
     /* A restart discards the pictures queued before it: the next picture read
-     * was produced afterwards. Matched-refresh hold fills the queue deterministically. */
+     * was produced afterwards. A visit that reports no jump discards nothing.
+     * Matched-refresh hold fills the queue deterministically. */
     p=playback_create(nes,NULL,NULL,stream,0,0);
     CHECK(p!=NULL);
     if(p) {
@@ -396,10 +410,44 @@ int main(void) {
         CHECK(next(p,&frame));
         unsigned k=frame.number;
         SDL_Delay(100);            /* k+1..k+3 queued, worker blocked on backpressure */
-        playback_restart(p);
+        CHECK(playback_restart(p,jump_refused,NULL)==k+3);
+        CHECK(playback_queued(p)==3);
+        CHECK(playback_restart(p,jump,NULL)==k+3);
         CHECK(next(p,&frame)); CHECK(frame.number==k+4);
         CHECK(SDL_GetAudioStreamQueued(stream)>=0);
         playback_pause(p); playback_destroy(p);
+    }
+    /* A loaded state is shown from its first frame. The main thread goes on
+     * to post a notice and render after the load, and the worker runs the
+     * restored machine meanwhile; that frame must reach the queue, not be
+     * dropped with the pictures from before the load. Backdrop 0x11 is in
+     * the state, 0x22 only on the console it replaces. */
+    p=playback_create(nes,NULL,NULL,stream,0,0);
+    CHECK(p!=NULL);
+    if(p) {
+        PlaybackControls controls={.analog=nes->apu.analog,.display_paced=true,.display_hz=60};
+        audio_chain_init_preset(&controls.audio,0,0,0);
+        playback_controls(p,&controls); playback_resume(p);
+        StateImage image={.size=nes_state_size(nes)};
+        image.data=malloc(image.size);
+        uint8_t saved=0x11, live=0x22;
+        playback_with_console(p,set_backdrop,&saved);
+        playback_with_console(p,save_image,&image);
+        CHECK(image.ok);
+        playback_with_console(p,set_backdrop,&live);
+        PlaybackFrame frame={0};
+        Uint64 timeout=SDL_GetTicks()+2000;
+        while(frame.backdrop!=live && SDL_GetTicks()<timeout) next(p,&frame);
+        CHECK(frame.backdrop==live);
+        while(playback_read(p,&frame)) {}   /* the queue has room: the worker runs */
+        unsigned loaded=playback_restart(p,load_image,&image);
+        CHECK(image.ok);
+        SDL_Delay(40);                     /* two frame periods of main-thread work */
+        CHECK(next(p,&frame));
+        CHECK(frame.number==loaded+1);
+        CHECK(frame.backdrop==saved);
+        playback_pause(p); playback_destroy(p);
+        free(image.data);
     }
     /* Replay must hold buttons across frames and release at the exact event.
      * Captures and reviews are compared bit-for-bit, so the paired-frame
