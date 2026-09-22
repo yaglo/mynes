@@ -181,11 +181,11 @@ static int run(void *user) {
          * Fast-forward outruns the display on purpose and overwrites the oldest.
          * Pause/stop still wake this wait; other modes keep the audio clock free. */
         unsigned hold = low_latency_active(p) ? 1 : PLAYBACK_PICTURES;
-        if ((p->capture_from && p->number >= p->capture_from && p->picture_count) ||
-            (display_backpressure(p) && p->picture_count >= hold)) {
-            /* After display backpressure, the next audio block gets a fresh
-             * deadline too; an expired producer deadline must not persist. */
-            deadline = 0;
+        bool capture_wait = p->capture_from && p->number >= p->capture_from && p->picture_count;
+        if (capture_wait || (display_backpressure(p) && p->picture_count >= hold)) {
+            /* Captures run as fast as their offscreen reader. Display
+             * backpressure keeps the deadline: it is the ceiling below. */
+            if (capture_wait) deadline = 0;
             SDL_WaitCondition(p->condition, p->mutex);
             continue;
         }
@@ -196,13 +196,23 @@ static int run(void *user) {
             c.display_hz, c.display_paced);
         bool fast = c.speed > 1;
         if (fast) period = (Uint64)((double)period / c.speed);
-        if (!deadline || now > deadline + 3 * period) deadline = now;
-        if (now < deadline) {
-            Sint32 remaining_ms=(Sint32)((deadline-now+999999)/1000000);
+        /* A matched display clocks the worker through its reads, but a macOS
+         * window that is covered or minimized hands out drawables at about
+         * 120 Hz. Follow reads at most one period early and never faster
+         * than the period; a late read rebases instead of banking catch-up
+         * frames, so visible play starts each frame right after the read. */
+        bool paced = display_backpressure(p);
+        if (!deadline || now > deadline + 3 * period || (paced && now > deadline)) deadline = now;
+        Uint64 lead = paced ? period : 0;
+        if (now + lead < deadline) {
+            Sint32 remaining_ms=(Sint32)((deadline-lead-now+999999)/1000000);
             SDL_WaitConditionTimeout(p->condition, p->mutex, remaining_ms);
             continue;
         }
-        deadline += period;
+        /* 0.4% headroom: a panel whose vblank runs slightly faster than its
+         * nominal rate never meets the ceiling, and a run held at the ceiling
+         * stays inside the audio rate controller's 0.5% range. */
+        deadline += paced ? period - period / 256 : period;
         p->busy = true;
         p->emulating = true;
         SDL_UnlockMutex(p->mutex);

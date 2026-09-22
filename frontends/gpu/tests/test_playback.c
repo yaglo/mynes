@@ -169,6 +169,29 @@ int main(void) {
         CHECK(playback_queued(p)==3);
         playback_pause(p); playback_destroy(p);
     }
+    /* A window macOS no longer composites hands out drawables at about
+     * 120 Hz. Reads that fast must not clock the emulation above the display
+     * rate, with low latency or with the three-picture FIFO. */
+    for(int low_latency=1;low_latency>=0;low_latency--) {
+        p=playback_create(nes,NULL,NULL,stream,0,0);
+        CHECK(p!=NULL);
+        if(!p) continue;
+        PlaybackControls controls={.analog=nes->apu.analog,.display_paced=true,.display_hz=60,
+            .low_latency=low_latency};
+        audio_chain_init_preset(&controls.audio,0,0,0);
+        playback_controls(p,&controls); playback_resume(p);
+        PlaybackFrame frame;
+        CHECK(next(p,&frame));
+        unsigned first=frame.number,last=first;
+        Uint64 end=SDL_GetTicks()+1000;
+        while(SDL_GetTicks()<end) {
+            if(playback_read(p,&frame)) last=frame.number;
+            SDL_Delay(8);
+        }
+        /* 60 a second, plus the queue and one frame started early. */
+        CHECK(last-first<=66);
+        playback_pause(p); playback_destroy(p);
+    }
     /* Low latency without display pacing: the emulation clock runs freely and
      * a renderer that stalled gets the newest picture, discarding the stale
      * ones behind it. The frame limit makes the newest number exact. */
