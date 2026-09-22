@@ -195,6 +195,36 @@ class RomInfo(unittest.TestCase):
         self.assertEqual(plain.crc, trained.crc)
         self.assertEqual(shots.rom_info(ines(pal=True)).region, "pal")
 
+    def test_junk_header_is_ntsc(self):
+        # Bytes 7-15 of a "DiskDude!" dump: byte 9 is 's' (bit 0 set), bytes
+        # 12-15 are "ude!". rom.h ignores byte 9 then, as Punch-Out!! (U) needs.
+        data = bytearray(ines())
+        data[7:16] = b"DiskDude!"
+        self.assertEqual(data[9] & 1, 1)
+        self.assertEqual(shots.rom_info(bytes(data)).region, "ntsc")
+        self.assertEqual(shots.rom_info(bytes(data), "Game (Europe).nes").region, "pal")
+
+    def test_nes2_timing_byte(self):
+        def nes2(timing, byte9=0):
+            data = bytearray(ines())
+            data[7] = 0x08
+            data[9] = byte9
+            data[12] = timing
+            return bytes(data)
+        self.assertEqual(shots.rom_info(nes2(0)).region, "ntsc")
+        self.assertEqual(shots.rom_info(nes2(1)).region, "pal")
+        self.assertEqual(shots.rom_info(nes2(2)).region, "ntsc")  # multi-region runs NTSC
+        self.assertEqual(shots.rom_info(nes2(3)).region, "ntsc")  # only NES_TV_PAL selects the PAL rate
+        self.assertEqual(shots.rom_info(nes2(0), "Game (E).nes").region, "ntsc")  # NES 2.0 wins over the name
+
+    def test_file_name_tag(self):
+        self.assertEqual(shots.rom_info(ines(), "Metroid (E).nes").region, "pal")
+        self.assertEqual(shots.rom_info(ines(), "Metroid (U).nes").region, "ntsc")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "Metroid (Europe).nes"
+            path.write_bytes(ines())
+            self.assertEqual(shots.read_rom_info(path).region, "pal")
+
     def test_chr_ram_rom(self):
         data = ines(prg=1, chr_=0)
         self.assertEqual(shots.rom_info(data).crc, zlib.crc32(data[16:]) & 0xFFFFFFFF)

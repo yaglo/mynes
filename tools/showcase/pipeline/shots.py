@@ -404,7 +404,27 @@ class RomInfo:
         return f"{self.crc:08x}"
 
 
-def rom_info(data: bytes) -> RomInfo:
+PAL_NAME_TAGS = ("(e)", "(europe)", "(pal)", "(australia)", "(europe, australia)")
+
+
+def header_region(header: bytes, name: str | None = None) -> str:
+    """The TV system the emulator runs, read the way src/nes/rom.h reads it.
+
+    NES 2.0 (flags 7 bits 2-3 = 10) keeps it in byte 12. An iNES 1.0 header
+    keeps it in byte 9 bit 0, but only when bytes 12-15 are zero: old dumps
+    such as the "DiskDude!" ones carry ASCII in bytes 7-15, so byte 9 is junk
+    and the emulator runs NTSC. Without NES 2.0, an NTSC result becomes PAL
+    when the file name has a tag such as "(E)" or "(Europe)"."""
+    if (header[7] & 0x0C) == 0x08:
+        return "pal" if header[12] & 0x03 == 1 else "ntsc"
+    if not any(header[12:16]) and header[9] & 0x01:
+        return "pal"
+    if name and any(tag in name.lower() for tag in PAL_NAME_TAGS):
+        return "pal"
+    return "ntsc"
+
+
+def rom_info(data: bytes, name: str | None = None) -> RomInfo:
     """CRC-32 over PRG then CHR, as frontends/shared/saves.c names save files."""
     if len(data) < 16 or data[:4] != INES_MAGIC:
         raise ShotListError("not an iNES file")
@@ -416,12 +436,12 @@ def rom_info(data: bytes) -> RomInfo:
     crc = zlib.crc32(data[offset:offset + prg])
     if chr_:
         crc = zlib.crc32(data[offset + prg:offset + prg + chr_], crc)
-    region = "pal" if data[9] & 0x01 else "ntsc"
-    return RomInfo(crc & 0xFFFFFFFF, region, prg, chr_)
+    return RomInfo(crc & 0xFFFFFFFF, header_region(data[:16], name), prg, chr_)
 
 
 def read_rom_info(path: Path | str) -> RomInfo:
-    return rom_info(Path(path).read_bytes())
+    path = Path(path)
+    return rom_info(path.read_bytes(), path.name)
 
 
 def config_dir(explicit: Path | str | None = None) -> Path:
