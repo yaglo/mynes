@@ -93,7 +93,8 @@ bool recorder_command_add_split(RecorderCommand *cmd, const char *args);
 bool recorder_encode_command(RecorderCommand *cmd, const RecorderOptions *options,
                              const char *video_path);
 /* The mux run: the encoded video plus float32 mono 44100 Hz audio into the
- * output as AAC 256k, cut to the shorter stream. */
+ * output as AAC 256k, cut to the length of options->seconds in whole
+ * frames. False when that is not one frame. */
 bool recorder_mux_command(RecorderCommand *cmd, const RecorderOptions *options,
                           const char *video_path, const char *audio_path);
 /* One line for logs and error messages. */

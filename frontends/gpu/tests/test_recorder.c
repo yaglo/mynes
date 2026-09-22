@@ -124,7 +124,7 @@ static void test_paths_and_commands(void) {
     CHECK(!recorder_json_path("demo.avi", json, sizeof(json)));
     CHECK(!recorder_json_path("demo.mov", json, 9));
 
-    RecorderOptions options = { .output = "out/clip.mov", .ffmpeg = "ffmpeg-test",
+    RecorderOptions options = { .output = "out/clip.mov", .ffmpeg = "ffmpeg-test", .seconds = 2,
         .codec_args = RECORDER_DEFAULT_CODEC_ARGS, .region = 0, .width = 3840, .height = 2880 };
     RecorderCommand cmd;
     CHECK(recorder_encode_command(&cmd, &options, "out/clip.mov.video.mov"));
@@ -144,15 +144,19 @@ static void test_paths_and_commands(void) {
     CHECK(!recorder_encode_command(&cmd, &options, "v.mov"));
     options.codec_args = RECORDER_DEFAULT_CODEC_ARGS;
     CHECK(recorder_mux_command(&cmd, &options, "v.mov", "a.f32le"));
+    /* PAL: 100 frames of 50.007 Hz, cut at the video's end. */
     const char *const mux[] = { "ffmpeg-test", "-y", "-nostdin", "-loglevel", "error",
         "-i", "v.mov", "-f", "f32le", "-ar", "44100", "-ac", "1", "-i", "a.f32le",
-        "-c:v", "copy", "-c:a", "aac", "-b:a", "256k", "-shortest",
+        "-c:v", "copy", "-c:a", "aac", "-b:a", "256k", "-t", "1.999720",
         "-movflags", "+faststart", "out/clip.mov", NULL };
     if (!argv_equals(&cmd, mux)) { CHECK(!"mux argv"); print_argv(&cmd); }
     char text[512];
     const char *prefix = "ffmpeg-test -y -nostdin -loglevel error -i v.mov -f f32le -ar 44100";
     recorder_command_text(&cmd, text, sizeof(text));
     CHECK(!strncmp(text, prefix, strlen(prefix)));
+    options.seconds = 0.001;
+    CHECK(!recorder_mux_command(&cmd, &options, "v.mov", "a.f32le"));
+    options.seconds = 2;
     /* The argv is bounded; a pathological override fails rather than truncates. */
     char many[2048]; many[0] = 0;
     for (int i = 0; i < 60; i++) strcat(many, "-x ");
@@ -184,10 +188,10 @@ static void test_paths_and_commands(void) {
 
     /* HDR: rgb48 PQ in, explicit BT.2020 matrix, tagged in and out. */
     options = (RecorderOptions){ .output = "out/clip.mov", .ffmpeg = "ffmpeg-test", .hdr = true,
-        .codec_args = RECORDER_HDR_CODEC_ARGS, .region = 0, .width = 1920, .height = 1440 };
+        .seconds = 2, .codec_args = RECORDER_HDR_CODEC_ARGS, .region = 1, .width = 1920, .height = 1440 };
     CHECK(recorder_encode_command(&cmd, &options, "out/clip.mov.video.mov"));
     const char *const encode_hdr[] = { "ffmpeg-test", "-y", "-loglevel", "error",
-        "-f", "rawvideo", "-pix_fmt", "rgb48le", "-video_size", "1920x1440", "-r", "60.0988",
+        "-f", "rawvideo", "-pix_fmt", "rgb48le", "-video_size", "1920x1440", "-r", "50.007",
         "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-i", "-",
         "-vf", "scale=out_color_matrix=bt2020:out_range=tv",
         "-c:v", "prores_ks", "-profile:v", "4", "-pix_fmt", "yuv444p10le", "-vendor", "apl0",
@@ -379,7 +383,7 @@ static void test_end_to_end(const char *directory) {
     CHECK(probe_value(info, "codec_name", value, sizeof(value)) && !strcmp(value, "aac"));
     CHECK(probe_value(info, "sample_rate", value, sizeof(value)) && atoi(value) == 44100);
     CHECK(probe_value(info, "channels", value, sizeof(value)) && atoi(value) == 1);
-    /* -shortest may drop the padded final AAC frame: within one of them. */
+    /* The audio ends within one AAC frame of the video. */
     CHECK(probe_value(info, "duration", value, sizeof(value)) && fabs(atof(value) - frames / 60.0988) < 0.03);
     char command[2048];
     snprintf(command, sizeof(command), "ffmpeg -y -loglevel error -i '%s' -f rawvideo -pix_fmt rgb24 '%s'", output, decoded);
@@ -393,20 +397,23 @@ static void test_end_to_end(const char *directory) {
         CHECK(n == sizeof(expected) && !memcmp(got, expected, sizeof(expected)));
     } else CHECK(false);
 
-    /* The default codec arguments produce the documented master format. */
+    /* The default codec arguments produce the documented master format.
+     * Two seconds with the worker's sample count: the muxed AAC track ends
+     * 0.7 ms before the video, and every H.264 frame, with its reordering
+     * delay, must still reach the file. */
     snprintf(output, sizeof(output), "%s/master.mp4", directory);
-    options.output = output; options.codec_args = NULL; options.seconds = 0.1;
+    options.output = output; options.codec_args = NULL; options.seconds = 2;
     options.headroom = 1.6f;   /* an EDR target, tone-mapped into the SDR file */
     r = recorder_create(&options, error, sizeof(error));
     CHECK(r != NULL);
     if (r) {
-        CHECK(recorder_frames(r) == 6);
-        for (unsigned f = 0; f < 6; f++) {
+        CHECK(recorder_frames(r) == 120);
+        for (unsigned f = 0; f < 120; f++) {
             fill_frame(rgba, f, false);
             FrameCaptureImage image = { .pixels = rgba, .width = W, .height = H, .white_level = 1 };
             CHECK(recorder_push_frame(r, &image));
         }
-        write_sine(recorder_audio_file(r), 4410);
+        write_sine(recorder_audio_file(r), (unsigned)lround(120 * 44100 / 60.0988));
         finished = recorder_finish(r, error, sizeof(error));
         if (!finished) fprintf(stderr, "  finish: %s\n", error);
         CHECK(finished);
@@ -414,9 +421,10 @@ static void test_end_to_end(const char *directory) {
         CHECK(probe(output, "v:0", "codec_name,pix_fmt,nb_frames", info, sizeof(info)));
         CHECK(probe_value(info, "codec_name", value, sizeof(value)) && !strcmp(value, "h264"));
         CHECK(probe_value(info, "pix_fmt", value, sizeof(value)) && !strcmp(value, "yuv444p"));
-        CHECK(probe_value(info, "nb_frames", value, sizeof(value)) && atoi(value) == 6);
+        CHECK(probe_value(info, "nb_frames", value, sizeof(value)) && atoi(value) == 120);
+        if (atoi(value) != 120) fprintf(stderr, "  master.mp4 holds %s of 120 frames\n", value);
         snprintf(json, sizeof(json), "%s/master.json", directory);
-        CHECK(strstr(read_text(json, text, sizeof(text)), "\"frames\": 6,") != NULL);
+        CHECK(strstr(read_text(json, text, sizeof(text)), "\"frames\": 120,") != NULL);
         CHECK(strstr(text, "\"headroom\": 1.6\n}") != NULL && !strstr(text, "max_cll"));
     } else fprintf(stderr, "  %s\n", error);
 

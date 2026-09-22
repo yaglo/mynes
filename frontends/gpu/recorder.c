@@ -178,14 +178,20 @@ bool recorder_encode_command(RecorderCommand *cmd, const RecorderOptions *option
 
 bool recorder_mux_command(RecorderCommand *cmd, const RecorderOptions *options,
                           const char *video_path, const char *audio_path) {
+    char duration[32];
+    unsigned frames = recorder_frame_count(options->seconds, options->region);
     memset(cmd, 0, sizeof(*cmd));
-    if (!options->ffmpeg || !options->output) return false;
-    /* The APU capture is float32 mono at the worker's stream rate. -shortest
-     * trims the AAC encoder padding; faststart puts the index first so the
-     * clip streams from a web page. */
+    if (!options->ffmpeg || !options->output || !frames) return false;
+    /* The APU capture is float32 mono at the worker's stream rate. -t cuts
+     * the audio at the video's length. -shortest ended at the shorter
+     * stream instead, and the muxed AAC track ends 0.7 ms before the video
+     * (88024 of 88055 samples for 120 frames), so it dropped the last one
+     * to four frames of an H.264 or ProRes clip. faststart puts the index
+     * first so the clip streams from a web page. */
+    snprintf(duration, sizeof(duration), "%.6f", frames / recorder_rate(options->region));
     const char *const args[] = { options->ffmpeg, "-y", "-nostdin", "-loglevel", "error",
         "-i", video_path, "-f", "f32le", "-ar", "44100", "-ac", "1", "-i", audio_path,
-        "-c:v", "copy", "-c:a", "aac", "-b:a", "256k", "-shortest",
+        "-c:v", "copy", "-c:a", "aac", "-b:a", "256k", "-t", duration,
         "-movflags", "+faststart", options->output, NULL };
     return add_all(cmd, args);
 }
