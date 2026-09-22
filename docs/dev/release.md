@@ -231,13 +231,63 @@ There is no AppImage or Flatpak yet. A distribution package would install
 `shaders/`, `presets/` and `palettes/` next to a `bin/` directory; the
 lookup does not consult `/usr/share`.
 
+## Hardware checks
+
+The tests cannot press a gamepad button, feel input latency or look at a
+panel. Run these on a Mac with one or two controllers before tagging.
+
+Input:
+
+- Plug a gamepad in while a game runs: "GAMEPAD CONNECTED" appears and the
+  pad drives player 1. A second pad drives player 2. Unplug and plug in
+  again: the notice repeats and the pad works.
+- Guide opens the menu. The d-pad and left stick move through the menu and
+  the ROM browser (South is Enter, East is back); nothing reaches the game
+  while either is open. The stick registers at about half its travel.
+- Player 2 plays on W/A/S/D with J, H, U and Y. Ctrl+D, Ctrl+T, Ctrl+B,
+  Ctrl+A and Ctrl+L never press a player 2 button.
+- Escape and M open the menu and never quit. Ctrl+Q and Game > Quit quit.
+
+Play:
+
+- Space pauses: the picture stays and audio stops; it resumes without a
+  click.
+- Holding ` or the right shoulder runs up to 8x with audio muted; audio
+  comes back clean on release.
+- F, Globe+F, F11 and Alt+Return toggle fullscreen at the panel's native
+  mode; the performance overlay (V) reports NATIVE PANEL PIXELS. Globe+F in
+  the ROM browser does not type an F.
+- Cover the window with another app for 30 s, then minimize it: the music
+  keeps its tempo.
+- The pointer stays hidden over the picture, windowed and fullscreen.
+
+Saves:
+
+- The Legend of Zelda: register a name, save, quit, relaunch; the file is
+  still there.
+- F5 saves, F6 changes slot, F7 loads; states survive a restart.
+
+Display:
+
+- Render scale Auto on a heavy preset (vhs_sp_consumer) in fullscreen
+  steps down only under sustained load, never after a resize or a
+  fullscreen switch.
+- Low latency on and off: no stutter on a 60 Hz panel.
+
+SDL2 frontend (`bin/mynes`): gamepad hot-plug as above, F toggles
+fullscreen, the pointer stays hidden.
+
+Packages: `dist/MyNES.app` opens from Finder (right-click Open for an
+ad-hoc build) and plays a ROM chosen in the browser.
+
 ## Checklist
 
 1. `ctest` passes on macOS and in the Linux CI workflow.
-2. Bump `VERSION` in `CMakeLists.txt`; commit.
-3. Regenerate shaders if any `.glsl` changed:
+2. The hardware checks above pass.
+3. Bump `VERSION` in `CMakeLists.txt`; commit.
+4. Regenerate shaders if any `.glsl` changed:
    `cmake --build build --target shaders_regenerate`, commit the `.spv`/`.msl`.
-4. Tag, then run the release scripts on each platform.
-5. macOS: sign with Developer ID, notarize, staple; or document the
+5. Tag, then run the release scripts on each platform.
+6. macOS: sign with Developer ID, notarize, staple; or document the
    right-click workaround in the release notes.
-6. Attach `dist/*.tar.*` and `dist/*.dmg` to the GitHub release.
+7. Attach `dist/*.tar.*` and `dist/*.dmg` to the GitHub release.
