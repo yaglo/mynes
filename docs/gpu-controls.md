@@ -215,8 +215,8 @@ mynes_gpu --offscreen 1920x1440 --sdr --preset presets/sony_pvm_14l2.json \
 | `--record-seconds N` | Clip length. Frames = round(N × rate) with the region's exact rate, 60.0988 (NTSC) or 50.007 (PAL), which is also the stream's frame rate. |
 | `--record-after F` | Emulated frames run before the first recorded one (default 2), so a loaded state's first pictures are left out. |
 | `--record-hdr` | Record BT.2020 PQ from a half-float target instead of 8-bit sRGB. Requires `--record`; not with `--sdr`. |
-| `--record-headroom H` | Headroom over SDR white for the recorded render, 1 to 10000. Overrides `MYNES_OFFSCREEN_HEADROOM`; the default is 1.6, or 4.0 with `--record-hdr`. Not with `--sdr`, whose target has none. |
-| `--record-hdr-white NITS` | Luminance of SDR white (1.0) in an HDR recording, default 203 (ITU-R BT.2408). Headroom × white must stay within the 10000-nit PQ peak. |
+| `--record-headroom H` | Headroom over SDR white for the recorded render, 1 to 10000. Requires `--record`; not with `--sdr`, whose target has none. Without the flag the render uses `MYNES_OFFSCREEN_HEADROOM` when it is set, otherwise 1.6, or 4.0 with `--record-hdr`. |
+| `--record-hdr-white NITS` | Luminance of SDR white (1.0) in an HDR recording, default 203 (ITU-R BT.2408). Requires `--record-hdr`. Headroom × white must stay within the 10000-nit PQ peak. |
 | `--load-state FILE` | Load a save-state file once the ROM is running, before the first frame. Useful outside recording too. It is the F7 load path: the picture history, audio and the CRT's temporal state restart, and a rejected file (wrong ROM, region or build) stops the run with the loader's reason. |
 | `--input-replay FILE` | Scripted player-1 input for the run; see below. |
 
