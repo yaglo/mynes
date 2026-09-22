@@ -4,7 +4,7 @@
     "seconds": {"hero": 6, "feature": 15},
     "presets": ["sony_pvm_14l2", "jvc_d_series_2000", "toshiba_14af43",
                 "stass_favourite", "vhs_sp_consumer", "reference_composite"],
-    "flicker_crop": [64, 72, 128, 96],
+    "flicker_crop": [78, 73, 100, 93.75],
     "record_after": 2,
     "sizes": {"lens": "3840x2880", "stage": ["1920x1440", "960x720"], "readme": "1600x1200"},
     "hdr": {"headroom": 4.0, "white_nits": 203},
@@ -34,7 +34,8 @@
       "state": "super-mario-bros.s1",
       "replay": "super-mario-bros.replay",
       "kind": "hero",
-      "flicker_crop": [48, 104, 128, 96],
+      "flicker_crop": [62, 105, 100, 93.75],
+      "lens": true,
       "caption": "The frame everyone knows, through four televisions.",
       "readme": ["sony_pvm_14l2", "stass_favourite"]
     },
@@ -46,7 +47,7 @@
       "state": "legend-of-zelda.s1",
       "replay": "legend-of-zelda.replay",
       "kind": "hero",
-      "flicker_crop": [64, 96, 128, 96],
+      "flicker_crop": [78, 97, 100, 93.75],
       "caption": "Brown rock, green bush, the tunic: composite colour at its most familiar."
     },
     {
@@ -56,7 +57,7 @@
       "rom": "*Punch-Out*.nes",
       "state": "punch-out.s1",
       "kind": "feature",
-      "flicker_crop": [64, 8, 128, 96],
+      "flicker_crop": [78, 9, 100, 93.75],
       "caption": "The dithered crowd resolves into a texture on a real tube.",
       "readme": ["sony_pvm_14l2"]
     },
@@ -68,7 +69,7 @@
       "state": "journey-to-silius.s1",
       "replay": "journey-to-silius.replay",
       "kind": "feature",
-      "flicker_crop": [64, 16, 128, 96],
+      "flicker_crop": [78, 17, 100, 93.75],
       "caption": "Dither meant for composite blending: raw, PVM and RF side by side."
     },
     {
@@ -79,7 +80,8 @@
       "state": "castlevania-3.s1",
       "replay": "castlevania-3.replay",
       "kind": "hero",
-      "flicker_crop": [64, 64, 128, 96],
+      "flicker_crop": [78, 65, 100, 93.75],
+      "lens": true,
       "caption": "Fine sprite work and dark backgrounds: beam width and phosphor decay."
     },
     {
@@ -90,7 +92,7 @@
       "state": "blaster-master.s1",
       "replay": "blaster-master.replay",
       "kind": "hero",
-      "flicker_crop": [64, 96, 128, 96],
+      "flicker_crop": [78, 97, 100, 93.75],
       "caption": "Smooth horizontal scrolling: dot crawl and comb filtering in motion."
     },
     {
@@ -101,7 +103,7 @@
       "rom_exclude": ["*II*", "*III*", "*2*", "*3*"],
       "state": "ninja-gaiden.s1",
       "kind": "feature",
-      "flicker_crop": [64, 64, 128, 96],
+      "flicker_crop": [78, 65, 100, 93.75],
       "caption": "Cinematic panels and a hard cut to gameplay."
     },
     {
@@ -112,7 +114,7 @@
       "state": "mega-man-2.s1",
       "replay": "mega-man-2.replay",
       "kind": "feature",
-      "flicker_crop": [64, 64, 128, 96],
+      "flicker_crop": [78, 65, 100, 93.75],
       "caption": "Flashing tiles and a boss portrait: the same seconds on five televisions."
     },
     {
@@ -123,7 +125,8 @@
       "state": "metroid.s1",
       "replay": "metroid.replay",
       "kind": "hero",
-      "flicker_crop": [64, 96, 128, 96],
+      "flicker_crop": [78, 97, 100, 93.75],
+      "lens": true,
       "caption": "Bright shots on black: bloom, halation and beam growth."
     },
     {
@@ -135,7 +138,7 @@
       "state": "batman.s1",
       "replay": "batman.replay",
       "kind": "hero",
-      "flicker_crop": [64, 96, 128, 96],
+      "flicker_crop": [78, 97, 100, 93.75],
       "caption": "Dark palettes and purple skies: black level and grey tracking."
     }
   ],

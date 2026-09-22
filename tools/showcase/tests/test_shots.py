@@ -5,7 +5,7 @@ import unittest
 import zlib
 from pathlib import Path
 
-from pipeline import shots
+from pipeline import recipes, shots
 from pipeline.shots import ShotListError
 
 
@@ -32,8 +32,16 @@ class RealShotList(unittest.TestCase):
         for s in sl.shots:
             self.assertEqual(s.seconds, 6 if s.kind == "hero" else 15)
             self.assertEqual(s.presets, shots.DEFAULT_PRESETS)
-            self.assertEqual(len(s.flicker_crop), 4)
+            # Every crop is 1500x1125 on the full-size render (README embed width 750).
+            rect = recipes.flicker_geometry(s.flicker_crop, d.lens_size)
+            self.assertEqual((rect.w, rect.h), (1500, 1125), s.id)
             self.assertTrue((shots.PRESETS_DIR / f"{s.default_preset}.json").exists())
+        lens = [s.id for s in sl.shots if s.lens]
+        self.assertEqual(lens, ["super-mario-bros", "castlevania-3", "metroid"])
+        for s in sl.shots:
+            if s.lens:
+                self.assertEqual(s.kind, "hero")
+                self.assertEqual(s.lens, s.presets)
         for s in sl.shots:
             if s.replay:
                 rows = shots.parse_replay((shots.REPLAYS_DIR / s.replay).read_text())
