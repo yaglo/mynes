@@ -91,7 +91,7 @@ layout(set = 3, binding = 0) uniform DisplayParams {
     vec2 mask_scale, mask_origin;
     vec4 phosphor_to_display[3];
     vec4 presentation; // x: host-refresh emission multiplier
-    vec4 monitor; // x: 1 = FW900 physical variable-pitch grille; y: panel subpixels, 0 off, 1 RGB, 2 BGR; z: shoulder knee
+    vec4 monitor; // x: 1 = FW900 physical variable-pitch grille; y: panel subpixels, 0 off, 1 RGB, 2 BGR; z: shoulder knee; w: mask peak coverage
     vec4 damper;  // x: aperture-grille damper wires; y: shadow height, face fraction; z, w: wire heights from the top
 };
 
@@ -103,6 +103,11 @@ layout(set = 3, binding = 0) uniform DisplayParams {
 // Interpolating successive filter orders makes resize continuous; both have
 // unit integral and nonnegative coverage. The final sinc integrates the
 // output pixel footprint. This filters the phosphor face, not the beam.
+// Unmasked light of the last face_emission() and the factors applied after
+// the mask, for the output shoulder: it needs the triad's brightest pixel.
+vec3 g_drive=vec3(0.0);
+vec3 g_post=vec3(1.0);
+
 float sinc_pi(float x) {
     return abs(x)<0.0001 ? 1.0 : sin(3.14159265359*x)/(3.14159265359*x);
 }
@@ -253,6 +258,7 @@ vec3 phosphor_light(vec2 p, vec2 face_pos) {
     }
 
     vec3 drive=color;
+    g_drive=drive;
     if (mask_strength > 0.01) {
         vec3 coverage=phosphor_mask(face_pos,p);
         color *= mix(vec3(1.0), coverage, mask_strength);
@@ -273,6 +279,7 @@ vec3 phosphor_light(vec2 p, vec2 face_pos) {
 // through the grille, the matte surface and glass scatter.
 vec3 face_emission(vec2 sample_uv, vec2 face_pos) {
     vec3 color=phosphor_light(sample_uv,face_pos);
+    vec3 drive=g_drive, post=vec3(1.0);
     // Fine surface scatter acts AFTER emission through the fixed grille.
     // Radius follows phosphor pitch, not source texture or UI-point size.
     if (antiglare_blur > 0.001) {
@@ -298,7 +305,9 @@ vec3 face_emission(vec2 sample_uv, vec2 face_pos) {
         vec3 h=clamp(halation_strength*tint,vec3(0.0),vec3(1.0));
         float r=clamp(glass_reflection*0.08,0.0,1.0);
         color=mix(color,halo,1.0-(1.0-h)*(1.0-r));
+        post*=(1.0-h)*(1.0-r);
     }
+    g_drive=drive; g_post=post;
     return color;
 }
 
@@ -322,7 +331,7 @@ void main() {
      * pass only samples the already-landed beam texture and applies
      * fixed screen/glass optics at the physical tube face. */
     vec2 sample_uv = clamp(uv, vec2(0.0), vec2(1.0));
-    vec3 color;
+    vec3 color, unmasked;
     vec2 face_pos=gl_FragCoord.xy*mask_scale+mask_origin;
     vec3 gain=vec3(damper_light(sample_uv.y));
 
@@ -379,16 +388,26 @@ void main() {
         float third=monitor.y>1.5 ? -1.0/3.0 : 1.0/3.0;
         vec2 step_uv=vec2(third/out_size.x,0.0), step_face=vec2(third*mask_scale.x,0.0);
         vec3 at_red=max(face_emission(clamp(uv-step_uv,vec2(0.0),vec2(1.0)),face_pos-step_face)*gain,vec3(0.0));
+        vec3 lit=g_drive*g_post;
         vec3 at_green=max(face_emission(sample_uv,face_pos)*gain,vec3(0.0));
+        lit=max(lit,g_drive*g_post);
         vec3 at_blue=max(face_emission(clamp(uv+step_uv,vec2(0.0),vec2(1.0)),face_pos+step_face)*gain,vec3(0.0));
+        lit=max(lit,g_drive*g_post)*gain;
         color=vec3(dot(phosphor_to_display[0].rgb,at_red),
                    dot(phosphor_to_display[1].rgb,at_green),
                    dot(phosphor_to_display[2].rgb,at_blue));
+        unmasked=vec3(dot(phosphor_to_display[0].rgb,lit),
+                      dot(phosphor_to_display[1].rgb,lit),
+                      dot(phosphor_to_display[2].rgb,lit));
     } else {
         color=max(face_emission(sample_uv,face_pos)*gain,vec3(0.0));
+        vec3 lit=max(g_drive*g_post*gain,vec3(0.0));
         color=vec3(dot(phosphor_to_display[0].rgb,color),
                    dot(phosphor_to_display[1].rgb,color),
                    dot(phosphor_to_display[2].rgb,color));
+        unmasked=vec3(dot(phosphor_to_display[0].rgb,lit),
+                      dot(phosphor_to_display[1].rgb,lit),
+                      dot(phosphor_to_display[2].rgb,lit));
     }
 
     /* Apply glass tint (phosphor light attenuated through glass). */
@@ -400,6 +419,7 @@ void main() {
     // Linear emission gain uses HDR headroom for phosphor peaks. Reflected
     // room light is independent of tube drive and must not rise with it.
     color *= (hdr_gain > 0.0 ? hdr_gain : 1.0) * presentation.x;
+    unmasked *= glass_tint * vignette_factor(uv, vignette_strength) * (hdr_gain > 0.0 ? hdr_gain : 1.0) * presentation.x;
 
     /* (h) Black floor already applied in beam shader — don't double it.
      *     Only add ambient light reflection on the glass surface. */
@@ -540,7 +560,13 @@ void main() {
     // headroom. Independent channel clipping used to wash out the grille.
     // Auto HDR gain fits white under a higher knee, leaving the shoulder
     // only for light above white's peak.
-    float peak=max(max(color.r,color.g),color.b);
+    // The brightest pixel of this pixel's triad, from the unmasked light
+    // and the mask's peak coverage, not this pixel alone: every pixel of
+    // the triad takes the same factor, so a stripe over the limit dims its
+    // whole triad and the colour keeps its hue. Per pixel, a bright blue
+    // stripe was squeezed on its own and its triad turned purple.
+    float peak=max(max(max(unmasked.r,unmasked.g),unmasked.b)*max(monitor.w,1.0),
+                   max(max(color.r,color.g),color.b));
     float limit=max(hdr_headroom,1.0), knee=monitor.z*limit;
     if (peak>knee) {
         float mapped=knee+(limit-knee)*(peak-knee)/(peak-knee+limit-knee);

@@ -652,13 +652,14 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
             float _color_pad[2];
             float phosphor_to_display[3][4];
             float pulse_gain, _pulse_pad[3];
-            float monitor_model, panel_subpixels, shoulder_knee, _monitor_pad;
+            float monitor_model, panel_subpixels, shoulder_knee, mask_peak;
             float damper_wires, damper_width, damper_y0, damper_y1;
         } crt_ubo = {0};
 
         crt_ubo.monitor_model = params->monitor_model;
         crt_ubo.panel_subpixels = (float)params->panel_subpixels;
         crt_ubo.shoulder_knee = params->shoulder_knee > 0 ? params->shoulder_knee : 0.75f;
+        crt_ubo.mask_peak = gpu_display_mask_peak(params);
         crt_ubo.damper_wires = params->mask_type==1 ? (float)params->damper_wires : 0.0f;
         crt_ubo.damper_width = params->damper_width;
         crt_ubo.damper_y0 = params->damper_y[0];
@@ -995,7 +996,7 @@ static float mask_coverage_peak(const GPUDisplayParams *p) {
     return (float)(best + (1 - best) * unresolved);
 }
 
-float gpu_display_white_peak(const GPUDisplayParams *p, float fwhm_lines) {
+float gpu_display_mask_peak(const GPUDisplayParams *p) {
     static GPUDisplayParams last;
     static float coverage = 1;
     static bool valid;
@@ -1006,8 +1007,11 @@ float gpu_display_white_peak(const GPUDisplayParams *p, float fwhm_lines) {
         last = *p; valid = true;
         coverage = mask_coverage_peak(p);
     }
-    float mask = p->mask_strength > 0.01f ? 1 + p->mask_strength * (coverage - 1) : 1;
-    return gpu_display_scanline_peak(fwhm_lines) * mask;
+    return p->mask_strength > 0.01f ? 1 + p->mask_strength * (coverage - 1) : 1;
+}
+
+float gpu_display_white_peak(const GPUDisplayParams *p, float fwhm_lines) {
+    return gpu_display_scanline_peak(fwhm_lines) * gpu_display_mask_peak(p);
 }
 
 void gpu_display_fit_mask(GPUDisplayParams *p, bool pixel_aligned, int panel_subpixels,

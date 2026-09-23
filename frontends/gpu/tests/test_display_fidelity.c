@@ -42,6 +42,13 @@ static void render_region(SDL_GPUDevice *gpu, GPUDisplay *d, SDL_GPUTexture *inp
     SDL_ReleaseGPUTransferBuffer(gpu,download);
 }
 
+static void clear_rgb(SDL_GPUDevice *gpu, SDL_GPUTexture *input, float r, float g, float b) {
+    SDL_GPUCommandBuffer *cmd=SDL_AcquireGPUCommandBuffer(gpu);
+    SDL_GPUColorTargetInfo ct={.texture=input,.clear_color={r,g,b,1},.load_op=SDL_GPU_LOADOP_CLEAR,.store_op=SDL_GPU_STOREOP_STORE};
+    SDL_GPURenderPass *pass=SDL_BeginGPURenderPass(cmd,&ct,1,NULL); SDL_EndGPURenderPass(pass);
+    CHECK(SDL_SubmitGPUCommandBuffer(cmd)); CHECK(SDL_WaitForGPUIdle(gpu));
+}
+
 static void clear_input(SDL_GPUDevice *gpu, SDL_GPUTexture *input, float level) {
     SDL_GPUCommandBuffer *cmd=SDL_AcquireGPUCommandBuffer(gpu);
     SDL_GPUColorTargetInfo ct={.texture=input,.clear_color={level,level,level,1},.load_op=SDL_GPU_LOADOP_CLEAR,.store_op=SDL_GPU_STOREOP_STORE};
@@ -560,6 +567,21 @@ int test_display_fidelity(SDL_GPUDevice *gpu) {
     render(gpu,&d,input,target,&p,avg,&peak);
     CHECK(fabsf(avg[0]-.5f*.8224621f)<.002f && fabsf(avg[1]-.5f*.0331941f)<.001f && fabsf(avg[2]-.5f*.0170827f)<.001f);
     p.output_p3=0;
+    // Where the panel cannot show a colour's brightest stripe, the shoulder
+    // dims the whole triad: on a three-pixel grille at 1.5 headroom the blue
+    // stripe of (0.2, 0.3, 0.6) reaches 1.8, past the knee at 1.125, while
+    // red and green stay under it. The field keeps its channel ratios and
+    // comes out darker than the input.
+    {
+        GPUDisplayParams saved=p;
+        p.glass_reflection=0;p.halation_strength=0;p.antiglare_blur=0;p.mask_type=1;p.mask_pitch_px=1;p.mask_strength=1;
+        p.panel_subpixels=0;p.damper_wires=0;p.output_hdr=1;p.hdr_headroom=1.5f;p.sdr_white_level=1;p.hdr_gain=1;p.phosphor_gamut=0;
+        clear_rgb(gpu,input,.2f,.3f,.6f);
+        render(gpu,&d,input,target,&p,avg,&peak);
+        CHECK(fabsf(avg[0]/avg[2]-1.0f/3)<.005f && fabsf(avg[1]/avg[2]-.5f)<.005f);
+        CHECK(avg[2]<.55f && avg[2]>.4f);
+        p=saved;
+    }
     // Wavelength-dependent scatter fractions must leave a uniform field
     // neutral, even for extreme user tint values and high HDR headroom.
     p.glass_reflection=0;p.halation_strength=.3f;

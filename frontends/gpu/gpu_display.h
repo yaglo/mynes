@@ -165,8 +165,12 @@ void gpu_display_params_from_tv(GPUDisplayParams *out, const TVDisplayParams *tv
  * when neighbouring lines merge into a flat field. */
 float gpu_display_scanline_peak(float fwhm_lines);
 
+/* The most light one pixel draws from a colour's phosphor over that
+ * colour's mean, at the fitted pitch and mask strength; 1 without a mask. */
+float gpu_display_mask_peak(const GPUDisplayParams *p);
+
 /* Brightest point of a full-white field over its average: the scanline
- * peak times the fitted phosphor mask's peak coverage at its strength. */
+ * peak times the mask peak. */
 float gpu_display_white_peak(const GPUDisplayParams *p, float fwhm_lines);
 
 /* Fit the mask to the host panel, independently of the stored CRT preset.
