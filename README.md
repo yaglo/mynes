@@ -4,8 +4,7 @@ MyNES is an NES emulator that generates the console's composite video signal,
 decodes it the way a television would, and draws the beam, phosphors, mask and
 glass of a CRT. The emulation core is cycle accurate: it passes 144 of 144
 [AccuracyCoin](tests/accuracy_coin/README.md) tests and the blargg CPU, PPU
-and APU suites. The picture is computed from the composite signal, with no
-post-process filter over the NES frame.
+and APU suites.
 
 Flicker warning: the preview GIF alternates 2 frames at 25 Hz.
 
@@ -106,8 +105,9 @@ On an Apple M5 (24 GiB, Metal, Release build, measured 2026-09-21), the full
 GPU chain takes a median 7.3 ms per frame for the Sony PVM-14L2 preset at
 2560×1920. The JVC D-Series, Toshiba 14AF and Stas's Favourite presets take
 9.4 to 11.0 ms. The render scale setting (1, 0.75, 0.5 or auto) draws the beam
-and phosphor stages at that fraction of the viewport, which keeps 60 fps on
-slower GPUs. The method and raw data are in the
+and phosphor stages at that fraction of the viewport. Auto steps down when the
+GPU time per frame stays above 90% of the frame interval. The method and raw
+data are in the
 [benchmark results](docs/gpu-benchmark-results.md).
 
 ## Tests
