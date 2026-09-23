@@ -1,6 +1,7 @@
 /* Exercise exclusive core ownership, picture queue bounds, low-latency
  * queueing, and ROM replacement. */
 #define _POSIX_C_SOURCE 200809L
+#define _DARWIN_C_SOURCE /* proc_pid_rusage */
 #include "playback.h"
 #include "signal_format.h"
 #include <unistd.h>
@@ -8,6 +9,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#if defined(__APPLE__)
+#include <libproc.h>
+#include <mach/mach_time.h>
+#elif defined(__linux__)
+#include <dirent.h>
+#endif
 
 static int failures;
 #define CHECK(x) do { if (!(x)) { fprintf(stderr,"Playback FAIL %d: %s\n",__LINE__,#x); failures++; } } while (0)
@@ -69,6 +76,36 @@ static Uint64 median_gap(Pictures *r) {
     if(!r->gaps) return 0;
     qsort(r->gap,r->gaps,sizeof(r->gap[0]),compare_ns);
     return r->gap[r->gaps/2];
+}
+
+/* Nanoseconds the process's threads have spent ready to run with no CPU
+ * free for them, from an arbitrary origin, or -1 when the kernel does not
+ * say. macOS counts time in the run state whether or not a CPU runs the
+ * thread, so the CPU time is taken off; Linux keeps each thread's wait in
+ * schedstat. A thread that sleeps is not ready to run and adds nothing. */
+static double cpu_wait_ns(void) {
+#if defined(__APPLE__)
+    struct rusage_info_v4 info;
+    mach_timebase_info_data_t base;
+    if(proc_pid_rusage(getpid(),RUSAGE_INFO_V4,(rusage_info_t *)&info) || mach_timebase_info(&base)) return -1;
+    return ((double)info.ri_runnable_time-info.ri_user_time-info.ri_system_time)*base.numer/base.denom;
+#elif defined(__linux__)
+    DIR *dir=opendir("/proc/self/task");
+    if(!dir) return -1;
+    double total=-1;
+    for(struct dirent *entry;(entry=readdir(dir));) {
+        char path[300];
+        unsigned long long cpu,wait;
+        snprintf(path,sizeof(path),"/proc/self/task/%s/schedstat",entry->d_name);
+        FILE *file=entry->d_name[0]!='.' ? fopen(path,"r") : NULL;
+        if(file && fscanf(file,"%llu %llu",&cpu,&wait)==2) total=(total<0?0:total)+wait;
+        if(file) fclose(file);
+    }
+    closedir(dir);
+    return total;
+#else
+    return -1;
+#endif
 }
 
 int main(void) {
@@ -257,9 +294,13 @@ int main(void) {
      * CPU from the 8x worker, which then waits less, so this holds at any
      * load. The frame count must also outrun 1.5x pacing, which takes CPU:
      * the run goes on until it does, for up to 5 s. If it never did, the test
-     * reports a skip when the host starved the worker: the process had less
-     * than 90% of a core, or even the 1x waits were no longer than 8x allows. */
-    const char *fast_skip=NULL;
+     * reports a skip when the host starved the worker, which means the
+     * process spent a quarter of the run ready to run with no CPU free. On
+     * an M5 next to 30 busy loops an 8x frame takes up to 5.6 ms of CPU, so
+     * three quarters of a core still starts 130 frames a second, against 90
+     * for 1.5x pacing. A worker that sleeps is not ready to run, so a
+     * fast-forward slowed by a sleep still fails on a quiet host. */
+    char fast_skip[160]="";
     p=playback_create(nes,NULL,NULL,stream,0,0);
     CHECK(p!=NULL);
     if(p) {
@@ -281,6 +322,7 @@ int main(void) {
         CHECK(next(p,&frame)); add_picture(&fast,&frame);
         Uint64 begin=SDL_GetTicks();
         clock_t cpu=clock();
+        double wait_begin=cpu_wait_ns();
         unsigned fast_frames=0;
         Uint64 fast_ns=0;
         bool queued_while_fast=false;
@@ -294,16 +336,17 @@ int main(void) {
             if(elapsed>=400 && fast_frames>frames_paced(fast_ns,1.5)) break; /* at least 400 ms as at 1x */
             if(elapsed>=5000) break;
         }
-        double core=(double)(clock()-cpu)/CLOCKS_PER_SEC/((SDL_GetTicks()-begin)/1000.0);
+        double seconds=(SDL_GetTicks()-begin)/1000.0,wait_end=cpu_wait_ns();
+        double core=(double)(clock()-cpu)/CLOCKS_PER_SEC/seconds;
+        double starved=wait_begin>=0 && wait_end>=0 ? (wait_end-wait_begin)/1e9/seconds : -1;
         Uint64 fast_wait=median_gap(&fast);
         CHECK(next(p,&frame)); /* still running */
         CHECK(!queued_while_fast);
         CHECK(fast.gaps>=10 && fast_wait<=wait_limit);
         bool outran=fast_frames>frames_paced(fast_ns,1.5);
-        if(!outran && (normal.gaps<5 || normal_wait<=wait_limit))
-            fast_skip="the 1x worker waited no longer than 8x allows";
-        else if(!outran && core<0.9)
-            fast_skip="8x did not outrun 1.5x pacing with less than 90% of a core";
+        if(!outran && starved>=0.25)
+            snprintf(fast_skip,sizeof(fast_skip),"8x did not outrun 1.5x pacing and the process "
+                     "waited for a CPU for %.0f%% of the run",starved*100);
         else CHECK(outran);
         controls.speed=1;
         playback_controls(p,&controls);
@@ -313,9 +356,10 @@ int main(void) {
         playback_pause(p);
         playback_destroy(p);
         printf("Playback speed: %u frames in %.0f ms at 1x, %u in %.0f ms at 8x (1.5x allows %u); "
-               "median wait %.2f ms at 1x, %.2f ms at 8x; %.0f%% of a core at 8x\n",
+               "median wait %.2f ms at 1x, %.2f ms at 8x; at 8x %.0f%% of a core, "
+               "%.0f%% of the time waiting for one\n",
                normal_frames,normal_ns/1e6,fast_frames,fast_ns/1e6,frames_paced(fast_ns,1.5),
-               normal_wait/1e6,fast_wait/1e6,core*100);
+               normal_wait/1e6,fast_wait/1e6,core*100,starved*100);
     }
     /* A main-thread visit runs between frames, holds the next frame back for
      * as long as it lasts and may change the console; playback then goes on. */
@@ -393,7 +437,7 @@ int main(void) {
     SDL_DestroyAudioStream(stream); free(nes); free(prg); free(chr); SDL_Quit();
     printf("Playback ownership regressions: %d failures\n",failures);
     if(failures) return 1;
-    if(fast_skip) {
+    if(fast_skip[0]) {
         printf("Playback: fast-forward speed not checked, %s\n",fast_skip);
         return 77; /* SKIP_RETURN_CODE */
     }
