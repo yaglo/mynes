@@ -211,8 +211,9 @@ the bank/mode and the written value is ignored. Includes 1200-in-1 layouts.
   above $8000 (see the mapper 5 section).
 - **FME-7**: Sunsoft 5B expansion audio is silent.
 - **Mapper 34**: iNES 1.0 headers cannot say which board a ROM is; the CHR
-  type heuristic is wrong for the rare BNROM dump that carries CHR ROM, and
-  submapper hints in NES 2.0 headers are not read.
+  type heuristic is wrong for the rare BNROM dump that carries CHR ROM. The
+  loader reads the NES 2.0 submapper (1 is NINA-001, 2 is BNROM) into
+  `ROM.submapper`, but mapper 34 does not use it to pick the board.
 - **Mapper 71**: the mirroring latch is decoded for every mapper 71 ROM. A
   homebrew or hack that writes to $8000-$9FFF for another purpose would
   switch to single-screen mirroring.
