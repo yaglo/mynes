@@ -1974,8 +1974,8 @@ int main(int argc, char **argv) {
         /* preset_apply.c asks for this notice from the G key and the OSD
          * toggle. Posted here, before the state requests below, it is timed
          * from the toggle like any other notice and runs out behind an open
-         * menu. Posted only once no menu was open, it replaced the STATE
-         * SAVED or STATE LOADED notice of the menu action that closed it. */
+         * menu. Posted after them, it would replace the notice of a state
+         * save, state load or battery write requested in the same frame. */
         if (render_ctx.room_reflections_notice) {
             render_ctx.room_reflections_notice = false;
             show_notice("ROOM REFLECTIONS (G)", render_ctx.room_reflections_enabled ? "ON" : "OFF");
