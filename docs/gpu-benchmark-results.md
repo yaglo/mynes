@@ -1,3 +1,25 @@
+# GPU performance — 23 September 2026
+
+Apple M5, 24 GiB, Metal, Release build, validation off, the same method as the 21 September run below: twelve warmups and 60 individually fenced frames at each resolution, panel mask mode, offscreen scale 1:1, no other MyNES frontend running. One ffmpeg encode held one CPU core during the run (load average 6.4 before, 5.9 after); the GPU was otherwise idle. [Raw chain measurements and load metadata](gpu-benchmark-results.json).
+
+| Preset | 640×480 median | 1280×960 median | 1920×1440 median | 2560×1920 median / p95 / max |
+|---|---:|---:|---:|---:|
+| Sony PVM-14L2 | 2.574 ms | 3.564 ms | 6.678 ms | 11.218 / 11.974 / 12.116 ms |
+| JVC D-Series | 4.492 ms | 5.532 ms | 8.875 ms | 13.439 / 13.923 / 14.246 ms |
+| Toshiba 14AF43 | 4.233 ms | 5.395 ms | 8.908 ms | 13.515 / 13.731 / 13.868 ms |
+| Stas's Favourite | 4.242 ms | 5.936 ms | 9.508 ms | 14.619 / 14.976 / 15.199 ms |
+
+The chain is slower than on 21 September at every size above 640×480, and the gap grows with the pixel count:
+
+| Preset | 2560×1920, 21 Sep | 2560×1920, 23 Sep | Change | 640×480, 21 Sep | 640×480, 23 Sep |
+|---|---:|---:|---:|---:|---:|
+| Sony PVM-14L2 | 7.285 ms | 11.218 ms | +54% | 2.700 ms | 2.574 ms |
+| JVC D-Series | 9.363 ms | 13.439 ms | +44% | 3.653 ms | 4.492 ms |
+| Toshiba 14AF43 | 10.731 ms | 13.515 ms | +26% | 3.898 ms | 4.233 ms |
+| Stas's Favourite | 10.993 ms | 14.619 ms | +33% | 4.009 ms | 4.242 ms |
+
+The extra time is in the display pass, whose per-pixel work grew between the two runs: each colour is now sampled at the panel's own subpixel (three fetches per pixel in place of one), the exact stripe grille is evaluated per subpixel, the output shoulder spills what a stripe cannot show into its triad's other pixels, and the mask peak and white level are measured rather than estimated (commits 1e3d37d to b923f46). About 0.8 ns per output pixel at 2560×1920, or 3.9 ms of the 11.2 ms. The signal stages before the display pass are unchanged, which the flat 640×480 numbers show. No optimisation was attempted for this run.
+
 # GPU performance — 21 September 2026
 
 Apple M5, 24 GiB, Metal, Release build, validation off. All runs were sequential with no other MyNES frontend detected. Desktop/UI-test activity remained; these are observations on a shared machine, not isolated laboratory measurements.
