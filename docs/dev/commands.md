@@ -66,7 +66,9 @@ tree:
   (and repairs the Metal buffer indices in the MSL there).
 - Without them, CMake says so at configure time and copies the committed
   `.spv`/`.msl` files into the same layout. Force this path for testing
-  with `-DGLSLC_EXECUTABLE=NOTFOUND`.
+  with `-DGLSLC_EXECUTABLE=OFF`. A `NOTFOUND` value does not stay: CMake
+  searches again on the next configure, which adding or renaming a
+  shader starts.
 
 Either way the build then deletes every `.spv`/`.msl` in `build/shaders/`
 that no current `.glsl` produces, such as the outputs of a renamed or
