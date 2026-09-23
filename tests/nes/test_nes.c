@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "nes/nes.h"
+#include "nes/rom.h"
 
 static NES nes;
 
@@ -469,6 +470,68 @@ int test_trace_callback_toggle(void) {
     return pass;
 }
 
+/* Boots a 32 KB PRG, 8 KB CHR cartridge from header bytes, as the frontends do. */
+static void boot_cartridge(uint8_t flags6) {
+    static uint8_t data[INES_HEADER_SIZE + 2 * INES_PRG_BANK_SIZE + INES_CHR_BANK_SIZE];
+    static ROM rom;
+    nes_rom_free(&rom);
+    memcpy(data, "NES\x1A\x02\x01", 6);
+    data[6] = flags6;
+    if (nes_rom_load_data(&rom, data, sizeof(data)) != ROM_OK) return;
+    nes_init(&nes);
+    nes_load_mapper(&nes, rom.mapper, rom.prg_rom, rom.prg_size,
+                    rom.chr_rom, rom.chr_size, rom.mirroring);
+    nes_reset(&nes);
+}
+
+/* Each of $2000/$2400/$2800/$2C00, and its $3000 mirror, reads back the
+ * byte written to that table alone. */
+static bool four_tables_distinct(void) {
+    bool pass = true;
+    for (uint16_t t = 0; t < 4; t++) {
+        pass &= ppu_read(&nes.ppu, 0x2000 + t * 0x400 + 0x21) == 0x10 + t;
+        pass &= ppu_read(&nes.ppu, 0x3000 + t * 0x400 + 0x21) == 0x10 + t;
+    }
+    return pass;
+}
+
+/* Flags 6 bit 3 (Rad Racer II's TVROM board) adds 2 KB of cartridge VRAM,
+ * so the four nametables are separate memory. The board leaves the MMC3's
+ * mirroring output unconnected: a $A000 write must not fold them back. */
+int test_four_screen_nametables(void) {
+    boot_cartridge(0x48);   /* mapper 4, four-screen */
+    for (uint16_t t = 0; t < 4; t++)
+        ppu_write(&nes.ppu, 0x2000 + t * 0x400 + 0x21, 0x10 + t);
+    bool pass = nes.ppu.mirroring == 4 && four_tables_distinct();
+
+    for (uint8_t val = 0; val < 2; val++) {   /* $A000: 0 = vertical, 1 = horizontal */
+        nes_cpu_write(&nes.cpu, 0xA000, val);
+        pass &= nes.ppu.mirroring == 4 && four_tables_distinct();
+        run_cycles(10);
+        pass &= nes.ppu.mirroring == 4 && four_tables_distinct();
+    }
+
+    /* Without bit 3 the same write does fold them: $2400 is $2000. */
+    boot_cartridge(0x40);
+    nes_cpu_write(&nes.cpu, 0xA000, 0x01);
+    run_cycles(10);
+    for (uint16_t t = 0; t < 4; t++)
+        ppu_write(&nes.ppu, 0x2000 + t * 0x400 + 0x21, 0x10 + t);
+    pass &= nes.ppu.mirroring == 0 && !four_tables_distinct() &&
+            ppu_read(&nes.ppu, 0x2021) == 0x11;
+
+    /* No MMC2 board has four-screen RAM, yet the common Punch-Out!! (U)
+     * dump sets bit 3 (flags 6 = $99). The game switches the MMC2 between
+     * horizontal and vertical, and that register must keep working. */
+    boot_cartridge(0x98);
+    nes_cpu_write(&nes.cpu, 0xF000, 0x00);
+    run_cycles(10);
+    pass &= nes.mapper.number == 9 && nes.ppu.mirroring == 1;
+
+    printf("TEST four_screen_nametables: %s\n", pass ? "PASS" : "FAIL");
+    return pass;
+}
+
 /* ============================================================================
  * Main
  * ============================================================================ */
@@ -493,6 +556,7 @@ int main(void) {
     total++; passed += test_full_frame();
     total++; passed += test_vblank_flag_read();
     total++; passed += test_trace_callback_toggle();
+    total++; passed += test_four_screen_nametables();
 
     printf("\n=== Results: %d/%d tests passed ===\n", passed, total);
 

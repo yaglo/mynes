@@ -67,8 +67,15 @@ determines how the four logical nametables map to physical memory:
 | Vertical | NT0 | NT1 | NT0 | NT1 |
 | Single-low | NT0 | NT0 | NT0 | NT0 |
 | Single-high | NT1 | NT1 | NT1 | NT1 |
+| Four-screen | NT0 | NT1 | NT2 | NT3 |
 
 Mirroring is controlled by the cartridge (hardwired or mapper-controlled).
+A four-screen cartridge (iNES flags 6 bit 3, mode 4) adds 2 KB of VRAM for
+NT2 and NT3; the core keeps it in `ppu->vram` at $2800-$2FFF, so save states
+carry it with the rest of the PPU. MMC3 ignores its mirroring register on
+such a board (TVROM). Mappers whose boards never had the extra VRAM keep
+their own layout: MMC1, AxROM and FME-7 set it at power-on, MMC2 and MMC4
+at their first mirroring write.
 The PPU applies mirroring in `ppu_read()` / `ppu_write()` using a switch
 on `ppu->mirroring`.
 

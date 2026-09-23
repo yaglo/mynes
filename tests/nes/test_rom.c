@@ -298,6 +298,35 @@ static int test_nes2_mapper(void) {
     return pass;
 }
 
+/* Flags 6 bit 3 puts 2 KB of VRAM on the cartridge (Rad Racer II, Gauntlet).
+ * The loader reports it as mirroring mode 4 whatever bit 0 says, for iNES
+ * 1.0 and NES 2.0 headers alike. */
+static int test_four_screen(void) {
+    static uint8_t data[INES_HEADER_SIZE + INES_PRG_BANK_SIZE + INES_CHR_BANK_SIZE];
+    static const struct { uint8_t flags6, flags7, mirroring; } cases[] = {
+        {0x48, 0x00, 4}, {0x49, 0x00, 4}, {0x48, 0x08, 4}, {0x49, 0x08, 4},
+        {0x40, 0x00, 0}, {0x41, 0x00, 1}, {0x41, 0x08, 1},
+    };
+    memcpy(data, "NES\x1A\x01\x01", 6);
+    int pass = 1;
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+        data[6] = cases[i].flags6;
+        data[7] = cases[i].flags7;
+        ROM rom;
+        int result = nes_rom_load_data(&rom, data, sizeof(data));
+        if (result != ROM_OK || rom.mapper != 4 || rom.mirroring != cases[i].mirroring) {
+            printf("TEST four_screen: FAIL (flags6 %02X flags7 %02X: result %d, mapper %u, "
+                   "mirroring %u, expected %u)\n", cases[i].flags6, cases[i].flags7,
+                   result, rom.mapper, rom.mirroring, cases[i].mirroring);
+            pass = 0;
+        }
+        if (result == ROM_OK) nes_rom_free(&rom);
+    }
+    if (pass)
+        printf("TEST four_screen: PASS (flags6 bit 3 gives mirroring 4 in iNES and NES 2.0)\n");
+    return pass;
+}
+
 int test_battery_flag(void) {
     const char *path = "/tmp/test_battery.nes";
     create_test_rom(path, 1, 1, 0x02, 0x00);  /* Battery flag set (bit 1) */
@@ -397,6 +426,7 @@ int main(void) {
     total++; passed += test_unsupported_mapper();
     total++; passed += test_mapper_gate();
     total++; passed += test_nes2_mapper();
+    total++; passed += test_four_screen();
     total++; passed += test_battery_flag();
     total++; passed += test_rom_free();
 

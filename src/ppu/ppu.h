@@ -181,7 +181,8 @@ typedef struct PPU {
     /* Odd frame flag (for cycle skip) */
     bool odd_frame;
 
-    /* Nametable mirroring (0=horizontal, 1=vertical) */
+    /* Nametable mirroring (0=horizontal, 1=vertical, 2/3=single-screen
+     * low/high, 4=four-screen) */
     uint8_t mirroring;
 
     /* Region timing (set by ppu_set_region) */
@@ -333,6 +334,8 @@ static inline uint8_t ppu_read(PPU *ppu, uint16_t addr) {
          *   1 = Vertical:   $2000=$2800, $2400=$2C00
          *   2 = Single-screen low:  all → $2000
          *   3 = Single-screen high: all → $2400
+         *   4 = Four-screen: no folding. vram $2800-$2FFF stands in for
+         *       the 2 KB of VRAM on the cartridge.
          */
         addr &= 0x0FFF;
         switch (ppu->mirroring) {

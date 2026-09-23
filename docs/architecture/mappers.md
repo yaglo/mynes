@@ -93,6 +93,9 @@ and flexible PRG/CHR banking modes.
 - CHR: six 1KB/2KB banks with configurable layout
 - Scanline counter: counts A12 transitions for mid-frame effects
 - IRQ: fires after N scanlines (used for split-screen scrolling)
+- TVROM (Rad Racer II): the header's four-screen bit gives four separate
+  nametables, and $A000 writes are ignored because the board does not wire
+  the MMC3's mirroring output
 
 **Games**: Super Mario Bros 3, Kirby's Adventure, Mega Man 3-6
 
@@ -125,6 +128,9 @@ windows, each with a $FD and an $FE bank ($B000/$C000 for $0000, $D000/$E000
 for $1000). Latch 0 only reacts to the exact fetches $0FD8 and $0FE8, latch 1
 to the rows $1FD8-$1FDF and $1FE8-$1FEF; the triggering fetch still returns
 the old bank. $F000 bit 0 selects vertical (0) or horizontal (1) mirroring.
+No MMC2 board has four-screen VRAM, but the Punch-Out!! (U) dump sets the
+header's four-screen bit (flags 6 = $99), so the first $F000 write replaces
+the four-screen layout the loader starts with.
 
 **Games**: Punch-Out!!, Mike Tyson's Punch-Out!!
 
@@ -189,7 +195,8 @@ banks at $8000/$A000, with the last two PRG banks fixed. CHR values are six
 bits wide, the mode bits of the bank-select value are ignored, and there is
 no IRQ counter, mirroring control or PRG RAM. Only A0 is decoded within
 $8000-$FFFF, so the pair repeats across the whole range. The `mmc3_banks`
-registers are reused as state.
+registers are reused as state. The DRROM board (Gauntlet) carries four-screen
+VRAM, which the header's four-screen bit selects.
 
 **Games**: Gauntlet, Pac-Mania, Karnov, Dragon Spirit
 
@@ -209,10 +216,6 @@ the bank/mode and the written value is ignored. Includes 1200-in-1 layouts.
 - **Mapper 71**: the mirroring latch is decoded for every mapper 71 ROM. A
   homebrew or hack that writes to $8000-$9FFF for another purpose would
   switch to single-screen mirroring.
-- **Mapper 206**: the DRROM board (Gauntlet) carries four-screen VRAM. The
-  loader ignores the header's four-screen bit and the core has no cartridge
-  nametable RAM outside MMC5, so Gauntlet falls back to the header's H/V
-  mirroring.
 - **Bus conflicts** are emulated only where the track called for them
   (mapper 11). UxROM, CNROM, AxROM, BNROM and GxROM boards also have them on
   real hardware; a program that relies on the conflict for its result will

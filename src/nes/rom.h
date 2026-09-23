@@ -25,7 +25,7 @@
  * 0-3     4     Magic: "NES\x1A"
  * 4       1     PRG ROM size (16KB units)
  * 5       1     CHR ROM size (8KB units, 0 = CHR RAM)
- * 6       1     Flags 6: Mirroring, battery, trainer, mapper low
+ * 6       1     Flags 6: Mirroring, battery, trainer, four-screen, mapper low
  * 7       1     Flags 7: Mapper high, VS/Playchoice, NES 2.0
  * 8-15    8     Padding (zeros in iNES 1.0)
  *
@@ -72,7 +72,7 @@ typedef struct {
     uint32_t chr_size;      /* CHR ROM size in bytes (0 = CHR RAM) */
     uint16_t mapper;        /* Mapper number, 0-4095 (above 255 only in NES 2.0) */
     uint8_t submapper;      /* NES 2.0 submapper, 0 for iNES 1.0 */
-    uint8_t mirroring;      /* 0=horizontal, 1=vertical */
+    uint8_t mirroring;      /* 0=horizontal, 1=vertical, 4=four-screen */
     uint8_t tv_system;      /* NES_TV_NTSC / NES_TV_PAL / NES_TV_MULTI / NES_TV_DENDY */
     bool region_from_filename; /* Legacy header corrected by explicit PAL filename tag */
     bool is_nes2;           /* true if NES 2.0 header detected */
@@ -143,7 +143,9 @@ static inline int nes_rom_parse_header(ROM *rom, const uint8_t *header) {
 
     rom->prg_size = prg_banks * INES_PRG_BANK_SIZE;
     rom->chr_size = chr_banks * INES_CHR_BANK_SIZE;
-    rom->mirroring = (flags6 & 0x01);           /* Bit 0: mirroring */
+    /* Bit 0: mirroring. Bit 3: the cartridge carries 2 KB of VRAM for four
+     * separate nametables, which replaces the bit 0 layout. */
+    rom->mirroring = (flags6 & 0x08) ? 4 : (flags6 & 0x01);
     rom->has_battery = (flags6 & 0x02) != 0;    /* Bit 1: battery */
     rom->has_trainer = (flags6 & 0x04) != 0;    /* Bit 2: trainer */
     rom->mapper = ((flags6 >> 4) & 0x0F) | (flags7 & 0xF0);
@@ -329,7 +331,8 @@ static inline void nes_rom_print_info(const ROM *rom) {
         printf("  Mapper: %u (submapper %u)\n", rom->mapper, rom->submapper);
     else
         printf("  Mapper: %u\n", rom->mapper);
-    printf("  Mirroring: %s\n", rom->mirroring ? "Vertical" : "Horizontal");
+    printf("  Mirroring: %s\n", rom->mirroring == 4 ? "Four-screen" :
+                                 rom->mirroring ? "Vertical" : "Horizontal");
     const char *tv_names[] = {"NTSC", "PAL", "Multi-region", "Dendy"};
     printf("  TV System: %s%s\n", tv_names[rom->tv_system & 3],
            rom->is_nes2 ? " (NES 2.0)" :

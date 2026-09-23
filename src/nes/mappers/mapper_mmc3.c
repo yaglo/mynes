@@ -98,7 +98,11 @@ static void mapper4_cpu_write(Mapper *m, uint16_t addr, uint8_t val) {
             mapper4_update_banks(m);
             break;
         case 0xA000:  /* Mirroring */
-            m->mirroring = (val & 0x01) ? 0 : 1;  /* 0=vertical, 1=horizontal */
+            /* On TVROM (Rad Racer II) the cartridge's four-screen VRAM holds
+             * the nametables and the MMC3's mirroring output is not wired,
+             * so mode 4 from the header stays. */
+            if (m->mirroring != 4)
+                m->mirroring = (val & 0x01) ? 0 : 1;  /* 0=vertical, 1=horizontal */
             break;
         case 0xA001:  /* PRG RAM protect */
             m->prg_ram_enabled = (val & 0x80) != 0;

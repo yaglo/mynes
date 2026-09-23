@@ -40,7 +40,8 @@ typedef struct Mapper {
     bool prg_ram_write_protect;
 
     /* Mirroring */
-    uint8_t mirroring;      /* 0=horizontal, 1=vertical, 2=single-screen low, 3=single-screen high */
+    uint8_t mirroring;      /* 0=horizontal, 1=vertical, 2=single-screen low, 3=single-screen high,
+                               4=four-screen */
 
     /* MMC1 specific */
     uint8_t mmc1_shift;     /* Shift register */

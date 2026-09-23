@@ -201,6 +201,31 @@ int main(void) {
     restored = snapshot(&nes);
     CHECK(same(&restored, &at_save));
 
+    /* A four-screen board's extra 2 KB is ppu.vram $2800-$2FFF and its
+     * layout is mirroring mode 4, both already part of the image, so the
+     * four tables round-trip in the existing format. */
+    static uint8_t cart[INES_HEADER_SIZE + 2 * INES_PRG_BANK_SIZE + INES_CHR_BANK_SIZE];
+    static ROM four;
+    memcpy(cart, "NES\x1A\x02\x01", 6);
+    cart[6] = 0x48;   /* MMC3, four-screen */
+    CHECK(nes_rom_load_data(&four, cart, sizeof(cart)) == ROM_OK);
+    boot(&other, &four);
+    for (uint16_t t = 0; t < 4; t++)
+        ppu_write(&other.ppu, 0x2000 + t * 0x400, 0xA0 + t);
+    size_t four_size = nes_state_size(&other);
+    uint8_t *four_state = malloc(four_size);
+    CHECK(nes_state_save(&other, four_state, four_size));
+    for (uint16_t t = 0; t < 4; t++)
+        ppu_write(&other.ppu, 0x2000 + t * 0x400, 0);
+    CHECK(nes_state_load(&other, four_state, four_size, error, sizeof(error)));
+    nes_cpu_write(&other.cpu, 0xA000, 0x01);   /* MMC3 horizontal: no effect here */
+    frames(&other, 1);
+    CHECK(other.ppu.mirroring == 4);
+    for (uint16_t t = 0; t < 4; t++)
+        CHECK(ppu_read(&other.ppu, 0x2000 + t * 0x400) == 0xA0 + t);
+    free(four_state);
+    nes_rom_free(&four);
+
     free(state);
     free(again);
     nes_rom_free(&rom);
