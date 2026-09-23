@@ -11,7 +11,8 @@
       "toshiba_14af43",
       "stass_favourite",
       "vhs_sp_consumer",
-      "reference_composite"
+      "bedroom_rf_1990",
+      "famicom_kitchen"
     ],
     "flicker_crop": [
       78,
@@ -154,8 +155,8 @@
       "replay": "super-mario-bros.replay",
       "kind": "hero",
       "flicker_crop": [
-        62,
-        105,
+        8,
+        144,
         100,
         93.75
       ],
@@ -164,27 +165,36 @@
         "sony_pvm_14l2",
         "stass_favourite"
       ],
-      "crops": [
-        "arcade_cabinet",
-        "basement_tv",
-        "bedroom_rf_1990",
-        "commodore_1702",
-        "dying_crt",
-        "famicom_kitchen",
-        "late_crt_wega",
-        "living_room_1988",
-        "measured_glare_experiment",
-        "nec_xm29_arcade",
-        "rca_colortrak_1986",
-        "retro_gaming_setup",
-        "sony_gdm_fw900",
-        "sony_pvm_20m4u",
-        "studio_pvm",
-        "vivid_living_room",
-        "warm_desktop_monitor",
-        "zenith_system_3"
-      ],
       "readme_seconds": 5
+    },
+    {
+      "id": "contra",
+      "title": "Contra",
+      "scene": "Stage 3, the waterfall boss",
+      "rom": "*Contra (U)*.nes",
+      "rom_exclude": [
+        "*Force*",
+        "*PC10*",
+        "*[T-*"
+      ],
+      "state": "contra.s1",
+      "kind": "hero",
+      "flicker_crop": [
+        78,
+        16,
+        100,
+        93.75
+      ],
+      "caption": "The boss the earlier close-ups showed, through every television.",
+      "thumbnail_frame": 0,
+      "record_after": 60,
+      "replay": "contra.replay",
+      "detail_crop": [
+        64,
+        4,
+        128,
+        120
+      ]
     },
     {
       "id": "legend-of-zelda",
@@ -208,7 +218,7 @@
       "scene": "First fight, crowd visible behind the ring",
       "rom": "*Punch-Out*.nes",
       "state": "punch-out.s1",
-      "kind": "feature",
+      "kind": "hero",
       "flicker_crop": [
         78,
         9,
@@ -218,7 +228,27 @@
       "caption": "The dithered crowd resolves into a texture on a real tube.",
       "readme": [
         "sony_pvm_14l2"
-      ]
+      ],
+      "crops": [
+        "arcade_cabinet",
+        "basement_tv",
+        "commodore_1702",
+        "dying_crt",
+        "late_crt_wega",
+        "living_room_1988",
+        "measured_glare_experiment",
+        "nec_xm29_arcade",
+        "rca_colortrak_1986",
+        "reference_composite",
+        "retro_gaming_setup",
+        "sony_gdm_fw900",
+        "sony_pvm_20m4u",
+        "studio_pvm",
+        "vivid_living_room",
+        "warm_desktop_monitor",
+        "zenith_system_3"
+      ],
+      "seconds": 6
     },
     {
       "id": "journey-to-silius",
@@ -319,7 +349,8 @@
         100,
         93.75
       ],
-      "caption": "Bright shots on black: bloom, halation and beam growth."
+      "caption": "Bright shots on black: bloom, halation and beam growth.",
+      "default_preset": "bedroom_rf_1990"
     },
     {
       "id": "batman",
@@ -363,16 +394,16 @@
       "type": "side-by-side",
       "shot": "journey-to-silius",
       "presets": [
-        "reference_composite",
+        "bedroom_rf_1990",
         "sony_pvm_14l2",
         "stass_favourite"
       ],
       "labels": [
-        "Reference composite",
+        "Bedroom RF 1990",
         "Sony PVM-14L2",
         "Channel-3 RF"
       ],
-      "caption": "Left to right: neutral composite, a studio monitor, a worn RF set."
+      "caption": "Left to right: a 1990 bedroom set on RF, a studio monitor, a worn RF set."
     }
   ]
 }

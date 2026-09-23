@@ -19,8 +19,8 @@ DEFAULT_SHOTS_FILE = SHOWCASE_DIR / "shots.json"
 STATES_DIR = SHOWCASE_DIR / "states"
 REPLAYS_DIR = SHOWCASE_DIR / "replays"
 
-DEFAULT_PRESETS = ["sony_pvm_14l2", "jvc_d_series_2000", "toshiba_14af43",
-                   "stass_favourite", "vhs_sp_consumer", "reference_composite"]
+DEFAULT_PRESETS = ["sony_pvm_14l2", "jvc_d_series_2000", "toshiba_14af43", "stass_favourite", "vhs_sp_consumer",
+                   "bedroom_rf_1990", "famicom_kitchen"]
 SECONDS_BY_KIND = {"hero": 6, "feature": 15}
 # 100 NES pixels by 93.75 lines is 1500x1125 on a 3840x2880 render (15 x 12
 # render pixels per NES pixel), centred on the 256x240 frame.
@@ -56,6 +56,7 @@ class Shot:
     flicker_frame: int | None = None
     lens: list[str] = field(default_factory=list)
     crops: list[str] = field(default_factory=list)  # a still frame and its detail crop, no clip
+    detail_crop: list[float] = field(default_factory=list)  # the site's crop; empty = flicker_crop
 
     @property
     def frames(self) -> int:
@@ -265,6 +266,11 @@ def load(path: Path | str = DEFAULT_SHOTS_FILE, presets_dir: Path = PRESETS_DIR)
             recipes.validate_nes_rect(crop)
         except recipes.RecipeError as e:
             raise ShotListError(f"{where}: {e}") from e
+        detail = list(raw.get("detail_crop", crop))
+        try:
+            recipes.validate_nes_rect(detail)
+        except recipes.RecipeError as e:
+            raise ShotListError(f"{where}: detail_crop: {e}") from e
         readme = list(raw.get("readme", []))
         lens = raw.get("lens", False)
         if lens is True:
@@ -304,6 +310,7 @@ def load(path: Path | str = DEFAULT_SHOTS_FILE, presets_dir: Path = PRESETS_DIR)
             flicker_frame=raw.get("flicker_frame"),
             lens=lens,
             crops=list(crops),
+            detail_crop=detail,
         )
         if shot.seconds <= 0:
             raise ShotListError(f"{where}: seconds must be positive")

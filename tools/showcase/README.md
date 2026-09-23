@@ -281,9 +281,9 @@ holding version 1 keys.
 
 | Shot | Game and scene | Length | Replay | Crop (NES px) | Lens | README |
 |---|---|---|---|---|---|---|
-| `super-mario-bros` | Super Mario Bros., World 1-1 running right | 6 s | right, jump | 62,105 100x93.75 | every other preset as a crop | PVM, Stas's |
+| `super-mario-bros` | Super Mario Bros., World 1-1 running right | 6 s | right, jump | 8,144 100x93.75 | | PVM, Stas's |
 | `legend-of-zelda` | The Legend of Zelda, overworld start, walk up | 6 s | up | 78,97 100x93.75 | | |
-| `punch-out` | Punch-Out!!, first fight, crowd visible | 15 s | | 78,9 100x93.75 | | PVM |
+| `punch-out` | Punch-Out!!, first fight, crowd visible | 15 s | | 78,9 100x93.75 | every other preset as a crop | PVM |
 | `journey-to-silius` | Journey to Silius, stage 1 with the dithered sky | 15 s | right | 78,17 100x93.75 | | |
 | `castlevania-3` | Castlevania III, clock tower or the first stage | 6 s | right | 78,65 100x93.75 | | |
 | `blaster-master` | Blaster Master, area 1 driving right | 6 s | right | 78,97 100x93.75 | | |
@@ -293,27 +293,36 @@ holding version 1 keys.
 | `batman` | Batman, stage 1 | 6 s | right | 78,97 100x93.75 | | |
 
 Every shot is recorded on `sony_pvm_14l2`, `jvc_d_series_2000`,
-`toshiba_14af43`, `stass_favourite`, `vhs_sp_consumer` and
-`reference_composite`. `"lens": true` gives lens clips on all of a shot's
+`toshiba_14af43`, `stass_favourite`, `vhs_sp_consumer`, `bedroom_rf_1990`
+and `famicom_kitchen`. `"lens": true` gives lens clips on all of a shot's
 presets; a list of presets limits them. No shot has lens clips at present:
 a 6 s lens clip adds about 70 MB to the site, which is near the GitHub Pages
 budget with one game on every preset. Inspect then shows the still.
 
 `crops` lists presets that get the still frame and its detail crop but no
 clip. They are recorded for that one frame at full size, and the site shows
-the crop on the game's page and on the television's page. Super Mario
-Bros. lists every preset outside the six above in `crops`, so each
-television is on the site once (about 4 MB per crop).
+the crop on the game's page and on the television's page. Punch-Out!!
+lists every preset outside the seven above in `crops`, so each television
+is on the site once (about 4 MB per crop), on a frame with large sprites,
+skin tones and a dithered crowd.
+
+`detail_crop`, in the same units, is the region of the site's detail crops
+when it differs from `flicker_crop` (the README's crop keeps its width): a
+larger region shows more of a scene than the mouth of a boss.
 
 `flicker_crop` is in NES pixel coordinates (256x240) and may be fractional.
-The picture fills the 4:3 render, so on 3840x2880 one NES pixel is 15x12
-render pixels (NES pixels are 8:7): 100 pixels by 93.75 lines is the
-1500x1125 flicker crop, where a 100x75 region would be 1500x900. The detail
-crops use the same region with a size that is a multiple of 6 (1500x1122,
-`@1x` 750x561): the site shows the crop at half its size on a 2x display
-and at the `@1x` size on a 1x display, and a multiple of 6 also lands on
-whole device pixels at pixel ratios 1.5 and 3, where browsers lay out in
-steps of 1/64 CSS px.
+The 4:3 render is the receiver's active raster, and the 256x240 picture is
+a window in it: 282.75 NES dots across and 241 lines down, with the
+picture starting 14.53 dots in from the left and its first line one line
+above the field, so NES pixels are 8:7 and a set without overscan shows
+black at both sides. On 3840x2880 one NES pixel is 13.58x11.95 render
+pixels and the picture starts 197 pixels in: 100 pixels by 93.75 lines is
+the 1358x1120 flicker crop, where a 100x75 region would be 1358x896. The
+detail crops use the same region with a size that is a multiple of 6
+(1356x1116, `@1x` 678x558): the site shows the crop at half its size on a
+2x display and at the `@1x` size on a 1x display, and a multiple of 6 also
+lands on whole device pixels at pixel ratios 1.5 and 3, where browsers lay
+out in steps of 1/64 CSS px.
 `--flicker-scale 15` or `15x12` overrides the scale. `thumbnail_frame` picks
 the poster and still frame; the site freezes clips at frame 0, so leave it
 at 0 for shots on the site.
@@ -330,7 +339,8 @@ shots[]       id, title, scene, rom (glob), rom_exclude [globs], state (file in 
               replay (file in replays/), seconds, kind hero|feature, presets [],
               lens (true, or a list of presets), flicker_crop, caption, thumbnail_frame,
               flicker_frame, default_preset, readme [presets that get README media],
-              readme_seconds, region, record_after, crops [presets with a detail crop only]
+              readme_seconds, region, record_after, crops [presets with a detail crop only],
+              detail_crop [x,y,w,h] (the site's crop when it differs from flicker_crop)
 features[]    id, type five-televisions|side-by-side, shot, presets [], labels [], caption,
               seconds_per_preset (five-televisions)
 ```
@@ -350,16 +360,23 @@ root, with `XDG_CONFIG_HOME` pointing at a private directory,
 default masters:
 
 ```
-build/bin/mynes_gpu --offscreen WxH --sdr --mask-alignment pixels \
+build/bin/mynes_gpu --offscreen WxH --sdr --mask-alignment <A> \
     --preset presets/<preset>.json --load-state states/<shot>.s1 \
     [--input-replay replays/<shot>.replay] \
     --record out/<shot>/<preset>/WxH/sdr.mov --record-seconds <s> --record-after 2 <ROM>
-build/bin/mynes_gpu --offscreen WxH --mask-alignment pixels \
+build/bin/mynes_gpu --offscreen WxH --mask-alignment <A> \
     --preset presets/<preset>.json --load-state states/<shot>.s1 \
     [--input-replay replays/<shot>.replay] \
     --record out/<shot>/<preset>/WxH/hdr.mov --record-hdr --record-headroom 4 \
     --record-hdr-white 203 --record-seconds <s> --record-after 2 <ROM>
 ```
+
+`<A>` is `pixels` at the full size, where a 3840-pixel frame resolves a
+triad in 3 to 9 whole pixels, and `physical` at the stage and README
+sizes: there the mask is drawn at its own pitch and band-limited, because
+at 1920 or 960 pixels an integer-period mask would be 2 to 4 times too
+coarse, and the 4:2:0 video could not carry it anyway. Panel subpixel
+output is off for every render: a viewer's panel is unknown.
 
 It relies on: `--record` writing every emulated frame as one video frame
 with the APU audio as AAC; `--record-seconds N` producing exactly
@@ -391,6 +408,14 @@ the stills and crops, so `record` and `encode` refuse one.
 
 To feature a shot, add an entry to `features` that names it; `check`
 verifies the shot is long enough for the feature.
+
+A scene that play cannot reach in a scripted boot can be reached by poking
+RAM: `boot/contra-boss.c` boots Contra, sets the level and routine bytes
+the disassembly names, forces the player through the level until the
+scroll stops for the waterfall boss, then writes `states/contra.s1` with
+the core's own save-state call. Build it against the core the way
+`run_rom` is built (`build/CMakeFiles/run_rom.dir/link.txt` has the flags)
+and run it with the ROM and the output path.
 
 ## Tests
 

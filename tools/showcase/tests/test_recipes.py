@@ -65,23 +65,28 @@ class FrameCounts(unittest.TestCase):
 
 class Geometry(unittest.TestCase):
     def test_nes_scale(self):
-        self.assertEqual(recipes.nes_scale((3840, 2880)), (15.0, 12.0))
-        self.assertEqual(recipes.nes_scale((1920, 1440)), (7.5, 6.0))
+        sx, sy = recipes.nes_scale((3840, 2880))
+        self.assertAlmostEqual(sx, 13.582, places=3)   # 3840 / 282.73 active dots
+        self.assertAlmostEqual(sy, 11.950, places=3)   # 2880 / 241 active lines
+        self.assertAlmostEqual(sx / sy, 1.1366, places=3)  # the NES pixel aspect on a 4:3 face, near 8:7
+        self.assertAlmostEqual(recipes.nes_scale((1920, 1440))[0], 6.791, places=3)
         self.assertEqual(recipes.nes_scale((3840, 2880), "15"), (15.0, 15.0))
         self.assertEqual(recipes.nes_scale((3840, 2880), "15x12"), (15.0, 12.0))
         with self.assertRaises(recipes.RecipeError):
             recipes.nes_scale((3840, 2880), "big")
+        ox, oy = recipes.nes_origin((3840, 2880), recipes.nes_scale((3840, 2880)))
+        self.assertAlmostEqual(ox, 197.3, places=1)    # 14.53 dots of blanking left of the picture
+        self.assertAlmostEqual(oy, -11.95, places=2)   # the top line sits above the active field
 
-    def test_readme_crop_is_1500x1125(self):
-        # One NES pixel is 15x12 render pixels, so 100 pixels by 93.75 lines is
-        # 1500x1125; a 100x75 region would be 1500x900.
-        self.assertEqual(recipes.flicker_geometry([62, 105, 100, 93.75]), Rect(930, 1260, 1500, 1125))
-        self.assertEqual(recipes.flicker_geometry([62, 105, 100, 75]), Rect(930, 1260, 1500, 900))
-        self.assertEqual(recipes.flicker_geometry([78, 73, 100, 93.75]), Rect(1170, 876, 1500, 1125))
+    def test_readme_crop_is_1358x1120(self):
+        # 100 dots by 93.75 lines of the picture, placed on the raster.
+        self.assertEqual(recipes.flicker_geometry([62, 105, 100, 93.75]), Rect(1039, 1243, 1358, 1120))
+        self.assertEqual(recipes.flicker_geometry([62, 105, 100, 75]), Rect(1039, 1243, 1358, 896))
+        self.assertEqual(recipes.flicker_geometry([78, 73, 100, 93.75]), Rect(1257, 860, 1358, 1120))
 
     def test_detail_crop_is_a_multiple_of_6(self):
         r = recipes.flicker_geometry([62, 105, 100, 93.75], align=6)
-        self.assertEqual(r, Rect(930, 1260, 1500, 1122))
+        self.assertEqual(r, Rect(1039, 1243, 1356, 1116))
         r = recipes.flicker_geometry([1, 1, 3, 3], (1920, 1440), align=2)
         self.assertEqual((r.w % 2, r.h % 2), (0, 0))
 
@@ -89,9 +94,10 @@ class Geometry(unittest.TestCase):
         self.assertEqual(recipes.flicker_geometry([64, 72, 128, 96], scale="15"), Rect(960, 1080, 1920, 1440))
 
     def test_clamps_to_render(self):
-        r = recipes.flicker_geometry([200, 200, 56, 40])
-        self.assertEqual((r.x + r.w, r.y + r.h), (3840, 2880))
-        self.assertEqual((r.w, r.h), (840, 480))
+        # The picture's first line is above the field, so a crop from the top loses it.
+        r = recipes.flicker_geometry([0, 0, 56, 40])
+        self.assertEqual((r.x, r.y), (197, 0))
+        self.assertEqual((r.w, r.h), (761, 478))  # moved inside the frame, not shortened
 
     def test_validation(self):
         for bad in ([0, 0, 0, 10], [200, 0, 100, 10], [0, 0, 10], [-1, 0, 10, 10], [0, 200, 10, 50.5],
@@ -153,6 +159,11 @@ class Recorder(unittest.TestCase):
         s = shlex.join(cmd)
         self.assertNotIn("--sdr", cmd)
         self.assertIn("--offscreen 3840x2880 --mask-alignment pixels", s)
+        phys = " ".join(recipes.record_command("b", "r.nes", "presets/p.json", "s.s1", "o.mov", 6, size=(1920, 1440),
+                                               mask_alignment="physical"))
+        self.assertIn("--offscreen 1920x1440 --sdr --mask-alignment physical", phys)
+        with self.assertRaises(recipes.RecipeError):
+            recipes.record_command("b", "r.nes", "presets/p.json", "s.s1", "o.mov", 6, mask_alignment="panel")
         self.assertIn("--record hdr.mov --record-hdr --record-headroom 4 --record-hdr-white 203 "
                       "--record-seconds 0.133116136 --record-after 2", s)
         self.assertNotIn("--input-replay", cmd)

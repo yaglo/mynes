@@ -176,6 +176,15 @@ def render_plan(ctx: Context, shot: Shot, preset: str) -> list[Render]:
     return [Render(size, sdr, hdr, tuple(roles)) for size, (sdr, hdr, roles) in plan.items()]
 
 
+def mask_alignment_for(d, size) -> str:
+    """The full-size render draws the mask at whole output pixels, where a
+    3840-pixel frame resolves a triad in 3 to 9 pixels. The stage and README
+    renders draw it at its physical pitch, band-limited: at 1920 or 960
+    pixels an integer-period mask would be 2 to 4 times too coarse, and the
+    4:2:0 video could not carry it anyway."""
+    return "pixels" if tuple(size) == tuple(d.lens_size) else "physical"
+
+
 def plan_for(ctx: Context, shot: Shot, preset: str, size) -> Render:
     for r in render_plan(ctx, shot, preset):
         if r.size == tuple(size):
@@ -327,7 +336,7 @@ def record_one(ctx: Context, runner: Runner, shot: Shot, preset: str, r: Render,
     cmd = recipes.record_command(
         ctx.binary, rom, preset_path, state, out, seconds, replay=replay,
         record_after=shot.record_after, size=r.size, hdr=hdr, headroom=d.hdr_headroom,
-        white_nits=d.hdr_white_nits, extra_args=d.record_args)
+        white_nits=d.hdr_white_nits, mask_alignment=mask_alignment_for(d, r.size), extra_args=d.record_args)
     inputs = [state, preset_path, rom] + ([replay] if replay else [])
     if runner.up_to_date([out, sidecar_path(out), provenance], inputs) and _recorded(provenance, frames, r.size, cmd):
         runner.say(f"up to date: {out}")
@@ -614,7 +623,7 @@ def encode_still(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dict 
         return None
     with _discard_on_failure(runner, outputs + [d / "still-hdr.yuv"]):
         frame = shot.thumbnail_frame
-        rect = recipes.flicker_geometry(shot.flicker_crop, size, ctx.flicker_scale, align=CROP_ALIGN)
+        rect = recipes.flicker_geometry(shot.detail_crop, size, ctx.flicker_scale, align=CROP_ALIGN)
         runner.run(recipes.sdr_png_args(sdr.path, d / "still-sdr.png", frame, matrix=sdr.matrix, range_=sdr.range),
                    what=f"still-sdr {shot.id}/{preset}")
         runner.step("rewrite still-sdr.png with the sRGB chunk, cut crop-sdr.png "
@@ -914,7 +923,7 @@ def collect_clip(ctx: Context, runner: Runner, shot: Shot, preset: str) -> ClipI
 
 def crop_entry(ctx: Context, shot: Shot, rels: dict[str, str]) -> dict:
     """The manifest's detail crop: its four files and where it sits in the still."""
-    rect = recipes.flicker_geometry(shot.flicker_crop, ctx.defaults.lens_size, ctx.flicker_scale, align=CROP_ALIGN)
+    rect = recipes.flicker_geometry(shot.detail_crop, ctx.defaults.lens_size, ctx.flicker_scale, align=CROP_ALIGN)
     return {"sdr": rels["crop-sdr.png"], "sdr_1x": rels["crop-sdr@1x.png"], "hdr": rels["crop-hdr.avif"],
             "hdr_1x": rels["crop-hdr@1x.avif"], "x": rect.x, "y": rect.y, "width": rect.w, "height": rect.h}
 

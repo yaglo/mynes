@@ -32,16 +32,17 @@ class RealShotList(unittest.TestCase):
         for s in sl.shots:
             self.assertEqual(s.seconds, 6 if s.kind == "hero" else 15)
             self.assertEqual(s.presets, shots.DEFAULT_PRESETS)
-            # Every crop is 1500x1125 on the full-size render (README embed width 750).
+            # Every crop is 100 dots by 93.75 lines: 1358x1120 on the full-size render.
             rect = recipes.flicker_geometry(s.flicker_crop, d.lens_size)
-            self.assertEqual((rect.w, rect.h), (1500, 1125), s.id)
+            self.assertEqual((rect.w, rect.h), (1358, 1120), s.id)
             self.assertTrue((shots.PRESETS_DIR / f"{s.default_preset}.json").exists())
         # No lens clips while the site is near its size budget: a 6 s lens clip is about 70 MB.
         self.assertEqual([s.id for s in sl.shots if s.lens], [])
-        # Super Mario Bros. has every other preset file as a crop-only preset.
-        mario = sl.shot("super-mario-bros")
-        self.assertEqual(sorted(mario.presets + mario.crops), sorted(p.stem for p in shots.PRESETS_DIR.glob("*.json")))
-        self.assertEqual([s.id for s in sl.shots if s.crops], ["super-mario-bros"])
+        # Punch-Out!! has every other preset file as a crop-only preset.
+        punch = sl.shot("punch-out")
+        self.assertEqual(sorted(punch.presets + punch.crops), sorted(p.stem for p in shots.PRESETS_DIR.glob("*.json")))
+        self.assertEqual([s.id for s in sl.shots if s.crops], ["punch-out"])
+        self.assertEqual(sl.shot("metroid").default_preset, "bedroom_rf_1990")
         for s in sl.shots:
             if s.replay:
                 rows = shots.parse_replay((shots.REPLAYS_DIR / s.replay).read_text())
@@ -106,6 +107,14 @@ class Validation(unittest.TestCase):
         d = self.load(data).defaults
         self.assertEqual((d.lens_size, d.stage_sizes, d.readme_size), ((512, 384), [(256, 192), (128, 96)], (320, 240)))
         self.assertEqual((d.hdr_headroom, d.hdr_white_nits), (2.5, 100))
+
+    def test_detail_crop(self):
+        s = self.load(self.base()).shots[0]
+        self.assertEqual(s.detail_crop, s.flicker_crop)
+        s = self.load(self.base(detail_crop=[64, 4, 128, 120])).shots[0]
+        self.assertEqual(s.detail_crop, [64, 4, 128, 120])
+        with self.assertRaises(ShotListError):
+            self.load(self.base(detail_crop=[200, 200, 100, 100]))
 
     def test_crops(self):
         sl = self.load(self.base(crops=["gamma"]))

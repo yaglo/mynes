@@ -23,7 +23,7 @@ def ines(seed=0):
 ROMS = ["Super Mario Bros. (World).nes", "Super Mario Bros. 3 (USA).nes", "Legend of Zelda, The (USA).nes",
         "Mike Tyson's Punch-Out!! (USA).nes", "Journey to Silius (USA).nes", "Castlevania III (USA).nes",
         "Blaster Master (USA).nes", "Ninja Gaiden (USA).nes", "Mega Man 2 (USA).nes", "Metroid (USA).nes",
-        "Batman - The Video Game (USA).nes"]
+        "Batman - The Video Game (USA).nes", "Contra (U).nes"]
 
 
 class Cli(unittest.TestCase):
@@ -104,6 +104,13 @@ class Cli(unittest.TestCase):
         self.assertEqual(out.count("--offscreen 1600x1200"), readme * 2)
         self.assertEqual(out.count("--record-hdr --record-headroom 4 --record-hdr-white 203"), passes)
         self.assertIn("--record-seconds 6 --record-after 2", out)
+        # The full size keeps the mask at whole pixels; the stage and README sizes use its physical pitch.
+        self.assertIn("--offscreen 3840x2880 --mask-alignment pixels", out)
+        self.assertIn("--offscreen 1920x1440 --mask-alignment physical", out)
+        self.assertIn("--offscreen 960x720 --sdr --mask-alignment physical", out)
+        self.assertIn("--offscreen 1600x1200 --mask-alignment physical", out)
+        self.assertNotIn("--offscreen 1920x1440 --mask-alignment pixels", out)
+        self.assertNotIn("--offscreen 1920x1440 --sdr --mask-alignment pixels", out)
         self.assertIn("--record-seconds 15", out)
         self.assertIn("--input-replay", out)
 

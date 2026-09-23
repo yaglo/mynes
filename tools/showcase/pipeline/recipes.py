@@ -204,12 +204,25 @@ class Rect:
         return f"crop={self.w}:{self.h}:{self.x}:{self.y}"
 
 
-def nes_scale(size: Sequence[int], override: str | None = None) -> tuple[float, float]:
-    """Render pixels per NES pixel, horizontally and vertically.
+# Where the 256x240 picture sits on the receiver's 4:3 raster, as the
+# frontend places it (frontends/gpu/post_pipeline.c, raster_window): the
+# receiver scans the standard active line and field (BT.470 NTSC: a 63.556 us
+# line with 10.9 us of blanking after a 1.5 us front porch, 21 blanked lines
+# of the console's 262) locked to the console's sync, and the console's
+# picture starts 65 dots after its sync with the vertical sync 17 lines
+# before the frame's end. A NES dot is 8 samples of 12 per subcarrier cycle.
+_DOT_US = 1e6 * 8 / (12 * 3579545)
+ACTIVE_DOTS = (1e6 / 15734.264 - 10.9) / _DOT_US          # 282.73
+PICTURE_LEFT = 65 - (10.9 - 1.5) / _DOT_US                # 14.53
+ACTIVE_LINES = 262 - 21.0                                 # 241
+PICTURE_TOP = (262 - 245) - 18.0                          # -1: the top line is in blanking
 
-    The picture fills the 4:3 render, so a 3840x2880 render maps the 256x240
-    NES frame at 15 x 12 (NES pixels are 8:7, not square). ``override`` is
-    "15" (both axes) or "15x12"."""
+
+def nes_scale(size: Sequence[int], override: str | None = None) -> tuple[float, float]:
+    """Render pixels per NES pixel, horizontally and vertically: the render's
+    width over the active line's dots and its height over the active field's
+    lines (NES pixels are 8:7, not square). ``override`` is "15" (both axes)
+    or "15x12"."""
     if override:
         parts = override.lower().split("x")
         try:
@@ -221,7 +234,16 @@ def nes_scale(size: Sequence[int], override: str | None = None) -> tuple[float, 
         if len(values) == 2:
             return values[0], values[1]
         raise RecipeError(f"--flicker-scale must be S or SXxSY, got {override!r}")
-    return size[0] / NES_SIZE[0], size[1] / NES_SIZE[1]
+    return size[0] / ACTIVE_DOTS, size[1] / ACTIVE_LINES
+
+
+def nes_origin(size: Sequence[int], scale: tuple[float, float], override: str | None = None) -> tuple[float, float]:
+    """Render pixel of NES pixel (0, 0): the picture's offset on the raster.
+    An explicit scale describes a render whose picture fills the frame, so
+    its origin is the frame's corner."""
+    if override:
+        return 0.0, 0.0
+    return PICTURE_LEFT * scale[0], PICTURE_TOP * scale[1]
 
 
 def validate_nes_rect(crop: Sequence[float]) -> tuple[float, float, float, float]:
@@ -247,10 +269,11 @@ def flicker_geometry(crop: Sequence[float], size: Sequence[int] = LENS_SIZE,
     1.5 and 3, where browsers lay out in steps of 1/64 CSS px."""
     x, y, w, h = validate_nes_rect(crop)
     sx, sy = nes_scale(size, scale)
+    ox, oy = nes_origin(size, (sx, sy), scale)
     rw, rh = _round(w * sx), _round(h * sy)
     if align > 1:
         rw, rh = rw - rw % align, rh - rh % align
-    return Rect(_round(x * sx), _round(y * sy), rw, rh).clamp(size)
+    return Rect(_round(ox + x * sx), _round(oy + y * sy), rw, rh).clamp(size)
 
 
 def third_bands(width: int, count: int = 3) -> list[tuple[int, int]]:
@@ -329,15 +352,19 @@ def record_command(binary: Path | str, rom: Path | str, preset_file: Path | str,
                    replay: Path | str | None = None, record_after: int = 2,
                    size: Sequence[int] = LENS_SIZE, hdr: bool = False,
                    headroom: float = HDR_HEADROOM, white_nits: float = HDR_WHITE_NITS,
-                   extra_args: Iterable[str] = ()) -> list[str]:
+                   mask_alignment: str = "pixels", extra_args: Iterable[str] = ()) -> list[str]:
     """mynes_gpu --offscreen WxH ... --record OUT.mov ROM (README, "The recorder").
 
     The SDR pass renders with --sdr. The HDR pass renders to the EDR target
-    and asks the recorder for BT.2020 PQ with the given headroom and white."""
+    and asks the recorder for BT.2020 PQ with the given headroom and white.
+    ``mask_alignment`` is "pixels" (the mask at whole output pixels) or
+    "physical" (the mask at its own pitch, band-limited)."""
+    if mask_alignment not in ("pixels", "physical"):
+        raise RecipeError(f"mask_alignment must be pixels or physical, got {mask_alignment!r}")
     cmd = [str(binary), "--offscreen", size_string(size)]
     if not hdr:
         cmd.append("--sdr")
-    cmd += ["--mask-alignment", "pixels", "--preset", str(preset_file), "--load-state", str(state)]
+    cmd += ["--mask-alignment", mask_alignment, "--preset", str(preset_file), "--load-state", str(state)]
     if replay:
         cmd += ["--input-replay", str(replay)]
     cmd += ["--record", str(output)]

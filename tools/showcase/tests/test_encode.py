@@ -472,7 +472,7 @@ class EncodePipeline(unittest.TestCase):
     def test_detail_crops_are_1_to_1_with_exact_1x_averages(self):
         d = self.d(LENS)
         rect = recipes.flicker_geometry([78, 73, 100, 93.75], LENS, align=jobs_mod.CROP_ALIGN)
-        self.assertEqual(rect, recipes.Rect(156, 117, 198, 150))  # 200x150 rounded down to multiples of 6
+        self.assertEqual(rect, recipes.Rect(168, 115, 180, 144))  # on the raster, rounded down to multiples of 6
         with Image.open(d / "still-sdr.png") as still, Image.open(d / "crop-sdr.png") as crop, \
                 Image.open(d / "crop-sdr@1x.png") as small:
             self.assertEqual(np.asarray(crop).tolist(), np.asarray(still.crop(rect.box)).tolist())
