@@ -2,14 +2,15 @@
 
 Small renders stand in for the recorder's output at each size: an SDR pass
 (rgb24 piped into libx264 yuv444p with swscale's default BT.601 matrix,
-untagged, AAC audio, as the recorder writes it) and an HDR pass (rgb48le PQ
-through an explicit BT.2020 matrix into ProRes 4444 10-bit, tagged BT.2020
-PQ), each with the recorder's OUT.json sidecar. The picture has one-pixel
-columns of alternating luma (a stand-in for the aperture grille, which any
-resampling would blur), flat colour patches, a moving block and a highlight
-at 800 nits in the HDR pass. The whole encode, feature and install job set
-runs against them and every output is checked for size, frame count,
-timebase, codec, colour tags, HDR metadata and pixels. Set
+untagged, AAC audio) and an HDR pass (PQ R'G'B' turned into limited-range
+BT.2020 Y'CbCr in numpy and piped as yuv444p16le with input tags into ProRes
+4444 10-bit), each with the recorder's OUT.json sidecar, as the recorder
+writes them. The picture has one-pixel columns of alternating luma (a
+stand-in for the aperture grille, which any resampling would blur), flat
+colour patches, a moving block, and in the HDR pass a highlight at 800 nits
+and a patch at the 10000-nit PQ peak. The whole encode, feature and install
+job set runs against them and every output is checked for size, frame
+count, timebase, codec, colour tags, HDR metadata and pixels. Set
 SHOWCASE_TEST_KEEP=1 to keep the files."""
 import json
 import os
@@ -43,6 +44,7 @@ FRAMES = 60           # 1 s NTSC = round(60.0988) = 60 frames
 PRESETS = ["p_sony", "p_jvc", "p_toshiba", "p_stass", "p_vhs"]
 PATCHES = [(200, 40, 40), (40, 180, 60), (50, 60, 200), (230, 200, 60)]
 HIGHLIGHT_NITS = 800
+PEAK_NITS = 10000
 WHITE_NITS = 203
 
 
@@ -63,22 +65,36 @@ def draw(i: int, size, hdr: bool, hue: int = 0) -> "np.ndarray":
     if not hdr:
         return (img * 255 + 0.5).astype(np.uint8)
     nits = (img ** 2.2) * WHITE_NITS           # the SDR picture at 203 nits white
-    nits[top * 3 + 4:h - 4, w // 3:2 * w // 3] = HIGHLIGHT_NITS
+    nits[highlight_patch(size)] = HIGHLIGHT_NITS
+    nits[peak_patch(size)] = PEAK_NITS         # PQ 1.0: Y' 940 of 10 bits
     return (images.nits_to_pq(nits) * 65535 + 0.5).astype("<u2")
 
 
-def write_render(path: Path, size, hdr: bool, frames: int = FRAMES, hue: int = 0) -> dict:
-    """What the recorder writes: OUT.mov plus OUT.json."""
+def highlight_patch(size, inset: int = 0):
     w, h = size
-    tags = ["-color_primaries", "bt2020", "-color_trc", "smpte2084"] if hdr else []
+    return slice(h * 3 // 4 + 4 + inset, h - 4 - inset), slice(w // 3 + inset, 2 * w // 3 - inset)
+
+
+def peak_patch(size, inset: int = 0):
+    w, h = size
+    return slice(h * 3 // 4 + 4 + inset, h - 4 - inset), slice(w // 16 + inset, w // 16 + w // 8 - inset)
+
+
+HDR_TAGS = ["-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc",
+            "-color_range", "tv"]
+
+
+def write_render(path: Path, size, hdr: bool, frames: int = FRAMES, hue: int = 0) -> dict:
+    """What the recorder writes: OUT.mov plus OUT.json. The HDR pass pipes
+    limited-range BT.2020 Y'CbCr at 16 bits with input tags, as the recorder
+    does (frontends/gpu/frame_pq.h), so ffmpeg only reduces the bit depth."""
+    w, h = size
     head = [tool("ffmpeg"), "-y", "-hide_banner", "-loglevel", "error", "-nostdin", "-f", "rawvideo",
-            "-pixel_format", "rgb48le" if hdr else "rgb24", "-video_size", f"{w}x{h}", "-r", "60.0988",
-            *tags, "-i", "pipe:0", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100",
-            "-map", "0:v", "-map", "1:a", "-shortest"]
+            "-pixel_format", "yuv444p16le" if hdr else "rgb24", "-video_size", f"{w}x{h}", "-r", "60.0988",
+            *(HDR_TAGS if hdr else []), "-i", "pipe:0",
+            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100", "-map", "0:v", "-map", "1:a", "-shortest"]
     if hdr:
-        codec = ["-vf", "scale=out_color_matrix=bt2020:out_range=tv", "-c:v", "prores_ks", "-profile:v", "4",
-                 "-pix_fmt", "yuv444p10le", "-vendor", "apl0", "-color_primaries", "bt2020",
-                 "-color_trc", "smpte2084", "-colorspace", "bt2020nc", "-color_range", "tv"]
+        codec = ["-c:v", "prores_ks", "-profile:v", "4", "-pix_fmt", "yuv444p10le", "-vendor", "apl0", *HDR_TAGS]
     else:
         codec = ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "12", "-pix_fmt", "yuv444p"]
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -89,6 +105,7 @@ def write_render(path: Path, size, hdr: bool, frames: int = FRAMES, hue: int = 0
             frame = draw(i, size, hdr, hue)
             if hdr:
                 levels.append(images.light_levels(frame))
+                frame = images.rgb48_to_yuv(frame).astype("<u2")
             p.stdin.write(frame.tobytes())
     finally:
         p.stdin.close()
@@ -102,16 +119,30 @@ def write_render(path: Path, size, hdr: bool, frames: int = FRAMES, hue: int = 0
     return sidecar
 
 
-def decode(path: Path, size, *, frame: int = 0, matrix: str = "bt709", range_: str = "tv",
-           hdr: bool = False) -> "np.ndarray":
-    """One frame of a video or image as RGB (rgb24, or rgb48 for HDR)."""
-    fmt = "rgb48le" if hdr else "rgb24"
+def decode(path: Path, size, *, frame: int = 0, matrix: str = "bt709", range_: str = "tv") -> "np.ndarray":
+    """One frame of an SDR video or image as rgb24."""
     out = subprocess.run([tool("ffmpeg"), "-v", "error", "-i", str(path), "-an", "-vf",
                           f"{recipes.select_frame(frame)},scale=in_color_matrix={matrix}:in_range={range_},"
-                          f"format={fmt}", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", fmt, "-"],
+                          f"format=rgb24", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
                          capture_output=True, check=True).stdout
     w, h = size
-    return np.frombuffer(out, "<u2" if hdr else np.uint8).reshape(h, w, 3).astype(np.int64)
+    return np.frombuffer(out, np.uint8).reshape(h, w, 3).astype(np.int64)
+
+
+def decode_hdr(path: Path, size, *, frame: int = 0) -> "np.ndarray":
+    """One frame of an HDR file as 16-bit PQ R'G'B' codes. A PNG is read as
+    rgb48. A video is read as yuv444p16le (ffmpeg widens 10 and 12 bits by a
+    plain shift) and converted with images.yuv_to_rgb48, not swscale's rgb48
+    output, which is 256/257 too dark."""
+    png = Path(path).suffix == ".png"
+    fmt = "rgb48le" if png else "yuv444p16le"
+    out = subprocess.run([tool("ffmpeg"), "-v", "error", "-i", str(path), "-an", "-vf", recipes.select_frame(frame),
+                          "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", fmt, "-"],
+                         capture_output=True, check=True).stdout
+    w, h = size
+    data = np.frombuffer(out, "<u2")
+    rgb = data.reshape(h, w, 3) if png else images.yuv_to_rgb48(data.reshape(3, h, w), 16, "bt2020")
+    return rgb.astype(np.int64)
 
 
 def side_data(path: Path) -> dict:
@@ -263,14 +294,13 @@ class EncodePipeline(unittest.TestCase):
 
     def test_hdr_survives_the_encode(self):
         size = STAGE[0]
-        got = decode(self.d(size) / "stage-hdr-hevc.mp4", size, matrix="bt2020", hdr=True)
+        got = decode_hdr(self.d(size) / "stage-hdr-hevc.mp4", size)
         want = self.source(size, True)
-        w, h = size
-        patch = (slice(h * 3 // 4 + 8, h - 8), slice(w // 3 + 8, 2 * w // 3 - 8))
+        patch = highlight_patch(size, inset=4)
         highlight = images.pq_to_nits(got[patch].astype(np.uint16)).mean()
-        self.assertAlmostEqual(highlight, HIGHLIGHT_NITS, delta=HIGHLIGHT_NITS * 0.04)
+        self.assertAlmostEqual(highlight, HIGHLIGHT_NITS, delta=HIGHLIGHT_NITS * 0.01)
         self.assertGreater(highlight, 3 * WHITE_NITS)  # above SDR white, as HDR should be
-        self.assertLess(np.abs(got[patch] - want[patch]).mean(), 200)
+        self.assertLess(np.abs(got[patch] - want[patch]).mean(), 150)  # x265 moves chroma by about one code
 
     def test_sdr_colour_matrix(self):
         """The untagged BT.601 render becomes tagged BT.709 with the same colours."""
@@ -341,8 +371,14 @@ class EncodePipeline(unittest.TestCase):
             sdr = np.asarray(im).astype(np.int64)
         self.assertLess(np.abs(sdr - self.source(LENS, False)).max(), 12)
         self.assertLess(np.abs(sdr - self.source(LENS, False)).mean(), 1.5)
-        hdr = decode(d / "still-hdr.png", LENS, range_="pc", matrix="bt709", hdr=True)
-        self.assertLess(np.abs(hdr - self.source(LENS, True)).mean(), 150)  # ProRes and 10-bit steps
+        hdr = decode_hdr(d / "still-hdr.png", LENS)
+        source = self.source(LENS, True)
+        self.assertLess(np.abs(hdr - source).mean(), 40)  # 10-bit steps and ProRes
+        self.assertLess(abs((hdr - source).mean()), 4)     # no bias: the range expansion is exact
+        highlight = images.pq_to_nits(hdr[highlight_patch(LENS, inset=4)].astype(np.uint16)).mean()
+        self.assertAlmostEqual(highlight, HIGHLIGHT_NITS, delta=HIGHLIGHT_NITS * 0.01)
+        peak = hdr[peak_patch(LENS)]  # Y' 940 is PQ 1.0; ProRes leaves one-code noise around it
+        self.assertEqual((np.median(peak), peak.max()), (65535, 65535))
         info = probe_video(d / "still-hdr.avif")
         self.assertEqual((info.width, info.height, info.pix_fmt), (*LENS, "yuv444p10le"))
         self.assertEqual((info.colour["color_primaries"], info.colour["color_transfer"],
@@ -351,6 +387,7 @@ class EncodePipeline(unittest.TestCase):
         light = next(s for s in info.stream.get("side_data_list", []) if "light" in s["side_data_type"].lower())
         self.assertEqual((light["max_content"], light["max_average"]),
                          images.light_levels(hdr.astype(np.uint16)))
+        self.assertEqual(light["max_content"], PEAK_NITS)
 
     def test_detail_crops_are_1_to_1_with_exact_1x_averages(self):
         d = self.d(LENS)
@@ -360,9 +397,9 @@ class EncodePipeline(unittest.TestCase):
                 Image.open(d / "crop-sdr@1x.png") as small:
             self.assertEqual(np.asarray(crop).tolist(), np.asarray(still.crop(rect.box)).tolist())
             self.assertEqual(np.asarray(small).tolist(), np.asarray(crop.reduce(2)).tolist())
-        still = decode(d / "still-hdr.png", LENS, range_="pc", hdr=True)
-        crop = decode(d / "crop-hdr.png", (rect.w, rect.h), range_="pc", hdr=True)
-        small = decode(d / "crop-hdr@1x.png", (rect.w // 2, rect.h // 2), range_="pc", hdr=True)
+        still = decode_hdr(d / "still-hdr.png", LENS)
+        crop = decode_hdr(d / "crop-hdr.png", (rect.w, rect.h))
+        small = decode_hdr(d / "crop-hdr@1x.png", (rect.w // 2, rect.h // 2))
         self.assertTrue(np.array_equal(crop, still[rect.y:rect.y + rect.h, rect.x:rect.x + rect.w]))
         self.assertTrue(np.array_equal(small, images.box_average_2x2(crop.astype(np.uint16))))
         for name, size in (("crop-hdr.avif", (rect.w, rect.h)), ("crop-hdr@1x.avif", (rect.w // 2, rect.h // 2))):

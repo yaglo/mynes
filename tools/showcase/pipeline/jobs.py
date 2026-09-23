@@ -360,6 +360,7 @@ class RenderFacts:
     matrix: str
     range: str
     sidecar: dict
+    pix_fmt: str = ""
     assumed: bool = False
 
     @property
@@ -382,13 +383,14 @@ def render_facts(ctx: Context, runner: Runner, shot: Shot, preset: str, size, hd
         if hdr and not _has_levels(sidecar):
             raise PipelineError(f"{sidecar_path(path)} lacks max_cll and max_fall")
         return RenderFacts(path, info.frames, info.rate, r.size, bool(info.audio_codec), hdr,
-                           recipes.sws_matrix(info.colour, hdr), recipes.sws_range(info.colour), sidecar)
+                           recipes.sws_matrix(info.colour, hdr), recipes.sws_range(info.colour), sidecar,
+                           info.pix_fmt)
     if runner.dry_run:
         sidecar = {"white_nits": ctx.defaults.hdr_white_nits, "headroom": ctx.defaults.hdr_headroom,
                    "max_cll": "MAXCLL", "max_fall": "MAXFALL"} if hdr else {}
         return RenderFacts(path, r.frames, recipes.rate_for(shot.region), r.size, True, hdr,
                            recipes.HDR_DEFAULT_MATRIX if hdr else recipes.SDR_DEFAULT_MATRIX, "tv",
-                           sidecar, assumed=True)
+                           sidecar, "yuv444p12le" if hdr else "yuv444p", assumed=True)
     raise PipelineError(f"{path} is missing: run `showcase.py --shots {shot.id} --presets {preset} record` first")
 
 
@@ -478,15 +480,22 @@ def encode_poster(ctx: Context, runner: Runner, shot: Shot, preset: str, size) -
 
 
 def _hdr_frame(runner: Runner, facts: RenderFacts, frame: int, raw: Path, what: str, work) -> dict:
-    """Extract one HDR frame as raw rgb48le, hand the array to ``work``, and
-    return what it returns (light levels per written file)."""
-    runner.run(recipes.hdr_raw_args(facts.path, raw, frame, matrix=facts.matrix, range_=facts.range),
+    """Extract one HDR frame as raw Y'CbCr in the render's own format, convert
+    it to 16-bit PQ R'G'B' (images.yuv_to_rgb48), hand the array to ``work``,
+    and return what it returns (light levels per written file)."""
+    depth = recipes.HDR_RAW_FORMATS.get(facts.pix_fmt)
+    if depth is None:
+        raise PipelineError(f"{facts.path} is {facts.pix_fmt or 'of unknown format'}: the HDR stills need "
+                            f"4:4:4 at 10, 12 or 16 bits ({', '.join(recipes.HDR_RAW_FORMATS)})")
+    if facts.matrix not in images.LUMA_WEIGHTS:
+        raise PipelineError(f"{facts.path}: no Y'CbCr weights for its {facts.matrix} matrix")
+    runner.run(recipes.hdr_raw_args(facts.path, raw, frame, pix_fmt=facts.pix_fmt),
                what=f"HDR frame {frame} of {facts.path.parent.name}/{facts.path.name}")
 
     def step():
-        rgb = images.read_rgb48(raw, facts.size)
+        yuv = images.read_yuv444(raw, facts.size)
         raw.unlink()
-        return work(rgb)
+        return work(images.yuv_to_rgb48(yuv, depth, facts.matrix, full_range=facts.range == "pc"))
 
     return runner.step(what, step) or {}
 
@@ -522,7 +531,7 @@ def encode_still(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dict 
         return {**_write16(d / "still-hdr.png", rgb), **_write16(d / "crop-hdr.png", part),
                 **_write16(d / "crop-hdr@1x.png", images.box_average_2x2(part))}
 
-    levels = _hdr_frame(runner, hdr, frame, d / "still-hdr.rgb48",
+    levels = _hdr_frame(runner, hdr, frame, d / "still-hdr.yuv",
                         f"write still-hdr.png, crop-hdr.png ({rect.crop_filter()}) and crop-hdr@1x.png "
                         f"(2x2 box average) as 16-bit PQ PNGs", hdr_work)
     for png in ("still-hdr.png", "crop-hdr.png", "crop-hdr@1x.png"):
@@ -606,7 +615,7 @@ def encode_readme(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dict
     quality, webp_size = recipes.fit(limit, recipes.README_QUALITIES, build)
     runner.run(recipes.sdr_png_args(sdr.path, png, shot.thumbnail_frame, matrix=sdr.matrix, range_=sdr.range),
                what="readme png")
-    _hdr_frame(runner, hdr, shot.thumbnail_frame, d / "readme-hdr.rgb48", "write readme-hdr.png as 16-bit PQ PNG",
+    _hdr_frame(runner, hdr, shot.thumbnail_frame, d / "readme-hdr.yuv", "write readme-hdr.png as 16-bit PQ PNG",
                lambda rgb: _write16(hdr_png, rgb))
     gain = _gainmap(runner, png, hdr_png, jpg, size)
     if runner.dry_run:
@@ -651,7 +660,7 @@ def encode_flicker(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dic
     quality, webp_size = recipes.fit(limit, recipes.FLICKER_QUALITIES, build)
     runner.run(recipes.sdr_png_args(sdr.path, png, first, matrix=sdr.matrix, range_=sdr.range, rect=rect),
                what="flicker png")
-    _hdr_frame(runner, hdr, first, d / "flicker-hdr.rgb48",
+    _hdr_frame(runner, hdr, first, d / "flicker-hdr.yuv",
                f"write flicker-hdr.png ({rect.crop_filter()}) as 16-bit PQ PNG",
                lambda rgb: _write16(hdr_png, images.crop(rgb, rect)))
     gain = _gainmap(runner, png, hdr_png, jpg, (rect.w, rect.h))

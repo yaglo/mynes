@@ -14,7 +14,7 @@ def every_command():
     cmds = [recipes.video_args("r.mov", "o.mp4", spec, cll=(812, 50), fast=fast)
             for spec in recipes.STAGE_OUTPUTS + recipes.LENS_OUTPUTS for fast in (False, True)]
     cmds += [recipes.poster_args("r.mov", "p.webp"), recipes.sdr_png_args("r.mov", "s.png", rect=rect),
-             recipes.hdr_raw_args("r.mov", "h.rgb48"), recipes.readme_webp_args("r.mov", "r.webp", 361, 80),
+             recipes.hdr_raw_args("r.mov", "h.yuv"), recipes.readme_webp_args("r.mov", "r.webp", 361, 80),
              recipes.flicker_webp_args("r.mov", "f.webp", rect, 0),
              recipes.five_televisions_args([f"m{i}.mov" for i in range(5)], [f"c{i}" for i in range(5)],
                                            "five.mp4", 180, recipes.NTSC_RATE, font="/f.ttf"),
@@ -228,9 +228,13 @@ class Stills(unittest.TestCase):
         cmd = recipes.sdr_png_args("sdr.mov", "f.png", 7, rect=r)
         self.assertIn("select='eq(n\\,7)',crop=1500:1125:930:1260,scale=in_color_matrix=bt601", cmd[cmd.index("-vf") + 1])
         self.assertIn("-c:v png", shlex.join(cmd))
-        cmd = recipes.hdr_raw_args("hdr.mov", "h.rgb48", 3)
-        self.assertIn("scale=in_color_matrix=bt2020:in_range=tv,format=rgb48le", cmd[cmd.index("-vf") + 1])
-        self.assertEqual(cmd[-5:], ["-f", "rawvideo", "-pix_fmt", "rgb48le", "h.rgb48"])
+        # The HDR frame leaves ffmpeg as the decoder's own samples: no scale, no format change.
+        cmd = recipes.hdr_raw_args("hdr.mov", "h.yuv", 3)
+        self.assertEqual(cmd[cmd.index("-vf") + 1], "select='eq(n\\,3)'")
+        self.assertEqual(cmd[-5:], ["-f", "rawvideo", "-pix_fmt", "yuv444p12le", "h.yuv"])
+        self.assertEqual(recipes.hdr_raw_args("hdr.mov", "h.yuv", pix_fmt="yuv444p10le")[-2], "yuv444p10le")
+        with self.assertRaises(recipes.RecipeError):
+            recipes.hdr_raw_args("hdr.mov", "h.yuv", pix_fmt="yuv420p10le")
 
     def test_avifenc(self):
         cmd = recipes.avifenc_args("still-hdr.png", "still-hdr.avif", clli=(812, 50))

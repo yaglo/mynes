@@ -179,6 +179,13 @@ recorder's SDR files are BT.601 without tags (swscale's default when it
 converts rgb24), so SDR outputs go through 16-bit RGB to BT.709 and are
 tagged BT.709.
 
+The HDR stills and crops take the render's frame as ffmpeg decodes it
+(ProRes 4444 is `yuv444p12le`) and convert it to 16-bit R'G'B' in numpy
+(`images.yuv_to_rgb48`): BT.2020 matrix, limited range expanded so that
+Y' 940 of 10 bits is 65535. swscale's `rgb48le` output maps that white to
+65280, which made every HDR still 256/257 darker in PQ code than the stage
+video of the same frame, about 2.5% in nits.
+
 Feature clips, `out/features/<id>/youtube.mp4`, are built at 3840x2880 from
 the full-size SDR renders (libx264 High, crf 14, BT.709, AAC 192k) and are
 not installed:
@@ -330,11 +337,14 @@ python3 -m unittest discover -s tools/showcase/tests -t tools/showcase -v
 `test_images` and `test_cli` need no encoders; one PNG check in
 `test_images` uses ffmpeg when it is there. `test_encode` draws small SDR
 and HDR renders the way the recorder writes them (512x384, 256x192, 128x96
-and 320x240, 60 frames, with sidecars), runs every encode, feature and
-install job on them and checks the outputs: codecs strings, HDR10 metadata,
-one-pixel columns surviving, colours after the BT.601 to BT.709 change,
-highlights above SDR white, 1:1 crops and exact `@1x` averages, the
-manifest and the budget refusal. It takes under a minute and is skipped when
+and 320x240, 60 frames, with sidecars; the HDR frames are limited-range
+BT.2020 Y'CbCr computed in numpy and piped as `yuv444p16le`), runs every
+encode, feature and install job on them and checks the outputs: codecs
+strings, HDR10 metadata, one-pixel columns surviving, colours after the
+BT.601 to BT.709 change, an 800-nit highlight within 1% in the stage video
+and the still, a PQ-peak patch that must read 65535 in `still-hdr.png` and
+10000 nits in the AVIF's content light level, 1:1 crops and exact `@1x`
+averages, the manifest and the budget refusal. It takes under a minute and is skipped when
 ffmpeg lacks one of the encoders or avifenc, numpy or Pillow is missing; the
 gain-map and `--fast` checks are skipped without swift on macOS 15 or
 `hevc_videotoolbox`.

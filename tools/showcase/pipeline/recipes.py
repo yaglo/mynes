@@ -83,6 +83,8 @@ SWS_MATRIX = {"bt709": "bt709", "smpte170m": "bt601", "bt470bg": "bt601", "bt202
               "bt2020c": "bt2020", "fcc": "fcc", "smpte240m": "smpte240m"}
 SDR_DEFAULT_MATRIX = "bt601"
 HDR_DEFAULT_MATRIX = "bt2020"
+# Planar 4:4:4 formats an HDR frame is read in, with their bit depth.
+HDR_RAW_FORMATS = {"yuv444p10le": 10, "yuv444p12le": 12, "yuv444p16le": 16}
 
 
 class RecipeError(ValueError):
@@ -433,12 +435,15 @@ def sdr_png_args(src: Path | str, out: Path | str, frame: int = 0, *, matrix: st
 
 
 def hdr_raw_args(src: Path | str, out: Path | str, frame: int = 0, *,
-                 matrix: str = HDR_DEFAULT_MATRIX, range_: str = "tv") -> list[str]:
-    """One frame of the HDR render as raw rgb48le, still PQ-coded BT.2020.
+                 pix_fmt: str = "yuv444p12le") -> list[str]:
+    """One frame of the HDR render as raw planar Y'CbCr in the decoder's own
+    format (ffmpeg decodes ProRes 4444 as yuv444p12le), so ffmpeg changes no
+    sample. images.yuv_to_rgb48 turns it into 16-bit PQ R'G'B'; then
     images.py cuts the crops, averages the @1x variants and writes the PNGs."""
-    return [*FFMPEG_BASE, "-i", str(src), "-an",
-            "-vf", f"{select_frame(frame)},{to_rgb(matrix, range_, 'rgb48le')}",
-            "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb48le", str(out)]
+    if pix_fmt not in HDR_RAW_FORMATS:
+        raise RecipeError(f"an HDR still needs a 4:4:4 render of 10, 12 or 16 bits, not {pix_fmt}")
+    return [*FFMPEG_BASE, "-i", str(src), "-an", "-vf", select_frame(frame),
+            "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", pix_fmt, str(out)]
 
 
 def avifenc_args(png: Path | str, out: Path | str, *, quality: int = AVIF_QUALITY,
