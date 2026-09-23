@@ -46,6 +46,13 @@ static bool dispatch_h_blur_rgb(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd);
 static bool dispatch_beam_profile(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd);
 static bool dispatch_aux_fir_cmd(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd,
                                   int stage_idx, int src_aux, int dst_aux);
+/* The standard burst, as an amplitude with blanking to white at 1: NTSC
+ * 40 IRE peak to peak of 100, PAL 300 mV of 700. The ACC holds the burst
+ * here, so the console's 47.7 IRE burst reads two thirds as much chroma. */
+static float demod_burst_reference(const VideoGPUChain *vgc) {
+    return vgc->signal_fmt.region == SIGNAL_REGION_PAL ? 150.0f / 700.0f : 0.20f;
+}
+
 static bool rebind_osd(struct SignalChainFwd *chain,struct ChainStageFwd *stage,void *user) {
     (void)chain;
     VideoGPUChain *v=user;
@@ -620,6 +627,7 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
         demod_params.line_phase_inc   = (float)chain->signal_fmt.lines > 0
             ? (float)signal_region_line_phase(vgc->signal_fmt.region) * 2.0f * (float)M_PI / 12.0f  /* match the DAC clock */
             : 0.0f;
+        demod_params.burst_reference  = demod_burst_reference(vgc);
 
         vgc->stage_chroma_demod = chain_add_stage(&vgc->sig_chain,
             "Chroma Demod", CHAIN_KERNEL_RECEIVER_DEMOD,
@@ -1315,6 +1323,7 @@ void video_gpu_set_demod(VideoGPUChain *vgc, float phase, float dp)
     memset(&demod_params, 0, sizeof(demod_params));
     demod_params.count            = (uint32_t)vgc->raster_fmt.total_samples;
     demod_params.mode             = 3;
+    demod_params.burst_reference  = demod_burst_reference(vgc);
     demod_params.phase            = phase;
     demod_params.dp               = dp;
     demod_params.param_a          = 1.0f;
@@ -1483,6 +1492,7 @@ static void update_demod_params(VideoGPUChain *vgc) {
     p.param_a = 1;
     p.samples_per_line = (uint32_t)vgc->raster_fmt.samples_per_line;
     p.line_phase_inc = (float)(65 * vgc->signal_fmt.samples_per_pixel); /* active offset */
+    p.burst_reference = demod_burst_reference(vgc);
     chain_update_params(&vgc->sig_chain, vgc->stage_chroma_demod, &p, sizeof(p));
 }
 

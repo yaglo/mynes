@@ -1188,8 +1188,10 @@ static void comb_separation(SDL_GPUDevice *gpu) {
 
 static void decoder_gain(SDL_GPUDevice *gpu) {
     SignalChain sc; CHECK(chain_init(&sc,gpu,240,"shaders/compute"));
-    float input[240]; const float nominal=(376.0f/788.0f)/(6*sinf(3.14159265359f/12));
-    GpuModulatorParams p={.count=240,.mode=3,.dp=6.28318530718f/12,.param_a=1,.samples_per_line=240};
+    // A burst at the standard amplitude (40 IRE peak to peak, 0.20) gives
+    // unity gain; a halved one doubles it.
+    float input[240]; const float nominal=0.20f;
+    GpuModulatorParams p={.count=240,.mode=3,.dp=6.28318530718f/12,.param_a=1,.samples_per_line=240,.burst_reference=nominal};
     int stage=chain_add_stage(&sc,"Detector gain",CHAIN_KERNEL_RECEIVER_DEMOD,&p,sizeof(p),1,1);
     ChainStage *d=&sc.stages[stage];d->io_typed=true;d->ro_count=2;d->ro[0]=CBR_BUF_SRC;d->ro[1]=CBR_AUX3;
     d->rw_count=2;d->rw[0]=CBR_AUX0;d->rw[1]=CBR_AUX1;

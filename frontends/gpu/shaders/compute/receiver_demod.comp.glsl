@@ -18,6 +18,7 @@ layout(set = 2, binding = 0) uniform Params {
     float param_a;           /* mode-dependent: mod_index (mode 2), gain (mode 3) */
     uint  samples_per_line;  /* 0 = continuous (no per-line reset), >0 = reset phase per scanline */
     float active_offset;    /* phase advance per scanline (radians), e.g. 6 * 2π/12 = π */
+    float burst_reference;  /* burst amplitude the ACC holds, blanking to white = 1 */
 };
 
 #define TWO_PI 6.28318530718
@@ -37,10 +38,15 @@ void main() {
         uint sample_in_line = tid % samples_per_line;
         p = phase + reference[scanline].x + (float(sample_in_line) - active_offset) * dp;
         x -= reference[scanline].y;
-        // Nominal fundamental of the sampled 2C02 burst square wave.
-        // Automatic chroma gain compensates shared cable/receiver attenuation.
+        // Automatic chroma control holds the burst at the standard amplitude
+        // and scales the chroma with it, so cable and receiver attenuation
+        // cancel. The reference is the standard's burst, not the console's:
+        // the 2C02's burst is a square wave of 47.7 IRE peak to peak with a
+        // 60.7 IRE fundamental, against the 40 IRE the receiver expects, so
+        // a receiver shows the console at two thirds of the chroma a decoder
+        // normalised to the console's own burst would give.
         float received = reference[scanline].z;
-        burst_gain = received > 0.01 ? clamp(((376.0/788.0)/(6.0*sin(3.14159265359/12.0))) / received, 0.25, 4.0) : 0.0;
+        burst_gain = received > 0.01 ? clamp(burst_reference / received, 0.25, 4.0) : 0.0;
     } else {
         p = phase + float(tid) * dp;
     }

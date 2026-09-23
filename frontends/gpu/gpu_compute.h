@@ -319,7 +319,8 @@ typedef struct {
     float    max_gain;          /* maximum gain ceiling (2.0) */
 } GpuAGCParams;
 
-/* Modulator / demodulator parameters (matches modulator.comp.glsl). */
+/* Modulator / demodulator parameters. modulator.comp.glsl reads the first
+ * seven; receiver_demod.comp.glsl reads them all. */
 typedef struct {
     uint32_t count;
     uint32_t mode;              /* 0=cos, 1=sin, 2=AM, 3=IQ */
@@ -328,6 +329,7 @@ typedef struct {
     float    param_a;           /* mod_index (mode 2) or gain (mode 3) */
     uint32_t samples_per_line;  /* 0=continuous, >0=reset phase per scanline */
     float    line_phase_inc;    /* phase advance per scanline (radians) */
+    float    burst_reference;   /* burst amplitude the ACC holds, blanking to white = 1 */
 } GpuModulatorParams;
 
 bool gpu_dispatch_modulator(
