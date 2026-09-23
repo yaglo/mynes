@@ -11,6 +11,7 @@
 static int failures;
 static float center_row[W][3];
 static float row_mean[H][3];
+static float band[8][W][3];   /* rows H/2 .. H/2+7 */
 #define CHECK(x) do { if (!(x)) { fprintf(stderr,"Display FAIL %d: %s\n",__LINE__,#x); failures++; } } while(0)
 
 static void render_region(SDL_GPUDevice *gpu, GPUDisplay *d, SDL_GPUTexture *input,
@@ -35,11 +36,41 @@ static void render_region(SDL_GPUDevice *gpu, GPUDisplay *d, SDL_GPUTexture *inp
             CHECK(isfinite(x)); sum[c]+=x; *peak=fmaxf(*peak,x);
             if(i/W==H/2) center_row[i%W][c]=x;
             row_mean[i/W][c]+=x/W;
+            if(i/W>=H/2 && i/W<H/2+8) band[i/W-H/2][i%W][c]=x;
         }
         for(int c=0;c<3;c++) avg[c]=(float)(sum[c]/(W*H));
         SDL_UnmapGPUTransferBuffer(gpu,download);
     }
     SDL_ReleaseGPUTransferBuffer(gpu,download);
+}
+
+static uint16_t half_from_float(float f) {
+    if (f <= 0) return 0;
+    uint32_t x; memcpy(&x,&f,4);
+    return (uint16_t)(((((x>>23)&0xff)-112)<<10) | ((x>>13)&0x3ff));
+}
+
+/* Rows shaped like scanlines: a raised cosine every `period` rows. */
+static void upload_scanlines(SDL_GPUDevice *gpu, SDL_GPUTexture *input, int period, float base, float swing) {
+    SDL_GPUTransferBufferCreateInfo info={.usage=SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,.size=W*H*8};
+    SDL_GPUTransferBuffer *buffer=SDL_CreateGPUTransferBuffer(gpu,&info);
+    uint16_t *pixels=SDL_MapGPUTransferBuffer(gpu,buffer,false);
+    CHECK(pixels!=NULL);
+    if(!pixels) { SDL_ReleaseGPUTransferBuffer(gpu,buffer);return; }
+    for(int y=0;y<H;y++) {
+        float v=base+swing*0.5f*(1+cosf(6.2831853f*(y+0.5f)/period));
+        for(int x=0;x<W;x++) {
+            for(int c=0;c<3;c++) pixels[(y*W+x)*4+c]=half_from_float(v);
+            pixels[(y*W+x)*4+3]=0x3c00;
+        }
+    }
+    SDL_UnmapGPUTransferBuffer(gpu,buffer);
+    SDL_GPUCommandBuffer *cmd=SDL_AcquireGPUCommandBuffer(gpu);
+    SDL_GPUCopyPass *pass=SDL_BeginGPUCopyPass(cmd);
+    SDL_GPUTextureTransferInfo source={.transfer_buffer=buffer,.pixels_per_row=W,.rows_per_layer=H};
+    SDL_GPUTextureRegion region={.texture=input,.w=W,.h=H,.d=1};
+    SDL_UploadToGPUTexture(pass,&source,&region,false);SDL_EndGPUCopyPass(pass);
+    CHECK(SDL_SubmitGPUCommandBuffer(cmd));SDL_ReleaseGPUTransferBuffer(gpu,buffer);
 }
 
 static void clear_input(SDL_GPUDevice *gpu, SDL_GPUTexture *input, float level) {
@@ -284,6 +315,29 @@ int test_display_fidelity(SDL_GPUDevice *gpu) {
         CHECK(fabsf(avg[c]-0.6f)<0.002f);
         for(int x=0;x<W;x++) CHECK(center_row[x][c]<0.752f && center_row[x][c]>0.448f);
     }
+    // The contrast follows the scanline's peak, not each row's own light, so
+    // every row of a bright line gets the same grille, as on a tube. Lines
+    // eight rows tall peaking near 0.6 in SDR keep about a quarter of the
+    // grille's contrast: each row's relative depth (max minus min over the
+    // mean) is about 0.5 on the bright centre row and the dim edge rows
+    // alike, and the unlimited EDR grille is deeper.
+    upload_scanlines(gpu,input,8,0.05f,0.55f);
+    p.scanline_uv=8.0f/H;
+    render(gpu,&d,input,target,&p,avg,&peak);
+    float depth_lo=1e9f,depth_hi=0;
+    for(int r=0;r<8;r++) {
+        float lo=1e9f,hi=0,sum=0;
+        for(int x=0;x<W;x++) { float v=band[r][x][1]; lo=fminf(lo,v); hi=fmaxf(hi,v); sum+=v; }
+        float depth=(hi-lo)/(sum/W);
+        depth_lo=fminf(depth_lo,depth); depth_hi=fmaxf(depth_hi,depth);
+    }
+    CHECK(depth_lo>0.4f && depth_hi-depth_lo<0.02f*depth_hi);
+    p.hdr_headroom=8;
+    render(gpu,&d,input,target,&p,avg,&peak);
+    float lo=1e9f,hi=0,sum=0;
+    for(int x=0;x<W;x++) { float v=band[0][x][1]; lo=fminf(lo,v); hi=fmaxf(hi,v); sum+=v; }
+    CHECK((hi-lo)/(sum/W)>depth_hi*1.2f);
+    p.scanline_uv=0;
     clear_input(gpu,input,0.25f); p.hdr_headroom=8;
     // A four-pixel triad: each colour's stripe moves onto the nearest
     // subpixel of its colour (green is centred by the phase shift), so the
@@ -431,7 +485,11 @@ int test_display_fidelity(SDL_GPUDevice *gpu) {
         render(gpu,&d,input,target,&p,avg,&peak);
         printf("Grille period %d px: SDR mean/peak %.4f/%.4f, EDR %.4f/%.4f\n",
                3*pitch,sdr_mean,sdr_peak,avg[0],peak);
-        CHECK(avg[0]>sdr_mean && peak>sdr_peak);
+        // SDR lowers the grille's contrast to stay under the shoulder
+        // instead of clipping it, so both keep the same light; EDR keeps
+        // the full contrast.
+        CHECK(fabsf(sdr_mean-.5f)<.002f && sdr_peak<.7502f);
+        CHECK(peak>sdr_peak);
         CHECK(fabsf(avg[0]-.5f)<.002f);
         CHECK(fabsf(avg[0]-avg[2])<.002f);
     }

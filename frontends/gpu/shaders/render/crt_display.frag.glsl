@@ -91,7 +91,7 @@ layout(set = 3, binding = 0) uniform DisplayParams {
     vec2 mask_scale, mask_origin;
     vec4 phosphor_to_display[3];
     vec4 presentation; // x: host-refresh emission multiplier
-    vec4 monitor; // x: 1 = FW900 physical variable-pitch grille; y: panel subpixels, 0 off, 1 RGB, 2 BGR
+    vec4 monitor; // x: 1 = FW900 physical variable-pitch grille; y: panel subpixels, 0 off, 1 RGB, 2 BGR; z: scanline height in texture UV (0: 1/240)
     vec4 damper;  // x: aperture-grille damper wires; y: shadow height, face fraction; z, w: wire heights from the top
 };
 
@@ -122,6 +122,14 @@ float stripe_window(float x, float period, float offset, float fill) {
     }
     return covered/fill;
 }
+// Amplitude of the band-limited grille's n-th harmonic. Interpolating two
+// Fejer orders keeps the coverage continuous and nonnegative across resize.
+float stripe_harmonic(int n, int order, float sampled_period) {
+    float k=float(n);
+    float transition=1.0-smoothstep(0.45,0.5,float(order)/sampled_period);
+    float weight=mix(max(1.0-k/float(order),0.0),1.0-k/float(order+1),transition);
+    return 2.0*sinc_pi(k*0.28)*sinc_pi(k/sampled_period)*weight;
+}
 vec3 aperture_mask(float x, float pitch) {
     float period=3.0*max(pitch,0.05);
     if(monitor.y>0.5 && monitor.x!=1.0) {
@@ -148,30 +156,31 @@ vec3 aperture_mask(float x, float pitch) {
     float sampled_period=period/footprint;
     int order=min(int(floor(sampled_period*0.5)),16);
     if(order<1) return vec3(1.0);
-    float transition=1.0-smoothstep(0.45,0.5,float(order)/sampled_period);
     // A grille wire separates RGB groups more than neighbouring phosphors.
     // Equal gaps at every colour erased the achromatic triad structure.
     // These normalized stripe dimensions are nominal, not a Sony tube fit.
     vec3 phase=6.28318530718*(x/period-vec3(0.21,0.50,0.79));
     vec3 coverage=vec3(1.0);
-    for(int n=1;n<=order;n++) {
-        float k=float(n);
-        float previous=max(1.0-k/float(order),0.0);
-        float current=1.0-k/float(order+1);
-        float weight=mix(previous,current,transition);
-        float amplitude=2.0*sinc_pi(k*0.28)*sinc_pi(k/sampled_period)*weight;
-        coverage+=amplitude*cos(k*phase);
-    }
+    for(int n=1;n<=order;n++)
+        coverage+=stripe_harmonic(n,order,sampled_period)*cos(float(n)*phase);
     return subpixel_layout==2 ? coverage.bgr : coverage;
 }
-// A display cannot exceed its peak. Drawn on subpixels, a grille puts each
-// colour's light into part of the triad at several times the average level.
-// When that would pass the peak, lower that colour's grille contrast just
-// enough: its gaps fill, its stripes stay within reach, and its average over
-// the triad is unchanged, so clipping cannot darken or tint the picture.
+// A display cannot exceed its peak. A grille puts each colour's light into
+// part of the triad at several times the average level. When that would
+// pass the peak, lower that colour's grille contrast just enough: its gaps
+// fill, its stripes stay within reach, and its average over the triad is
+// unchanged, so clipping cannot darken or tint the picture. `drive` is the
+// scanline's peak, so every row of a line gets the same grille contrast,
+// as on a tube, where the grille shades the whole line evenly.
 vec3 grille_within_peak(vec3 coverage, vec3 drive) {
-    float period=3.0*max(mask_pitch_pixels,0.05);
-    float peak_cover=min(1.0,0.28*period)/0.28;
+    float period=3.0*max(mask_pitch_pixels,0.05), peak_cover=1.0;
+    if(monitor.y>0.5) peak_cover=min(1.0,0.28*period)/0.28;
+    else {
+        // The band-limited stripe's value at its centre.
+        float sampled_period=period/max(1.0,mask_scale.x);
+        int order=min(int(floor(sampled_period*0.5)),16);
+        for(int n=1;n<=order;n++) peak_cover+=stripe_harmonic(n,order,sampled_period);
+    }
     if(peak_cover<=1.001) return coverage;
     float scale=max(glass_tint,0.001)*(hdr_gain>0.0 ? hdr_gain : 1.0)*max(presentation.x,0.001);
     // The output shoulder starts compressing at 0.75 of the host peak.
@@ -238,6 +247,19 @@ float vignette_factor(vec2 coord, float strength) {
 
 // Excitation and emitted spectral light at one physical phosphor location.
 // Optical surface scattering samples this result, including the grille.
+// Brightest beam light within half a scanline above or below: the peak of
+// the line this pixel belongs to. Set once per pixel in main().
+vec3 g_line_peak=vec3(0.0);
+vec3 line_peak_light(vec2 p) {
+    float h=monitor.z>0.0 ? monitor.z : 1.0/240.0;
+    vec3 peak=beam_light(p);
+    for(int i=1;i<=2;i++) {
+        vec2 d=vec2(0.0,0.25*float(i)*h);
+        peak=max(peak,beam_light(clamp(p+d,vec2(0.0),vec2(1.0))));
+        peak=max(peak,beam_light(clamp(p-d,vec2(0.0),vec2(1.0))));
+    }
+    return peak;
+}
 vec3 phosphor_light(vec2 p, vec2 face_pos) {
     vec3 color=beam_light(p);
     // Generic purity error: redistribute excitation between phosphors,
@@ -261,7 +283,7 @@ vec3 phosphor_light(vec2 p, vec2 face_pos) {
     vec3 drive=color;
     if (mask_strength > 0.01) {
         vec3 coverage=phosphor_mask(face_pos,p);
-        if(monitor.y>0.5 && mask_type==1 && monitor.x!=1.0) coverage=grille_within_peak(coverage,drive);
+        if(mask_type==1 && monitor.x!=1.0) coverage=grille_within_peak(coverage,g_line_peak);
         color *= mix(vec3(1.0), coverage, mask_strength);
     }
     // Generic legacy material-response control, not a measured phosphor fit.
@@ -332,6 +354,7 @@ void main() {
     vec3 color;
     vec2 face_pos=gl_FragCoord.xy*mask_scale+mask_origin;
     vec3 gain=vec3(damper_light(sample_uv.y));
+    if(mask_type==1 && mask_strength>0.01) g_line_peak=line_peak_light(sample_uv);
 
     /* §5.3 cathode aging / non-uniformity — center dims faster than
      * edges, and the three guns age at different rates. Multiplicative
