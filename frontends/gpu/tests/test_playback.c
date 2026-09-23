@@ -2,6 +2,7 @@
  * queueing, and ROM replacement. */
 #define _POSIX_C_SOURCE 200809L
 #include "playback.h"
+#include "signal_format.h"
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,6 +31,16 @@ static bool next(Playback *p, PlaybackFrame *frame) {
         SDL_Delay(1);
     } while(SDL_GetTicks()<timeout);
     return false;
+}
+
+/* The most frames 1x NTSC pacing can start in ns nanoseconds, counted from
+ * one picture's start_ns to a later one's. The deadline advances one period
+ * per frame and a worker that fell behind catches up at most three periods
+ * before it rebases, so at most ns/period + 3 frames follow the first.
+ * start_ns is read a moment after the deadline check; one frame covers that. */
+static unsigned frames_1x_allows(Uint64 ns) {
+    Uint64 period=(Uint64)(signal_region_frame_ms(0)*1000000.0); /* as playback.c */
+    return (unsigned)(ns/period)+4;
 }
 
 int main(void) {
@@ -209,9 +220,11 @@ int main(void) {
         CHECK(!playback_read(p,&frame));
         playback_pause(p); playback_destroy(p);
     }
-    /* Fast-forward runs more emulated frames per wall-clock interval than
-     * normal speed, never queues audio while active, and hands the stream back
-     * to the resampler afterwards. Frame counts come from the worker itself. */
+    /* Fast-forward starts more frames in a stretch of time than 1x pacing
+     * could, never queues audio while active, and hands the stream back to
+     * the resampler afterwards. Frame numbers and start times come from the
+     * worker. A busy host slows the worker at any speed, so fast-forward
+     * keeps running until it has outrun the 1x bound, for up to 5 s. */
     p=playback_create(nes,NULL,NULL,stream,0,0);
     CHECK(p!=NULL);
     if(p) {
@@ -221,24 +234,32 @@ int main(void) {
         PlaybackFrame frame;
         CHECK(next(p,&frame));
         unsigned normal_start=frame.number;
+        Uint64 normal_start_ns=frame.start_ns;
         SDL_Delay(400);
         CHECK(next(p,&frame));
         unsigned normal_frames=frame.number-normal_start;
+        Uint64 normal_ns=frame.start_ns-normal_start_ns;
+        CHECK(normal_frames<=frames_1x_allows(normal_ns)); /* the bound holds at 1x */
         playback_pause(p);
         CHECK(SDL_GetAudioStreamQueued(stream)==0);
         controls.speed=8;
         playback_controls(p,&controls); playback_resume(p);
         CHECK(next(p,&frame));
-        unsigned fast_start=frame.number;
+        unsigned fast_start=frame.number,fast_frames=0;
+        Uint64 fast_start_ns=frame.start_ns,fast_ns=0,give_up=SDL_GetTicks()+5000;
         bool queued_while_fast=false;
-        for(int i=0;i<8;i++) {
+        for(int i=1;;i++) {
             SDL_Delay(50);
             if(SDL_GetAudioStreamQueued(stream)!=0) queued_while_fast=true;
+            if(i<8) continue; /* at least the 400 ms measured at 1x */
+            bool fresh=next(p,&frame);
+            CHECK(fresh);
+            fast_frames=frame.number-fast_start;
+            fast_ns=frame.start_ns-fast_start_ns;
+            if(!fresh || fast_frames>frames_1x_allows(fast_ns) || SDL_GetTicks()>=give_up) break;
         }
-        CHECK(next(p,&frame));
-        unsigned fast_frames=frame.number-fast_start;
         CHECK(!queued_while_fast);
-        CHECK(fast_frames>normal_frames*3/2); /* 8x requested; the host decides how close it gets */
+        CHECK(fast_frames>frames_1x_allows(fast_ns)); /* 8x requested; the host decides how close it gets */
         controls.speed=1;
         playback_controls(p,&controls);
         Uint64 timeout=SDL_GetTicks()+2000;
@@ -246,7 +267,8 @@ int main(void) {
         CHECK(SDL_GetAudioStreamQueued(stream)>0); /* audio flows again after fast-forward */
         playback_pause(p);
         playback_destroy(p);
-        printf("Playback speed: %u frames at 1x, %u at 8x over equal intervals\n",normal_frames,fast_frames);
+        printf("Playback speed: %u frames in %.0f ms at 1x, %u in %.0f ms at 8x (1x allows %u)\n",
+               normal_frames,normal_ns/1e6,fast_frames,fast_ns/1e6,frames_1x_allows(fast_ns));
     }
     /* A main-thread visit runs between frames, holds the next frame back for
      * as long as it lasts and may change the console; playback then goes on. */
