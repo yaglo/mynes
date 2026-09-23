@@ -672,11 +672,13 @@ presentation scheduling itself is not changed by either setting.
 
 Signal chain → RF receiver exposes the complex IF response. Signal chain →
 VHS recording / playback controls the optional NTSC composite recording path:
-FM clip levels and deviation, RF carrier-to-noise, tape tilt and modulation
-noise, colour-under noise, dropout rate and compensator, noise canceller,
-sharpness, Y/C delay, head bows, field timing error, line jitter, head-switch
-position and skews, and the deck seed. Y/C separation holds the TV's line PLL
-(frequency, damping and V-blank gain; 0 Hz keeps the generic loop). The
+FM clip levels and deviation, RF carrier-to-noise, tape tilt (to 4.4 dB/MHz)
+and modulation noise, colour-under noise, dropout rate and compensator, noise
+canceller, sharpness, colour APC loop (100 Hz to 2 kHz), Y/C delay, head bows,
+field timing error with its persisting share, decay and period, line jitter,
+head-switch position and skews, and the deck seed. Y/C separation holds the
+TV's line PLL (frequency to 1 kHz, damping and V-blank gain to 3; 0 Hz keeps
+the generic loop) and the black clamp time constant in lines. The
 `VHS SP` preset pairs the deck with a consumer slot-mask CRT. Slow-decay time and
 energy are in Mask / phosphor. The additional tube controls are grouped with
 beam, gun, phosphor, glass and wear settings rather than hidden in preset JSON.

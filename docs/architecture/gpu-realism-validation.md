@@ -96,15 +96,29 @@ seed and the emulated frame number, measured on a Panasonic PV-7450 capture
 
 - a fixed bow per head, fitted with 10 scan harmonics: 77 ns RMS on head A,
   39 ns on head B;
-- a varying part of 48 ns RMS over 22 scan harmonics (45.4 and 23.3 ns in the
-  first two), 40% of it persisting with a 0.4 s decorrelation and 60% new
-  every field (field-to-field correlation 0.31 at lag 1, DH 0.41);
+- a varying part over 22 scan harmonics whose per-harmonic RMS (62.5, 14.3,
+  7.6, 2.9 and 1.2 ns for harmonics 1, 2, 3-4, 5-9 and 10-22) was found by
+  inverting the DH band analysis (240 lines per field, a per-field linear
+  detrend, Hann periodogram; bands 0-70, 70-140, 140-300, 300-600 and
+  600-1500 Hz at 45.4, 23.3, 10.9, 6.4 and 4.1 ns), so the same analysis of
+  the table returns those bands. The detrend removes 40% of the first
+  harmonic's power, which is why its RMS exceeds its band. The parameter
+  `tbe_varying_ns` is the bands' quadrature sum, 52.5 ns for the DH deck.
+  40% of the power persists as a damped resonance with a 2 s decay and a
+  1.7 s period, the rest is new every field: field correlation 0.40, 0.27
+  and 0.04 at lags 1, 12 and 24 against DH's 0.41, 0.35 and 0.05, where a
+  plain exponential cannot hold 0.35 to lag 12 and fall to 0.05 by lag 24;
 - 5 ns RMS of white per-line jitter;
-- the head switch 6.5 H before vertical sync (NES line 238.5; JVC, IEC 5-8 H),
-  with steps of +1700 ns (B to A) and -80 ns (A to B), a 1.5 dB RF envelope
-  sag over the 3 lines before it and a random RF phase jump at it. The steps
-  are interchange values: a tape played on the deck that recorded it should
-  skew less, but that case was not measured.
+- the head switch 6.5 H before vertical sync (NES line 238.5; JVC, IEC 5-8 H)
+  with a step at each switch, a 1.5 dB RF envelope sag over the 3 lines before
+  it and a random RF phase jump at it. DH measured +1700 ns (B to A) and
+  -80 ns (A to B) on an interchange tape: the sum of the two, which sets the
+  -3.1 ns per line ramp, is the tension term that any tape shows, and their
+  difference is the dihedral term that cancels when the deck that recorded
+  the tape plays it, since each head then reads its own track. The presets
+  describe that same-deck case, so both steps are +810 ns; the DH values are
+  a menu setting. A whole-number switch position switches at the start of
+  its line.
 
 The deck's own filters and delay line hold the output about 1 us behind its
 input. The table removes that fixed delay, so the TV sees the timing error and
@@ -112,11 +126,20 @@ not a constant offset.
 
 On tape, the FM carrier gets 2700 Hz RMS of modulation noise below 0.4 MHz,
 the record high-pass (third order at 1.6 MHz: 24 dB down at 629 kHz, 13 dB at
-1 MHz, IEC fig. 22) and a head/tape pole giving -2 dB/MHz across the deviation
-(DH carrier level: +0.8 dB at 3.45 MHz, -1.2 dB at 4.45 MHz). Playback adds
-white RF noise at a carrier-to-noise density of 95.5 dB Hz (head B 0.8 dB
-worse) and the playback RF filters (second-order high-pass at 1.4 MHz, JVC
-fig. 3-2-12; second-order low-pass at 6 MHz). A limiter and pulse-count
+1 MHz, IEC fig. 22) and the head/tape loss. Spacing loss falls exponentially
+with frequency, a straight line in dB; three real poles a factor 1.65 apart,
+placed together for the measured -2 dB/MHz at 3.9 MHz (DH carrier level:
++0.8 dB at 3.45 MHz, -1.2 dB at 4.45 MHz), follow that line within 1 dB over
+1.4-6 MHz for every tilt the menu allows, up to 4.4 dB/MHz. Playback adds
+RF noise at a carrier-to-noise density of 95.5 dB Hz (head B 0.8 dB worse).
+The noise is real, so its analytic form has only positive frequencies: the
+white complex draws pass a fourth-order low-pass of 7 MHz rotated to
++7.5 MHz, which keeps the density on the positive side out to where the
+playback RF low-pass sets the noise bandwidth and takes the image at -1.4 to
+-6 MHz down by 9 to 23 dB. A lost carrier then demodulates to the noise's
+zero-crossing rate, above white, as a pulse-count discriminator does. Then
+the playback RF filters (second-order high-pass at 1.4 MHz, JVC fig. 3-2-12;
+second-order low-pass at 6 MHz). A limiter and pulse-count
 discriminator (JVC's delay-line switching demodulator) turn the phase advance
 per sample into luma, which then passes a third-order Bessel at 3.0 MHz
 (JVC fig. 3-2-16), de-emphasis, the noise canceller (the high band above
@@ -128,9 +151,13 @@ The colour-under envelope gets 0.8 IRE of noise per component (DH), the
 playback band-pass (second order, 0.5 MHz), the APC/AFC residual phase and
 the 1H comb (current line plus the glass delay line, 227.5 carrier cycles).
 The APC residual comes from a second-order loop at 1 kHz (an assumption: JVC
-calls APC comparatively rapid) driven by the timing and by 2.1 degrees per line
-of burst measurement noise (DH); it is 2.3 degrees RMS per line and settles
-within the vertical blanking after the 1.7 us step.
+calls APC comparatively rapid) driven by the timing and by the burst phase
+noise the modelled chroma noise gives: the noise on the burst, recorded 6 dB
+hot, averaged over the 10-cycle burst gate against the 20 IRE burst, 0.65
+degrees per line at the default noise (DH measured 2.1 degrees, which
+includes its own measurement noise). The loop samples one burst per line,
+so its natural frequency is held to 2 kHz, below where the per-line
+recurrence would run away.
 
 Luma RF runs at 12 fsc as an analytic signal. The record FM high-pass removes
 more than 10 dB below 1 MHz, so the sidebands a real signal folds around 0 Hz
@@ -159,17 +186,39 @@ lost carrier into a white streak. Shallow dropouts only raise the noise.
 
 ### TV line PLL
 
-The VHS preset sets the TV's horizontal loop to a second-order PLL at 250 Hz
-with damping 0.7, its detector gain raised 2.5 times for the 21 lines from
-vertical sync (TDA2579: head-change jumps are restored within the vertical
-blanking). It free-runs through lines without a sync edge and is never reset,
-so the head switch bends the top of the next field. A 1 us step at line 238.5
-leaves -72 ns at the first picture line, -52 ns at line 20 and -3 ns at line
-40. The 250 Hz bandwidth is an assumption, and the largest single control over
-how much tape timing the viewer sees: at 100 Hz the mid-field residual is
-99 ns RMS, at 500 Hz 8 ns. The sync slicer now works halfway up the sync
-pulse from its tip, so a late line does not move the slice onto picture or
-border in the front porch window.
+The VHS preset sets the TV's horizontal loop to a second-order PLL (150 Hz
+in the worn-tape preset, 250 Hz for the fallback) with damping 0.7, its
+detector gain raised 2.5 times for the 21 lines from vertical sync (TDA2579:
+head-change jumps are restored within the vertical blanking). It free-runs
+through lines without a sync edge and is never reset, so the head switch
+bends the top of the next field. A 1 us step at line 238.5 leaves -72 ns at
+the first picture line, -52 ns at line 20 and -3 ns at line 40. The 250 Hz
+bandwidth is an assumption, and the largest single control over how much
+tape timing the viewer sees: at 100 Hz the mid-field residual is 99 ns RMS,
+at 500 Hz 8 ns. The loop samples one sync per line, so its natural frequency
+is held to 1 kHz and its V-blank gain to what keeps the per-line recurrence
+stable.
+
+### TV sync separator and black clamp
+
+A VCR moves lines by up to a few microseconds, and the receiver has to
+follow without turning timing into level. The sync separator averages the
+composite over one subcarrier cycle before slicing, takes the sync tip as
+the lowest such average over the first 50 dots and slices halfway between
+tip and porch, first against the front porch window and then against the
+back porch it measures behind the edge it found, over dots 8 to 46 (3 us
+early to 4 us late). The black level is the mean of three whole subcarrier
+cycles of the back porch after the burst, 20.5 to 25 dots behind the sync
+trailing edge, where the deck's band-limited burst tail leaves only the
+fraction of a cycle its slope covers. Measuring on the burst tail itself,
+as the earlier 46-49 dot window did, gave a level that depended on where the
+carrier fell against the sync, and with the deck's fixed carrier grid that
+turned the head-switch timing into a 1.2% luminance alternation at 30 Hz.
+The measurement charges a keyed clamp with a time constant in lines
+(`clamp_lines`, generic 64 lines: a jungle IC clamp of 100 nF charged at
+about 1 mA/V over a 2 us key) that holds through vertical retrace, in place
+of the earlier 0.35 per line, which re-clamped every line to its own porch
+and turned the deck's fine grain into whole-line flicker.
 
 ### Left out
 
@@ -186,11 +235,18 @@ border in the front porch window.
 
 `gpu_vhs_deck_tests` checks the host model: filter responses (record Y
 -136 dB at fsc; record FM high-pass -24.4 dB at 629 kHz and -12.6 dB at
-1 MHz; tape slope +0.97 / -1.10 dB), tables identical for the same seed and
-frame, field correlation 0.31 at lag 1 and 0.06 at lag 24, no line in the
-spectrum of the per-frame timing change (peak 2.5 times the median), switch
-steps equal to the skews, line-to-line jitter 7.04 ns (5 ns times root 2),
-32.6 dropouts per second at -6 dB, 5.76 at -20 dB and a recurrence of 0.303.
+1 MHz; tape slope +0.91 / -1.18 dB, within 1 dB of a straight line over
+1.4-6 MHz, and -4.6 dB/MHz at the -4.4 setting; the noise shaping 0 dB at
+7.5 MHz, -11 dB at -1.4 MHz and -35 dB at -6 MHz), the APC burst noise
+0.65 degrees, tables identical for the same seed and frame, field
+correlation 0.36, 0.23 and 0.02 at lags 1, 12 and 24, the DH band analysis
+of the table returning 44.2, 22.3, 10.9, 6.6 and 4.0 ns (quadrature 51.2 ns
+against the 52.5 set), no line in the spectrum of the per-frame timing
+change (peak 2.2 times the median), switch steps equal to the skews at a
+half-line and a whole-line switch position, line-to-line jitter 7.04 ns
+(5 ns times root 2), every deck control at each end of its menu range giving
+a finite, bounded table, 32.6 dropouts per second at -6 dB, 5.76 at -20 dB
+and a recurrence of 0.303.
 
 `gpu_fidelity_tests` runs both kernels on synthetic NES rasters and compares
 them with a numpy reference model built from exact analog responses and real
@@ -200,8 +256,8 @@ RF:
 |---|---|---|---|
 | Grey $10 level | 80.00 IRE | 80.0 | |
 | Output burst | 39.8 IRE p-p | 40 | |
-| Luma noise 0-2.4 MHz at black, canceller off | 0.873 IRE | 0.87 | about 2.0 |
-| White / black noise | 1.285 | 1.26 | 1.0 |
+| Luma noise 0-2.4 MHz at black, canceller off | 0.850 IRE | 0.87 | about 2.0 |
+| White / black noise | 1.314 | 1.26 | 1.0 |
 | Share below 0.5 MHz / 2-2.9 MHz | 6.7% / 46.3% | 6% / 49% | 42% below 0.5 MHz |
 | Noise autocorrelation 0.5 / zero | 87 / 140 ns | 93 ns | 222 / over 300 ns |
 | Luma noise with canceller | 0.54 IRE, 28% below 0.5 MHz | 0.49-0.62, 21-28% | |
@@ -212,8 +268,11 @@ RF:
 | $0F-$30 fall excess at 1 us | 13.5 IRE | 14.9 | none |
 | White clip 200%: shortfall at 0.5 us | 16.0 IRE | 15.8 | |
 | Dropout with compensator: output minus line above | +0.02 IRE | within 1 | |
-| Dropout without compensator | +78.9 IRE | +54 | |
-| 0.25 um defect, extra noise | 3.4 IRE RMS | 2.4 | |
+| Dropout without compensator | +49.9 IRE | +54 | |
+| 0.25 um defect, extra noise | 2.2 IRE RMS | 2.4 | |
+| Head switch, 1 us steps: line before, switch line before and after x_switch, line after | 0 / 0 / 1000 / 1000 ns, no shear | | |
+| Whole chain, flat grey, timing only: head A against head B luminance | 0.001%, worst band of rows 0.007% | | 1.2% |
+| Whole chain, flat grey, deck defaults: whole-row share of the temporal variance of decoded Y | 2.8% | | 16% |
 
 The noise is independent between lines (r = 0.007) and frames (r = -0.006),
 with a flat per-column variance (5.5%) and no lattice at the earlier stage's
@@ -244,20 +303,28 @@ displacement is larger because the timing is now the measured transport
 residual after the TV's line PLL (about 15 ns mid-field), with a new component
 every field instead of a glide.
 
-The whole-line share is a TV effect, not the deck's: at the deck output it is
-1.5% (`gpu_fidelity_tests`), at the TV's decoded luma 16%, and on screen 40%.
-The receiver clamps every line to its own 0.56 us back-porch average with a
-gain of 0.35. The beam spot then smooths the fine grain and leaves the
-whole-line offsets as they are. With a clamp gain of 0.02 per line the on-screen share
-falls to 13%. The TV clamp's time constant is a generic value, not a
-measured one; a measured clamp model would settle it.
+The whole-line share was a TV effect, not the deck's: at the deck output it
+is 1.5% (`gpu_fidelity_tests`), and it reached 16% at the TV's decoded luma
+and 40% on screen while the receiver clamped every line to its own 0.56 us
+back-porch average with a gain of 0.35, with the beam spot smoothing the
+fine grain and leaving the whole-line offsets as they were. With the keyed
+clamp's 64-line time constant the share at the decoded luma is 2.8%. The
+on-screen table above was measured before the clamp, the band calibration
+and the same-deck skews; the whole-chain rows in the kernel table are the
+current figures.
 
 GPU time of the two kernels on an M5 (10-core GPU), measured interleaved
 with the earlier kernel in the same run: the tape stage takes 0.73 ms and playback 0.12 ms (median;
 0.88 ms together), against 1.93 ms for the earlier 129-tap stage. The complete
 VHS chain benchmark (`--benchmark`, 60 frames after 12) measured 8.2 ms at
 1280x960 and 11.2-11.4 ms at 1920x1440, 1.0-1.4 ms below the earlier stage in
-the same session; at 2560x1920 both builds measured 16.5-16.7 ms.
+the same session; at 2560x1920 both builds measured 16.5-16.7 ms. With the
+one-sided noise shaping (four more complex sections in the tape stage), the
+three-pole tape loss and the receiver's sync separator, the same benchmark
+gives 6.3 ms at 1280x960, 8.6 ms at 1920x1440 and 11.9 ms at 2560x1920
+(medians; the Sony PVM-14L2 preset 3.5, 5.2 and 7.5 ms and Bedroom RF 1990
+5.2, 7.5 and 10.9 ms in the same run), on a display pass that has changed
+since the earlier figures, so only the differences between presets compare.
 
 Presets saved before this model have no `"model": 2` in their `vhs` block.
 When such a block is enabled, the SP consumer defaults replace it, the TV
