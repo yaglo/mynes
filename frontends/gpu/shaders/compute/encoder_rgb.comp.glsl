@@ -133,7 +133,15 @@ void main() {
             int ss = int(s) + k;
             vec3 n = yuv_of(gun_at(pic_line, int(ss < 0 ? 0 : ss) * int(spp_den) / int(spp_num)));
             if (chroma_cut > 0.0) { float w = sinc_w(chroma_cut, x) * win; c_acc += w * n.yz; c_norm += w; }
-            if (luma_cut > 0.0) { float w = sinc_w(luma_cut, x) * win; y_acc += w * n.x; y_norm += w; }
+            if (luma_cut > 0.0) {
+                /* The Y path is an analogue lumped delay line and amplifier,
+                 * a maximally-flat-delay (Bessel-like) roll-off rather than a
+                 * brick wall: a Gaussian whose -3 dB point is luma_cut,
+                 * sigma = 0.8326 / (2 pi f) in samples. */
+                float sigma = 0.8326 / (6.28318530718 * luma_cut);
+                float w = exp(-x * x / (2.0 * sigma * sigma)) * win;
+                y_acc += w * n.x; y_norm += w;
+            }
             if (trap_depth > 0.0) {
                 float w = sinc_w(trap_cut, x) * win;
                 t_norm += w;
