@@ -165,6 +165,15 @@ class Cli(unittest.TestCase):
         self.assertNotIn("== features", out)  # no feature uses this selection
         self.assertEqual(out.count("dry-run copy"), 10)  # 6 stage files, 2 posters, 2 stills
 
+    def test_all_builds_only_the_features_of_the_selection(self):
+        """five-televisions uses mega-man-2 alone; raw-vs-pvm-vs-rf needs
+        journey-to-silius, which this run does not record."""
+        rc, out = self.run_cli("--dry-run", "--shots", "mega-man-2", "all", "--site", str(self.site))
+        self.assertEqual(rc, 0, out[-3000:])
+        self.assertIn("== features", out)
+        self.assertIn("features/five-televisions/youtube.mp4", out)
+        self.assertNotIn("raw-vs-pvm-vs-rf", out)
+
     def test_all_checks_the_site_before_recording(self):
         missing = Path(self.tmp.name) / "no-such-site"
         rc, out = self.run_cli("--dry-run", "--shots", "metroid", "all", "--site", str(missing))

@@ -113,7 +113,8 @@ options after it.
    pass.
 
    `all` checks the site directory and its manifest before it records
-   anything.
+   anything, and builds only the features whose shot and presets are all in
+   the selection; the others need renders it does not record.
 
 4. Install into the site (part of `all` when `--site` is given). Each complete
    clip is copied to `assets/hero/<shot>/<preset>/<WxH>/` and merged into

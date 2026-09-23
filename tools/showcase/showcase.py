@@ -277,8 +277,10 @@ def cmd_encode(ctx, args, runner: Runner) -> int:
     return 0 if result.success else 1
 
 
-def cmd_features(ctx, args, runner: Runner) -> int:
-    result = run_jobs(jobs_mod.feature_jobs(ctx, selected_features(ctx, args)), runner, workers=args.jobs or 2)
+def cmd_features(ctx, args, runner: Runner, features=None) -> int:
+    if features is None:
+        features = selected_features(ctx, args)
+    result = run_jobs(jobs_mod.feature_jobs(ctx, features), runner, workers=args.jobs or 2)
     summarize(result, runner)
     return 0 if result.success else 1
 
@@ -294,9 +296,11 @@ def cmd_all(ctx, args, runner: Runner) -> int:
     stages = [("record", cmd_record), ("encode", cmd_encode)]
     shots = {s.id for s, _ in selection(ctx, args)}
     presets = {p for _, p in selection(ctx, args)}
+    # Only the features whose renders this run makes: the others would fail
+    # on renders another selection records.
     wanted = [f for f in selected_features(ctx, args) if f.shot in shots and set(f.presets) <= presets]
     if wanted:
-        stages.append(("features", cmd_features))
+        stages.append(("features", lambda c, a, r: cmd_features(c, a, r, wanted)))
     for name, fn in stages:
         runner.say(f"== {name}")
         rc = fn(ctx, args, runner)
