@@ -8,6 +8,17 @@
 #include <string.h>
 #include <math.h>
 
+/* What the mask/glass bypass and the subpixel lab's reference half leave
+ * out: the mask (and with glass, the faceplate) while phosphor colour,
+ * beam, geometry, gain and shoulder stay. */
+static void strip_mask(GPUDisplayParams *p, bool glass) {
+    p->mask_strength = 0; p->damper_wires = 0; p->panel_subpixels = 0;
+    if (!glass) return;
+    p->halation_strength = 0; p->glass_reflection = 0; p->glass_glare = 0;
+    p->antiglare_blur = 0; p->ambient_light = 0; p->vignette = 0;
+    p->phosphor_grain = 0; p->glass_tint = 1;
+}
+
 void gpu_render_ensure_texture(GPURenderCtx *ctx, int w, int h) {
     if (ctx->display_tex && ctx->display_tex_w == w && ctx->display_tex_h == h
         && ctx->owns_display_tex)
@@ -477,10 +488,7 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
          * phosphor colour, beam and geometry stay. */
         disp_params.output_p3 = ctx->output_p3;
         if (ctx->display_bypass) {
-            disp_params.mask_strength = 0; disp_params.damper_wires = 0; disp_params.panel_subpixels = 0;
-            disp_params.halation_strength = 0; disp_params.glass_reflection = 0; disp_params.glass_glare = 0;
-            disp_params.antiglare_blur = 0; disp_params.ambient_light = 0; disp_params.vignette = 0;
-            disp_params.phosphor_grain = 0; disp_params.glass_tint = 1;
+            strip_mask(&disp_params, true);
             ctx->effective_panel_subpixels = 0;
         }
         ctx->effective_hdr_gain = ctx->hdr_enabled ? (disp_params.hdr_gain > 0 ? disp_params.hdr_gain : 1) : 1;
@@ -498,13 +506,18 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
         viewport.h = vp_h;
         viewport.min_depth = 0.0f;
         viewport.max_depth = 1.0f;
+        /* Subpixel lab: the reference half may show the picture without
+         * the grille, or without mask and glass, at the same gain. */
+        bool lab = ctx->lab_split && !ctx->offscreen_w;
+        GPUDisplayParams base = disp_params;
+        if (lab && ctx->lab_reference) strip_mask(&base, ctx->lab_reference == 2);
         gpu_display_render(ctx->gpu_disp, ctx->gpu, cmd,
                            ctx->display_tex, ctx->display_tex_w, ctx->display_tex_h,
                            swapchain_tex, (int)sw, (int)sh,
-                           &disp_params, &viewport);
+                           &base, &viewport);
         /* Subpixel lab: one half drawn again with the lab's grille, at the
          * same gain, so the two can be judged side by side. */
-        if (ctx->lab_split && !ctx->offscreen_w) {
+        if (lab) {
             GPUDisplayParams lab = disp_params;
             for (int i = 0; i < 3; i++) { lab.lab_gap[i] = ctx->lab_gap[i]; lab.lab_gain[i] = ctx->lab_gain[i]; }
             lab.lab_fill = ctx->lab_fill;

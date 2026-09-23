@@ -46,6 +46,7 @@ typedef struct {
     int             hdr_gain_mode;       /* 0 = Auto: fit headroom, 1 = preset's emission gain only */
     int             panel_primaries;     /* 0 = sRGB, 1 = Display P3 when the layer can take it */
     int             lab_split;           /* subpixel lab: 0 off, 1 right half, 2 left half shows the lab grille */
+    int             lab_reference;       /* subpixel lab: the other half shows 0 the shipped grille, 1 no grille, 2 mask/glass bypass */
     float           lab_gap[3];          /* subpixel lab: share of each colour drawn half a triad along */
     float           lab_gain[3];         /* subpixel lab: gain per output channel */
     float           lab_fill;            /* subpixel lab: stripe fill */

@@ -568,7 +568,9 @@ room-lit glass pedestal. Raising black floor does not illuminate blanked raster.
 **M → Host display → Subpixel lab** draws one half of the picture again
 with a variant of the grille, at the same gain, so the two can be judged
 side by side on the panel itself. Split picks the half (Off, Right half,
-Left half). Gap share R, G and B move that share of a colour's light half
+Left half). Other half chooses what the rest of the picture shows: the
+shipped grille, the same picture with no grille (the exact A/B for the
+grille), or the mask and glass bypass. Gap share R, G and B move that share of a colour's light half
 a triad along, onto the same colour's subpixel in the other pixel of a
 two-pixel triad; 0.5 spreads it evenly, 0 is the plain grille. Gain R, G
 and B trim each output channel. Stripe fill is the phosphor stripe's share

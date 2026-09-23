@@ -26,6 +26,7 @@ typedef struct {
     int  gpu_hdr_gain_mode;   /* host setting: 0=Auto (fit headroom), 1=preset gain */
     int  gpu_panel_primaries; /* host setting: 0=sRGB, 1=Display P3 when the panel's layer can take it */
     int  gpu_lab_split;       /* subpixel lab: 0 off, 1 right half, 2 left half */
+    int  gpu_lab_reference;   /* subpixel lab: other half 0 shipped grille, 1 no grille, 2 mask/glass bypass */
     int  gpu_lab_gap[3];      /* subpixel lab: gap share per colour, hundredths */
     int  gpu_lab_gain[3];     /* subpixel lab: gain per channel, hundredths */
     int  gpu_lab_fill;        /* subpixel lab: stripe fill, hundredths */

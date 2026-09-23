@@ -502,7 +502,7 @@ static void gpu_cb_panel_primaries(void) {
 
 static void gpu_cb_lab(void) {
     GPURenderCtx *r=g_ctx->render_ctx; MynesConfig *c=g_ctx->config;
-    c->gpu_lab_split=r->lab_split;
+    c->gpu_lab_split=r->lab_split; c->gpu_lab_reference=r->lab_reference;
     for (int i=0;i<3;i++) { c->gpu_lab_gap[i]=(int)lroundf(r->lab_gap[i]*100); c->gpu_lab_gain[i]=(int)lroundf(r->lab_gain[i]*100); }
     c->gpu_lab_fill=(int)lroundf(r->lab_fill*100);
     mynes_config_save(c);
@@ -986,7 +986,7 @@ static OSDMenuItem menu_rf[7],menu_vhs[15];
  * declared near the top of this file so the save action can reach them. */
 static OSDMenuItem menu_audio_top[3];
 static OSDMenuItem menu_picture[9], menu_tube[5];
-static OSDMenuItem menu_diagnostics[1],menu_display[PRESET_MENU_DISPLAY_MAX],menu_lab[8];
+static OSDMenuItem menu_diagnostics[1],menu_display[PRESET_MENU_DISPLAY_MAX],menu_lab[9];
 static int  menu_display_count = 8;
 static OSDMenuItem menu_game[PRESET_MENU_GAME_MAX];
 static int  menu_game_count = 0;
@@ -1496,7 +1496,8 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_lab[5] = MI_FLOAT("Gain G",&ctx->render_ctx->lab_gain[1],.05f,.5f,1.5f,gpu_cb_lab,"%.2f");
     menu_lab[6] = MI_FLOAT("Gain B",&ctx->render_ctx->lab_gain[2],.05f,.5f,1.5f,gpu_cb_lab,"%.2f");
     menu_lab[7] = MI_FLOAT("Stripe fill",&ctx->render_ctx->lab_fill,.02f,.1f,.5f,gpu_cb_lab,"%.2f");
-    menu_display[7] = MI_SUB("Subpixel lab",menu_lab,8);
+    menu_lab[8] = MI_CYCLIC("Other half",&ctx->render_ctx->lab_reference,0,2,gpu_cb_lab,"Shipped grille|No grille|Mask+glass bypass");
+    menu_display[7] = MI_SUB("Subpixel lab",menu_lab,9);
     preset_menu_root[6] = MI_SUB("Host display",menu_display,menu_display_count);
     preset_menu_root[7] = MI_TOGGLE("Room reflections (G)", &ctx->render_ctx->room_reflections_enabled, gpu_cb_room_reflections);
     /* Reset stays last: preset_menu_root_append() inserts before it. */

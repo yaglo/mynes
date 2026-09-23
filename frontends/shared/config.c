@@ -190,10 +190,10 @@ bool mynes_config_load(MynesConfig *cfg) {
             cfg->gpu_panel_primaries=colon && atoi(colon+1)==0 ? 0 : 1;
         } else if (strstr(s, "\"gpu_lab_")) {
             const char *colon=strchr(s, ':'); int v=colon ? atoi(colon+1) : 0;
-            static const char *names[]={"split","gap_r","gap_g","gap_b","gain_r","gain_g","gain_b","fill"};
+            static const char *names[]={"split","gap_r","gap_g","gap_b","gain_r","gain_g","gain_b","fill","reference"};
             int *slots[]={&cfg->gpu_lab_split,&cfg->gpu_lab_gap[0],&cfg->gpu_lab_gap[1],&cfg->gpu_lab_gap[2],
-                          &cfg->gpu_lab_gain[0],&cfg->gpu_lab_gain[1],&cfg->gpu_lab_gain[2],&cfg->gpu_lab_fill};
-            for (int i = 0; i < 8; i++) {
+                          &cfg->gpu_lab_gain[0],&cfg->gpu_lab_gain[1],&cfg->gpu_lab_gain[2],&cfg->gpu_lab_fill,&cfg->gpu_lab_reference};
+            for (int i = 0; i < 9; i++) {
                 char key[32]; snprintf(key,sizeof(key),"\"gpu_lab_%s\"",names[i]);
                 if (strstr(s,key)) *slots[i]=v;
             }
@@ -273,6 +273,7 @@ bool mynes_config_save(const MynesConfig *cfg) {
         cfg->gpu_lab_split,cfg->gpu_lab_gap[0],cfg->gpu_lab_gap[1],cfg->gpu_lab_gap[2]);
     fprintf(f, "    \"gpu_lab_gain_r\": %d,\n    \"gpu_lab_gain_g\": %d,\n    \"gpu_lab_gain_b\": %d,\n    \"gpu_lab_fill\": %d,\n",
         cfg->gpu_lab_gain[0],cfg->gpu_lab_gain[1],cfg->gpu_lab_gain[2],cfg->gpu_lab_fill);
+    fprintf(f, "    \"gpu_lab_reference\": %d,\n",cfg->gpu_lab_reference);
     fprintf(f, "    \"gpu_panel_subpixels\": %d,\n",cfg->gpu_panel_subpixels==1 || cfg->gpu_panel_subpixels==2 ? cfg->gpu_panel_subpixels : 0);
     fprintf(f, "    \"gpu_room_reflections\": %d,\n",cfg->gpu_room_reflections==1 ? 1 : 0);
     fprintf(f, "    \"gpu_render_scale\": \"%s\",\n",
