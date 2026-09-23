@@ -23,7 +23,7 @@ struct Measurement
 
 constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(32u, 1u, 1u);
 
-kernel void main0(constant Params& _19 [[buffer(0)]], const device Raster& _62 [[buffer(1)]], device Measurement& _153 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+kernel void main0(constant Params& _19 [[buffer(0)]], device Raster& _62 [[buffer(1)]], device Measurement& _157 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
     uint line = gl_GlobalInvocationID.x;
     if (line >= _19.count)
@@ -46,32 +46,32 @@ kernel void main0(constant Params& _19 [[buffer(0)]], const device Raster& _62 [
         tip += _62.raster[base + x_1];
     }
     tip /= float(8u * spp);
-    float threshold = (black + tip) * 0.5;
+    float threshold = tip + (0.5 * fast::min(black - tip, 0.335025370121002197265625));
     bool vertical = tip < (black - 0.07999999821186065673828125);
     for (uint _dot = 80u; _dot <= 300u; _dot += 20u)
     {
-        bool _142;
+        bool _146;
         if (vertical)
         {
-            _142 = _62.raster[base + (_dot * spp)] < threshold;
+            _146 = _62.raster[base + (_dot * spp)] < threshold;
         }
         else
         {
-            _142 = vertical;
+            _146 = vertical;
         }
-        vertical = _142;
+        vertical = _146;
     }
     if (vertical)
     {
-        _153.measurement[line] = float4(0.0, black, -1.0, 0.0);
+        _157.measurement[line] = float4(0.0, black, -1.0, 0.0);
         return;
     }
     float offset = 0.0;
     bool found = false;
     if (tip < (black - 0.07999999821186065673828125))
     {
-        uint _173 = 18u * spp;
-        for (uint x_2 = _173; x_2 < (32u * spp); x_2++)
+        uint _177 = 18u * spp;
+        for (uint x_2 = _177; x_2 < (32u * spp); x_2++)
         {
             float a = _62.raster[(base + x_2) - 1u];
             float b = _62.raster[base + x_2];
@@ -85,13 +85,13 @@ kernel void main0(constant Params& _19 [[buffer(0)]], const device Raster& _62 [
     }
     if (!found)
     {
-        _153.measurement[line] = float4(0.0, black, 0.0, 1000000.0);
+        _157.measurement[line] = float4(0.0, black, 0.0, 1000000.0);
         return;
     }
     int shift = int(round(offset));
     black = 0.0;
-    uint _249 = 46u * spp;
-    for (uint x_3 = _249; x_3 < (49u * spp); x_3++)
+    uint _253 = 46u * spp;
+    for (uint x_3 = _253; x_3 < (49u * spp); x_3++)
     {
         black += _62.raster[base + uint(int(x_3) + shift)];
     }
@@ -108,15 +108,15 @@ kernel void main0(constant Params& _19 [[buffer(0)]], const device Raster& _62 [
         s += (v * sin(p));
     }
     float amplitude = (2.0 * length(float2(c, s))) / float(n);
-    float _360;
+    float _364;
     if (_19.region == 1u)
     {
-        _360 = ((line & 1u) == 1u) ? 1.5 : 4.5;
+        _364 = ((line & 1u) == 1u) ? 1.5 : 4.5;
     }
     else
     {
-        _360 = 5.5;
+        _364 = 5.5;
     }
-    float burst_axis = _360;
-    _153.measurement[line] = float4(precise::atan2(-s, c) - ((burst_axis * 6.283185482025146484375) / 12.0), black, amplitude, offset);
+    float burst_axis = _364;
+    _157.measurement[line] = float4(precise::atan2(-s, c) - ((burst_axis * 6.283185482025146484375) / 12.0), black, amplitude, offset);
 }
