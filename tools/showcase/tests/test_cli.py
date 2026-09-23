@@ -1,6 +1,7 @@
 """showcase.py end to end in --dry-run, with fake ROMs and states."""
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -124,6 +125,23 @@ class Cli(unittest.TestCase):
             for p in s.lens:
                 for hdr in (False, True):
                     self.assertIn(f"--record-seconds {s.seconds:g} ", full_size(s.id, p, hdr)[0])
+        # Every pass of a clip (each size, SDR and HDR) starts from the same
+        # state, replay and frame, so lens clips and stills show the stage's frames.
+        passes: dict[tuple[str, str], list[list[str]]] = {}
+        for line in lines:
+            if recorder not in line:
+                continue
+            argv = shlex.split(line.split("dry-run $ ", 1)[1].split("   # ", 1)[0])
+            clip = Path(argv[argv.index("--record") + 1]).parts[-4:-2]
+            passes.setdefault(clip, []).append(argv)
+        self.assertEqual(len(passes), clips)
+        for (shot_id, preset), runs in passes.items():
+            shot = sl.shot(shot_id)
+            self.assertEqual(len(runs), 2 * (stage + 1 + (preset in shot.readme)), (shot_id, preset))
+            for flag in ("--load-state", "--input-replay", "--record-after", "--preset"):
+                values = {a[a.index(flag) + 1] if flag in a else None for a in runs}
+                self.assertEqual(len(values), 1, (shot_id, preset, flag, values))
+            self.assertEqual(len({a[-1] for a in runs}), 1, (shot_id, preset))  # one ROM
         self.assertEqual(out.count("-c:v libx265 -preset slow -crf 18 -profile:v main10"), clips * stage)
         self.assertEqual(out.count("-c:v libsvtav1 -preset 6 -crf 24"), clips * stage)
         self.assertEqual(out.count("-c:v libx264 -profile:v high -preset slow -crf 18"), clips * stage)
