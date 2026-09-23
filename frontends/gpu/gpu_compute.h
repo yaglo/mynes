@@ -284,11 +284,17 @@ typedef struct {
     float sample_rate, hum_phase, hum_hz;
 } GpuRFParams;
 typedef struct { uint32_t count, samples_per_line, tap_count, reserved; } GpuRFIFParams;
+/* VHS deck, shared by vhs_tape (V1) and vhs_playback (V2). Units are IRE
+ * referenced to the input sync, Hz and 12 fsc samples; see vhs_deck.c. */
 typedef struct {
-    uint32_t count, samples_per_line, tap_count, frame_seed;
-    float delay_samples, timebase_samples, phase_radians, noise;
-    float sample_rate, drift_frames, luma_noise_rms, chroma_noise_rms;
-    float head_switch_samples, dropout_rate, dropout_depth, frame_rate;
+    uint32_t frame, defect_count, doc, total;
+    float in_gain, dark_clip, white_clip, f_sync;
+    float hz_per_pct, sample_rate, mod_noise_sigma, rf_noise_sigma;
+    float env_norm, doc_on, doc_off, chroma_noise_sigma;
+    float burst_target, burst_norm, spacing_db, colour_under_hz;
+    float canceller_limit, sharpness, detail_limit, y_delay;
+    float c_delay, out_scale, playback_acc, click_scale;
+    float sharp_d, reserved0, reserved1, reserved2;
 } GpuVHSParams;
 
 /* Horizontal AFC is independent of the colour-burst PLL. Zero response

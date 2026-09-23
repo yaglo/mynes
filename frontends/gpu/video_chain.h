@@ -153,25 +153,62 @@ typedef struct {
     float agc_release_ms;       /* AGC release time constant */
 } RFModulatorParams;
 
-/* Recovered NTSC VHS response: luma FM / colour-under paths collapsed to
- * their baseband transfer. No claim of simulating magnetic tape domains. */
+/* NTSC SP VHS deck (vhs_deck.c, vhs_tape/vhs_playback shaders): FM luma
+ * with emphasis and clipping, colour-under chroma with a 1H comb, a per-line
+ * transport timing table and tape dropouts. Defaults are the SP consumer
+ * values in vhs_params_defaults(); sources are listed in
+ * docs/architecture/gpu-realism-validation.md. */
+#define VHS_MODEL_FM 2
 typedef struct {
     int enabled;
-    float luma_bandwidth;       /* recovered luma lowpass, Hz */
-    float chroma_bandwidth;     /* recovered colour envelope lowpass, Hz */
-    float chroma_delay_ns;      /* envelope delay relative to luma */
-    float timebase_ns;          /* residual line timebase error, peak ns */
-    float chroma_phase_deg;     /* residual line colour phase error, peak degrees */
-    float noise;               /* playback luma noise, peak normalized voltage */
-    float luma_noise_rms; /* recovered luma grain RMS, normalized voltage */
-    float chroma_noise_rms; /* recovered chroma noise RMS, normalized voltage */
-    float drift_ms; /* transport correlation interval; zero selects 180 ms */
-    float head_switch_ns; /* bottom six active lines: peak timing displacement */
-    float dropout_rate; /* mean localized carrier losses per second */
-    float dropout_depth; /* fraction of recovered signal lost, 0..1 */
-    float luma_peaking; /* recovered luma high-frequency shelf, 0..1 */
-    float luma_smear; /* fraction in a causal 140 ns luma tail, 0..1 */
+    int model;                    /* VHS_MODEL_FM; lower values are pre-2 presets */
+    float white_clip_pct;         /* pre-emphasis white clip, % of sync tip to white */
+    float dark_clip_pct;          /* dark clip, % below sync tip */
+    float fm_sync_hz, fm_white_hz; /* carrier at sync tip and at 100 IRE white */
+    float rf_cnr_dbhz;            /* playback carrier to noise density, dB Hz */
+    float tape_tilt_db_per_mhz;   /* head/tape response slope across the deviation */
+    float mod_noise_hz;           /* tape modulation noise, RMS random FM below 0.4 MHz */
+    float head_b_noise_db;        /* extra RF noise on head B */
+    float chroma_noise_ire;       /* colour-under noise per component before the comb */
+    float dropout_scale;          /* multiplier on the measured dropout rate */
+    int doc;                      /* dropout compensator on */
+    float doc_threshold_db;       /* RF envelope level that starts substitution */
+    float canceller_split_hz;     /* luma noise canceller high/low split */
+    float canceller_limit_ire;    /* canceller limit; 0 turns it off */
+    float sharpness;              /* playback aperture boost k */
+    float detail_limit_ire;       /* optional limit on the aperture term; 0 = none */
+    float apc_loop_hz;            /* colour APC/AFC loop natural frequency */
+    float yc_delay_ns;            /* residual luma delay added to the deck's Y delay line */
+    float bow_scale;              /* multiplier on the measured per-head timing bows */
+    float tbe_varying_ns;         /* field-varying timing error, RMS over the harmonics */
+    float tbe_slow_fraction;      /* share of the varying power that persists */
+    float tbe_slow_tau_ms;        /* decorrelation time of the persisting part */
+    float line_jitter_ns;         /* white per-line timing jitter, RMS */
+    float switch_lines_before_vsync; /* head switch position before vertical sync */
+    float skew_ba_ns, skew_ab_ns; /* timing step at the B to A and A to B switches */
+    int deck_seed;                /* seed of the transport and dropout draws */
 } VHSParams;
+
+/* SP consumer deck defaults (vhs_params_defaults) leave the block enabled
+ * state unchanged; model is set to VHS_MODEL_FM. */
+static inline void vhs_params_defaults(VHSParams *v) {
+    int enabled = v->enabled;
+    *v = (VHSParams){
+        .enabled = enabled, .model = VHS_MODEL_FM,
+        .white_clip_pct = 160, .dark_clip_pct = 40,
+        .fm_sync_hz = 3.4e6f, .fm_white_hz = 4.4e6f,
+        .rf_cnr_dbhz = 95.5f, .tape_tilt_db_per_mhz = -2.0f,
+        .mod_noise_hz = 2700, .head_b_noise_db = 0.8f,
+        .chroma_noise_ire = 0.8f, .dropout_scale = 1.0f,
+        .doc = 1, .doc_threshold_db = -15,
+        .canceller_split_hz = 5e5f, .canceller_limit_ire = 3,
+        .sharpness = 0.2f, .detail_limit_ire = 0,
+        .apc_loop_hz = 1000, .yc_delay_ns = 0,
+        .bow_scale = 1.0f, .tbe_varying_ns = 48,
+        .tbe_slow_fraction = 0.4f, .tbe_slow_tau_ms = 400,
+        .line_jitter_ns = 5, .switch_lines_before_vsync = 6.5f,
+        .skew_ba_ns = 1700, .skew_ab_ns = -80, .deck_seed = 1};
+}
 
 static inline float video_rf_noise_rms(const RFModulatorParams *rf) {
     float carrier=rf->carrier_level_dbm!=0 ? rf->carrier_level_dbm : -20;

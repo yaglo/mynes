@@ -470,6 +470,8 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
             frontends/gpu/gpu_compute.c
             frontends/gpu/gpu_display.c
             frontends/gpu/video_gpu.c
+            frontends/gpu/vhs_deck.c
+            frontends/gpu/vhs_gpu.c
             frontends/gpu/chroma_pipeline.c
             frontends/gpu/post_pipeline.c
             frontends/gpu/signal_chain.c
@@ -515,7 +517,8 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
         file(GLOB GLSL_VERT_SOURCES CONFIGURE_DEPENDS ${SHADER_SRC_DIR}/render/*.vert.glsl)
         file(GLOB GLSL_FRAG_SOURCES CONFIGURE_DEPENDS ${SHADER_SRC_DIR}/render/*.frag.glsl)
         set(ALL_GLSL_SOURCES ${GLSL_COMPUTE_SOURCES} ${GLSL_VERT_SOURCES} ${GLSL_FRAG_SOURCES})
-        list(APPEND ALL_GLSL_SOURCES ${SHADER_SRC_DIR}/compute/fw900_data.glsl ${SHADER_SRC_DIR}/compute/fw900_profile.glsl)
+        list(APPEND ALL_GLSL_SOURCES ${SHADER_SRC_DIR}/compute/fw900_data.glsl ${SHADER_SRC_DIR}/compute/fw900_profile.glsl
+            ${SHADER_SRC_DIR}/compute/vhs_common.glsl)
         file(GLOB SHADER_PREBUILT CONFIGURE_DEPENDS
             ${SHADER_SRC_DIR}/compute/*.spv ${SHADER_SRC_DIR}/compute/*.msl
             ${SHADER_SRC_DIR}/render/*.spv ${SHADER_SRC_DIR}/render/*.msl)
@@ -629,6 +632,14 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
                     COMMAND ${MYNES_PYTHON3} ${CMAKE_SOURCE_DIR}/frontends/gpu/tests/test_preset_controls.py)
             endif()
 
+            # VHS deck host model: filter design, transport table, dropouts
+            add_executable(test_vhs_deck
+                frontends/gpu/tests/test_vhs_deck.c
+                frontends/gpu/vhs_deck.c)
+            target_include_directories(test_vhs_deck PRIVATE frontends/gpu)
+            target_link_libraries(test_vhs_deck PRIVATE ${MYNES_SDL3_TARGET} m)
+            add_test(NAME gpu_vhs_deck_tests COMMAND test_vhs_deck)
+
             # JSON preset save/load round-trip + string enum tests
             add_executable(test_preset_json
                 frontends/gpu/tests/test_preset_json.c
@@ -685,6 +696,8 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
                 frontends/gpu/tests/test_pipeline.c
                 frontends/gpu/gpu_compute.c
                 frontends/gpu/video_gpu.c
+                frontends/gpu/vhs_deck.c
+                frontends/gpu/vhs_gpu.c
                 frontends/gpu/chroma_pipeline.c
                 frontends/gpu/post_pipeline.c
                 frontends/gpu/signal_chain.c
@@ -719,6 +732,8 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
             tools/gpu_process.c
             frontends/gpu/gpu_compute.c
             frontends/gpu/video_gpu.c
+            frontends/gpu/vhs_deck.c
+            frontends/gpu/vhs_gpu.c
             frontends/gpu/chroma_pipeline.c
             frontends/gpu/post_pipeline.c
             frontends/gpu/signal_chain.c

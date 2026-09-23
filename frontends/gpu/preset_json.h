@@ -433,22 +433,32 @@ static inline bool preset_json_save(const PhysicalPreset *p, const char *path)
     fprintf(f, "    \"contrast\": %.6f,\n",                 p->contrast);
     fprintf(f, "    \"chroma_gain\": %.6f,\n",              p->chroma_gain);
 
-    /* ---- VHS recording / playback ---- */
-    fprintf(f, "    \"vhs\": {\n        \"enabled\": %s,\n", p->vhs.enabled ? "true" : "false");
-    fprintf(f, "        \"luma_bandwidth\": %.6f,\n", p->vhs.luma_bandwidth);
-    fprintf(f, "        \"chroma_bandwidth\": %.6f,\n", p->vhs.chroma_bandwidth);
-    fprintf(f, "        \"chroma_delay_ns\": %.6f,\n", p->vhs.chroma_delay_ns);
-    fprintf(f, "        \"timebase_ns\": %.6f,\n", p->vhs.timebase_ns);
-    fprintf(f, "        \"chroma_phase_deg\": %.6f,\n", p->vhs.chroma_phase_deg);
-    fprintf(f, "        \"luma_noise_rms\": %.6f,\n", p->vhs.luma_noise_rms);
-    fprintf(f, "        \"chroma_noise_rms\": %.6f,\n", p->vhs.chroma_noise_rms);
-    fprintf(f, "        \"drift_ms\": %.6f,\n", p->vhs.drift_ms);
-    fprintf(f, "        \"head_switch_ns\": %.6f,\n", p->vhs.head_switch_ns);
-    fprintf(f, "        \"dropout_rate\": %.6f,\n", p->vhs.dropout_rate);
-    fprintf(f, "        \"dropout_depth\": %.6f,\n", p->vhs.dropout_depth);
-    fprintf(f, "        \"luma_peaking\": %.6f,\n", p->vhs.luma_peaking);
-    fprintf(f, "        \"luma_smear\": %.6f,\n", p->vhs.luma_smear);
-    fprintf(f, "        \"noise\": %.6f\n", p->vhs.noise);
+    /* ---- VHS deck (NTSC SP) ---- */
+    const VHSParams *v = &p->vhs;
+    fprintf(f, "    \"vhs\": {\n        \"enabled\": %s,\n", v->enabled ? "true" : "false");
+    fprintf(f, "        \"model\": %d,\n", v->model);
+    fprintf(f, "        \"doc\": %s,\n", v->doc ? "true" : "false");
+    fprintf(f, "        \"deck_seed\": %d,\n", v->deck_seed);
+    const struct { const char *key; float value; } vhs_fields[] = {
+        {"white_clip_pct", v->white_clip_pct}, {"dark_clip_pct", v->dark_clip_pct},
+        {"fm_sync_hz", v->fm_sync_hz}, {"fm_white_hz", v->fm_white_hz},
+        {"rf_cnr_dbhz", v->rf_cnr_dbhz}, {"tape_tilt_db_per_mhz", v->tape_tilt_db_per_mhz},
+        {"mod_noise_hz", v->mod_noise_hz}, {"head_b_noise_db", v->head_b_noise_db},
+        {"chroma_noise_ire", v->chroma_noise_ire}, {"dropout_scale", v->dropout_scale},
+        {"doc_threshold_db", v->doc_threshold_db}, {"canceller_split_hz", v->canceller_split_hz},
+        {"canceller_limit_ire", v->canceller_limit_ire}, {"sharpness", v->sharpness},
+        {"detail_limit_ire", v->detail_limit_ire}, {"apc_loop_hz", v->apc_loop_hz},
+        {"yc_delay_ns", v->yc_delay_ns}, {"bow_scale", v->bow_scale},
+        {"tbe_varying_ns", v->tbe_varying_ns}, {"tbe_slow_fraction", v->tbe_slow_fraction},
+        {"tbe_slow_tau_ms", v->tbe_slow_tau_ms}, {"line_jitter_ns", v->line_jitter_ns},
+        {"switch_lines_before_vsync", v->switch_lines_before_vsync},
+        {"skew_ba_ns", v->skew_ba_ns}, {"skew_ab_ns", v->skew_ab_ns},
+    };
+    const size_t vhs_count = sizeof(vhs_fields) / sizeof(vhs_fields[0]);
+    /* The last member has no trailing comma. */
+    for (size_t i = 0; i < vhs_count; i++)
+        fprintf(f, "        \"%s\": %.6f%s\n", vhs_fields[i].key, vhs_fields[i].value,
+                i + 1 < vhs_count ? "," : "");
     fprintf(f, "    },\n");
 
     fprintf(f, "    \"audio_psu_hum_amplitude\": %.6f,\n",  p->audio_psu_hum_amplitude);
@@ -721,24 +731,44 @@ static inline void preset_json__assign(PhysicalPreset *p, PresetJsonSection sect
         else MATCH_FLOAT(PJSON_SEC_TV, "glass_glare_size",        p->tv.glass_glare_size)
         else MATCH_FLOAT(PJSON_SEC_TV, "glass_glare_temp_k",      p->tv.glass_glare_temp_k)
 
-        /* VHS toggle accepts the earlier numeric spelling too. */
+        /* VHS toggles accept the earlier numeric spelling too. The model
+         * number marks the file format, not a setting: pre-2 blocks are
+         * replaced with the deck defaults at apply time. */
         else if (section == PJSON_SEC_VHS && strcmp(key, "enabled") == 0) {
             p->vhs.enabled = strcmp(val, "true") == 0 || strtol(val, NULL, 10) != 0;
         }
-        else MATCH_FLOAT(PJSON_SEC_VHS, "luma_bandwidth", p->vhs.luma_bandwidth)
-        else MATCH_FLOAT(PJSON_SEC_VHS, "chroma_bandwidth", p->vhs.chroma_bandwidth)
-        else MATCH_FLOAT(PJSON_SEC_VHS, "chroma_delay_ns", p->vhs.chroma_delay_ns)
-        else MATCH_FLOAT(PJSON_SEC_VHS, "timebase_ns", p->vhs.timebase_ns)
-        else MATCH_FLOAT(PJSON_SEC_VHS, "chroma_phase_deg", p->vhs.chroma_phase_deg)
-        else MATCH_FLOAT(PJSON_SEC_VHS, "noise", p->vhs.noise)
-        else MATCH_FLOAT(PJSON_SEC_VHS, "luma_noise_rms", p->vhs.luma_noise_rms)
-        else MATCH_FLOAT(PJSON_SEC_VHS, "chroma_noise_rms", p->vhs.chroma_noise_rms)
-        else MATCH_FLOAT(PJSON_SEC_VHS, "drift_ms", p->vhs.drift_ms)
-        else MATCH_FLOAT(PJSON_SEC_VHS, "head_switch_ns", p->vhs.head_switch_ns)
-        else MATCH_FLOAT(PJSON_SEC_VHS, "dropout_rate", p->vhs.dropout_rate)
-        else MATCH_FLOAT(PJSON_SEC_VHS, "dropout_depth", p->vhs.dropout_depth)
-        else MATCH_FLOAT(PJSON_SEC_VHS, "luma_peaking", p->vhs.luma_peaking)
-        else MATCH_FLOAT(PJSON_SEC_VHS, "luma_smear", p->vhs.luma_smear)
+        else if (section == PJSON_SEC_VHS && strcmp(key, "doc") == 0) {
+            p->vhs.doc = strcmp(val, "true") == 0 || strtol(val, NULL, 10) != 0;
+        }
+        else if (section == PJSON_SEC_VHS && strcmp(key, "model") == 0) {
+            p->vhs.model = (int)strtol(val, NULL, 10);
+        }
+        else MATCH_INT  (PJSON_SEC_VHS, "deck_seed",            p->vhs.deck_seed)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "white_clip_pct",       p->vhs.white_clip_pct)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "dark_clip_pct",        p->vhs.dark_clip_pct)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "fm_sync_hz",           p->vhs.fm_sync_hz)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "fm_white_hz",          p->vhs.fm_white_hz)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "rf_cnr_dbhz",          p->vhs.rf_cnr_dbhz)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "tape_tilt_db_per_mhz", p->vhs.tape_tilt_db_per_mhz)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "mod_noise_hz",         p->vhs.mod_noise_hz)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "head_b_noise_db",      p->vhs.head_b_noise_db)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "chroma_noise_ire",     p->vhs.chroma_noise_ire)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "dropout_scale",        p->vhs.dropout_scale)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "doc_threshold_db",     p->vhs.doc_threshold_db)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "canceller_split_hz",   p->vhs.canceller_split_hz)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "canceller_limit_ire",  p->vhs.canceller_limit_ire)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "sharpness",            p->vhs.sharpness)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "detail_limit_ire",     p->vhs.detail_limit_ire)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "apc_loop_hz",          p->vhs.apc_loop_hz)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "yc_delay_ns",          p->vhs.yc_delay_ns)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "bow_scale",            p->vhs.bow_scale)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "tbe_varying_ns",       p->vhs.tbe_varying_ns)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "tbe_slow_fraction",    p->vhs.tbe_slow_fraction)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "tbe_slow_tau_ms",      p->vhs.tbe_slow_tau_ms)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "line_jitter_ns",       p->vhs.line_jitter_ns)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "switch_lines_before_vsync", p->vhs.switch_lines_before_vsync)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "skew_ba_ns",           p->vhs.skew_ba_ns)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "skew_ab_ns",           p->vhs.skew_ab_ns)
 
         /* ---- RF modulator ---- */
         else MATCH_BOOL (PJSON_SEC_RF, "enabled",              p->rf.enabled)

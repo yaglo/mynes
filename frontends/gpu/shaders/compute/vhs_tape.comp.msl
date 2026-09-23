@@ -1,0 +1,1280 @@
+#pragma clang diagnostic ignored "-Wunused-variable"
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+#pragma clang diagnostic ignored "-Wmissing-braces"
+
+#include <metal_stdlib>
+#include <simd/simd.h>
+#include <metal_atomic>
+
+using namespace metal;
+
+template<typename T, size_t Num>
+struct spvUnsafeArray
+{
+    T elements[Num ? Num : 1];
+
+    thread T& operator [] (size_t pos) thread
+    {
+        return elements[pos];
+    }
+    constexpr const thread T& operator [] (size_t pos) const thread
+    {
+        return elements[pos];
+    }
+
+    device T& operator [] (size_t pos) device
+    {
+        return elements[pos];
+    }
+    constexpr const device T& operator [] (size_t pos) const device
+    {
+        return elements[pos];
+    }
+
+    constexpr const constant T& operator [] (size_t pos) const constant
+    {
+        return elements[pos];
+    }
+
+    threadgroup T& operator [] (size_t pos) threadgroup
+    {
+        return elements[pos];
+    }
+    constexpr const threadgroup T& operator [] (size_t pos) const threadgroup
+    {
+        return elements[pos];
+    }
+};
+
+// Implementation of the GLSL mod() function, which is slightly different than Metal fmod()
+template<typename Tx, typename Ty>
+inline Tx mod(Tx x, Ty y)
+{
+    return x - y * floor(x / y);
+}
+
+// Implementation of signed integer mod accurate to SPIR-V specification
+template<typename Tx, typename Ty>
+inline Tx spvSMod(Tx x, Ty y)
+{
+    Tx remainder = x - y * (x / y);
+    return select(Tx(remainder + y), remainder, remainder == 0 || (x >= 0) == (y >= 0));
+}
+
+template<typename T>
+inline T spvSubgroupShuffleUp(T value, ushort delta)
+{
+    return simd_shuffle_up(value, delta);
+}
+
+template<>
+inline bool spvSubgroupShuffleUp(bool value, ushort delta)
+{
+    return !!simd_shuffle_up((ushort)value, delta);
+}
+
+template<uint N>
+inline vec<bool, N> spvSubgroupShuffleUp(vec<bool, N> value, ushort delta)
+{
+    return (vec<bool, N>)simd_shuffle_up((vec<ushort, N>)value, delta);
+}
+
+struct Params
+{
+    uint frame;
+    uint defect_count;
+    uint doc;
+    uint total;
+    float in_gain;
+    float dark_clip;
+    float white_clip;
+    float f_sync;
+    float hz_per_pct;
+    float sample_rate;
+    float mod_noise_sigma;
+    float rf_noise_sigma;
+    float env_norm;
+    float doc_on;
+    float doc_off;
+    float chroma_noise_sigma;
+    float burst_target;
+    float burst_norm;
+    float spacing_db;
+    float colour_under_hz;
+    float canceller_limit;
+    float sharpness;
+    float detail_limit;
+    float y_delay;
+    float c_delay;
+    float out_scale;
+    float playback_acc;
+    float click_scale;
+    float sharp_d;
+    float reserved0;
+    float reserved1;
+    float reserved2;
+};
+
+struct Coeffs
+{
+    float4 coeff[1];
+};
+
+struct LineTable
+{
+    float4 line_table[1];
+};
+
+struct Defects
+{
+    float4 defects[1];
+};
+
+struct Input
+{
+    float signal_in[1];
+};
+
+struct Mask
+{
+    uint dropout_mask[1];
+};
+
+struct Luma
+{
+    float y12[1];
+};
+
+struct Chroma
+{
+    float2 c3[1];
+};
+
+constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(224u, 1u, 1u);
+
+constant spvUnsafeArray<float2, 12> _1902 = spvUnsafeArray<float2, 12>({ float2(1.0, 0.0), float2(0.866025388240814208984375, 0.5), float2(0.5, 0.866025388240814208984375), float2(0.0, 1.0), float2(-0.5, 0.866025388240814208984375), float2(-0.866025388240814208984375, 0.5), float2(-1.0, 0.0), float2(-0.866025388240814208984375, -0.5), float2(-0.5, -0.866025388240814208984375), float2(0.0, -1.0), float2(0.5, -0.866025388240814208984375), float2(0.866025388240814208984375, -0.5) });
+
+static inline __attribute__((always_inline))
+uint thread_index(thread uint& gl_SubgroupID, thread uint& gl_SubgroupSize, thread uint& gl_SubgroupInvocationID)
+{
+    return (gl_SubgroupID * gl_SubgroupSize) + gl_SubgroupInvocationID;
+}
+
+static inline __attribute__((always_inline))
+int wrap_sample(thread const int& n, constant Params& _229)
+{
+    int _1114;
+    if (n < 0)
+    {
+        _1114 = n + int(_229.total);
+    }
+    else
+    {
+        int _1129;
+        if (n >= int(_229.total))
+        {
+            _1129 = n - int(_229.total);
+        }
+        else
+        {
+            _1129 = n;
+        }
+        _1114 = _1129;
+    }
+    return _1114;
+}
+
+static inline __attribute__((always_inline))
+bool last_lane(thread uint& gl_SubgroupSize, thread uint& gl_SubgroupInvocationID)
+{
+    return gl_SubgroupInvocationID == (gl_SubgroupSize - 1u);
+}
+
+static inline __attribute__((always_inline))
+float carry_real(thread const float& v, thread const float& p, thread const float& k, thread uint& gl_SubgroupID, thread uint& gl_SubgroupSize, thread uint& gl_SubgroupInvocationID, threadgroup spvUnsafeArray<float2, 64>& scan_share)
+{
+    float pk = powr(p, k);
+    float m = pk;
+    float agg = v;
+    for (uint d = 1u; d < gl_SubgroupSize; d = d << 1u)
+    {
+        float o = spvSubgroupShuffleUp(agg, d);
+        if (gl_SubgroupInvocationID >= d)
+        {
+            agg += (m * o);
+        }
+        m *= m;
+    }
+    if (last_lane(gl_SubgroupSize, gl_SubgroupInvocationID))
+    {
+        ((threadgroup float*)&scan_share[gl_SubgroupID])[0u] = agg;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    float carry = 0.0;
+    for (uint g = 0u; g < gl_SubgroupID; g++)
+    {
+        carry = (m * carry) + ((threadgroup float*)&scan_share[g])[0u];
+    }
+    float prev = spvSubgroupShuffleUp(agg, 1u);
+    if (gl_SubgroupInvocationID > 0u)
+    {
+        carry = prev + (powr(p, k * float(gl_SubgroupInvocationID)) * carry);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    return carry;
+}
+
+static inline __attribute__((always_inline))
+float2 cmul(thread const float2& a, thread const float2& b)
+{
+    return float2((a.x * b.x) - (a.y * b.y), (a.x * b.y) + (a.y * b.x));
+}
+
+static inline __attribute__((always_inline))
+float2 cpow(thread const float2& p, thread const float& n)
+{
+    float m = powr(length(p), n);
+    float a = precise::atan2(p.y, p.x) * n;
+    return float2(cos(a), sin(a)) * m;
+}
+
+static inline __attribute__((always_inline))
+float2 carry_complex(thread const float2& v, thread const float2& p, thread const float& k, thread uint& gl_SubgroupID, thread uint& gl_SubgroupSize, thread uint& gl_SubgroupInvocationID, threadgroup spvUnsafeArray<float2, 64>& scan_share)
+{
+    float2 param = p;
+    float param_1 = k;
+    float2 pk = cpow(param, param_1);
+    float2 m = pk;
+    float2 agg = v;
+    for (uint d = 1u; d < gl_SubgroupSize; d = d << 1u)
+    {
+        float2 o = spvSubgroupShuffleUp(agg, d);
+        if (gl_SubgroupInvocationID >= d)
+        {
+            float2 param_2 = m;
+            float2 param_3 = o;
+            agg += cmul(param_2, param_3);
+        }
+        float2 param_4 = m;
+        float2 param_5 = m;
+        m = cmul(param_4, param_5);
+    }
+    if (last_lane(gl_SubgroupSize, gl_SubgroupInvocationID))
+    {
+        scan_share[gl_SubgroupID] = agg;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    float2 carry = float2(0.0);
+    for (uint g = 0u; g < gl_SubgroupID; g++)
+    {
+        float2 param_6 = m;
+        float2 param_7 = carry;
+        carry = cmul(param_6, param_7) + scan_share[g];
+    }
+    float2 prev = spvSubgroupShuffleUp(agg, 1u);
+    if (gl_SubgroupInvocationID > 0u)
+    {
+        float2 param_8 = p;
+        float param_9 = k * float(gl_SubgroupInvocationID);
+        float2 param_10 = cpow(param_8, param_9);
+        float2 param_11 = carry;
+        carry = prev + cmul(param_10, param_11);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    return carry;
+}
+
+static inline __attribute__((always_inline))
+void iir_real16(thread const int& f, thread spvUnsafeArray<float, 16>& x, thread uint& gl_SubgroupID, thread uint& gl_SubgroupSize, thread uint& gl_SubgroupInvocationID, threadgroup spvUnsafeArray<float2, 64>& scan_share, device Coeffs& _665)
+{
+    float4 h = _665.coeff[f];
+    spvUnsafeArray<float, 16> o;
+    for (int k = 0; k < 16; k++)
+    {
+        o[k] = h.x * x[k];
+    }
+    int first = int(h.z);
+    int count = int(h.w);
+    spvUnsafeArray<float, 16> loc;
+    spvUnsafeArray<float2, 16> loc_1;
+    for (int j = 0; j < count; j++)
+    {
+        float4 s = _665.coeff[(16 + first) + j];
+        if (s.y == 0.0)
+        {
+            float p = s.x;
+            float st = 0.0;
+            for (int k_1 = 0; k_1 < 16; k_1++)
+            {
+                st = (p * st) + x[k_1];
+                loc[k_1] = st;
+            }
+            float param = st;
+            float param_1 = p;
+            float param_2 = 16.0;
+            float _751 = carry_real(param, param_1, param_2, gl_SubgroupID, gl_SubgroupSize, gl_SubgroupInvocationID, scan_share);
+            float c = _751;
+            float w = p;
+            for (int k_2 = 0; k_2 < 16; k_2++)
+            {
+                o[k_2] += (s.z * (loc[k_2] + (w * c)));
+                w *= p;
+            }
+        }
+        else
+        {
+            float2 p_1 = s.xy;
+            float2 st_1 = float2(0.0);
+            for (int k_3 = 0; k_3 < 16; k_3++)
+            {
+                float2 param_3 = p_1;
+                float2 param_4 = st_1;
+                st_1 = cmul(param_3, param_4) + float2(x[k_3], 0.0);
+                loc_1[k_3] = st_1;
+            }
+            float2 param_5 = st_1;
+            float2 param_6 = p_1;
+            float param_7 = 16.0;
+            float2 _817 = carry_complex(param_5, param_6, param_7, gl_SubgroupID, gl_SubgroupSize, gl_SubgroupInvocationID, scan_share);
+            float2 c_1 = _817;
+            float2 w_1 = p_1;
+            for (int k_4 = 0; k_4 < 16; k_4++)
+            {
+                float2 param_8 = w_1;
+                float2 param_9 = c_1;
+                float2 y = loc_1[k_4] + cmul(param_8, param_9);
+                o[k_4] += (2.0 * ((s.z * y.x) - (s.w * y.y)));
+                float2 param_10 = w_1;
+                float2 param_11 = p_1;
+                w_1 = cmul(param_10, param_11);
+            }
+        }
+    }
+    x = o;
+}
+
+static inline __attribute__((always_inline))
+float4 previous_thread(thread const float4& v, thread uint& gl_SubgroupID, thread uint& gl_SubgroupSize, thread uint& gl_SubgroupInvocationID, threadgroup spvUnsafeArray<float2, 64>& scan_share)
+{
+    float4 prev = spvSubgroupShuffleUp(v, 1u);
+    if (last_lane(gl_SubgroupSize, gl_SubgroupInvocationID))
+    {
+        scan_share[gl_SubgroupID] = v.xy;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    float2 _615;
+    if (gl_SubgroupID > 0u)
+    {
+        _615 = scan_share[gl_SubgroupID - 1u];
+    }
+    else
+    {
+        _615 = v.xy;
+    }
+    float2 lo = _615;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (last_lane(gl_SubgroupSize, gl_SubgroupInvocationID))
+    {
+        scan_share[gl_SubgroupID] = v.zw;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    float2 _636;
+    if (gl_SubgroupID > 0u)
+    {
+        _636 = scan_share[gl_SubgroupID - 1u];
+    }
+    else
+    {
+        _636 = v.zw;
+    }
+    float2 hi = _636;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (gl_SubgroupInvocationID == 0u)
+    {
+        prev = float4(lo, hi);
+    }
+    return prev;
+}
+
+static inline __attribute__((always_inline))
+int c_addr(thread const int& i)
+{
+    return i + (i >> 2);
+}
+
+static inline __attribute__((always_inline))
+int f_addr(thread const int& w)
+{
+    return w + (w >> 3);
+}
+
+static inline __attribute__((always_inline))
+uint pcg(thread const uint& v)
+{
+    uint s = (v * 747796405u) + 2891336453u;
+    uint w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
+    return (w >> 22u) ^ w;
+}
+
+static inline __attribute__((always_inline))
+uint noise_key(thread const uint& stream, thread const int& n, constant Params& _229)
+{
+    uint param = (_229.frame * 2654435769u) ^ stream;
+    return pcg(param) + (uint(n) * 2246822507u);
+}
+
+static inline __attribute__((always_inline))
+float2 gauss2(thread const uint& key)
+{
+    uint param = key;
+    uint a = pcg(param);
+    uint param_1 = a ^ 2654435769u;
+    uint b = pcg(param_1);
+    float u1 = (float(a >> uint(8)) + 0.5) * 5.9604644775390625e-08;
+    float u2 = float(b >> uint(8)) * 5.9604644775390625e-08;
+    float r = sqrt((-2.0) * log(u1));
+    return float2(cos(6.283185482025146484375 * u2), sin(6.283185482025146484375 * u2)) * r;
+}
+
+static inline __attribute__((always_inline))
+float4 pick(thread const int& r, thread const float4& x0, thread const float4& x1, thread const float4& x2)
+{
+    float4 _1158;
+    if (r == 0)
+    {
+        _1158 = x0;
+    }
+    else
+    {
+        _1158 = select(x2, x1, bool4(r == 1));
+    }
+    return _1158;
+}
+
+static inline __attribute__((always_inline))
+void transport_at(thread const int& q, thread float& tau, thread float& rf_db, thread float& noise_gain, thread float4& a0, thread float4& a1, thread float4& a2, thread float4& b0, thread float4& b1, thread float4& b2, thread float4& a3, thread float4& b3)
+{
+    int x = q - 512;
+    int _1180;
+    if (x < 0)
+    {
+        _1180 = 0;
+    }
+    else
+    {
+        _1180 = (x < 2728) ? 1 : 2;
+    }
+    int r = _1180;
+    float xl = float(x - ((r - 1) * 2728));
+    int param = r;
+    float4 param_1 = a0;
+    float4 param_2 = a1;
+    float4 param_3 = a2;
+    float4 a = pick(param, param_1, param_2, param_3);
+    int param_4 = r;
+    float4 param_5 = b0;
+    float4 param_6 = b1;
+    float4 param_7 = b2;
+    float4 b = pick(param_4, param_5, param_6, param_7);
+    float _1226;
+    if (r == 0)
+    {
+        _1226 = a1.x;
+    }
+    else
+    {
+        float _1235;
+        if (r == 1)
+        {
+            _1235 = a2.x;
+        }
+        else
+        {
+            _1235 = a3.x;
+        }
+        _1226 = _1235;
+    }
+    float next_tau = _1226;
+    float _1249;
+    if (r == 0)
+    {
+        _1249 = b1.x;
+    }
+    else
+    {
+        float _1257;
+        if (r == 1)
+        {
+            _1257 = b2.x;
+        }
+        else
+        {
+            _1257 = b3.x;
+        }
+        _1249 = _1257;
+    }
+    float next_db = _1249;
+    bool _1270 = a.w >= 0.0;
+    bool _1277;
+    if (_1270)
+    {
+        _1277 = xl >= a.w;
+    }
+    else
+    {
+        _1277 = _1270;
+    }
+    if (_1277)
+    {
+        float t = (xl - a.w) / (2728.0 - a.w);
+        tau = mix(a.z, next_tau, t);
+        rf_db = mix(0.0, next_db, t);
+        noise_gain = b.w;
+    }
+    else
+    {
+        float _1305;
+        if (a.w >= 0.0)
+        {
+            _1305 = xl / a.w;
+        }
+        else
+        {
+            _1305 = xl / 2728.0;
+        }
+        float t_1 = _1305;
+        float _1321;
+        if (a.w >= 0.0)
+        {
+            _1321 = a.y;
+        }
+        else
+        {
+            _1321 = next_tau;
+        }
+        tau = mix(a.x, _1321, t_1);
+        float _1336;
+        if (a.w >= 0.0)
+        {
+            _1336 = b.y;
+        }
+        else
+        {
+            _1336 = next_db;
+        }
+        rf_db = mix(b.x, _1336, t_1);
+        noise_gain = b.z;
+    }
+}
+
+static inline __attribute__((always_inline))
+int segment(thread const int& q, thread float4& a0, thread float4& a1, thread float4& a2)
+{
+    int x = q - 512;
+    int _1354;
+    if (x < 0)
+    {
+        _1354 = 0;
+    }
+    else
+    {
+        _1354 = (x < 2728) ? 1 : 2;
+    }
+    int r = _1354;
+    int param = r;
+    float4 param_1 = a0;
+    float4 param_2 = a1;
+    float4 param_3 = a2;
+    float4 a = pick(param, param_1, param_2, param_3);
+    bool _1376 = a.w >= 0.0;
+    bool _1388;
+    if (_1376)
+    {
+        _1388 = float(x - ((r - 1) * 2728)) >= a.w;
+    }
+    else
+    {
+        _1388 = _1376;
+    }
+    return (2 * r) + int(_1388);
+}
+
+static inline __attribute__((always_inline))
+float f_rec_at(thread int& i, threadgroup spvUnsafeArray<uint, 2016>& f_rec, thread float& f_lo, thread float& f_span)
+{
+    i = clamp(i, 0, 3583);
+    int param = i >> 1;
+    float2 pair = unpack_unorm2x16_to_float(f_rec[f_addr(param)]);
+    float _1502;
+    if ((i & 1) == 0)
+    {
+        _1502 = pair.x;
+    }
+    else
+    {
+        _1502 = pair.y;
+    }
+    return f_lo + (f_span * _1502);
+}
+
+static inline __attribute__((always_inline))
+float cubic(thread const float& x, threadgroup spvUnsafeArray<uint, 2016>& f_rec, thread float& f_lo, thread float& f_span)
+{
+    int i = int(floor(x));
+    float t = x - float(i);
+    int param = i - 1;
+    float _1528 = f_rec_at(param, f_rec, f_lo, f_span);
+    float p0 = _1528;
+    int param_1 = i;
+    float _1532 = f_rec_at(param_1, f_rec, f_lo, f_span);
+    float p1 = _1532;
+    int param_2 = i + 1;
+    float _1537 = f_rec_at(param_2, f_rec, f_lo, f_span);
+    float p2 = _1537;
+    int param_3 = i + 2;
+    float _1542 = f_rec_at(param_3, f_rec, f_lo, f_span);
+    float p3 = _1542;
+    return p1 + ((0.5 * t) * ((p2 - p0) + (t * (((((2.0 * p0) - (5.0 * p1)) + (4.0 * p2)) - p3) + (t * (((3.0 * (p1 - p2)) + p3) - p0))))));
+}
+
+static inline __attribute__((always_inline))
+float spacing_at(thread const float& n, threadgroup uint& tile_defects, threadgroup spvUnsafeArray<float4, 32>& tile_defect, threadgroup spvUnsafeArray<float2, 32>& tile_valid)
+{
+    float sp = 0.0;
+    for (uint i = 0u; i < tile_defects; i++)
+    {
+        float4 d = tile_defect[i];
+        float2 v = tile_valid[i];
+        float k = n - d.x;
+        bool _1429 = n < v.x;
+        bool _1437;
+        if (!_1429)
+        {
+            _1437 = n >= v.y;
+        }
+        else
+        {
+            _1437 = _1429;
+        }
+        bool _1440 = _1437 || (k < 0.0);
+        bool _1448;
+        if (!_1440)
+        {
+            _1448 = k > d.y;
+        }
+        else
+        {
+            _1448 = _1440;
+        }
+        if (_1448)
+        {
+            continue;
+        }
+        float t = fast::min(1.0, fast::min(k, d.y - k) / d.w);
+        sp = fast::max(sp, d.z * (0.5 - (0.5 * cos(3.1415927410125732421875 * t))));
+    }
+    return sp;
+}
+
+static inline __attribute__((always_inline))
+float carry_fract(thread const float& v, thread uint& gl_SubgroupID, thread uint& gl_SubgroupSize, thread uint& gl_SubgroupInvocationID, threadgroup spvUnsafeArray<float2, 64>& scan_share)
+{
+    float agg = v;
+    for (uint d = 1u; d < gl_SubgroupSize; d = d << 1u)
+    {
+        float o = spvSubgroupShuffleUp(agg, d);
+        if (gl_SubgroupInvocationID >= d)
+        {
+            agg = fract(agg + o);
+        }
+    }
+    if (last_lane(gl_SubgroupSize, gl_SubgroupInvocationID))
+    {
+        ((threadgroup float*)&scan_share[gl_SubgroupID])[0u] = agg;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    float carry = 0.0;
+    for (uint g = 0u; g < gl_SubgroupID; g++)
+    {
+        carry = fract(carry + ((threadgroup float*)&scan_share[g])[0u]);
+    }
+    float prev = spvSubgroupShuffleUp(agg, 1u);
+    if (gl_SubgroupInvocationID > 0u)
+    {
+        carry = fract(prev + carry);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    return carry;
+}
+
+static inline __attribute__((always_inline))
+void iir_complex16(thread const int& f, thread spvUnsafeArray<float2, 16>& x, thread uint& gl_SubgroupID, thread uint& gl_SubgroupSize, thread uint& gl_SubgroupInvocationID, threadgroup spvUnsafeArray<float2, 64>& scan_share, device Coeffs& _665)
+{
+    float4 h = _665.coeff[f];
+    spvUnsafeArray<float2, 16> o;
+    for (int k = 0; k < 16; k++)
+    {
+        float2 param = h.xy;
+        float2 param_1 = x[k];
+        o[k] = cmul(param, param_1);
+    }
+    int first = int(h.z);
+    int count = int(h.w);
+    spvUnsafeArray<float2, 16> loc;
+    for (int j = 0; j < count; j++)
+    {
+        float4 s = _665.coeff[(16 + first) + j];
+        float2 p = s.xy;
+        float2 st = float2(0.0);
+        for (int k_1 = 0; k_1 < 16; k_1++)
+        {
+            float2 param_2 = p;
+            float2 param_3 = st;
+            st = cmul(param_2, param_3) + x[k_1];
+            loc[k_1] = st;
+        }
+        float2 param_4 = st;
+        float2 param_5 = p;
+        float param_6 = 16.0;
+        float2 _948 = carry_complex(param_4, param_5, param_6, gl_SubgroupID, gl_SubgroupSize, gl_SubgroupInvocationID, scan_share);
+        float2 c = _948;
+        float2 w = p;
+        for (int k_2 = 0; k_2 < 16; k_2++)
+        {
+            float2 param_7 = w;
+            float2 param_8 = c;
+            float2 param_9 = s.zw;
+            float2 param_10 = loc[k_2] + cmul(param_7, param_8);
+            o[k_2] += cmul(param_9, param_10);
+            float2 param_11 = w;
+            float2 param_12 = p;
+            w = cmul(param_11, param_12);
+        }
+    }
+    x = o;
+}
+
+static inline __attribute__((always_inline))
+int carry_max(thread const int& v, thread uint& gl_SubgroupID, thread uint& gl_SubgroupSize, thread uint& gl_SubgroupInvocationID, threadgroup spvUnsafeArray<float2, 64>& scan_share)
+{
+    int agg = v;
+    for (uint d = 1u; d < gl_SubgroupSize; d = d << 1u)
+    {
+        int o = spvSubgroupShuffleUp(agg, d);
+        if (gl_SubgroupInvocationID >= d)
+        {
+            agg = max(agg, o);
+        }
+    }
+    if (last_lane(gl_SubgroupSize, gl_SubgroupInvocationID))
+    {
+        ((threadgroup float*)&scan_share[gl_SubgroupID])[0u] = as_type<float>(agg);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    int carry = -1;
+    for (uint g = 0u; g < gl_SubgroupID; g++)
+    {
+        carry = max(carry, as_type<int>(((threadgroup float*)&scan_share[g])[0u]));
+    }
+    int prev = spvSubgroupShuffleUp(agg, 1u);
+    if (gl_SubgroupInvocationID > 0u)
+    {
+        carry = max(prev, carry);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    return carry;
+}
+
+static inline __attribute__((always_inline))
+float2 c_rec_at(thread const int& i, threadgroup spvUnsafeArray<uint, 1120>& c_rec)
+{
+    int param = clamp(i, 0, 895);
+    return float2(as_type<half2>(c_rec[c_addr(param)]));
+}
+
+static inline __attribute__((always_inline))
+float2 cubic_c(thread const float& x, threadgroup spvUnsafeArray<uint, 1120>& c_rec)
+{
+    int i = int(floor(x));
+    float t = x - float(i);
+    int param = i - 1;
+    float2 p0 = c_rec_at(param, c_rec);
+    int param_1 = i;
+    float2 p1 = c_rec_at(param_1, c_rec);
+    int param_2 = i + 1;
+    float2 p2 = c_rec_at(param_2, c_rec);
+    int param_3 = i + 2;
+    float2 p3 = c_rec_at(param_3, c_rec);
+    return p1 + (((p2 - p0) + ((((((p0 * 2.0) - (p1 * 5.0)) + (p2 * 4.0)) - p3) + (((((p1 - p2) * 3.0) + p3) - p0) * t)) * t)) * (0.5 * t));
+}
+
+static inline __attribute__((always_inline))
+void iir_complex4(thread const int& f, thread spvUnsafeArray<float2, 4>& x, thread uint& gl_SubgroupID, thread uint& gl_SubgroupSize, thread uint& gl_SubgroupInvocationID, threadgroup spvUnsafeArray<float2, 64>& scan_share, device Coeffs& _665)
+{
+    float4 h = _665.coeff[f];
+    spvUnsafeArray<float2, 4> o;
+    for (int k = 0; k < 4; k++)
+    {
+        float2 param = h.xy;
+        float2 param_1 = x[k];
+        o[k] = cmul(param, param_1);
+    }
+    int first = int(h.z);
+    int count = int(h.w);
+    spvUnsafeArray<float2, 4> loc;
+    for (int j = 0; j < count; j++)
+    {
+        float4 s = _665.coeff[(16 + first) + j];
+        float2 p = s.xy;
+        float2 st = float2(0.0);
+        for (int k_1 = 0; k_1 < 4; k_1++)
+        {
+            float2 param_2 = p;
+            float2 param_3 = st;
+            st = cmul(param_2, param_3) + x[k_1];
+            loc[k_1] = st;
+        }
+        float2 param_4 = st;
+        float2 param_5 = p;
+        float param_6 = 4.0;
+        float2 _1072 = carry_complex(param_4, param_5, param_6, gl_SubgroupID, gl_SubgroupSize, gl_SubgroupInvocationID, scan_share);
+        float2 c = _1072;
+        float2 w = p;
+        for (int k_2 = 0; k_2 < 4; k_2++)
+        {
+            float2 param_7 = w;
+            float2 param_8 = c;
+            float2 param_9 = s.zw;
+            float2 param_10 = loc[k_2] + cmul(param_7, param_8);
+            o[k_2] += cmul(param_9, param_10);
+            float2 param_11 = w;
+            float2 param_12 = p;
+            w = cmul(param_11, param_12);
+        }
+    }
+    x = o;
+}
+
+kernel void main0(constant Params& _229 [[buffer(0)]], device Coeffs& _665 [[buffer(2)]], device LineTable& _1697 [[buffer(3)]], device Defects& _1785 [[buffer(4)]], device Input& _1874 [[buffer(1)]], device Mask& _2753 [[buffer(7)]], device Luma& _2867 [[buffer(5)]], device Chroma& _3017 [[buffer(6)]], uint gl_SubgroupID [[simdgroup_index_in_threadgroup]], uint gl_SubgroupSize [[thread_execution_width]], uint gl_SubgroupInvocationID [[thread_index_in_simdgroup]], uint3 gl_WorkGroupID [[threadgroup_position_in_grid]])
+{
+    threadgroup spvUnsafeArray<float2, 64> scan_share;
+    threadgroup uint tile_defects;
+    threadgroup spvUnsafeArray<float4, 32> tile_defect;
+    threadgroup spvUnsafeArray<float2, 32> tile_valid;
+    threadgroup spvUnsafeArray<uint, 2016> f_rec;
+    threadgroup spvUnsafeArray<uint, 1120> c_rec;
+    threadgroup spvUnsafeArray<float2, 128> burst_part;
+    uint T = thread_index(gl_SubgroupID, gl_SubgroupSize, gl_SubgroupInvocationID);
+    float f_lo = _229.f_sync + (_229.dark_clip * _229.hz_per_pct);
+    float f_span = (_229.white_clip - _229.dark_clip) * _229.hz_per_pct;
+    int line = int(gl_WorkGroupID.x);
+    int q0 = int(T) * 16;
+    int n0 = ((line * 2728) - 512) + q0;
+    float4 a0 = _1697.line_table[3 * line];
+    float4 b0 = _1697.line_table[(3 * line) + 1];
+    float4 c0 = _1697.line_table[(3 * line) + 2];
+    float4 a1 = _1697.line_table[(3 * line) + 3];
+    float4 b1 = _1697.line_table[(3 * line) + 4];
+    float4 c1 = _1697.line_table[(3 * line) + 5];
+    float4 a2 = _1697.line_table[(3 * line) + 6];
+    float4 b2 = _1697.line_table[(3 * line) + 7];
+    float4 c2 = _1697.line_table[(3 * line) + 8];
+    int last = min((line + 3), 263);
+    float4 a3 = _1697.line_table[3 * last];
+    float4 b3 = _1697.line_table[(3 * last) + 1];
+    if (T == 0u)
+    {
+        tile_defects = 0u;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    float tile_lo = float((line * 2728) - 512);
+    float tile_hi = tile_lo + 3584.0;
+    if ((T < _229.defect_count) && (T < 64u))
+    {
+        float4 d = _1785.defects[2u * T];
+        float4 v = _1785.defects[(2u * T) + 1u];
+        float lo = fast::max(d.x, v.x);
+        float hi = fast::min(d.x + d.y, v.y);
+        if ((hi > tile_lo) && (lo < tile_hi))
+        {
+            uint _1821 = atomic_fetch_add_explicit((threadgroup atomic_uint*)&tile_defects, 1u, memory_order_relaxed);
+            uint slot = _1821;
+            if (slot < 32u)
+            {
+                tile_defect[slot] = d;
+                tile_valid[slot] = v.xy;
+            }
+        }
+    }
+    if ((T >= 32u) && (T < 160u))
+    {
+        int i = int(T) - 32;
+        int l = spvSMod(((line - 8) + (i / 8)) + 262, 262);
+        int x0 = 240 + (12 * spvSMod(i, 8));
+        float2 acc = float2(0.0);
+        for (int x = 0; x < 12; x++)
+        {
+            acc += (_1902[spvSMod(((l * 2728) + x0) + x, 12)] * _1874.signal_in[((l * 2728) + x0) + x]);
+        }
+        burst_part[i] = acc;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (T == 0u)
+    {
+        tile_defects = min(tile_defects, 32u);
+    }
+    float peak = 0.0;
+    float sum = 0.0;
+    float used = 0.0;
+    spvUnsafeArray<float, 16> burst;
+    for (int i_1 = 0; i_1 < 16; i_1++)
+    {
+        float2 acc_1 = float2(0.0);
+        for (int j = 0; j < 8; j++)
+        {
+            acc_1 += burst_part[(8 * i_1) + j];
+        }
+        burst[i_1] = (0.02083333395421504974365234375 * length(acc_1)) * _229.in_gain;
+        peak = fast::max(peak, burst[i_1]);
+    }
+    for (int i_2 = 0; i_2 < 16; i_2++)
+    {
+        if (burst[i_2] > (0.5 * peak))
+        {
+            sum += burst[i_2];
+            used += 1.0;
+        }
+    }
+    float _2007;
+    if (sum > 1.0)
+    {
+        _2007 = ((_229.burst_target * _229.burst_norm) * used) / sum;
+    }
+    else
+    {
+        _2007 = 1.0;
+    }
+    float acc_gain = _2007;
+    spvUnsafeArray<float, 16> x_1;
+    for (int k = 0; k < 16; k++)
+    {
+        int param = n0 + k;
+        x_1[k] = _1874.signal_in[wrap_sample(param, _229)] * _229.in_gain;
+    }
+    spvUnsafeArray<float, 16> bp = x_1;
+    int param_1 = 2;
+    spvUnsafeArray<float, 16> param_2 = bp;
+    iir_real16(param_1, param_2, gl_SubgroupID, gl_SubgroupSize, gl_SubgroupInvocationID, scan_share, _665);
+    bp = param_2;
+    int _2067;
+    spvUnsafeArray<float2, 16> u;
+    for (int k_1 = 0; k_1 < 16; k_1++)
+    {
+        int ph = spvSMod(n0 + k_1, 12);
+        if (ph < 0)
+        {
+            _2067 = ph + 12;
+        }
+        else
+        {
+            _2067 = ph;
+        }
+        ph = _2067;
+        u[k_1] = float2(_1902[ph].x, -_1902[ph].y) * (2.0 * bp[k_1]);
+    }
+    float4 param_3 = float4((((u[11] + u[12]) + u[13]) + u[14]) + u[15], u[15]);
+    float4 _2122 = previous_thread(param_3, gl_SubgroupID, gl_SubgroupSize, gl_SubgroupInvocationID, scan_share);
+    float4 prev = _2122;
+    float g = acc_gain / 6.0;
+    int param_4 = 4 * int(T);
+    int c = c_addr(param_4);
+    c_rec[c] = as_type<uint>(half2((prev.xy + u[0]) * g));
+    c_rec[c + 1] = as_type<uint>(half2((((((prev.zw + u[0]) + u[1]) + u[2]) + u[3]) + u[4]) * g));
+    c_rec[c + 2] = as_type<uint>(half2((((((u[3] + u[4]) + u[5]) + u[6]) + u[7]) + u[8]) * g));
+    c_rec[c + 3] = as_type<uint>(half2((((((u[7] + u[8]) + u[9]) + u[10]) + u[11]) + u[12]) * g));
+    int param_5 = 0;
+    spvUnsafeArray<float, 16> param_6 = x_1;
+    iir_real16(param_5, param_6, gl_SubgroupID, gl_SubgroupSize, gl_SubgroupInvocationID, scan_share, _665);
+    x_1 = param_6;
+    spvUnsafeArray<float, 16> pe = x_1;
+    int param_7 = 1;
+    spvUnsafeArray<float, 16> param_8 = pe;
+    iir_real16(param_7, param_8, gl_SubgroupID, gl_SubgroupSize, gl_SubgroupInvocationID, scan_share, _665);
+    pe = param_8;
+    for (int k_2 = 0; k_2 < 16; k_2 += 2)
+    {
+        float2 pct = fast::clamp((float2(pe[k_2], pe[k_2 + 1]) + float2(40.0)) * 0.71428573131561279296875, float2(_229.dark_clip), float2(_229.white_clip));
+        int param_9 = (q0 + k_2) >> 1;
+        f_rec[f_addr(param_9)] = pack_float_to_unorm2x16((pct - float2(_229.dark_clip)) / float2(_229.white_clip - _229.dark_clip));
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    spvUnsafeArray<float, 16> mod_noise;
+    for (int k_3 = 0; k_3 < 16; k_3 += 2)
+    {
+        uint param_10 = 11u;
+        int param_11 = n0 + k_3;
+        uint param_12 = noise_key(param_10, param_11, _229);
+        float2 g_1 = gauss2(param_12) * _229.mod_noise_sigma;
+        mod_noise[k_3] = g_1.x;
+        mod_noise[k_3 + 1] = g_1.y;
+    }
+    int param_13 = 3;
+    spvUnsafeArray<float, 16> param_14 = mod_noise;
+    iir_real16(param_13, param_14, gl_SubgroupID, gl_SubgroupSize, gl_SubgroupInvocationID, scan_share, _665);
+    mod_noise = param_14;
+    int param_15 = q0;
+    float param_16;
+    float param_17;
+    float param_18;
+    transport_at(param_15, param_16, param_17, param_18, a0, a1, a2, b0, b1, b2, a3, b3);
+    float tau_a = param_16;
+    float db_a = param_17;
+    float g_a = param_18;
+    int param_19 = q0 + 15;
+    float param_20;
+    float param_21;
+    float param_22;
+    transport_at(param_19, param_20, param_21, param_22, a0, a1, a2, b0, b1, b2, a3, b3);
+    float tau_b = param_20;
+    float db_b = param_21;
+    float g_b = param_22;
+    int param_23 = q0;
+    int param_24 = q0 + 15;
+    bool linear = segment(param_23, a0, a1, a2) == segment(param_24, a0, a1, a2);
+    float tau;
+    float rf_db;
+    spvUnsafeArray<float, 16> noise_gain;
+    float param_26;
+    float param_27;
+    float param_28;
+    spvUnsafeArray<float, 16> amp;
+    spvUnsafeArray<float, 16> phase;
+    for (int k_4 = 0; k_4 < 16; k_4++)
+    {
+        int q = q0 + k_4;
+        if (linear)
+        {
+            float t = float(k_4) / 15.0;
+            tau = mix(tau_a, tau_b, t);
+            rf_db = mix(db_a, db_b, t);
+            noise_gain[k_4] = g_a;
+        }
+        else
+        {
+            int param_25 = q;
+            transport_at(param_25, param_26, param_27, param_28, a0, a1, a2, b0, b1, b2, a3, b3);
+            tau = param_26;
+            rf_db = param_27;
+            noise_gain[k_4] = param_28;
+        }
+        float param_29 = float(q) - tau;
+        float f = cubic(param_29, f_rec, f_lo, f_span) + mod_noise[k_4];
+        float param_30 = float(n0 + k_4);
+        float db = rf_db - ((_229.spacing_db * spacing_at(param_30, tile_defects, tile_defect, tile_valid)) * f);
+        amp[k_4] = exp2(db * 0.16609640419483184814453125);
+        phase[k_4] = f / _229.sample_rate;
+    }
+    float s = 0.0;
+    spvUnsafeArray<float, 16> loc;
+    for (int k_5 = 0; k_5 < 16; k_5++)
+    {
+        s = fract(s + phase[k_5]);
+        loc[k_5] = s;
+    }
+    float param_31 = s;
+    float _2462 = carry_fract(param_31, gl_SubgroupID, gl_SubgroupSize, gl_SubgroupInvocationID, scan_share);
+    float c_1 = _2462;
+    for (int k_6 = 0; k_6 < 16; k_6++)
+    {
+        phase[k_6] = loc[k_6] + c_1;
+    }
+    for (int r = 0; r < 3; r++)
+    {
+        int param_32 = r;
+        float4 param_33 = a0;
+        float4 param_34 = a1;
+        float4 param_35 = a2;
+        float4 a = pick(param_32, param_33, param_34, param_35);
+        if (a.w < 0.0)
+        {
+            continue;
+        }
+        float qs = float(512 + ((r - 1) * 2728)) + a.w;
+        int param_36 = r;
+        float4 param_37 = c0;
+        float4 param_38 = c1;
+        float4 param_39 = c2;
+        float jump = pick(param_36, param_37, param_38, param_39).y / 6.283185482025146484375;
+        for (int k_7 = 0; k_7 < 16; k_7++)
+        {
+            if (float(q0 + k_7) >= qs)
+            {
+                phase[k_7] += jump;
+            }
+        }
+    }
+    spvUnsafeArray<float2, 16> z;
+    for (int k_8 = 0; k_8 < 16; k_8++)
+    {
+        float a_1 = 6.283185482025146484375 * fract(phase[k_8]);
+        z[k_8] = float2(cos(a_1), sin(a_1)) * amp[k_8];
+    }
+    int param_40 = 4;
+    spvUnsafeArray<float2, 16> param_41 = z;
+    iir_complex16(param_40, param_41, gl_SubgroupID, gl_SubgroupSize, gl_SubgroupInvocationID, scan_share, _665);
+    z = param_41;
+    for (int k_9 = 0; k_9 < 16; k_9++)
+    {
+        uint param_42 = 13u;
+        int param_43 = n0 + k_9;
+        uint param_44 = noise_key(param_42, param_43, _229);
+        z[k_9] += (gauss2(param_44) * (_229.rf_noise_sigma * noise_gain[k_9]));
+    }
+    int param_45 = 5;
+    spvUnsafeArray<float2, 16> param_46 = z;
+    iir_complex16(param_45, param_46, gl_SubgroupID, gl_SubgroupSize, gl_SubgroupInvocationID, scan_share, _665);
+    z = param_46;
+    spvUnsafeArray<float, 16> e;
+    for (int k_10 = 0; k_10 < 16; k_10++)
+    {
+        e[k_10] = length(z[k_10]) * _229.env_norm;
+    }
+    int param_47 = 6;
+    spvUnsafeArray<float, 16> param_48 = e;
+    iir_real16(param_47, param_48, gl_SubgroupID, gl_SubgroupSize, gl_SubgroupInvocationID, scan_share, _665);
+    e = param_48;
+    int last_1 = -1;
+    for (int k_11 = 0; k_11 < 16; k_11++)
+    {
+        if (e[k_11] < _229.doc_on)
+        {
+            last_1 = (2 * (q0 + k_11)) + 1;
+        }
+        else
+        {
+            if (e[k_11] > _229.doc_off)
+            {
+                last_1 = 2 * (q0 + k_11);
+            }
+        }
+    }
+    int param_49 = last_1;
+    int _2685 = carry_max(param_49, gl_SubgroupID, gl_SubgroupSize, gl_SubgroupInvocationID, scan_share);
+    int state = _2685;
+    uint bits = 0u;
+    for (int k_12 = 0; k_12 < 16; k_12++)
+    {
+        if (e[k_12] < _229.doc_on)
+        {
+            state = (2 * (q0 + k_12)) + 1;
+        }
+        else
+        {
+            if (e[k_12] > _229.doc_off)
+            {
+                state = 2 * (q0 + k_12);
+            }
+        }
+        bool _2722 = state >= 0;
+        bool _2728;
+        if (_2722)
+        {
+            _2728 = (state & 1) == 1;
+        }
+        else
+        {
+            _2728 = _2722;
+        }
+        if (_2728)
+        {
+            bits |= (1u << uint(k_12));
+        }
+    }
+    int word = int(T) - 32;
+    if ((word >= 0) && (word < 171))
+    {
+        _2753.dropout_mask[(line * 171) + word] = bits;
+    }
+    float4 param_50 = float4(z[15], 0.0, 0.0);
+    float4 _2768 = previous_thread(param_50, gl_SubgroupID, gl_SubgroupSize, gl_SubgroupInvocationID, scan_share);
+    float4 zp = _2768;
+    float2 _2780;
+    float2 _2785;
+    spvUnsafeArray<float, 16> y;
+    for (int k_13 = 0; k_13 < 16; k_13++)
+    {
+        if (k_13 == 0)
+        {
+            if (T == 0u)
+            {
+                _2785 = z[0];
+            }
+            else
+            {
+                _2785 = zp.xy;
+            }
+            _2780 = _2785;
+        }
+        else
+        {
+            _2780 = z[k_13 - 1];
+        }
+        float2 prev_1 = _2780;
+        float2 param_51 = z[k_13];
+        float2 param_52 = float2(prev_1.x, -prev_1.y);
+        float2 w = cmul(param_51, param_52);
+        float f_1 = (abs(precise::atan2(w.y, w.x)) * _229.sample_rate) / 6.283185482025146484375;
+        y[k_13] = (((f_1 - _229.f_sync) / _229.hz_per_pct) * 1.39999997615814208984375) - 40.0;
+    }
+    int param_53 = 7;
+    spvUnsafeArray<float, 16> param_54 = y;
+    iir_real16(param_53, param_54, gl_SubgroupID, gl_SubgroupSize, gl_SubgroupInvocationID, scan_share, _665);
+    y = param_54;
+    for (int k_14 = 0; k_14 < 16; k_14++)
+    {
+        int xpos = (q0 + k_14) - 512;
+        if ((xpos >= 0) && (xpos < 2728))
+        {
+            _2867.y12[(line * 2728) + xpos] = y[k_14];
+        }
+    }
+    float param_56;
+    float param_57;
+    float param_58;
+    spvUnsafeArray<float2, 4> cc;
+    for (int j_1 = 0; j_1 < 4; j_1++)
+    {
+        int q_1 = q0 + (4 * j_1);
+        int param_55 = q_1;
+        transport_at(param_55, param_56, param_57, param_58, a0, a1, a2, b0, b1, b2, a3, b3);
+        float tau_1 = param_56;
+        float rf_db_1 = param_57;
+        float noise_gain_1 = param_58;
+        float param_59 = (float(q_1) - tau_1) * 0.25;
+        float2 c_2 = cubic_c(param_59, c_rec);
+        float param_60 = float(n0 + (4 * j_1));
+        c_2 *= exp2((((-_229.spacing_db) * spacing_at(param_60, tile_defects, tile_defect, tile_valid)) * _229.colour_under_hz) * 0.16609640419483184814453125);
+        float xr = mod(float(q_1 - 512) - tau_1, 2728.0);
+        float g_2 = ((xr >= 240.0) && (xr < 336.0)) ? 0.5 : 1.0;
+        int n3 = ((((line * 2728) - 512) / 4) + (int(T) * 4)) + j_1;
+        uint param_61 = 17u;
+        int param_62 = n3;
+        uint param_63 = noise_key(param_61, param_62, _229);
+        cc[j_1] = c_2 + (gauss2(param_63) * (_229.chroma_noise_sigma * g_2));
+    }
+    int param_64 = 8;
+    spvUnsafeArray<float2, 4> param_65 = cc;
+    iir_complex4(param_64, param_65, gl_SubgroupID, gl_SubgroupSize, gl_SubgroupInvocationID, scan_share, _665);
+    cc = param_65;
+    float2 rot = float2(cos(c1.x), sin(c1.x));
+    for (int j_2 = 0; j_2 < 4; j_2++)
+    {
+        int x3 = ((int(T) * 4) + j_2) - 128;
+        if ((x3 >= 0) && (x3 < 682))
+        {
+            float2 param_66 = cc[j_2];
+            float2 param_67 = rot;
+            _3017.c3[(line * 682) + x3] = cmul(param_66, param_67);
+        }
+    }
+}
