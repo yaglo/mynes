@@ -4,7 +4,7 @@ The open work from the model-limits review of 23 September 2026 (a 27-agent
 workflow that collected 693 stated limitations from the site, docs, presets
 and code, assessed 11 model areas, challenged each, and ranked the
 improvements). The full plan with its reasoning, sources and cost estimates is
-outside the repository at `~/Projects/mynes-compare/model-limits-plan-2026-09-23.md`
+outside the repository at `~/Projects/mynes-compare/2026-09-23-model-limits/plan.md` (with the full assessments beside it)
 (the run record is `wf_de267029-54e` under the `mynes-build` session's
 workflows). This file tracks status; keep it current when an item lands.
 
@@ -16,7 +16,7 @@ for a hardware measurement listed at the end.
 
 - [~] 1. H/H/S. Draw NES pixels at 8:7 and place the picture on the receiver's active raster. Done: the deflection map now uses BT.470 blanking and the console's timings, so dots are 8:7 and blanking shows at the sides until overscan hides it. Open: keep the 15+11 border dots in the active line; documented overscan per preset (JVC 5% H and 4% V per edge, Toshiba V 9±2%, PVM underscan 252×188 mm with about 13/10 mm backdrop borders). WP-F.
 - [ ] 2. H/H/S. Synchronous video detector per receiver on RF; envelope detector only for pre-1978 sets. Envelope detection on the DSB+Nyquist IF makes $0x–$2x luma 12–14% low in voltage and chroma ×0.82–0.88. Data: M52342SP is a PLL VIF; TDA8362 note 14. WP-B.
-- [ ] 3. H/H/S. Console audio filter from the schematic plus rainwarrior's hardware sweep: remove the 90 Hz and 440 Hz high-passes; NES-001 HP 16–17 Hz, LP about 12 kHz; HVC-001 HP 32–37 Hz. 14.5 dB of bass is missing at 100 Hz. WP-I.
+- [~] 3. H/H/S. Console audio filter from the schematic. Done: NES-001 16.8 Hz high-pass and the two low-pass poles (15.4 kHz feedback, 15.9 kHz output pin) from `tools/circuits/nes001_audio.cir` (rainwarrior measured 16 Hz), Famicom 37 Hz from its mixing network, the 90 Hz and 440 Hz high-passes removed, `test_audio` pinned to the golden response. Open: the Famicom's, NES-101's and Dendy's low-passes are generic; the HC04 gate's output resistance (8–53 kHz for the output-pin pole) wants a measurement. WP-I.
 - [ ] 4. H/H/S. One keyed top-sync AGC loop across lines and frames; remove the per-frame reacquire in all receiver loops. Fixes 1.4–1.6% line-to-line gain streaks on Basement and Bedroom, and each frame's hue and black level being set by one noisy line. TDA8362 AGC table. WP-B, WP-C.
 - [ ] 5. H/H/S. RF sound: no pre-emphasis in the modulator; 75 µs de-emphasis (System M) or 50 µs (PAL); FM noise from CNR. Real sets are −8.2 dB at 5 kHz. ITU-R BT.470. WP-I.
 - [ ] 6. H/H/M. Trap-type consumer front end (TDA8362 stand-in, labelled): causal Q=2 trap, 480 ns Y delay, 3-tap peaking with compression, chroma BPF folded into the I/Q FIRs; filter lengths from −3 dB targets. Replaces windowed-sinc luma and blended ringing; chroma requests of 0.25–0.5 MHz currently realise 0.57 MHz. +0.25–0.35 ms. WP-D2.

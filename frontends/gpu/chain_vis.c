@@ -195,7 +195,7 @@ static const char *video_stage_names[VIDEO_STAGE_COUNT] = {
 
 static const char *audio_stage_names[AUDIO_STAGE_COUNT] = {
     "Coupling Cap",     /*  1 */
-    "Feedback HP",      /*  2 */
+    "Output pin LP",    /*  2 */
     "Amp BW LP",        /*  3 */
     "Saturation",       /*  4 */
     "PSU Hum",          /*  5 */

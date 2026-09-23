@@ -65,7 +65,7 @@ typedef struct {
 
     /* Signal stages (in processing order). */
     AudioRCStage        coupling_cap;       /* Stage 1: DC blocking */
-    AudioRCStage        feedback_network;   /* Stage 2: bass shaping */
+    AudioRCStage        feedback_network;   /* Stage 2: output-pin low-pass (NES-001 C4 on the gate's output resistance) */
     AudioRCStage        amp_bandwidth;      /* Stage 3: amp LP */
     AudioSaturationStage amp_saturation;    /* Stage 4: soft clip */
     AudioHumStage       psu_hum;            /* Stage 5: mains hum */

@@ -131,3 +131,32 @@ on the rise, the difference being the deck's device capacitances and source
 resistance. Shipped presets leave it at 0 until it is compared with a
 console on the PVM; the earlier 30 ns differential-phase estimate stays as
 their default.
+
+## NES-001 audio path
+
+```sh
+python3 tools/circuits/sweep_nes001_audio.py /tmp/nes001-audio --golden tools/circuits/golden
+```
+
+`nes001_audio.cir` is the NES-001 mixer and amplifier from Schenk's schematic
+(AD1 through R4 100 Ω and R7 20 kΩ, AD2 through R3 100 Ω and R8 12 kΩ, AUX
+through R9 20 kΩ, C23 1 µF into gate U9E of the 74HC04 with R6 47 kΩ and
+C21 220 pF in the feedback, C20 220 pF at the output, FC1 39 µH and C4
+0.01 µF) followed by the AV module's follower, 1 µF coupling and 68 µH choke
+into the TV's line input (Electronix trace). The gate is a behavioural
+inverter swept over open-loop gain 10–40 and output resistance 300 Ω–2 kΩ;
+the follower's output resistance and the choke's shunt capacitors are
+assumed; the TV input is swept over 10 kΩ, 47 kΩ and 1 MΩ.
+
+The high-pass is 16–18 Hz at the board across the sweep, set by C23 against
+the 20k/12k sources and the gate's summing node, which agrees with
+rainwarrior's hardware sweep (about 16 Hz, nesdev thread 17745). A 10 kΩ TV
+input adds a second pole and moves the jack's corner to 23–26 Hz. The
+low-pass is two poles: R6 with C21 (15.4 kHz) and C4 on the gate's output
+resistance (15.9 kHz at 1 kΩ, 8 kHz at 2 kΩ, 53 kHz at 300 Ω), so the
+resistance of an unbuffered HC04 gate in linear use is the number a
+measurement would settle. There is no 440 Hz network anywhere in the path;
+the chain's old second high-pass had no circuit behind it and its slot now
+carries the output-pin pole. `golden/nes001_audio.h` holds the a_ol=20,
+r_out=1k, r_tv=47k response and `test_audio` holds the chain's coupling,
+amplifier and TV-input stages to it within 0.5 dB up to 12 kHz.

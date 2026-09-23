@@ -78,11 +78,25 @@ static float gain(float hz, int speaker) {
     return sqrt(output_energy/input_energy);
 }
 
+#include "../../../tools/circuits/golden/nes001_audio.h"
+/* The NES-001 console filter against the ngspice run of its schematic
+ * (tools/circuits/nes001_audio.cir, pulse pin, TV input 47k): the chain's
+ * coupling, amplifier and TV-input stages on headphones (no speaker) must
+ * follow the golden response relative to 1 kHz within 0.5 dB up to 12 kHz.
+ * Above that the 44.1 kHz first-order stages and the deck's second-order
+ * shunts part ways, so the two highest points are only printed. */
 static void response(void) {
-    float bass=gain(30,AUDIO_SPEAKER_HEADPHONES),mid=gain(1000,AUDIO_SPEAKER_HEADPHONES);
+    float mid=gain(1000,AUDIO_SPEAKER_HEADPHONES);
     float speaker_high=gain(15000,AUDIO_SPEAKER_SMALL_TV);
-    printf("Gain: 30 Hz %.4f, 1 kHz %.4f, TV 15 kHz %.4f\n",bass,mid,speaker_high);
-    CHECK(bass < .03f); CHECK(mid > .75f && mid < 1); CHECK(speaker_high < .1f);
+    printf("Gain: 1 kHz %.4f, TV 15 kHz %.4f\n",mid,speaker_high);
+    CHECK(mid > .75f && mid < 1); CHECK(speaker_high < .1f);
+    printf("NES-001 console filter vs ngspice (dB relative to 1 kHz, chain / golden):\n");
+    for(unsigned i=0;i<sizeof(nes001_audio_golden_hz)/sizeof(nes001_audio_golden_hz[0]);++i) {
+        float hz=nes001_audio_golden_hz[i];
+        float db=20*log10f(gain(hz,AUDIO_SPEAKER_HEADPHONES)/mid);
+        printf("  %6.0f Hz: %+6.2f / %+6.2f\n",hz,db,nes001_audio_golden_db[i]);
+        if(hz<=12000) CHECK(fabsf(db-nes001_audio_golden_db[i])<0.5f);
+    }
     AudioChain c; AudioState s={0};
     audio_chain_init_preset(&c,AUDIO_CONSOLE_NES_FRONT,AUDIO_SPEAKER_SMALL_TV,0);
     for(int i=0;i<1024;++i) source[i]=.5f;

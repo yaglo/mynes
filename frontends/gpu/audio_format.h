@@ -4,16 +4,30 @@
 #include <stdint.h>
 
 typedef struct {
-    double hp1_hz;      /* coupling cap high-pass (DC blocking): 16-90 Hz */
-    double hp2_hz;      /* feedback network high-pass: ~440 Hz */
-    double lp_hz;       /* amplifier bandwidth low-pass: 8000-14000 Hz */
+    double hp1_hz;      /* console coupling high-pass */
+    double lp2_hz;      /* second low-pass (NES-001: C4 at the output pin on the gate's output resistance); 0 = none */
+    double lp_hz;       /* amplifier bandwidth low-pass */
 } AudioFilterCorners;
 
-/* Predefined corners per hardware variant. */
-#define AUDIO_CORNERS_FAMICOM       ((AudioFilterCorners){ 16.0,  440.0, 10000.0 })
-#define AUDIO_CORNERS_NES_FRONT     ((AudioFilterCorners){ 90.0,  440.0, 14000.0 })
-#define AUDIO_CORNERS_NES_TOP       ((AudioFilterCorners){ 90.0,  440.0, 12000.0 })
-#define AUDIO_CORNERS_DENDY         ((AudioFilterCorners){ 37.0,  440.0,  8000.0 })
+/* Corners per hardware variant.
+ * NES-001: from N. Schenk's schematic through ngspice
+ * (tools/circuits/nes001_audio.cir): C23 1 uF against the 20k/12k mixing
+ * resistors and the 74HC04 gate's summing node gives 16.8 Hz (rainwarrior
+ * measured about 16 Hz, nesdev thread 17745); R6 47k with C21 220 pF in the
+ * feedback gives 15.4 kHz, and C4 0.01 uF at the output pin on the gate's
+ * output resistance a second pole, 15.9 kHz at the assumed 1k (8 kHz at 2k,
+ * 53 kHz at 300 ohm). The jack's 1 uF into the TV's input is the separate
+ * TV coupling stage.
+ * Famicom (HVC-001): C2 1 uF against R3//R4//R5 (10k, 20k, 12k) gives 37 Hz
+ * (lidnariq; rainwarrior measured about 32 Hz). Its low-pass sits in the RF
+ * modulator's sound path and is a generic figure.
+ * NES-101 (top loader) and Dendy: no schematic here; the NES-101 takes the
+ * NES-001 values and the Dendy the Famicom high-pass with a generic
+ * low-pass. */
+#define AUDIO_CORNERS_FAMICOM       ((AudioFilterCorners){ 37.0,     0.0, 10000.0 })
+#define AUDIO_CORNERS_NES_FRONT     ((AudioFilterCorners){ 16.8, 15900.0, 15400.0 })
+#define AUDIO_CORNERS_NES_TOP       ((AudioFilterCorners){ 16.8, 15900.0, 15400.0 })
+#define AUDIO_CORNERS_DENDY         ((AudioFilterCorners){ 37.0,     0.0,  8000.0 })
 
 /* Speaker model parameters. */
 typedef struct {

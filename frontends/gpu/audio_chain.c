@@ -4,14 +4,18 @@
 #include <string.h>
 #include <math.h>
 
-/* Nominal filter corners; these are equivalent RC networks, not claimed
- * component measurements of individual consoles. NES: 90/440/14000 Hz. */
+/* Filter corners per console (audio_format.h): the NES-001 pair comes from
+ * its schematic through ngspice (tools/circuits/nes001_audio.cir), the
+ * Famicom high-pass from its mixing network; the rest are equivalent
+ * networks, not measurements. A corner of 0 leaves that stage out. */
 static const AudioFilterCorners console_corners[] = {
     AUDIO_CORNERS_FAMICOM, AUDIO_CORNERS_NES_FRONT,
     AUDIO_CORNERS_NES_TOP, AUDIO_CORNERS_DENDY
 };
 
 static AudioRCStage rc_stage(float corner, bool highpass) {
+    if (corner <= 0.0f) return (AudioRCStage){ .enabled = false, .is_highpass = highpass,
+        .resistance = 10000.0f, .capacitance = 1e-6f };
     return (AudioRCStage){ .enabled = true, .is_highpass = highpass,
         .resistance = 10000.0f,
         .capacitance = 1.0f / (2.0f * 3.14159265f * 10000.0f * corner) };
@@ -40,7 +44,7 @@ void audio_chain_init_preset(AudioChain *chain, int console_variant,
     chain->sample_rate = AUDIO_STREAM_RATE;
     AudioFilterCorners corners = console_corners[console_variant];
     chain->coupling_cap = rc_stage(corners.hp1_hz, true);
-    chain->feedback_network = rc_stage(corners.hp2_hz, true);
+    chain->feedback_network = rc_stage(corners.lp2_hz, false); /* output-pin pole; the slot's name is historical */
     chain->amp_bandwidth = rc_stage(corners.lp_hz, false);
 
     /* Stage 4: Amplifier saturation. */
