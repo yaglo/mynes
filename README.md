@@ -117,10 +117,11 @@ ctest --test-dir build --output-on-failure
 ```
 
 Unit tests, mapper tests, PAL APU ROM tests, the complete AccuracyCoin suite
-and the GPU kernel, preset and playback tests run on every push through
-GitHub Actions on Ubuntu and macOS. On Ubuntu the GPU tests run on lavapipe
-(software Vulkan). `gpu_fidelity_tests` needs a hardware GPU and runs outside
-CI.
+and the GPU kernel and preset tests run on every push through GitHub Actions
+on Ubuntu and macOS. The GPU pipeline, audio, fence, playback and frame-capture
+tests run in CI on Ubuntu only, on lavapipe (software Vulkan). The macOS job
+runs the GPU tests that need no GPU device. `gpu_fidelity_tests` needs a
+hardware GPU and runs outside CI.
 
 ## Documentation
 
