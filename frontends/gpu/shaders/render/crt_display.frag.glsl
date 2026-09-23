@@ -164,6 +164,21 @@ vec3 aperture_mask(float x, float pitch) {
     }
     return subpixel_layout==2 ? coverage.bgr : coverage;
 }
+// A display cannot exceed its peak. Drawn on subpixels, a grille puts each
+// colour's light into part of the triad at several times the average level.
+// When that would pass the peak, lower that colour's grille contrast just
+// enough: its gaps fill, its stripes stay within reach, and its average over
+// the triad is unchanged, so clipping cannot darken or tint the picture.
+vec3 grille_within_peak(vec3 coverage, vec3 drive) {
+    float period=3.0*max(mask_pitch_pixels,0.05);
+    float peak_cover=min(1.0,0.28*period)/0.28;
+    if(peak_cover<=1.001) return coverage;
+    float scale=max(glass_tint,0.001)*(hdr_gain>0.0 ? hdr_gain : 1.0)*max(presentation.x,0.001);
+    // The output shoulder starts compressing at 0.75 of the host peak.
+    float limit=0.75*max(hdr_headroom,1.0)/scale;
+    vec3 depth=clamp((limit/max(drive,vec3(1e-6))-1.0)/(peak_cover-1.0),0.0,1.0);
+    return 1.0+(coverage-1.0)*depth;
+}
 vec3 phosphor_mask(vec2 pos, vec2 face_uv) {
     if (monitor.x == 1.0) {
         // Published centre/edge pitch; quadratic variation is an assumption.
@@ -244,8 +259,11 @@ vec3 phosphor_light(vec2 p, vec2 face_pos) {
     }
 
     vec3 drive=color;
-    if (mask_strength > 0.01)
-        color *= mix(vec3(1.0), phosphor_mask(face_pos,p), mask_strength);
+    if (mask_strength > 0.01) {
+        vec3 coverage=phosphor_mask(face_pos,p);
+        if(monitor.y>0.5 && mask_type==1 && monitor.x!=1.0) coverage=grille_within_peak(coverage,drive);
+        color *= mix(vec3(1.0), coverage, mask_strength);
+    }
     // Generic legacy material-response control, not a measured phosphor fit.
     // Use unmasked excitation: changing host pitch must not change the
     // response curve. Shifted emission remains at its originating stripe.

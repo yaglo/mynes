@@ -42,6 +42,13 @@ static void render_region(SDL_GPUDevice *gpu, GPUDisplay *d, SDL_GPUTexture *inp
     SDL_ReleaseGPUTransferBuffer(gpu,download);
 }
 
+static void clear_input(SDL_GPUDevice *gpu, SDL_GPUTexture *input, float level) {
+    SDL_GPUCommandBuffer *cmd=SDL_AcquireGPUCommandBuffer(gpu);
+    SDL_GPUColorTargetInfo ct={.texture=input,.clear_color={level,level,level,1},.load_op=SDL_GPU_LOADOP_CLEAR,.store_op=SDL_GPU_STOREOP_STORE};
+    SDL_GPURenderPass *pass=SDL_BeginGPURenderPass(cmd,&ct,1,NULL); SDL_EndGPURenderPass(pass);
+    CHECK(SDL_SubmitGPUCommandBuffer(cmd)); CHECK(SDL_WaitForGPUIdle(gpu));
+}
+
 static void render(SDL_GPUDevice *gpu, GPUDisplay *d, SDL_GPUTexture *input,
                    SDL_GPUTexture *target, GPUDisplayParams *p, float avg[3], float *peak) {
     render_region(gpu,d,input,target,p,NULL,avg,peak);
@@ -268,6 +275,16 @@ int test_display_fidelity(SDL_GPUDevice *gpu) {
     }
     for(int x=0;x<W;x++)
         CHECK(fabsf(center_row[x][0]-center_row[x][1])<0.002f && fabsf(center_row[x][2]-center_row[x][1])<0.002f);
+    // Near an SDR peak (the shoulder starts at 0.75) the same grille on a 0.6
+    // field lowers its contrast instead of clipping: lit pixels stop at 0.75,
+    // gaps hold 0.45, and every channel still averages 0.6.
+    clear_input(gpu,input,0.6f); p.hdr_headroom=1;
+    render(gpu,&d,input,target,&p,avg,&peak);
+    for(int c=0;c<3;c++) {
+        CHECK(fabsf(avg[c]-0.6f)<0.002f);
+        for(int x=0;x<W;x++) CHECK(center_row[x][c]<0.752f && center_row[x][c]>0.448f);
+    }
+    clear_input(gpu,input,0.25f); p.hdr_headroom=8;
     // A four-pixel triad: each colour's stripe moves onto the nearest
     // subpixel of its colour (green is centred by the phase shift), so the
     // light lands at 1.17, 2.50 and 3.83 pixels on an RGB panel and at 1.83,
