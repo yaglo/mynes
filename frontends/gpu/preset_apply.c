@@ -1364,7 +1364,7 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_env[n++] = MI_FLOAT("Ambient",        &vc->tv.ambient_light,  0.01f, 0.0f, 0.25f, gpu_cb_update_beam_params, "%.2f");
     menu_env[n++] = MI_FLOAT("Gun black level",    &vc->tv.black_floor,    0.005f, 0.0f, 0.10f, gpu_cb_update_beam_params, "%.3f");
     menu_env[n++] = MI_FLOAT("Receiver noise",    &vc->tv.noise_level,    0.005f, 0.0f, 0.10f, gpu_cb_update_beam_params, "%.3f");
-    menu_env[n++] = MI_FLOAT("Emission gain",       &vc->tv.hdr_gain,       0.1f, 0.5f, 3.0f, gpu_cb_update_beam_params, "%.1f");
+    menu_env[n++] = MI_FLOAT("HDR emission gain",   &vc->tv.hdr_gain,       0.1f, 0.5f, 3.0f, gpu_cb_update_beam_params, "%.1f");
     menu_env[n++] = MI_FLOAT("EMI gradient", &vc->tv.emi_gradient, 0.02f, 0.0f, 1.0f, gpu_cb_update_beam_params, "%.3f");
     menu_env[n++] = MI_FLOAT("Purity error", &vc->tv.degauss_tint, 0.02f, 0.0f, 1.0f, gpu_cb_update_beam_params, "%.3f");
     menu_env[n++] = MI_FLOAT("Center cathode wear", &vc->tv.cathode_center_dim, 0.02f, 0.0f, 0.5f, gpu_cb_update_beam_params, "%.3f");
@@ -1434,7 +1434,7 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_picture[5] = menu_color_decode[2];
     menu_picture[5].label = "Color temperature";
     menu_picture[6] = menu_video_amp[3];
-    menu_picture[7] = MI_FLOAT("Emission gain", &vc->tv.hdr_gain, 0.05f, 0.1f, 4.0f, NULL, "%.2fx");
+    menu_picture[7] = MI_FLOAT("HDR emission gain", &vc->tv.hdr_gain, 0.05f, 0.1f, 4.0f, NULL, "%.2fx");
     menu_picture[8] = MI_FLOAT("Room light", &vc->tv.ambient_light, 0.005f, 0, 0.3f, NULL, "%.3f");
     n = 0;
     menu_presets_video_idx = -1;
@@ -1553,7 +1553,7 @@ void preset_register_debug_controls(PresetCtx *ctx, DebugServer *server) {
         {"Blue lifetime scale", "Phosphor", &tv->persistence_b, 0, 1, gpu_cb_update_beam_params},
         {"Mask triads across", "Phosphor", &tv->mask_triads, 0, 2000, NULL},
         {"Mask pitch (triads = 0)", "Phosphor", &tv->mask_pitch_px, 1, 12, NULL},
-        {"Emission gain", "Phosphor", &tv->hdr_gain, 0.5f, 3, NULL},
+        {"HDR emission gain", "Phosphor", &tv->hdr_gain, 0.5f, 3, NULL},
         {"Mask strength", "Phosphor", &tv->mask_strength, 0, 1, NULL},
         {"Glass curvature", "Glass", &tv->barrel, 0, 0.1f, NULL},
         {"Halation", "Glass", &tv->halation, 0, 0.5f, NULL},

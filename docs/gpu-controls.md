@@ -86,7 +86,7 @@ and the signal chain; loading a CRT preset retains the running console's region.
 | Sharpness | Edge peaking after luma separation; bypassed for RGB/direct. |
 | Color temperature | The white balance, from warmer to cooler. |
 
-Gamma, Emission gain and Room light follow these controls. The quick controls
+Gamma, HDR emission gain and Room light follow these controls. The quick controls
 share their values with the detailed signal/CRT menus and are included when
 you use **Presets → Save current...**.
 
@@ -135,7 +135,7 @@ claim that every combination has been visually calibrated.
 | Time | Persistence and RGB lifetime scales, optional frame blend and motion threshold | Motion threshold only affects frame blending. This post-render blend is not a 3D composite comb filter. Zero persistence disables phosphor history. |
 | Tube variation | Cathode gains/nonuniformity, purity tint, grain, thermal doming, chromaticity shift, astigmatism, microphonics | Behavioral approximations, not individually measured tube defects. Avoid increasing every imperfection merely to make a picture “more CRT.” |
 | Glass/room | Halation and tint, glass transmission/reflection, scatter, antiglare, glare position/size/color, ambient light, vignette | Halo tint sets per-primary scatter fractions and needs halation. Internal reflection uses spatial scatter, not a local gray pedestal. Glare geometry and ambient light require Room reflections (G) enabled. Reflected room light does not scale with emission gain. |
-| Output | Emission gain, available HDR headroom, SDR white level | Gain controls emitted light; headroom and white level come from the host. The output shoulder preserves RGB ratios while fitting peaks. |
+| Output | HDR emission gain, available HDR headroom, SDR white level | Gain controls emitted light in HDR output only (SDR uses 1); headroom and white level come from the host. The output shoulder preserves RGB ratios while fitting peaks. |
 | Audio | Amplifier drive, hum strength/frequency/harmonics, noise | Shared CPU/GPU audio model controls; independent of picture gain. |
 
 Legacy `num_sections` and RF `carrier_freq` values still round-trip when importing

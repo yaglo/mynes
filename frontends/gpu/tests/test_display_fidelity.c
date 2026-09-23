@@ -458,7 +458,11 @@ int test_display_fidelity(SDL_GPUDevice *gpu) {
     render(gpu,&d,input,target,&p,avg,&peak);
     for(int ch=0;ch<3;ch++) CHECK(fabsf(avg[ch]/avg[1]-reference_color[ch])<.0003f);
     // SDR gamut fitting must preserve luminance and the chroma direction.
-    p.hdr_gain=.5f;p.output_hdr=0;p.hdr_headroom=1;
+    // SDR output ignores emission gain, so halve the phosphor drive instead.
+    cmd=SDL_AcquireGPUCommandBuffer(gpu);ct.clear_color=(SDL_FColor){0,.5f,0,1};
+    pass=SDL_BeginGPURenderPass(cmd,&ct,1,NULL);SDL_EndGPURenderPass(pass);
+    CHECK(SDL_SubmitGPUCommandBuffer(cmd));
+    p.hdr_gain=8;p.output_hdr=0;p.hdr_headroom=1;
     render(gpu,&d,input,target,&p,avg,&peak);
     float linear[3];
     for(int ch=0;ch<3;ch++) {

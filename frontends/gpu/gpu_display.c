@@ -687,7 +687,9 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
         crt_ubo.black_floor = params->black_floor;
         crt_ubo.ambient_light = params->ambient_light;
         crt_ubo.glass_tint = params->glass_tint;
-        crt_ubo.hdr_gain = params->hdr_gain;
+        // Emission gain spends HDR headroom; SDR output has none to spend,
+        // so there it would only clip highlights and the grille.
+        crt_ubo.hdr_gain = params->output_hdr ? params->hdr_gain : 1.0f;
         crt_ubo.subpixel_layout = params->subpixel_layout;
         crt_ubo.overscan = params->overscan;
         crt_ubo.keystone = params->keystone;
