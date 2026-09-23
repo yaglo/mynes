@@ -132,6 +132,9 @@ run cp -R "$REPO_ROOT/palettes" "$CONTENTS/Resources/palettes"
 run find "$CONTENTS/Resources" -name '.*' -type f -delete
 
 # 3. Info.plist -----------------------------------------------------------------
+# The document type lets Finder open .nes files with MyNES; the frontend gets
+# them as SDL_EVENT_DROP_FILE. .fds stays out: the ROM browser lists it, but
+# the loader reads only iNES images and rejects every .fds file.
 write_file "$CONTENTS/Info.plist" "$(cat <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

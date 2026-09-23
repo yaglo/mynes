@@ -59,6 +59,12 @@ Escape returns to the same row. A gamepad drives the same navigation.
 Selecting another ROM in the browser initializes a fresh console and clears
 the old picture history (and any pause) before playback resumes.
 
+A `.nes` file opened from Finder (double-click or **Open With → MyNES** with
+the app bundle) or dropped on the window loads the same way, with its battery
+save and a place at the top of the recent list, and closes the browser or menu.
+A file that does not load leaves the running game alone; the reason shows in
+the browser when it is open, otherwise in an OPEN ROM FAILED notice.
+
 Room reflections start **off** and the choice is saved as a host setting,
 independent of the preset. Switching off retains each preset's light strengths
 and leaves bloom/internal glass scatter intact. The same toggle is also in

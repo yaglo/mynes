@@ -633,54 +633,62 @@ static SDL_Scancode direction_nav_key(uint8_t bit) {
  * ROM browser and host UI navigation
  * ============================================================================ */
 
-/* Feed one browser key; on selection replace the running console. The
+/* Replace the running console with the cartridge at `path`, for a browser
+ * pick and for a file opened from Finder or dropped on the window. Returns
+ * ROM_OK or the loader's error, which leaves the running console alone. The
  * static frame buffer belongs to main, so it is handed in by reference. */
+static int open_rom(const char *path, bool *console_changed, uint8_t **static_frame) {
+    ROM new_rom;
+    int re = nes_rom_load(&new_rom, path);
+    if (re != ROM_OK) {
+        fprintf(stderr, "Failed to load %s: %s\n", path, nes_rom_error_str(re));
+        return re;
+    }
+    /* The loader resolves header timing plus
+     * explicit legacy PAL filename tags. Flip the
+     * PPU + APU + GPU pipeline so PAL
+     * ROMs decode with the 2C07 table +
+     * correct per-line V-phase inversion. */
+    int new_region = (new_rom.tv_system == NES_TV_PAL)
+                     ? SIGNAL_REGION_PAL
+                     : SIGNAL_REGION_NTSC;
+    if (new_region != preset_ctx.region) {
+        bool rebuilt = preset_set_region(
+            &preset_ctx, new_region);
+        if (rebuilt && tap_mgr) {
+            /* tap_mgr caches per-stage
+             * metadata that's stale
+             * after the rebuild. */
+            debug_tap_destroy(tap_mgr);
+            tap_mgr = debug_tap_create(gpu,
+                gpu_video_enabled ? &video_gpu_chain.sig_chain : NULL,
+                NULL);
+        }
+        region = new_region;
+    }
+    /* The outgoing cartridge's battery RAM goes to disk first. */
+    saves_flush(false);
+    playback_load_cartridge(playback,&new_rom,new_region);
+    playback_active = false;
+    *console_changed = true;
+    nes_rom_free(&rom);
+    rom = new_rom;
+    rom_loaded = true;
+    saves_attach(path);
+    free(*static_frame);
+    *static_frame = NULL;
+    mynes_config_add_recent(&mynes_config, path);
+    mynes_config_save(&mynes_config);
+    fprintf(stderr, "Loaded %s\n", path);
+    return ROM_OK;
+}
+
+/* Feed one browser key; on selection replace the running console. */
 static void browser_key(BrowserKey key, bool *console_changed, uint8_t **static_frame) {
     BrowserResult r = browser_handle_key(&browser, key);
     if (r == BROWSER_SELECTED) {
-        ROM new_rom;
-        int re = nes_rom_load(&new_rom, browser.chosen_path);
-        if (re == ROM_OK) {
-            /* The loader resolves header timing plus
-             * explicit legacy PAL filename tags. Flip the
-             * PPU + APU + GPU pipeline so PAL
-             * ROMs decode with the 2C07 table +
-             * correct per-line V-phase inversion. */
-            int new_region = (new_rom.tv_system == NES_TV_PAL)
-                             ? SIGNAL_REGION_PAL
-                             : SIGNAL_REGION_NTSC;
-            if (new_region != preset_ctx.region) {
-                bool rebuilt = preset_set_region(
-                    &preset_ctx, new_region);
-                if (rebuilt && tap_mgr) {
-                    /* tap_mgr caches per-stage
-                     * metadata that's stale
-                     * after the rebuild. */
-                    debug_tap_destroy(tap_mgr);
-                    tap_mgr = debug_tap_create(gpu,
-                        gpu_video_enabled ? &video_gpu_chain.sig_chain : NULL,
-                        NULL);
-                }
-                region = new_region;
-            }
-            /* The outgoing cartridge's battery RAM goes to disk first. */
-            saves_flush(false);
-            playback_load_cartridge(playback,&new_rom,new_region);
-            playback_active = false;
-            *console_changed = true;
-            nes_rom_free(&rom);
-            rom = new_rom;
-            rom_loaded = true;
-            saves_attach(browser.chosen_path);
-            free(*static_frame);
-            *static_frame = NULL;
-            mynes_config_add_recent(&mynes_config,
-                                    browser.chosen_path);
-            mynes_config_save(&mynes_config);
-            fprintf(stderr, "Loaded %s\n", browser.chosen_path);
-        } else {
-            fprintf(stderr, "Failed to load %s: %s\n",
-                browser.chosen_path, nes_rom_error_str(re));
+        int re = open_rom(browser.chosen_path, console_changed, static_frame);
+        if (re != ROM_OK) {
             browser_set_error(&browser,nes_rom_error_str(re));
             r=BROWSER_BROWSING;
         }
@@ -692,6 +700,28 @@ static void browser_key(BrowserKey key, bool *console_changed, uint8_t **static_
     if (r != BROWSER_BROWSING) {
         browser_active = false;
         SDL_StopTextInput(window);
+    }
+}
+
+/* A file opened from Finder (SDL reports it as a drop with window ID 0) or
+ * dropped on the window. It loads like a browser pick and closes the
+ * browser and the menu; a file that does not load leaves the game running
+ * and says why, in the browser when it is open, else in a notice. */
+static void drop_file(const char *path, bool *console_changed, uint8_t **static_frame) {
+    int re = open_rom(path, console_changed, static_frame);
+    if (re == ROM_OK) {
+        close_osd_menu();
+        if (browser_active) {
+            browser_active = false;
+            SDL_StopTextInput(window);
+        }
+    } else if (browser_active) {
+        browser_set_error(&browser, nes_rom_error_str(re));
+    } else {
+        const char *name = strrchr(path, '/');
+        char value[96];
+        snprintf(value, sizeof(value), "%s: %s", name ? name + 1 : path, nes_rom_error_str(re));
+        show_notice("OPEN ROM FAILED", value);
     }
 }
 
@@ -1606,7 +1636,7 @@ int main(int argc, char **argv) {
                 (ev.type == SDL_EVENT_KEY_DOWN || ev.type == SDL_EVENT_KEY_UP ||
                  ev.type == SDL_EVENT_TEXT_INPUT || ev.type == SDL_EVENT_MOUSE_WHEEL ||
                  ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || ev.type == SDL_EVENT_GAMEPAD_BUTTON_UP ||
-                 ev.type == SDL_EVENT_GAMEPAD_AXIS_MOTION ||
+                 ev.type == SDL_EVENT_GAMEPAD_AXIS_MOTION || ev.type == SDL_EVENT_DROP_FILE ||
                  ev.type == SDL_EVENT_GAMEPAD_ADDED || ev.type == SDL_EVENT_GAMEPAD_REMOVED)) continue;
             /* Resizes, fullscreen switches and display changes reallocate the
              * swapchain and CRT targets; the frames around them say nothing
@@ -1898,6 +1928,10 @@ int main(int argc, char **argv) {
                                 ui_navigate(direction_nav_key(bit), &console_changed, &static_frame_buf);
                     break;
                 }
+
+                case SDL_EVENT_DROP_FILE:
+                    if (ev.drop.data) drop_file(ev.drop.data, &console_changed, &static_frame_buf);
+                    break;
 
                 case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
                     if(offscreen_w) break;
