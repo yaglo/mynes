@@ -763,7 +763,8 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
         SDL_GPUColorTargetInfo ct;
         memset(&ct, 0, sizeof(ct));
         ct.texture = swapchain_tex;
-        ct.load_op = SDL_GPU_LOADOP_CLEAR;
+        /* The subpixel lab's second pass draws over half of a finished frame. */
+        ct.load_op = params->lab_scissor_w > 0 ? SDL_GPU_LOADOP_LOAD : SDL_GPU_LOADOP_CLEAR;
         ct.store_op = SDL_GPU_STOREOP_STORE;
         /* Continue the unlit glass level into letterbox/pillarbox margins.
          * Match the final shader's ambient level and output transfer so
