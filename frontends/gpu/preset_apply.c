@@ -1296,7 +1296,7 @@ void preset_ctx_init(PresetCtx *ctx) {
      * ================================================================ */
     n = 0;
     menu_phosphor[n++] = MI_CYCLIC("Mask type",      &vc->tv.mask_type, 0.0f, 2.0f, gpu_cb_update_beam_params, "Shadow|Grille|Slot");
-    menu_phosphor[n++] = MI_FLOAT("Mask triads (0=pixels)", &vc->tv.mask_triads, 10.0f, 0.0f, 1200.0f, NULL, "%.0f");
+    menu_phosphor[n++] = MI_FLOAT("Mask triads (0=pixels)", &vc->tv.mask_triads, 10.0f, 0.0f, 2000.0f, NULL, "%.0f");
     menu_phosphor[n++] = MI_FLOAT("Pitch (triads=0)",   &vc->tv.mask_pitch_px,       0.5f, 1.0f, 20.0f, gpu_cb_update_beam_params, "%.1f");
     menu_phosphor[n++] = MI_FLOAT("Mask strength",   &vc->tv.mask_strength,       0.05f, 0.0f, 1.0f, gpu_cb_update_beam_params, "%.2f");
     /* Lifetimes are estimated exponential constants, not a universal P22 specification. */
@@ -1551,7 +1551,7 @@ void preset_register_debug_controls(PresetCtx *ctx, DebugServer *server) {
         {"Red lifetime scale", "Phosphor", &tv->persistence_r, 0, 1, gpu_cb_update_beam_params},
         {"Green lifetime scale", "Phosphor", &tv->persistence_g, 0, 1, gpu_cb_update_beam_params},
         {"Blue lifetime scale", "Phosphor", &tv->persistence_b, 0, 1, gpu_cb_update_beam_params},
-        {"Mask triads across", "Phosphor", &tv->mask_triads, 0, 1200, NULL},
+        {"Mask triads across", "Phosphor", &tv->mask_triads, 0, 2000, NULL},
         {"Mask pitch (triads = 0)", "Phosphor", &tv->mask_pitch_px, 1, 12, NULL},
         {"Emission gain", "Phosphor", &tv->hdr_gain, 0.5f, 3, NULL},
         {"Mask strength", "Phosphor", &tv->mask_strength, 0, 1, NULL},
