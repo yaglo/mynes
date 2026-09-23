@@ -152,12 +152,31 @@ def light_levels(rgb: np.ndarray) -> tuple[int, int]:
     return int(np.ceil(peak.max())), int(np.ceil(peak.mean()))
 
 
+def srgb_info():
+    """The chunk an SDR PNG carries: sRGB with the perceptual intent, no ICC
+    profile, so browsers show the renderer's values as sRGB."""
+    from PIL.PngImagePlugin import PngInfo
+    info = PngInfo()
+    info.add(b"sRGB", b"\x00")
+    return info
+
+
+def sdr_png(src: Path | str, out: Path | str) -> tuple[int, int]:
+    """An 8-bit RGB PNG rewritten lossless with the sRGB chunk and nothing
+    else (ffmpeg's PNGs have no colour chunk)."""
+    from PIL import Image
+    with Image.open(src) as im:
+        rgb = im.convert("RGB")
+        rgb.save(out, optimize=True, pnginfo=srgb_info())
+        return rgb.size
+
+
 def sdr_crop(src: Path | str, out: Path | str, rect: Rect) -> tuple[int, int]:
-    """1:1 crop of an 8-bit PNG, saved lossless."""
+    """1:1 crop of an 8-bit PNG, saved lossless with the sRGB chunk."""
     from PIL import Image
     with Image.open(src) as im:
         part = im.convert("RGB").crop((rect.x, rect.y, rect.x + rect.w, rect.y + rect.h))
-        part.save(out, optimize=True)
+        part.save(out, optimize=True, pnginfo=srgb_info())
         return part.size
 
 
@@ -168,5 +187,22 @@ def sdr_reduce(src: Path | str, out: Path | str) -> tuple[int, int]:
         if im.width % 2 or im.height % 2:
             raise ValueError(f"{src}: the 2x2 average needs even dimensions, got {im.width}x{im.height}")
         small = im.convert("RGB").reduce(2)
-        small.save(out, optimize=True)
+        small.save(out, optimize=True, pnginfo=srgb_info())
         return small.size
+
+
+def png_chunk_types(path: Path | str) -> list[str]:
+    """The chunk types of a PNG file, in order."""
+    import struct
+    out = []
+    with open(path, "rb") as f:
+        if f.read(8) != b"\x89PNG\r\n\x1a\n":
+            raise ValueError(f"{path}: not a PNG")
+        while True:
+            head = f.read(8)
+            if len(head) < 8:
+                break
+            length, kind = struct.unpack(">I4s", head)
+            out.append(kind.decode("latin-1"))
+            f.seek(length + 4, 1)
+    return out

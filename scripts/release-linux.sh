@@ -16,9 +16,9 @@
 # no -march=native) so they run on other machines. SDL3 is built in and
 # linked statically by default (MYNES_BUNDLED_SDL3=ON) so the tarball does
 # not depend on the target distribution's SDL3; that needs the X11/Wayland
-# development packages (on Debian/Ubuntu: libx11-dev libxext-dev
-# libwayland-dev libxkbcommon-dev libdecor-0-dev libpulse-dev libasound2-dev
-# libgl-dev libvulkan-dev). Set MYNES_BUNDLED_SDL3=OFF to link the system
+# development packages (on Debian/Ubuntu the apt list in README.md, from
+# build-essential and pkg-config to libpulse-dev and libasound2-dev). Set
+# MYNES_BUNDLED_SDL3=OFF to link the system
 # SDL3 instead, and MYNES_CMAKE_ARGS for anything else (e.g. -DSDL3_DIR=...).
 #
 # Requirements: cmake, a C compiler, tar; glslc + spirv-cross only if you

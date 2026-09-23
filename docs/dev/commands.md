@@ -95,11 +95,11 @@ leaves only the new outputs.
 
 ### Building on Linux
 
-Debian/Ubuntu packages for a full build:
+Debian/Ubuntu packages for a full build, on top of the apt list in
+README.md that the bundled SDL3 needs:
 
 ```bash
-sudo apt-get install cmake build-essential libsdl2-dev glslc spirv-cross \
-    libvulkan-dev mesa-vulkan-drivers
+sudo apt-get install libsdl2-dev glslc spirv-cross mesa-vulkan-drivers
 ```
 
 (`glslc` and `spirv-cross` are optional, see above; `mesa-vulkan-drivers`

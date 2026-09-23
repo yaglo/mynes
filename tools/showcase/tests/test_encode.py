@@ -477,6 +477,10 @@ class EncodePipeline(unittest.TestCase):
                 Image.open(d / "crop-sdr@1x.png") as small:
             self.assertEqual(np.asarray(crop).tolist(), np.asarray(still.crop(rect.box)).tolist())
             self.assertEqual(np.asarray(small).tolist(), np.asarray(crop.reduce(2)).tolist())
+        for name in ("still-sdr.png", "crop-sdr.png", "crop-sdr@1x.png"):  # sRGB chunk, no ICC profile
+            kinds = images.png_chunk_types(d / name)
+            self.assertIn("sRGB", kinds, name)
+            self.assertNotIn("iCCP", kinds, name)
         still = decode_hdr(d / "still-hdr.png", LENS)
         crop = decode_hdr(d / "crop-hdr.png", (rect.w, rect.h))
         small = decode_hdr(d / "crop-hdr@1x.png", (rect.w // 2, rect.h // 2))

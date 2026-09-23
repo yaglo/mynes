@@ -174,7 +174,7 @@ In `out/<shot>/<preset>/<WxH>/`:
 | `lens-hdr-hevc.mp4` | 3840x2880 | As `stage-hdr-hevc.mp4` at crf 14, no audio; lens shots only |
 | `lens-hdr-av1.mp4` | 3840x2880 | As `stage-hdr-av1.mp4` at crf 20, no audio; lens shots only |
 | `lens-sdr-hevc.mp4` | 3840x2880 | libx265 Main, crf 14, BT.709, no audio; lens shots only |
-| `still-sdr.png` | 3840x2880 | Frame `thumbnail_frame` of the SDR render, lossless |
+| `still-sdr.png` | 3840x2880 | Frame `thumbnail_frame` of the SDR render, lossless, with an sRGB chunk and no ICC profile (as every SDR PNG here) |
 | `still-hdr.png` | 3840x2880 | The same frame of the HDR render, 16-bit PQ PNG with a cICP chunk |
 | `still-hdr.avif` | 3840x2880 | `avifenc --cicp 9/16/9 --depth 10 --yuv 444 --range full -q 90 --clli MaxCLL,MaxFALL` from `still-hdr.png` |
 | `crop-sdr.png`, `crop-sdr@1x.png` | crop | 1:1 detail crop of `still-sdr.png`, and its 2x2 average |
@@ -281,23 +281,23 @@ holding version 1 keys.
 
 | Shot | Game and scene | Length | Replay | Crop (NES px) | Lens | README |
 |---|---|---|---|---|---|---|
-| `super-mario-bros` | Super Mario Bros., World 1-1 running right | 6 s | right, jump | 62,105 100x93.75 | PVM, Stas's; every other preset as a crop | PVM, Stas's |
+| `super-mario-bros` | Super Mario Bros., World 1-1 running right | 6 s | right, jump | 62,105 100x93.75 | every other preset as a crop | PVM, Stas's |
 | `legend-of-zelda` | The Legend of Zelda, overworld start, walk up | 6 s | up | 78,97 100x93.75 | | |
 | `punch-out` | Punch-Out!!, first fight, crowd visible | 15 s | | 78,9 100x93.75 | | PVM |
 | `journey-to-silius` | Journey to Silius, stage 1 with the dithered sky | 15 s | right | 78,17 100x93.75 | | |
-| `castlevania-3` | Castlevania III, clock tower or the first stage | 6 s | right | 78,65 100x93.75 | PVM, Stas's | |
+| `castlevania-3` | Castlevania III, clock tower or the first stage | 6 s | right | 78,65 100x93.75 | | |
 | `blaster-master` | Blaster Master, area 1 driving right | 6 s | right | 78,97 100x93.75 | | |
 | `ninja-gaiden` | Ninja Gaiden, opening cutscene panel then gameplay | 15 s | | 78,65 100x93.75 | | |
 | `mega-man-2` | Mega Man 2, stage select flashing, then a boss intro | 15 s | Start at frame 120 | 78,65 100x93.75 | | |
-| `metroid` | Metroid, Brinstar start, bright shots on black | 6 s | right, fire | 78,97 100x93.75 | PVM, Stas's | |
+| `metroid` | Metroid, Brinstar start, bright shots on black | 6 s | right, fire | 78,97 100x93.75 | | |
 | `batman` | Batman, stage 1 | 6 s | right | 78,97 100x93.75 | | |
 
 Every shot is recorded on `sony_pvm_14l2`, `jvc_d_series_2000`,
 `toshiba_14af43`, `stass_favourite`, `vhs_sp_consumer` and
 `reference_composite`. `"lens": true` gives lens clips on all of a shot's
-presets; a list of presets limits them. The three lens shots have lens
-clips on the Sony PVM-14L2 and Stas's Favourite: a 6 s lens clip is about
-70 MB more on the site.
+presets; a list of presets limits them. No shot has lens clips at present:
+a 6 s lens clip adds about 70 MB to the site, which is near the GitHub Pages
+budget with one game on every preset. Inspect then shows the still.
 
 `crops` lists presets that get the still frame and its detail crop but no
 clip. They are recorded for that one frame at full size, and the site shows

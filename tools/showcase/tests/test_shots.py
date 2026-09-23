@@ -36,12 +36,8 @@ class RealShotList(unittest.TestCase):
             rect = recipes.flicker_geometry(s.flicker_crop, d.lens_size)
             self.assertEqual((rect.w, rect.h), (1500, 1125), s.id)
             self.assertTrue((shots.PRESETS_DIR / f"{s.default_preset}.json").exists())
-        lens = [s.id for s in sl.shots if s.lens]
-        self.assertEqual(lens, ["super-mario-bros", "castlevania-3", "metroid"])
-        for s in sl.shots:
-            if s.lens:
-                self.assertEqual(s.kind, "hero")
-                self.assertEqual(s.lens, ["sony_pvm_14l2", "stass_favourite"])
+        # No lens clips while the site is near its size budget: a 6 s lens clip is about 70 MB.
+        self.assertEqual([s.id for s in sl.shots if s.lens], [])
         # Super Mario Bros. has every other preset file as a crop-only preset.
         mario = sl.shot("super-mario-bros")
         self.assertEqual(sorted(mario.presets + mario.crops), sorted(p.stem for p in shots.PRESETS_DIR.glob("*.json")))

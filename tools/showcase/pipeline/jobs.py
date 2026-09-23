@@ -617,8 +617,10 @@ def encode_still(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dict 
         rect = recipes.flicker_geometry(shot.flicker_crop, size, ctx.flicker_scale, align=CROP_ALIGN)
         runner.run(recipes.sdr_png_args(sdr.path, d / "still-sdr.png", frame, matrix=sdr.matrix, range_=sdr.range),
                    what=f"still-sdr {shot.id}/{preset}")
-        runner.step(f"cut crop-sdr.png ({rect.crop_filter()}) and crop-sdr@1x.png (Image.reduce(2))",
-                    lambda: (images.sdr_crop(d / "still-sdr.png", d / "crop-sdr.png", rect),
+        runner.step("rewrite still-sdr.png with the sRGB chunk, cut crop-sdr.png "
+                    f"({rect.crop_filter()}) and crop-sdr@1x.png (Image.reduce(2))",
+                    lambda: (images.sdr_png(d / "still-sdr.png", d / "still-sdr.png"),
+                             images.sdr_crop(d / "still-sdr.png", d / "crop-sdr.png", rect),
                              images.sdr_reduce(d / "crop-sdr.png", d / "crop-sdr@1x.png")))
 
         def hdr_work(rgb):

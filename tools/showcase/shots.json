@@ -58,8 +58,8 @@
       "blurb": "Worn slot-mask set over channel-3 RF, imperfect convergence, horizontal recovery"
     },
     "vhs_sp_consumer": {
-      "name": "VHS SP playback",
-      "blurb": "Slightly noisy SP tape on a slot-mask consumer set: soft delayed colour, luma grain, dropouts"
+      "name": "VHS worn tape",
+      "blurb": "Well-used SP tape on a slot-mask consumer set: soft delayed color, luma grain, dropouts, line jitter"
     },
     "reference_composite": {
       "name": "Reference composite",
@@ -159,10 +159,6 @@
         100,
         93.75
       ],
-      "lens": [
-        "sony_pvm_14l2",
-        "stass_favourite"
-      ],
       "caption": "The frame everyone knows, through four televisions.",
       "readme": [
         "sony_pvm_14l2",
@@ -253,10 +249,6 @@
         100,
         93.75
       ],
-      "lens": [
-        "sony_pvm_14l2",
-        "stass_favourite"
-      ],
       "caption": "Fine sprite work and dark backgrounds: beam width and phosphor decay."
     },
     {
@@ -325,10 +317,6 @@
         97,
         100,
         93.75
-      ],
-      "lens": [
-        "sony_pvm_14l2",
-        "stass_favourite"
       ],
       "caption": "Bright shots on black: bloom, halation and beam growth."
     },

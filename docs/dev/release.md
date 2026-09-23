@@ -218,8 +218,10 @@ Builds with `MYNES_PORTABLE_BINARY=ON` and, by default,
 tarball then only needs the system's Vulkan loader, X11/Wayland client
 libraries and audio server, not a particular SDL3 package. Building SDL
 from source needs the usual development packages (on Debian/Ubuntu:
-`libx11-dev libxext-dev libwayland-dev libxkbcommon-dev libdecor-0-dev
-libpulse-dev libasound2-dev libgl-dev libvulkan-dev`). Set
+`build-essential git cmake pkg-config libvulkan-dev libx11-dev libxext-dev
+libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev
+libwayland-dev libxkbcommon-dev libdecor-0-dev libegl-dev libgl-dev
+libpulse-dev libasound2-dev`, the list the README gives). Set
 `MYNES_BUNDLED_SDL3=OFF` to link the distribution's SDL3 instead and
 `MYNES_CMAKE_ARGS` to pass anything else through to CMake.
 
