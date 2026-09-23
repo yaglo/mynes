@@ -122,8 +122,9 @@ options after it.
    modification time (the copy keeps the build's time), so a file restored by
    `git checkout` is replaced too. `install` reads and merges the manifest
    before it copies anything, and stops without copying when the manifest does
-   not parse or when no selected clip is complete (the manifest is then left
-   as it was). It refuses, listing the 20 largest files, when the site's
+   not parse, when an HDR render's `hdr.json` is missing or lacks `max_cll`
+   and `max_fall`, or when no selected clip is complete (the manifest is then
+   left as it was). It refuses, listing the 20 largest files, when the site's
    `assets/` would exceed `--budget-mb` (default 900; GitHub Pages sites must
    stay under 1 GB). `--with-crops` also copies the detail crops.
 

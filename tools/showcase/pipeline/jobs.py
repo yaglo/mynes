@@ -877,21 +877,42 @@ def collect_clip(ctx: Context, runner: Runner, shot: Shot, preset: str) -> ClipI
     if fast:
         runner.say(f"warning: {shot.id}/{preset}: {', '.join(fast)} made with --fast (hevc_videotoolbox, "
                    f"no HDR10 metadata); run encode without --fast before publishing")
-    sidecars = [read_sidecar(ctx.render_path(shot, preset, r.size, True)) or {}
-                for r in render_plan(ctx, shot, preset)]
+    sidecars = _hdr_sidecars(ctx, shot, preset)
     entry = {
         "poster": posters,
         "stage": [_source_entry(src, rel, spec.hdr) for spec, src, rel in stage],
         "still": {"hdr": still_hdr, "sdr": still_sdr, "width": d.lens_size[0], "height": d.lens_size[1],
                   "frame": shot.thumbnail_frame},
-        "hdr": {"white_nits": sidecars[0].get("white_nits", d.hdr_white_nits),
-                "headroom": sidecars[0].get("headroom", d.hdr_headroom),
-                "max_cll": max(int(s.get("max_cll", 0)) for s in sidecars),
-                "max_fall": max(int(s.get("max_fall", 0)) for s in sidecars)},
+        "hdr": {"white_nits": _number(sidecars[0].get("white_nits"), d.hdr_white_nits),
+                "headroom": _number(sidecars[0].get("headroom"), d.hdr_headroom),
+                "max_cll": max(int(s["max_cll"]) for s in sidecars),
+                "max_fall": max(int(s["max_fall"]) for s in sidecars)},
     }
     if lens:
         entry["lens"] = [_source_entry(src, rel, spec.hdr) for spec, src, rel in lens]
     return ClipInstall(shot, preset, copies, entry)
+
+
+def _hdr_sidecars(ctx: Context, shot: Shot, preset: str) -> list[dict]:
+    """The sidecar of every HDR render in the clip's plan, each with numeric
+    max_cll and max_fall: the manifest's light levels come from them."""
+    sidecars = []
+    for r in render_plan(ctx, shot, preset):
+        if not r.hdr_frames:
+            continue
+        render = ctx.render_path(shot, preset, r.size, True)
+        sidecar = read_sidecar(render)
+        if sidecar is None:
+            raise PipelineError(f"{sidecar_path(render)} is missing: the manifest's max_cll and max_fall come from "
+                                f"it (showcase.py --shots {shot.id} --presets {preset} record)")
+        if not _has_levels(sidecar):
+            raise PipelineError(f"{sidecar_path(render)} lacks numeric max_cll and max_fall")
+        sidecars.append(sidecar)
+    return sidecars
+
+
+def _number(value, default):
+    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else default
 
 
 def assets_budget(site: Path, copies: list[tuple[Path, str]]) -> tuple[int, list[tuple[int, str, str]]]:

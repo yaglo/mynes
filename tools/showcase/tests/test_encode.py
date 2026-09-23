@@ -634,6 +634,27 @@ class EncodePipeline(unittest.TestCase):
         entry = next(e for e in merged["clips"]["synth"]["p_sony"]["stage"] if e["src"].endswith("256x192/stage-sdr.mp4"))
         self.assertEqual((entry["width"], entry["bytes"]), (256, stale.stat().st_size))
 
+    def test_install_needs_the_hdr_sidecars(self):
+        """The manifest's light levels come from the HDR sidecars; without
+        them install stops before copying anything."""
+        sidecar = self.ctx.render_path(self.shot, "p_sony", STAGE[1], True).with_suffix(".json")
+        levels = json.loads(sidecar.read_text())
+        self.backup(sidecar)
+        for i, (text, message) in enumerate(((None, f"{sidecar} is missing"),
+                                             (json.dumps({**levels, "max_cll": None}),
+                                              f"{sidecar} lacks numeric max_cll and max_fall"))):
+            if text is None:
+                sidecar.unlink()
+            else:
+                sidecar.write_text(text)
+            site = self.make_site(f"site-sidecar-{i}")
+            manifest = (site / "assets" / "hero" / "manifest.json").read_text()
+            with self.assertRaises(PipelineError) as cm:
+                jobs_mod.install(self.install_ctx(site), Runner(quiet=True), self.shot_list.select())
+            self.assertIn(message, str(cm.exception))
+            self.assertFalse((site / "assets" / "hero" / "synth").exists())
+            self.assertEqual((site / "assets" / "hero" / "manifest.json").read_text(), manifest)
+
     def test_install_reads_the_manifest_before_copying(self):
         for i, text in enumerate(('{"version": 2, "clips": {', "[1, 2]", '{"clips": {"synth": {"p_sony": "oops"}}}')):
             site = self.make_site(f"site-bad-{i}")
