@@ -473,8 +473,10 @@ int test_display_fidelity(SDL_GPUDevice *gpu) {
         render(gpu,&d,input,target,&p,avg,&peak);
         printf("Grille period %d px: SDR mean/peak %.4f/%.4f, EDR %.4f/%.4f\n",
                3*pitch,sdr_mean,sdr_peak,avg[0],peak);
-        CHECK(avg[0]>sdr_mean && peak>sdr_peak);
-        CHECK(fabsf(avg[0]-.5f)<.002f);
+        // SDR keeps the field's light by spilling what a stripe cannot show
+        // into its gaps; only the peak is higher with headroom.
+        CHECK(peak>sdr_peak && sdr_peak<=1.0001f);
+        CHECK(fabsf(sdr_mean-.5f)<.002f && fabsf(avg[0]-.5f)<.002f);
         CHECK(fabsf(avg[0]-avg[2])<.002f);
     }
     // Limited host headroom must preserve RGB ratios and a nonzero
@@ -574,19 +576,20 @@ int test_display_fidelity(SDL_GPUDevice *gpu) {
     render(gpu,&d,input,target,&p,avg,&peak);
     CHECK(fabsf(avg[0]-.5f*.8224621f)<.002f && fabsf(avg[1]-.5f*.0331941f)<.001f && fabsf(avg[2]-.5f*.0170827f)<.001f);
     p.output_p3=0;
-    // Where the panel cannot show a colour's brightest stripe, the shoulder
-    // dims the whole triad: on a three-pixel grille at 1.5 headroom the blue
-    // stripe of (0.2, 0.3, 0.6) reaches 1.8, past the knee at 1.125, while
-    // red and green stay under it. The field keeps its channel ratios and
-    // comes out darker than the input.
+    // Where the panel cannot show a colour's brightest stripe, the light
+    // it cannot show moves to that colour's other pixels of the triad: on a
+    // three-pixel grille at 1.5 headroom the blue stripe of (0.2, 0.3, 0.6)
+    // reaches 1.8, past the knee at 1.125, while red and green stay under
+    // it. The field keeps its mean and its channel ratios, and no pixel
+    // passes the limit.
     {
         GPUDisplayParams saved=p;
         p.glass_reflection=0;p.halation_strength=0;p.antiglare_blur=0;p.mask_type=1;p.mask_pitch_px=1;p.mask_strength=1;
         p.panel_subpixels=0;p.damper_wires=0;p.output_hdr=1;p.hdr_headroom=1.5f;p.sdr_white_level=1;p.hdr_gain=1;p.phosphor_gamut=0;
         clear_rgb(gpu,input,.2f,.3f,.6f);
         render(gpu,&d,input,target,&p,avg,&peak);
-        CHECK(fabsf(avg[0]/avg[2]-1.0f/3)<.005f && fabsf(avg[1]/avg[2]-.5f)<.005f);
-        CHECK(avg[2]<.55f && avg[2]>.4f);
+        CHECK(fabsf(avg[0]-.2f)<.003f && fabsf(avg[1]-.3f)<.003f && fabsf(avg[2]-.6f)<.003f);
+        CHECK(peak<1.5f);
         p=saved;
     }
     // Wavelength-dependent scatter fractions must leave a uniform field

@@ -109,6 +109,8 @@ layout(set = 3, binding = 0) uniform DisplayParams {
 // the mask, for the output shoulder: it needs the triad's brightest pixel.
 vec3 g_drive=vec3(0.0);
 vec3 g_post=vec3(1.0);
+vec3 g_cov=vec3(1.0);   // this pixel's mask coverage at the mask's strength
+vec3 g_add=vec3(0.0);   // light added after the mask (the halo), for the same estimate
 
 float sinc_pi(float x) {
     return abs(x)<0.0001 ? 1.0 : sin(3.14159265359*x)/(3.14159265359*x);
@@ -270,10 +272,11 @@ vec3 phosphor_light(vec2 p, vec2 face_pos) {
     }
 
     vec3 drive=color;
-    g_drive=drive;
+    g_drive=drive; g_cov=vec3(1.0);
     if (mask_strength > 0.01) {
         vec3 coverage=phosphor_mask(face_pos,p);
-        color *= mix(vec3(1.0), coverage, mask_strength);
+        g_cov=mix(vec3(1.0), coverage, mask_strength);
+        color *= g_cov;
     }
     // Generic legacy material-response control, not a measured phosphor fit.
     // Use unmasked excitation: changing host pitch must not change the
@@ -291,7 +294,7 @@ vec3 phosphor_light(vec2 p, vec2 face_pos) {
 // through the grille, the matte surface and glass scatter.
 vec3 face_emission(vec2 sample_uv, vec2 face_pos) {
     vec3 color=phosphor_light(sample_uv,face_pos);
-    vec3 drive=g_drive, post=vec3(1.0);
+    vec3 drive=g_drive, cov=g_cov, post=vec3(1.0), add=vec3(0.0);
     // Fine surface scatter acts AFTER emission through the fixed grille.
     // Radius follows phosphor pitch, not source texture or UI-point size.
     if (antiglare_blur > 0.001) {
@@ -316,10 +319,11 @@ vec3 face_emission(vec2 sample_uv, vec2 face_pos) {
         if (tint.r + tint.g + tint.b < 1e-4) tint = vec3(1.0);
         vec3 h=clamp(halation_strength*tint,vec3(0.0),vec3(1.0));
         float r=clamp(glass_reflection*0.08,0.0,1.0);
-        color=mix(color,halo,1.0-(1.0-h)*(1.0-r));
-        post*=(1.0-h)*(1.0-r);
+        vec3 k=1.0-(1.0-h)*(1.0-r);
+        color=mix(color,halo,k);
+        post*=1.0-k; add+=k*halo;
     }
-    g_drive=drive; g_post=post;
+    g_drive=drive; g_cov=cov; g_post=post; g_add=add;
     return color;
 }
 
@@ -343,7 +347,7 @@ void main() {
      * pass only samples the already-landed beam texture and applies
      * fixed screen/glass optics at the physical tube face. */
     vec2 sample_uv = clamp(uv, vec2(0.0), vec2(1.0));
-    vec3 color, unmasked;
+    vec3 color, unmasked, cov;
     vec2 face_pos=gl_FragCoord.xy*mask_scale+mask_origin;
     vec3 gain=vec3(damper_light(sample_uv.y));
 
@@ -400,11 +404,11 @@ void main() {
         float third=monitor.y>1.5 ? -1.0/3.0 : 1.0/3.0;
         vec2 step_uv=vec2(third/out_size.x,0.0), step_face=vec2(third*mask_scale.x,0.0);
         vec3 at_red=max(face_emission(clamp(uv-step_uv,vec2(0.0),vec2(1.0)),face_pos-step_face)*gain,vec3(0.0));
-        vec3 lit=g_drive*g_post;
+        vec3 lit=g_drive*g_post+g_add; cov.r=g_cov.r;
         vec3 at_green=max(face_emission(sample_uv,face_pos)*gain,vec3(0.0));
-        lit=max(lit,g_drive*g_post);
+        lit=max(lit,g_drive*g_post+g_add); cov.g=g_cov.g;
         vec3 at_blue=max(face_emission(clamp(uv+step_uv,vec2(0.0),vec2(1.0)),face_pos+step_face)*gain,vec3(0.0));
-        lit=max(lit,g_drive*g_post)*gain;
+        lit=max(lit,g_drive*g_post+g_add)*gain; cov.b=g_cov.b;
         color=vec3(dot(phosphor_to_display[0].rgb,at_red),
                    dot(phosphor_to_display[1].rgb,at_green),
                    dot(phosphor_to_display[2].rgb,at_blue));
@@ -413,7 +417,7 @@ void main() {
                       dot(phosphor_to_display[2].rgb,lit));
     } else {
         color=max(face_emission(sample_uv,face_pos)*gain,vec3(0.0));
-        vec3 lit=max(g_drive*g_post*gain,vec3(0.0));
+        vec3 lit=max((g_drive*g_post+g_add)*gain,vec3(0.0)); cov=g_cov;
         color=vec3(dot(phosphor_to_display[0].rgb,color),
                    dot(phosphor_to_display[1].rgb,color),
                    dot(phosphor_to_display[2].rgb,color));
@@ -570,23 +574,30 @@ void main() {
         }
         color = max(color,vec3(0.0));
     }
-    // Output adaptation, not tube physics. A continuous shoulder preserves
-    // highlight gradients and RGB ratios when the host lacks phosphor peak
-    // headroom. Independent channel clipping used to wash out the grille.
-    // Auto HDR gain fits white under a higher knee, leaving the shoulder
-    // only for light above white's peak.
-    // The brightest pixel of this pixel's triad, from the unmasked light
-    // and the mask's peak coverage, not this pixel alone: every pixel of
-    // the triad takes the same factor, so a stripe over the limit dims its
-    // whole triad and the colour keeps its hue. Per pixel, a bright blue
-    // stripe was squeezed on its own and its triad turned purple.
-    float peak=max(max(max(unmasked.r,unmasked.g),unmasked.b)*max(monitor.w,1.0),
-                   max(max(color.r,color.g),color.b));
-    float limit=max(hdr_headroom,1.0), knee=monitor.z*limit;
-    if (peak>knee) {
-        float mapped=knee+(limit-knee)*(peak-knee)/(peak-knee+limit-knee);
-        color*=mapped/peak;
-    }
+    // Output adaptation, not tube physics. Where the panel cannot show a
+    // colour's brightest stripe, the light it cannot show moves to the same
+    // colour's subpixel in the triad's other pixels instead of being lost:
+    // the tube's stripe is wider than the subpixel it lands on anyway. The
+    // triad's mean stays exact, so brightness follows the gain, and the
+    // grille softens only where the drive exceeds the panel, as a tube's
+    // spot blooms at high beam current. Without a mask this is the plain
+    // continuous shoulder on the pixel itself.
+    float limit=max(hdr_headroom,1.0), knee=monitor.z*limit, mpeak=max(monitor.w,1.0);
+    vec3 p=unmasked*mpeak;                         // the triad's lit peak per channel
+    float peak=max(max(max(p.r,p.g),p.b),1e-6);
+    // One factor for the whole triad keeps its hue; the lit pixel shows
+    // that share and the rest of each colour goes to its other pixels.
+    float keep=peak>knee ? (knee+(limit-knee)*(peak-knee)/(peak-knee+limit-knee))/peak : 1.0;
+    // Each pixel's share of the colour's spill: its unlit part over the
+    // triad's, which sums to period*(1-1/peak) because coverage averages 1.
+    float period=max(3.0*mask_pitch_pixels/max(mask_scale.x,0.001),1.0);
+    vec3 spill=mpeak>1.001 ? clamp((1.0-cov/mpeak)/(period*(1.0-1.0/mpeak)),0.0,1.0) : vec3(0.0);
+    // The triad loses (1-keep) of each colour's light, period*unmasked of
+    // it in all, and that is what its unlit parts receive.
+    color=color*keep+max(unmasked,vec3(0.0))*period*(1.0-keep)*spill;
+    // A pixel that received more than the panel can show is capped there.
+    float own=max(max(color.r,color.g),color.b);
+    if (own>limit) color*=limit/own;
     color = output_hdr != 0 ? color * sdr_white_level : srgb_encode(color);
 
     frag_color = vec4(color, 1.0);

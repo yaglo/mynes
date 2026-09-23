@@ -586,8 +586,9 @@ half; the shipped grille does not read them.
 order (Off, RGB stripe, BGR stripe), Panel primaries (P3 gives the window's layer
 the panel's own primaries where it can take them; sRGB is the compositor's
 conversion), Subpixel lab (below), Auto boost (multiplies the Auto gain,
-1.00 to 2.00; above 1.00 white's stripe centres pass the shoulder's knee, so
-the picture is brighter and the lines and gaps flatter), HDR gain (Auto fits the display's
+1.00 to 2.00; above 1.00 white's stripe centres pass the shoulder's knee and
+what they cannot show spills into the triad's other pixels, so the picture is
+brighter and the grille softens where the drive exceeds the panel), HDR gain (Auto fits the display's
 headroom, Preset uses the preset's own; see the
 [pipeline reference](gpu-pipeline-reference.md)) and two host-side
 performance settings. None is a television setting; all are saved to
