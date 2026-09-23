@@ -41,6 +41,8 @@ typedef struct {
     int             mask_alignment;      /* 0 = panel pixels, 1 = physical CRT pitch */
     int             panel_subpixels;     /* host panel order: 0 unknown/off, 1 RGB stripe, 2 BGR */
     int             effective_panel_subpixels; /* 0 while the desktop resamples the output */
+    int             hdr_gain_mode;       /* 0 = Auto: fit headroom, 1 = preset's emission gain only */
+    float           effective_hdr_gain;  /* emission gain in use; 1 in SDR */
     GPUOutputGeometry output_geometry;
     int             drawable_w, drawable_h;
     float           effective_mask_triads;

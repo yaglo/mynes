@@ -973,6 +973,7 @@ int main(int argc, char **argv) {
     render_ctx.room_reflections_enabled=room_reflections_override>=0
         ? room_reflections_override : mynes_config.gpu_room_reflections;
     render_ctx.mask_alignment=mask_alignment_override>=0 ? mask_alignment_override : mynes_config.gpu_mask_alignment;
+    render_ctx.hdr_gain_mode=mynes_config.gpu_hdr_gain_mode;
     /* Captures and recordings are viewed on other panels: they use the saved
      * subpixel order only when asked for on the command line. */
     render_ctx.panel_subpixels=panel_subpixels_override>=0 ? panel_subpixels_override

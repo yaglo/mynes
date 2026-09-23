@@ -179,6 +179,9 @@ bool mynes_config_load(MynesConfig *cfg) {
                 cfg->recent_roms[cfg->recent_count][MYNES_PATH_MAX - 1] = '\0';
                 cfg->recent_count++;
             }
+        } else if (strstr(s, "\"gpu_hdr_gain_mode\"")) {
+            const char *colon=strchr(s, ':');
+            cfg->gpu_hdr_gain_mode=colon && atoi(colon+1)==1 ? 1 : 0;
         } else if (strstr(s, "\"gpu_panel_subpixels\"")) {
             const char *colon=strchr(s, ':');
             int order=colon ? atoi(colon+1) : 0;
@@ -249,6 +252,7 @@ bool mynes_config_save(const MynesConfig *cfg) {
     }
     fprintf(f, "    ],\n");
     fprintf(f, "    \"gpu_mask_alignment\": %d,\n",cfg->gpu_mask_alignment==1 ? 1 : 0);
+    fprintf(f, "    \"gpu_hdr_gain_mode\": %d,\n",cfg->gpu_hdr_gain_mode==1 ? 1 : 0);
     fprintf(f, "    \"gpu_panel_subpixels\": %d,\n",cfg->gpu_panel_subpixels==1 || cfg->gpu_panel_subpixels==2 ? cfg->gpu_panel_subpixels : 0);
     fprintf(f, "    \"gpu_room_reflections\": %d,\n",cfg->gpu_room_reflections==1 ? 1 : 0);
     fprintf(f, "    \"gpu_render_scale\": \"%s\",\n",

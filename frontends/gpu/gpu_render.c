@@ -464,6 +464,16 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
         disp_params.output_hdr = ctx->hdr_enabled;
         SDL_PropertiesID props = SDL_GetWindowProperties(ctx->window);
         disp_params.hdr_headroom = gpu_render_headroom(ctx);
+        /* Auto HDR gain spends the display's headroom on full-white scanline
+         * centres: emission is scaled so they reach 90% of the current peak.
+         * Never below the preset's own gain, at most 4x. Offscreen captures
+         * keep the preset's gain so recordings do not depend on the host. */
+        float preset_gain = disp_params.hdr_gain > 0 ? disp_params.hdr_gain : 1;
+        if (ctx->crt_shader_enabled && ctx->hdr_enabled && !ctx->offscreen_w && ctx->hdr_gain_mode == 0) {
+            float fit = 0.9f * disp_params.hdr_headroom / gpu_display_scanline_peak(chain->tv.beam_fwhm_max);
+            disp_params.hdr_gain = fmaxf(preset_gain, fminf(fit, 4.0f));
+        }
+        ctx->effective_hdr_gain = ctx->hdr_enabled ? (disp_params.hdr_gain > 0 ? disp_params.hdr_gain : 1) : 1;
         disp_params.sdr_white_level = ctx->hdr_enabled
             ? SDL_GetFloatProperty(props, SDL_PROP_WINDOW_SDR_WHITE_LEVEL_FLOAT, 1.0f) : 1.0f;
         if(ctx->offscreen_w) {

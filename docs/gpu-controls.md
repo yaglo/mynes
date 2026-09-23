@@ -555,7 +555,8 @@ room-lit glass pedestal. Raising black floor does not illuminate blanked raster.
 ## Performance
 
 **M → Host display** holds the mask sampling choice, the panel's subpixel
-order (Off, RGB stripe, BGR stripe; see the
+order (Off, RGB stripe, BGR stripe), HDR gain (Auto fits the display's
+headroom, Preset uses the preset's own; see the
 [pipeline reference](gpu-pipeline-reference.md)) and two host-side
 performance settings. None is a television setting; all are saved to
 `config.json` and apply to every preset. The status lines at the top of the

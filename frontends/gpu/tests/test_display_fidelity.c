@@ -344,6 +344,13 @@ int test_display_fidelity(SDL_GPUDevice *gpu) {
     CHECK(fabsf(row_mean[31][0]/row_mean[20][0]-1.0f)<0.01f);
     p.mask_type=1; p.damper_wires=0;
 
+    // Auto HDR gain divides the headroom by the scanline peak factor: the
+    // PVM's 0.6-line white lines peak 1.57x above a white field's average,
+    // the old 0.9-line lines 1.11x, merged 2-line lines not at all.
+    CHECK(fabsf(gpu_display_scanline_peak(0.6f)-1.566f)<0.005f);
+    CHECK(fabsf(gpu_display_scanline_peak(2.0f)-1.0f)<0.001f);
+    CHECK(fabsf(gpu_display_scanline_peak(0.9f)-1.112f)<0.005f);
+
     // Host fitting must use the drawable/panel ratio, not the 256-pixel source.
     // A 1470-point desktop backed at 2x on a 2560-pixel panel is not a 2940-pixel panel.
     GPUDisplayParams fit={.mask_type=1,.mask_pitch_px=2.24f};

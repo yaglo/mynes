@@ -879,6 +879,13 @@ void gpu_display_params_from_tv(GPUDisplayParams *out, const TVDisplayParams *tv
     out->glass_glare_temp_k  = tv->glass_glare_temp_k;
 }
 
+float gpu_display_scanline_peak(float fwhm_lines) {
+    if (fwhm_lines <= 0.0f) return 1.0f;
+    double sigma = fwhm_lines / 2.354820045, peak = 0;
+    for (int k = -8; k <= 8; k++) peak += exp(-(double)(k * k) / (2 * sigma * sigma));
+    return (float)(peak / (2.5066282746310002 * sigma));
+}
+
 void gpu_display_fit_mask(GPUDisplayParams *p, bool pixel_aligned, int panel_subpixels,
                          float scale_x, float scale_y, float origin_x, float origin_y) {
     p->mask_scale_x=fmaxf(scale_x,0.01f);p->mask_scale_y=fmaxf(scale_y,0.01f);

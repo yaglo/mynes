@@ -23,6 +23,7 @@ typedef struct {
     int  gpu_room_reflections; /* host setting: simulated room light, off by default */
     int  gpu_mask_alignment; /* host setting: 0=panel pixels, 1=CRT pitch */
     int  gpu_panel_subpixels; /* host setting: 0=off, 1=RGB stripe, 2=BGR stripe */
+    int  gpu_hdr_gain_mode;   /* host setting: 0=Auto (fit headroom), 1=preset gain */
     int  gpu_render_scale;   /* host setting: 0=auto, 1=full (default), 2=3/4, 3=half */
     int  gpu_low_latency;    /* host setting: 1=one picture queued ahead of the display */
     char last_preset[MYNES_PRESET_MAX];                  /* slug or filename */

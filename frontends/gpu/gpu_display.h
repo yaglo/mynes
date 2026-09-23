@@ -158,6 +158,11 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
 void gpu_display_params_from_tv(GPUDisplayParams *out, const TVDisplayParams *tv,
                                  int comp_w, int comp_h, int win_w, int win_h);
 
+/* A full-white field's scanline centres sit above its average light by
+ * this factor: Gaussian lines of the given FWHM, one line apart. It is 1
+ * when neighbouring lines merge into a flat field. */
+float gpu_display_scanline_peak(float fwhm_lines);
+
 /* Fit the mask to the host panel, independently of the stored CRT preset.
  * Integer RGB-triad/row periods in pixel mode trade exact CRT pitch for stability.
  * With the panel's subpixel order known (1 RGB, 2 BGR), each colour is drawn at

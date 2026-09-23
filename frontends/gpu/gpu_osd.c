@@ -132,8 +132,11 @@ void gpu_osd_render(uint32_t *rgba, const OSDMenuLevel *level, bool editing,
     text(rgba,x+8,y+7,line,0x30,1);
     snprintf(line,sizeof(line),"%s%.34s",modified ? "* " : "",preset ? preset : "Custom");
     text(rgba,x+8,y+18,line,0x10,1);
-    snprintf(line,sizeof(line),"GPU / %s / %s %.2fX",pal ? "PAL" : "NTSC",
-        render->hdr_enabled ? "HDR" : "SDR",headroom);
+    if (render->hdr_enabled)
+        snprintf(line,sizeof(line),"GPU / %s / HDR %.2fX / GAIN %.2f",pal ? "PAL" : "NTSC",
+            headroom,render->effective_hdr_gain);
+    else
+        snprintf(line,sizeof(line),"GPU / %s / SDR %.2fX",pal ? "PAL" : "NTSC",headroom);
     text(rgba,x+8,y+29,line,0x00,1);
     snprintf(line,sizeof(line),"%dX%d / %s / %.0f TRIADS",render->drawable_w,render->drawable_h,
         render->mask_alignment ? "TUBE" : "PIXELS",render->effective_mask_triads);
