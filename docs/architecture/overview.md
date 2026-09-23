@@ -83,9 +83,6 @@ src/
   nes/debug_chr.h          CHR tile debug renderer
   nes/rom.h                iNES ROM parser
   nes/exit_codes.h         CI exit codes
-include/nes/
-  nes.h                    Public C API (lifecycle, run, input, video, audio)
-  types.h                  Shared types, constants, error codes
 tools/
   dsl2c.scm                DSL-to-C compiler (Chicken Scheme)
   test_runner.c            Headless test execution with Blargg, scripting, traces
@@ -110,22 +107,30 @@ examples/
 | `nes_sdl` | SDL2 frontend (optional, requires SDL2) |
 | `run_rom` | Simple headless ROM runner |
 
-## Public API
+## Driving the Core
 
-The public API in `include/nes/nes.h` provides a clean frontend interface:
+Frontends include `nes/rom.h` and `nes/nes.h` from `src/` and link
+`nes_static`. `frontends/headless/main.c` is the smallest complete example:
 
 ```c
-nes_t *nes = nes_create();
-nes_load_rom_file(nes, "game.nes");
+static ROM rom;
+static NES nes;
+
+nes_rom_load(&rom, "game.nes");
+nes_init(&nes);
+nes_load_mapper(&nes, rom.mapper, rom.prg_rom, rom.prg_size,
+                rom.chr_rom, rom.chr_size, rom.mirroring);
+nes_reset(&nes);
 
 while (running) {
-    nes_run_frame(nes);
-    display(nes_get_framebuffer(nes));
-    nes_set_controller(nes, 0, buttons);
+    nes_set_controller(&nes, 0, buttons);
+    nes_run_frame(&nes);
+    display(nes.ppu.framebuffer);   /* 256x240 RGB888 */
 }
 
-nes_destroy(nes);
+nes_rom_free(&rom);
 ```
 
-Framebuffer output is available in RGB888, RGBA8888, BGRA8888, and RGB565
-formats for compatibility with GPU textures and embedded displays.
+`nes.ppu.index_framebuffer` holds the palette index and emphasis bits of
+each pixel for the composite video paths. Audio samples arrive through
+`apu_set_audio_callback()`, and `src/nes/state.h` saves and loads states.

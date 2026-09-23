@@ -137,7 +137,6 @@ hardware GPU and runs outside CI.
 ## Project layout
 
 ```text
-include/nes/        Public API
 src/cpu/            6502 DSL source
 src/nes/            System, APU, mappers, ROM loading, composite video
 src/ppu/            Dot-accurate PPU

@@ -254,33 +254,33 @@ programmatic API (`trace_parse_categories("mycat")`).
 
 ## Adding a New Frontend
 
-The public API in `include/nes/nes.h` provides everything needed:
+A frontend includes `nes/rom.h` and `nes/nes.h` from `src/` and links
+`nes_static`. `frontends/headless/main.c` is the smallest complete one:
 
 ```c
-#include <nes/nes.h>
+#include "nes/rom.h"
+#include "nes/nes.h"
 
-nes_t *nes = nes_create();
-nes_load_rom_file(nes, "game.nes");
-nes_set_audio_sample_rate(nes, 44100);
+static ROM rom;
+static NES nes;   // 355 KB, so keep it off the stack
+
+nes_rom_load(&rom, "game.nes");
+nes_init(&nes);
+nes_load_mapper(&nes, rom.mapper, rom.prg_rom, rom.prg_size,
+                rom.chr_rom, rom.chr_size, rom.mirroring);
+if (rom.tv_system == NES_TV_PAL)
+    nes_set_region(&nes, NES_REGION_PAL);
+apu_set_audio_callback(&nes.apu, audio_callback, user_data);  // one float per sample
+nes_reset(&nes);
 
 while (running) {
-    nes_run_frame(nes);
-
-    // Video: get framebuffer in your preferred format
-    nes_get_framebuffer_rgba(nes, texture_data, 255);
-    // Or: nes_get_framebuffer_rgb565(nes, display_buffer);
-
-    // Audio: set callback for streaming
-    nes_set_audio_callback(nes, audio_callback, user_data);
-
-    // Input
-    nes_set_controller(nes, 0, buttons);
+    nes_set_controller(&nes, 0, buttons);   // BTN_A, BTN_START, ...
+    nes_run_frame(&nes);
+    // Video: nes.ppu.framebuffer is 256x240 RGB888
 }
 
-nes_destroy(nes);
+nes_rom_free(&rom);
 ```
-
-Supported framebuffer formats: RGB888, RGBA8888, BGRA8888, RGB565.
 
 ## Related Files
 
@@ -290,5 +290,5 @@ Supported framebuffer formats: RGB888, RGBA8888, BGRA8888, RGB565.
 - `src/nes/hooks.h` -- Hook system
 - `src/nes/trace.h` -- Trace categories
 - `src/nes/trace.c` -- Trace implementation
-- `include/nes/nes.h` -- Public API
+- `frontends/headless/main.c` -- Smallest frontend
 - `CMakeLists.txt` -- Build system

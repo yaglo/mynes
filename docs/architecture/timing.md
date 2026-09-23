@@ -123,6 +123,5 @@ When $4017 is written, the frame counter resets after a 3-4 cycle delay
 ## Related Files
 
 - `src/nes/nes.h` -- `nes_step()`, DMA implementation
-- `include/nes/types.h` -- clock constants
 - `src/ppu/ppu.h` -- region-specific scanline counts
 - `src/nes/apu.h` -- frame counter step tables, clock rates

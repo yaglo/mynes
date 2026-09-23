@@ -40,8 +40,8 @@ Less welcome without discussion first:
 
 - **C11** for the core and both frontends. Keep it warning-clean under
   `-Wall -Wextra -Wpedantic`.
-- **Platform-agnostic core** — `src/` and `include/nes/` must not
-  reference SDL, OS APIs, or GPU libraries. Those belong in `frontends/`.
+- **Platform-agnostic core** — `src/` must not reference SDL, OS APIs,
+  or GPU libraries. Those belong in `frontends/`.
 - **4-space indent**, no tabs. Line length soft-capped around 100.
 - **Comments explain *why*, not *what*.** The identifier name already
   says what; use a comment for a subtle invariant, a workaround for a

@@ -135,4 +135,4 @@ The source address is `(page << 8) | byte_index`. The destination is
 - `src/nes/nes.h` -- `nes_cpu_read()`, `nes_cpu_write()`, `nes_dma_step()`
 - `src/ppu/ppu.h` -- `ppu_read()`, `ppu_write()`, `ppu_reg_read()`, `ppu_reg_write()`
 - `src/nes/mapper.h` -- `mapper_cpu_read()`, `mapper_cpu_write()`
-- `include/nes/types.h` -- memory size constants
+- `src/ppu/ppu.h` -- `PPU_VRAM_SIZE`, `PPU_OAM_SIZE`, `PPU_PALETTE_SIZE`

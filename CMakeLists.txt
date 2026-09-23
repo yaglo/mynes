@@ -5,7 +5,6 @@
 #   mkdir build && cd build && cmake .. && make
 #
 # Directory structure:
-#   include/nes/      - Public API headers
 #   src/              - Core implementation
 #   tests/            - Test files
 #   frontends/        - Platform-specific frontends
@@ -162,13 +161,9 @@ add_custom_target(generate_cpu DEPENDS ${CPU_GENERATED_C} ${CPU_GENERATED_H})
 # Interface library for header-only usage
 add_library(nes INTERFACE)
 
-# Note: src comes before include for backward compatibility
-# (implementation headers have same names as public API headers)
 target_include_directories(nes INTERFACE
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src>
-    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/generated>
-    $<INSTALL_INTERFACE:include>
 )
 
 add_dependencies(nes generate_cpu)
@@ -209,9 +204,7 @@ add_library(nes_static STATIC
 
 target_include_directories(nes_static PUBLIC
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src>
-    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/generated>
-    $<INSTALL_INTERFACE:include>
 )
 
 add_dependencies(nes_static generate_cpu)
@@ -760,47 +753,6 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
         message(WARNING "SDL3 not found - GPU frontend unavailable. On macOS: brew install sdl3 shaderc spirv-cross. Use -DNES_BUILD_GPU_FRONTEND=OFF to explicitly disable it.")
     endif()
 endif()
-
-# =============================================================================
-# Installation
-# =============================================================================
-
-include(GNUInstallDirs)
-
-install(DIRECTORY include/nes
-    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-)
-
-install(TARGETS nes_static
-    EXPORT NESTargets
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-)
-
-install(EXPORT NESTargets
-    FILE NESTargets.cmake
-    NAMESPACE NES::
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/NES
-)
-
-include(CMakePackageConfigHelpers)
-
-configure_package_config_file(
-    ${CMAKE_SOURCE_DIR}/cmake/NESConfig.cmake.in
-    ${CMAKE_BINARY_DIR}/NESConfig.cmake
-    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/NES
-)
-
-write_basic_package_version_file(
-    ${CMAKE_BINARY_DIR}/NESConfigVersion.cmake
-    VERSION ${PROJECT_VERSION}
-    COMPATIBILITY SameMajorVersion
-)
-
-install(FILES
-    ${CMAKE_BINARY_DIR}/NESConfig.cmake
-    ${CMAKE_BINARY_DIR}/NESConfigVersion.cmake
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/NES
-)
 
 # =============================================================================
 # Summary
