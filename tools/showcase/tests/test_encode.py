@@ -196,7 +196,7 @@ class EncodePipeline(unittest.TestCase):
         for r in jobs_mod.render_plan(cls.ctx, cls.shot, "p_sony"):
             for hdr in (False, True):
                 path = cls.ctx.render_path(cls.shot, "p_sony", r.size, hdr)
-                cls.sidecars[(r.size, hdr)] = write_render(path, r.size, hdr, r.frames)
+                cls.sidecars[(r.size, hdr)] = write_render(path, r.size, hdr, r.frames(hdr))
         full = cls.ctx.render_path(cls.shot, "p_sony", LENS, False)
         for p in PRESETS[1:]:
             dst = cls.ctx.render_path(cls.shot, p, LENS, False)
@@ -224,18 +224,22 @@ class EncodePipeline(unittest.TestCase):
 
     # -- the plan and the renders --------------------------------------------
     def test_render_plan(self):
-        plan = {r.size: (r.frames, r.roles) for r in jobs_mod.render_plan(self.ctx, self.shot, "p_sony")}
-        self.assertEqual(plan[(256, 192)], (60, ("stage",)))
-        self.assertEqual(plan[LENS], (60, ("still", "lens", "flicker", "feature")))
-        self.assertEqual(plan[README], (60, ("readme",)))
-        # A preset with neither lens, README nor feature stops the full size after the still.
+        plan = {r.size: (r.sdr_frames, r.hdr_frames, r.roles)
+                for r in jobs_mod.render_plan(self.ctx, self.shot, "p_sony")}
+        self.assertEqual(plan[(256, 192)], (60, 60, ("stage",)))
+        self.assertEqual(plan[LENS], (60, 60, ("still", "lens", "flicker", "feature")))
+        self.assertEqual(plan[README], (60, 1, ("readme",)))  # readme-hdr.png reads frame 0 only
+        # Without a lens clip, the full size stops after the frames read from each pass.
         ctx = jobs_mod.Context(shot_list=self.shot_list, out=self.out)
         ctx.shot_list = shots.load(self.shot_list.path, self.presets_dir)
+        plan = {r.size: (r.sdr_frames, r.hdr_frames) for r in jobs_mod.render_plan(ctx, ctx.shot_list.shots[0], "p_jvc")}
+        self.assertEqual(plan, {(256, 192): (60, 60), (128, 96): (60, 60), LENS: (60, 1)})  # a feature reads SDR
         ctx.shot_list.features = []
-        plan = {r.size: r.frames for r in jobs_mod.render_plan(ctx, ctx.shot_list.shots[0], "p_jvc")}
-        self.assertEqual(plan, {(256, 192): 60, (128, 96): 60, LENS: 1})
-        plan = {r.size: r.frames for r in jobs_mod.render_plan(ctx, ctx.shot_list.shots[0], "p_sony")}
-        self.assertEqual(plan[LENS], 60)  # lens
+        plan = {r.size: (r.sdr_frames, r.hdr_frames) for r in jobs_mod.render_plan(ctx, ctx.shot_list.shots[0], "p_jvc")}
+        self.assertEqual(plan, {(256, 192): (60, 60), (128, 96): (60, 60), LENS: (1, 1)})
+        ctx.shot_list.shots[0].lens = []
+        plan = {r.size: (r.sdr_frames, r.hdr_frames) for r in jobs_mod.render_plan(ctx, ctx.shot_list.shots[0], "p_sony")}
+        self.assertEqual(plan[LENS], (8, 1))  # the eight flicker frames; the HDR still and flicker frame 0
 
     def test_renders_are_what_the_recorder_writes(self):
         info = probe_video(self.ctx.render_path(self.shot, "p_sony", LENS, True))

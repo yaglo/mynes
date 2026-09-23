@@ -120,17 +120,18 @@ options after it.
 
 ## Render sizes
 
-Each clip (shot and preset) is recorded twice at each size, SDR and HDR:
+Each clip (shot and preset) is recorded twice at each size, SDR and HDR,
+and each pass runs until the last frame read from it:
 
-| Size | Frames | Built from it |
-|---|---|---|
-| 1920x1440 | the whole shot | stage clips and poster for 2x displays |
-| 960x720 | the whole shot | stage clips and poster for 1x displays |
-| 3840x2880 | the whole shot for lens clips and features; otherwise up to the still frame, or the eight flicker frames for README presets | lens clips, stills, detail crops, flicker crop, feature clips |
-| 1600x1200 | the first `readme_seconds` | README media, presets in `readme` only |
+| Size | SDR frames | HDR frames | Built from it |
+|---|---|---|---|
+| 1920x1440 | the whole shot | the whole shot | stage clips and poster for 2x displays |
+| 960x720 | the whole shot | the whole shot | stage clips and poster for 1x displays |
+| 3840x2880 | the whole shot for lens clips and features; otherwise up to the still frame, or the eight flicker frames for README presets | the whole shot for lens clips; otherwise up to the still frame and the first flicker frame | lens clips, stills, detail crops, flicker crop, feature clips |
+| 1600x1200 | the first `readme_seconds` | up to the still frame | README media, presets in `readme` only |
 
-Emulation from a state and a replay is deterministic, so a short 3840x2880
-render holds the same first frames as the stage renders. Frames =
+Emulation from a state and a replay is deterministic, so a short render
+holds the same first frames as the stage renders. Frames =
 round(seconds x 60.0988) for NTSC, x 50.007 for PAL: 361 for a 6 s hero shot,
 901 for a 15 s feature shot. The sizes, the HDR headroom (4.0) and the SDR
 white inside HDR (203 nits) are `defaults.sizes` and `defaults.hdr` in

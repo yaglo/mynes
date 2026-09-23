@@ -126,46 +126,49 @@ class Context:
 @dataclass(frozen=True)
 class Render:
     """One render size of a clip, recorded twice (SDR and HDR) from the same
-    state and replay. ``roles`` says what is built from it."""
+    state and replay, each pass for as many frames as is read from it.
+    ``roles`` says what is built from it."""
     size: tuple[int, int]
-    frames: int
+    sdr_frames: int
+    hdr_frames: int
     roles: tuple[str, ...]
+
+    def frames(self, hdr: bool) -> int:
+        return self.hdr_frames if hdr else self.sdr_frames
 
 
 def render_plan(ctx: Context, shot: Shot, preset: str) -> list[Render]:
-    """Every size a clip is recorded at, and for how many frames.
+    """Every size a clip is recorded at, and for how many frames per pass.
 
-    Stage sizes run the whole shot. The full size (3840x2880) runs the whole
-    shot when a lens clip or a feature needs it; otherwise it stops after the
-    still frame and, for README presets, the eight flicker frames. Emulation
-    from a state and a replay is deterministic, so those are the same frames
-    the stage renders show."""
+    Stage sizes run the whole shot in both passes. At the full size
+    (3840x2880) the SDR pass runs the whole shot when a lens clip or a
+    feature needs it, and the HDR pass when a lens clip does; otherwise a
+    pass stops after the last frame read from it: the still frame, and for
+    README presets the eight flicker frames (SDR) or the first of them (HDR).
+    At the README size the SDR pass runs readme_seconds and the HDR pass
+    stops after the still frame. Emulation from a state and a replay is
+    deterministic, so those are the same frames the stage renders show."""
     d = ctx.defaults
     plan: dict[tuple[int, int], list] = {}
 
-    def add(size, frames, role):
-        entry = plan.setdefault(tuple(size), [0, []])
-        entry[0] = max(entry[0], frames)
-        entry[1].append(role)
+    def add(size, role, sdr, hdr):
+        entry = plan.setdefault(tuple(size), [0, 0, []])
+        entry[0], entry[1] = max(entry[0], sdr), max(entry[1], hdr)
+        entry[2].append(role)
 
     for size in d.stage_sizes:
-        add(size, shot.frames, "stage")
-    readme = preset in shot.readme
-    lens = preset in shot.lens
-    feature = preset in ctx.feature_presets(shot)
-    need = shot.thumbnail_frame + 1
-    if readme:
-        need = max(need, shot.flicker_first_frame + recipes.FLICKER_FRAMES)
-    full = shot.frames if (lens or feature) else min(shot.frames, need)
-    add(d.lens_size, full, "still")
-    if lens:
-        add(d.lens_size, full, "lens")
-    if readme:
-        add(d.lens_size, full, "flicker")
-        add(d.readme_size, max(shot.readme_frames, shot.thumbnail_frame + 1), "readme")
-    if feature:
-        add(d.lens_size, full, "feature")
-    return [Render(size, frames, tuple(roles)) for size, (frames, roles) in plan.items()]
+        add(size, "stage", shot.frames, shot.frames)
+    still = shot.thumbnail_frame + 1
+    add(d.lens_size, "still", still, still)
+    if preset in shot.lens:
+        add(d.lens_size, "lens", shot.frames, shot.frames)
+    if preset in shot.readme:
+        first = shot.flicker_first_frame
+        add(d.lens_size, "flicker", first + recipes.FLICKER_FRAMES, first + 1)
+        add(d.readme_size, "readme", max(shot.readme_frames, still), still)
+    if preset in ctx.feature_presets(shot):
+        add(d.lens_size, "feature", shot.frames, 0)
+    return [Render(size, sdr, hdr, tuple(roles)) for size, (sdr, hdr, roles) in plan.items()]
 
 
 def plan_for(ctx: Context, shot: Shot, preset: str, size) -> Render:
@@ -255,6 +258,8 @@ def record_jobs(ctx: Context, pairs: list[tuple[Shot, str]]) -> list[Job]:
     for shot, preset in pairs:
         for r in render_plan(ctx, shot, preset):
             for hdr in (False, True):
+                if not r.frames(hdr):
+                    continue
                 tag = f"{recipes.size_string(r.size)}/{_pass(hdr)}"
                 jobs.append(Job(id=f"record:{shot.id}/{preset}/{tag}",
                                 description=f"record {shot.title} on {preset}, {tag}",
@@ -262,12 +267,12 @@ def record_jobs(ctx: Context, pairs: list[tuple[Shot, str]]) -> list[Job]:
     return jobs
 
 
-def _recorded(provenance: Path, r: Render) -> bool:
+def _recorded(provenance: Path, frames: int, size) -> bool:
     try:
         data = json.loads(provenance.read_text())
     except (OSError, ValueError):
         return False
-    return data.get("frames") == r.frames and data.get("size") == list(r.size)
+    return data.get("frames") == frames and data.get("size") == list(size)
 
 
 def record_one(ctx: Context, runner: Runner, shot: Shot, preset: str, r: Render, hdr: bool) -> dict | None:
@@ -292,17 +297,18 @@ def record_one(ctx: Context, runner: Runner, shot: Shot, preset: str, r: Render,
     size_dir = out.parent
     name = _pass(hdr)
     provenance = size_dir / f"{name}.record.json"
-    inputs = [state, preset_path, rom] + ([replay] if replay else [])
-    if runner.up_to_date([out, sidecar_path(out), provenance], inputs) and _recorded(provenance, r):
-        runner.say(f"up to date: {out}")
-        return None
+    frames = r.frames(hdr)
     d = ctx.defaults
-    seconds = (recipes._num(shot.seconds) if r.frames == shot.frames
-               else recipes.seconds_for_frames(r.frames, shot.region))
+    seconds = (recipes._num(shot.seconds) if frames == shot.frames
+               else recipes.seconds_for_frames(frames, shot.region))
     cmd = recipes.record_command(
         ctx.binary, rom, preset_path, state, out, seconds, replay=replay,
         record_after=shot.record_after, size=r.size, hdr=hdr, headroom=d.hdr_headroom,
         white_nits=d.hdr_white_nits, extra_args=d.record_args)
+    inputs = [state, preset_path, rom] + ([replay] if replay else [])
+    if runner.up_to_date([out, sidecar_path(out), provenance], inputs) and _recorded(provenance, frames, r.size):
+        runner.say(f"up to date: {out}")
+        return None
     config_home = ctx.clip_dir(shot, preset) / "config"
     if not runner.dry_run:
         size_dir.mkdir(parents=True, exist_ok=True)
@@ -311,10 +317,10 @@ def record_one(ctx: Context, runner: Runner, shot: Shot, preset: str, r: Render,
                log_file=size_dir / f"{name}.record.log",
                what=f"record {shot.id}/{preset} {recipes.size_string(r.size)} {name.upper()}")
     if runner.dry_run:
-        runner.say(f"dry-run: would verify {out}: {r.frames} frames, {recipes.size_string(r.size)}"
+        runner.say(f"dry-run: would verify {out}: {frames} frames, {recipes.size_string(r.size)}"
                    + (", BT.2020 PQ tags, max_cll and max_fall in the sidecar" if hdr else ""))
         return None
-    info = verify_video(out, frames=r.frames, size=r.size, colour=HDR_COLOUR if hdr else None)
+    info = verify_video(out, frames=frames, size=r.size, colour=HDR_COLOUR if hdr else None)
     if not info.audio_codec:
         runner.say(f"warning: {out} has no audio stream")
     sidecar = read_sidecar(out)
@@ -324,8 +330,8 @@ def record_one(ctx: Context, runner: Runner, shot: Shot, preset: str, r: Render,
             raise PipelineError(f"{sidecar_path(out)} is missing: the HDR encodes need its max_cll and max_fall")
         runner.say(f"warning: {sidecar_path(out)} is missing (a recorder without sidecars)")
     else:
-        if sidecar.get("frames") != r.frames:
-            problems.append(f"frames {sidecar.get('frames')}, expected {r.frames}")
+        if sidecar.get("frames") != frames:
+            problems.append(f"frames {sidecar.get('frames')}, expected {frames}")
         if [sidecar.get("width"), sidecar.get("height")] != list(r.size):
             problems.append(f"size {sidecar.get('width')}x{sidecar.get('height')}")
         if bool(sidecar.get("hdr")) != hdr:
@@ -371,11 +377,14 @@ class RenderFacts:
 def render_facts(ctx: Context, runner: Runner, shot: Shot, preset: str, size, hdr: bool) -> RenderFacts:
     """Probe a render; in a dry run without one, assume the plan's numbers."""
     r = plan_for(ctx, shot, preset, size)
+    frames = r.frames(hdr)
     path = ctx.render_path(shot, preset, r.size, hdr)
+    if not frames:
+        raise PipelineError(f"{shot.id}/{preset} has no {_pass(hdr).upper()} render at {recipes.size_string(r.size)}")
     if path.exists():
         info = probe_video(path)
-        if info.frames != r.frames:
-            raise PipelineError(f"{path} holds {info.frames} frames, the plan needs {r.frames}: record it "
+        if info.frames != frames:
+            raise PipelineError(f"{path} holds {info.frames} frames, the plan needs {frames}: record it "
                                 f"again (showcase.py --shots {shot.id} --presets {preset} record)")
         if (info.width, info.height) != r.size:
             raise PipelineError(f"{path} is {info.width}x{info.height}, not {recipes.size_string(r.size)}")
@@ -388,7 +397,7 @@ def render_facts(ctx: Context, runner: Runner, shot: Shot, preset: str, size, hd
     if runner.dry_run:
         sidecar = {"white_nits": ctx.defaults.hdr_white_nits, "headroom": ctx.defaults.hdr_headroom,
                    "max_cll": "MAXCLL", "max_fall": "MAXFALL"} if hdr else {}
-        return RenderFacts(path, r.frames, recipes.rate_for(shot.region), r.size, True, hdr,
+        return RenderFacts(path, frames, recipes.rate_for(shot.region), r.size, True, hdr,
                            recipes.HDR_DEFAULT_MATRIX if hdr else recipes.SDR_DEFAULT_MATRIX, "tv",
                            sidecar, "yuv444p12le" if hdr else "yuv444p", assumed=True)
     raise PipelineError(f"{path} is missing: run `showcase.py --shots {shot.id} --presets {preset} record` first")

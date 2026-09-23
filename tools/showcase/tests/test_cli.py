@@ -103,18 +103,27 @@ class Cli(unittest.TestCase):
         self.assertIn("--record-seconds 15", out)
         self.assertIn("--input-replay", out)
 
-        def full_size(shot, preset):
-            return [l for l in lines if recorder in l and f"{shot}/{preset}/3840x2880/" in l]
+        def full_size(shot, preset, hdr=False):
+            name = "hdr.mov" if hdr else "sdr.mov"
+            return [l for l in lines if recorder in l and f"{shot}/{preset}/3840x2880/{name}" in l]
 
         # The full-size render stops after the still unless a lens clip, a
-        # feature or the README flicker crop needs more frames.
-        self.assertIn(f"--record-seconds {recipes.seconds_for_frames(1)} ",
-                      full_size("legend-of-zelda", "jvc_d_series_2000")[0])
+        # feature or the README flicker crop needs more frames; the HDR pass
+        # runs the whole shot only for a lens clip.
+        one = f"--record-seconds {recipes.seconds_for_frames(1)} "
+        self.assertIn(one, full_size("legend-of-zelda", "jvc_d_series_2000")[0])
+        self.assertIn(one, full_size("legend-of-zelda", "jvc_d_series_2000", hdr=True)[0])
         self.assertIn(f"--record-seconds {recipes.seconds_for_frames(8)} ", full_size("punch-out", "sony_pvm_14l2")[0])
+        self.assertIn(one, full_size("punch-out", "sony_pvm_14l2", hdr=True)[0])
         self.assertIn("--record-seconds 15 ", full_size("mega-man-2", "jvc_d_series_2000")[0])  # a feature
+        self.assertIn(one, full_size("mega-man-2", "jvc_d_series_2000", hdr=True)[0])
+        readme_hdr = [l for l in lines if recorder in l and "/1600x1200/hdr.mov" in l]
+        self.assertEqual(len(readme_hdr), readme)
+        self.assertTrue(all(one in l for l in readme_hdr))
         for s in sl.shots:
             for p in s.lens:
-                self.assertIn(f"--record-seconds {s.seconds:g} ", full_size(s.id, p)[0])
+                for hdr in (False, True):
+                    self.assertIn(f"--record-seconds {s.seconds:g} ", full_size(s.id, p, hdr)[0])
         self.assertEqual(out.count("-c:v libx265 -preset slow -crf 18 -profile:v main10"), clips * stage)
         self.assertEqual(out.count("-c:v libsvtav1 -preset 6 -crf 24"), clips * stage)
         self.assertEqual(out.count("-c:v libx264 -profile:v high -preset slow -crf 18"), clips * stage)
