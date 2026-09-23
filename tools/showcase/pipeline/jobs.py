@@ -282,12 +282,15 @@ def record_jobs(ctx: Context, pairs: list[tuple[Shot, str]]) -> list[Job]:
     return jobs
 
 
-def _recorded(provenance: Path, frames: int, size) -> bool:
+def _recorded(provenance: Path, frames: int, size, cmd: list[str]) -> bool:
+    """Whether the last finished recording of this pass ran ``cmd`` (so the
+    same size, length, start, headroom, white and extra arguments) and gave
+    ``frames`` frames."""
     try:
         data = json.loads(provenance.read_text())
     except (OSError, ValueError):
         return False
-    return data.get("frames") == frames and data.get("size") == list(size)
+    return data.get("frames") == frames and data.get("size") == list(size) and data.get("command") == cmd
 
 
 def record_one(ctx: Context, runner: Runner, shot: Shot, preset: str, r: Render, hdr: bool) -> dict | None:
@@ -321,13 +324,17 @@ def record_one(ctx: Context, runner: Runner, shot: Shot, preset: str, r: Render,
         record_after=shot.record_after, size=r.size, hdr=hdr, headroom=d.hdr_headroom,
         white_nits=d.hdr_white_nits, extra_args=d.record_args)
     inputs = [state, preset_path, rom] + ([replay] if replay else [])
-    if runner.up_to_date([out, sidecar_path(out), provenance], inputs) and _recorded(provenance, frames, r.size):
+    if runner.up_to_date([out, sidecar_path(out), provenance], inputs) and _recorded(provenance, frames, r.size, cmd):
         runner.say(f"up to date: {out}")
         return None
     config_home = ctx.clip_dir(shot, preset) / "config"
     if not runner.dry_run:
         size_dir.mkdir(parents=True, exist_ok=True)
         config_home.mkdir(exist_ok=True)
+        # Only a run that finishes and passes the checks below writes these
+        # again, so a failed run can never look recorded.
+        provenance.unlink(missing_ok=True)
+        sidecar_path(out).unlink(missing_ok=True)
     runner.run(cmd, env=env_for_capture(config_home=config_home), cwd=ROOT, timeout=RECORD_TIMEOUT,
                log_file=size_dir / f"{name}.record.log",
                what=f"record {shot.id}/{preset} {recipes.size_string(r.size)} {name.upper()}")

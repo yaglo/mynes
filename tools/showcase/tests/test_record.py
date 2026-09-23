@@ -136,6 +136,35 @@ class Record(unittest.TestCase):
             jobs_mod.render_facts(ctx, Runner(quiet=True), ctx.shot_list.shots[0], "p_a", STAGE, False)
         self.assertIn("4:4:4", str(cm.exception))
 
+    def test_a_failed_run_is_recorded_again(self):
+        self.record()
+        with mock.patch.dict(os.environ, {"FAKE_RECORDER_FRAMES": "20", "FAKE_RECORDER_EXIT": "4"}):
+            result, _ = self.record(force=True)
+        self.assertEqual(len(result.failed), 6)
+        self.assertFalse(self.render(STAGE, False).with_name("sdr.record.json").exists())
+        self.assertFalse(self.render(STAGE, True).with_name("hdr.record.json").exists())
+        before = len(self.calls())
+        result, _ = self.record()  # no --force: the failed passes run again
+        self.assertEqual(result.failed, {})
+        self.assertEqual(len(self.calls()), before + 6)
+        self.assertEqual(probe_video(self.render(STAGE, False)).frames, 60)
+
+    def test_changed_settings_record_again(self):
+        self.record()
+        self.set_defaults(hdr={"headroom": 2.0, "white_nits": 100})
+        self.record()
+        calls = self.calls()[6:]
+        self.assertEqual(len(calls), 3)  # the HDR passes only
+        self.assertTrue(all("--record-hdr" in c["argv"] for c in calls))
+        sidecar = json.loads(self.render(STAGE, True).with_suffix(".json").read_text())
+        self.assertEqual((sidecar["headroom"], sidecar["white_nits"]), (2.0, 100))
+        self.set_defaults(record_after=5)
+        self.record()
+        self.assertEqual(len(self.calls()), 6 + 3 + 6)  # a later start changes every pass
+        self.set_defaults(record_args=["--room-reflections"])
+        self.record()
+        self.assertEqual(len(self.calls()), 6 + 3 + 6 + 6)
+
 
 if __name__ == "__main__":
     unittest.main()

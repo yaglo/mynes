@@ -105,7 +105,12 @@ options after it.
    (see Outputs), `--dry-run` prints the commands. The log is
    `out/showcase.log`; each render has `sdr.record.log`/`hdr.record.log` and
    `sdr.record.json`/`hdr.record.json` beside it (command, frames, rate, the
-   recorder's sidecar, SHA-256 of ROM, state, replay and preset).
+   recorder's sidecar, SHA-256 of ROM, state, replay and preset). `record`
+   runs a pass again when its command changes (size, length, start frame,
+   HDR headroom and white, `record_args`), when the ROM, state, replay or
+   preset is newer, or when its last run failed: the `.record.json` is
+   removed before the recorder starts and written only after the checks
+   pass.
 
 4. Install into the site (part of `all` when `--site` is given). Each
    complete clip is copied to `assets/hero/<shot>/<preset>/<WxH>/` and merged
