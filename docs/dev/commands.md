@@ -86,7 +86,10 @@ cmake --build . --target shaders_regenerate
 ```
 
 `ctest -R gpu_shader_layout_test` checks that `build/shaders/` holds exactly
-the committed set, whichever way it was populated.
+the committed set, whichever way it was populated. `gpu_shader_rename_test`
+builds a scratch project with the same shader step (`cmake/ShaderStep.cmake`),
+renames a shader without changing its mtime, and checks that the next build
+leaves only the new outputs.
 
 ### Building on Linux
 
