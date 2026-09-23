@@ -16,6 +16,9 @@ static void streaming(SDL_GPUDevice *gpu) {
         AudioChain c;
         audio_chain_init_preset(&c, speaker % 4, speaker, speaker % 2);
         c.amp_saturation.enabled = true; c.amp_saturation.drive = 1.7f;
+        c.rail_clip.enabled = true; c.rail_clip.window = .3f; c.rail_clip.knee = .15f;
+        c.rf_deemphasis_us = (speaker & 1) ? 75.0f : 0.0f;
+        audio_chain_prepare(&c);
         c.psu_hum.enabled = true; c.psu_hum.amplitude = .002f;
         c.psu_hum.harmonic_2 = .4f; c.psu_hum.harmonic_3 = .2f;
         c.noise_floor.enabled = true; c.noise_floor.amplitude = .001f;
@@ -96,6 +99,50 @@ static void response(void) {
         float db=20*log10f(gain(hz,AUDIO_SPEAKER_HEADPHONES)/mid);
         printf("  %6.0f Hz: %+6.2f / %+6.2f\n",hz,db,nes001_audio_golden_db[i]);
         if(hz<=12000) CHECK(fabsf(db-nes001_audio_golden_db[i])<0.5f);
+    }
+    /* The set's 75 us sound de-emphasis on RF: -3 dB at 2.12 kHz relative to 100 Hz. */
+    {
+        AudioChain c; AudioState s={0};
+        audio_chain_init_preset(&c,AUDIO_CONSOLE_NES_FRONT,AUDIO_SPEAKER_HEADPHONES,0);
+        c.coupling_cap.enabled=c.feedback_network.enabled=c.amp_bandwidth.enabled=c.tv_input_coupling.enabled=false;
+        c.rf_deemphasis_us=75.0f; audio_chain_prepare(&c);
+        double e[2]={0,0};
+        for(int k=0;k<2;++k) { float hz=k ? 2122.0f : 100.0f; double in=0,out=0; s=(AudioState){0};
+            for(int b=0;b<32;++b) { for(int i=0;i<1024;++i) source[i]=.2f*sinf(2*M_PI*hz*(b*1024+i)/AUDIO_STREAM_RATE);
+                audio_chain_process(&c,&s,source,whole,1024);
+                if(b>16) for(int i=0;i<1024;++i) { in+=source[i]*source[i]; out+=whole[i]*whole[i]; } }
+            e[k]=sqrt(out/in); }
+        float deemph_db=20*log10f((float)(e[1]/e[0]));
+        printf("RF de-emphasis at 2122 Hz: %.2f dB\n",deemph_db);
+        CHECK(fabsf(deemph_db+3.0f)<0.3f);
+    }
+    /* The PVM-14L2's AN5278 output capacitor into its 7x5 cm speaker: 199 Hz. */
+    {
+        AudioChain c; AudioState s={0};
+        audio_chain_init_preset(&c,AUDIO_CONSOLE_NES_FRONT,AUDIO_SPEAKER_PVM_14L2,0);
+        CHECK(c.speaker_coupling.enabled);
+        c.coupling_cap.enabled=c.feedback_network.enabled=c.amp_bandwidth.enabled=c.tv_input_coupling.enabled=false;
+        c.speaker.enabled=false; audio_chain_prepare(&c);
+        double e[2]={0,0};
+        for(int k=0;k<2;++k) { float hz=k ? 199.0f : 5000.0f; double in=0,out=0; s=(AudioState){0};
+            for(int b=0;b<32;++b) { for(int i=0;i<1024;++i) source[i]=.2f*sinf(2*M_PI*hz*(b*1024+i)/AUDIO_STREAM_RATE);
+                audio_chain_process(&c,&s,source,whole,1024);
+                if(b>16) for(int i=0;i<1024;++i) { in+=source[i]*source[i]; out+=whole[i]*whole[i]; } }
+            e[k]=sqrt(out/in); }
+        float cap_db=20*log10f((float)(e[1]/e[0]));
+        printf("PVM-14L2 speaker capacitor at 199 Hz: %.2f dB\n",cap_db);
+        CHECK(fabsf(cap_db+3.0f)<0.3f);
+    }
+    /* The gate's rail window: linear well inside it, held at the rail beyond it. */
+    {
+        AudioChain c; AudioState s={0};
+        audio_chain_init_preset(&c,AUDIO_CONSOLE_NES_FRONT,AUDIO_SPEAKER_HEADPHONES,0);
+        c.coupling_cap.enabled=c.feedback_network.enabled=c.amp_bandwidth.enabled=c.tv_input_coupling.enabled=false;
+        c.rail_clip.enabled=true; c.rail_clip.window=.75f; c.rail_clip.knee=.15f; audio_chain_prepare(&c);
+        for(int i=0;i<1024;++i) source[i]=(i%2 ? 1.f : -1.f)*(i<512 ? .5f : 3.f);
+        audio_chain_process(&c,&s,source,whole,1024);
+        CHECK(fabsf(whole[100]-source[100])<1e-6f);
+        CHECK(fabsf(fabsf(whole[900])-.75f)<.01f);
     }
     AudioChain c; AudioState s={0};
     audio_chain_init_preset(&c,AUDIO_CONSOLE_NES_FRONT,AUDIO_SPEAKER_SMALL_TV,0);

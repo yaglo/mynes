@@ -130,7 +130,12 @@ of white; it lands at 0.94 against 0.90 on row 2 and 93 ns against 108 ns
 on the rise, the difference being the deck's device capacitances and source
 resistance. Shipped presets leave it at 0 until it is compared with a
 console on the PVM; the earlier 30 ns differential-phase estimate stays as
-their default.
+their default. `check_follower_model.py golden/nes001_video.json` runs the
+shader's follower law in Python over the same rows and prints it next to the
+deck for a few constants, so the constants can be tried without a GPU.
+`fit_encoder_axes.py` is the least-squares fit of the RGB encoder's chroma
+axes from decoded colour bars that set the 138°/48° axis phases in
+`encoder_rgb.comp.glsl`.
 
 ## NES-001 audio path
 
@@ -142,21 +147,81 @@ python3 tools/circuits/sweep_nes001_audio.py /tmp/nes001-audio --golden tools/ci
 (AD1 through R4 100 Ω and R7 20 kΩ, AD2 through R3 100 Ω and R8 12 kΩ, AUX
 through R9 20 kΩ, C23 1 µF into gate U9E of the 74HC04 with R6 47 kΩ and
 C21 220 pF in the feedback, C20 220 pF at the output, FC1 39 µH and C4
-0.01 µF) followed by the AV module's follower, 1 µF coupling and 68 µH choke
-into the TV's line input (Electronix trace). The gate is a behavioural
-inverter swept over open-loop gain 10–40 and output resistance 300 Ω–2 kΩ;
-the follower's output resistance and the choke's shunt capacitors are
+0.01 µF) followed by the AV module's follower (Q4 with its 7500 Ω and
+3900 Ω loads), 1 µF coupling and 68 µH choke into the TV's line input
+(Electronix trace). The gate is a level-1 NMOS/PMOS pair fitted to the
+Nexperia 74HCU04 data sheet: forward transconductance about 35 mA/V at 5 V
+(Fig. 12), open-loop gain 20, VOL 0.15 V at 4 mA, so the output resistance
+in linear use follows as Gol/gm ≈ 570 Ω instead of being assumed. The
+follower's transistor and the choke's shunt capacitors are generic or
 assumed; the TV input is swept over 10 kΩ, 47 kΩ and 1 MΩ.
 
-The high-pass is 16–18 Hz at the board across the sweep, set by C23 against
-the 20k/12k sources and the gate's summing node, which agrees with
-rainwarrior's hardware sweep (about 16 Hz, nesdev thread 17745). A 10 kΩ TV
-input adds a second pole and moves the jack's corner to 23–26 Hz. The
-low-pass is two poles: R6 with C21 (15.4 kHz) and C4 on the gate's output
-resistance (15.9 kHz at 1 kΩ, 8 kHz at 2 kΩ, 53 kHz at 300 Ω), so the
-resistance of an unbuffered HC04 gate in linear use is the number a
-measurement would settle. There is no 440 Hz network anywhere in the path;
-the chain's old second high-pass had no circuit behind it and its slot now
-carries the output-pin pole. `golden/nes001_audio.h` holds the a_ol=20,
-r_out=1k, r_tv=47k response and `test_audio` holds the chain's coupling,
-amplifier and TV-input stages to it within 0.5 dB up to 12 kHz.
+Results: the high-pass is 16.7 Hz at the board (17.4 Hz at the jack into
+47 kΩ, 25 Hz into 10 kΩ), set by C23 against the 20k/12k sources and the
+gate's summing node, which agrees with rainwarrior's hardware sweep (about
+16 Hz, nesdev thread 17745). The low-pass is 17.1 kHz at the jack from two
+poles, R6·C21 at 15.4 kHz and C4 on the gate's closed-loop output
+resistance; the chain's first-order stages match the deck within 0.06 dB to
+12 kHz with the second pole at 21.5 kHz. Gain is +4.8 dB from the pulse pin
+and +9.2 dB from the TND pin; with the APU's 0.3 V pin swing (uXe and
+lidnariq, nesdev thread 56) the jack sees 0.52 V and 0.87 V peak, which is
+where `AUDIO_JACK_VOLTS_PER_UNIT` (2.0 V) comes from. Distortion at those
+levels is 0.05 to 0.21% THD, so the gate is linear until its rails
+(VCC − 2 V, 3 V peak to peak), which the chain carries as the gate rail
+window. The gate's supply-to-jack gain is +9 dB (2.8 V/V), the number the
+PSU deck's ripple is multiplied by. There is no 440 Hz network anywhere in
+the path; the chain's former second high-pass had no circuit behind it and
+its slot now carries the output-pin pole.
+
+## NES-001 power supply
+
+```sh
+python3 tools/circuits/sweep_nes001_psu.py /tmp/nes001-psu --golden tools/circuits/golden
+```
+
+`nes001_psu.cir` is the Electronix trace's supply: the NES-002's 9 VAC into
+a bridge, 2200 µF, then a 7805 (behavioural, with the TI data sheet's 62 dB
+minimum and about 73 dB typical ripple rejection at 120 Hz and 10 mΩ of
+load regulation) into 100 µF, with the console as a 0.4 to 0.8 A load and
+the modulator as 40 mA on the raw rail. The transformer's source
+resistance (0.8 Ω) and the load current are assumptions; the trace labels
+the raw rail +13 V, which needs an unloaded adaptor above 9 V. At 0.6 A the
+reservoir shows 3.7 V peak to peak of ripple and the +5 V rail 0.16 mV peak
+at 120 Hz (73 dB) to 0.57 mV (62 dB), with the 240 Hz component a fifth of
+that. Through the gate's +9 dB the jack carries 0.45 to 1.6 mV peak of
+120 Hz hum, 58 to 70 dB below full scale: the NES-001 presets' ripple
+setting (0.00023 units) is this, not an audible authored hum. Below about
+7 V on the raw rail the 7805 drops out and the ripple passes; that case is
+not in the presets.
+
+## Monitor speakers
+
+The PVM-14L2's audio board (service manual G 4/4): line input through
+C3511 10 µF and R3512 220 Ω, C3501 10 µF into the AN5278's input with
+R3506 6.2 kΩ and C3507 0.047 µF on its LT pin (the data sheet's flat
+configuration is 6.2 kΩ and 0.01 µF; the larger capacitor eases the treble
+cut), gain 30 dB, TONE pin at 2.1 V (near the data sheet's flat 2.5 V),
+output through C3510 100 µF to the 7×5 cm speaker (part 1-544-063-12). At
+8 Ω that capacitor is a 199 Hz high-pass, the dominant feature of the
+PVM's sound. The Toshiba 14AF43 (service manual G-9): AN5891 tone control
+into the AN5276 (34 dB) with 6.8 kΩ and 3.9 nF at its inputs, outputs
+through 1000 µF to 8 Ω 5 W speakers, a 20 Hz corner. Both drivers remain
+class estimates; the amplifier output networks are in `speaker_presets[]`
+in `audio_chain.c` and `test_audio` checks the 199 Hz corner.
+
+To hear the whole account, `tools/audio/record_presets.sh rom outdir` records
+a ROM through the frontend with every preset that has a distinct audio path
+(the two measured monitors, the RF sets, the Famicom, the arcade monitor) and
+prints each recording's mean level and its level below 120 Hz, where the hum
+and the speaker capacitors show.
+
+## Sources not in the repository
+
+The vendor documents behind the decks are copyrighted and are cited, not
+committed: the Nexperia 74HCU04 data sheet (forward transconductance and
+open-loop gain, figures 12 and 13), the Panasonic AN5276 and AN5278 data
+sheets, the Sony PVM-14L2 service manual (audio board, sheet G 4/4), the
+Toshiba 14AF43 service manual (sheet G-9), the TI LM7805 data sheet (ripple
+rejection), and Electronix Corp.'s 1992 trace of the NES-001 RF/AV module.
+Schenk's NES-001 and HVC-001 schematics are CC BY-SA 4.0 and are linked
+above rather than copied.

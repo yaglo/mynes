@@ -31,6 +31,15 @@ typedef struct {
     float drive;            /* 1.0 = linear, 4.0 = heavy compression */
 } AudioSaturationStage;
 
+/* Amplifier rail window (stage 4, with the soft clip): the NES-001's 74HC04
+ * gate swings at most VCC - 2 V (data sheet, linear amplifier), a hard limit
+ * with a short knee, expressed in units of the mixer output. */
+typedef struct {
+    bool  enabled;
+    float window;           /* peak swing in mixer units */
+    float knee;             /* share of the window over which the limit rounds off */
+} AudioRailStage;
+
 /* PSU hum injection (stage 5). */
 typedef struct {
     bool  enabled;
@@ -67,16 +76,24 @@ typedef struct {
     AudioRCStage        coupling_cap;       /* Stage 1: DC blocking */
     AudioRCStage        feedback_network;   /* Stage 2: output-pin low-pass (NES-001 C4 on the gate's output resistance) */
     AudioRCStage        amp_bandwidth;      /* Stage 3: amp LP */
-    AudioSaturationStage amp_saturation;    /* Stage 4: soft clip */
+    AudioSaturationStage amp_saturation;    /* Stage 4: soft clip (legacy tanh drive) */
+    AudioRailStage      rail_clip;          /* Stage 4: gate rail window */
     AudioHumStage       psu_hum;            /* Stage 5: mains hum */
     AudioNoiseStage     noise_floor;        /* Stage 6: thermal noise */
-    AudioRCStage        cable;              /* Stage 7: cable capacitance */
+    AudioRCStage        cable;              /* Stage 7: cable capacitance, or the set's sound de-emphasis on RF */
     AudioRCStage        tv_input_coupling;  /* Stage 8: TV input cap */
+    AudioRCStage        speaker_coupling;   /* Stage 10: amplifier output capacitor into the driver */
     AudioSpeakerStage   speaker;            /* Stage 9: speaker model */
+
+    /* RF sound: the set's de-emphasis time constant in microseconds (75 for
+     * System M, 50 for PAL; ITU-R BT.470), 0 for a baseband connection. The
+     * NES modulator applies no pre-emphasis, so on RF the cable slot carries
+     * this low-pass instead of a lead's negligible capacitance. */
+    float rf_deemphasis_us;
 
     /* Processing rate of the band-limited APU callback, in Hz. */
     float sample_rate;
-    uint32_t bypass_mask;       /* runtime diagnostics, nine stage bits */
+    uint32_t bypass_mask;       /* runtime diagnostics, ten stage bits */
 } AudioChain;
 
 /* ============================================================================
@@ -93,7 +110,7 @@ void audio_chain_prepare(AudioChain *chain);
 
 /* State is independent of frame boundaries and can move between backends. */
 typedef struct {
-    float rc[5][2];             /* previous input/output per RC stage */
+    float rc[6][2];             /* previous input/output per RC stage */
     float speaker[2][2];        /* transposed direct-form II delays */
     float hum_phase;
     uint32_t rng;
@@ -101,10 +118,11 @@ typedef struct {
 
 typedef struct {
     uint32_t count, flags, pad[2];
-    float rc[5][4];             /* a, b, highpass, enabled */
+    float rc[6][4];             /* a, b, highpass, enabled */
     float speaker[2][8];        /* five biquad coefficients, padded to vec4 */
     float effects[4];           /* drive, hum amplitude, phase step, noise */
     float harmonics[4];         /* relative second/third hum harmonics */
+    float clip[4];              /* rail window, knee */
 } AudioParams;
 
 #define AUDIO_STREAM_RATE 44100
@@ -128,5 +146,8 @@ void audio_chain_process(const AudioChain *chain, AudioState *state,
 #define AUDIO_SPEAKER_ARCADE       3
 #define AUDIO_SPEAKER_HEADPHONES   4
 #define AUDIO_SPEAKER_FAMICOM_RF   5
+#define AUDIO_SPEAKER_PVM_14L2     6   /* AN5278, 100 uF into a 7x5 cm driver (service manual) */
+#define AUDIO_SPEAKER_TOSHIBA_14AF43 7 /* AN5276, 1000 uF into 8 ohm 5 W drivers (service manual) */
+#define AUDIO_SPEAKER_LAST         7
 
 #endif /* AUDIO_CHAIN_H */

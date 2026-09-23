@@ -12,21 +12,30 @@
 * (2SC1740) whose emitter node carries 7500 to ground, a 3900 towards the
 * sound modulator and an 820 drawn to +5 V; a 1 uF/50 V capacitor, a 68 uH
 * choke and shunt capacitors (values not legible) reach the jack. The
-* follower is taken as a unity buffer with an assumed output resistance,
-* and the shunt capacitors as 1 nF each; the TV's line input is R_tv.
+* follower is a generic NPN with the 7500 load and the 3900 as a load; the
+* shunt capacitors are taken as 1 nF each; the TV's line input is R_tv.
 *
-* The 74HC04 gate is a behavioural inverter with open-loop gain a_ol and
-* output resistance r_out (swept; Nexperia gives no fixed figure for the
-* unbuffered part in linear use). This is a sensitivity model of a traced
-* topology, not a measurement of a console; the numbers to compare with
-* are rainwarrior's sweep (NES about 16 Hz single-pole high-pass; nesdev
-* thread 17745).
+* The gate is a CMOS inverter pair fitted to the Nexperia 74HCU04 data
+* sheet (rev. 10, 2024): forward transconductance about 35 mA/V at 5 V
+* (Fig. 12), open-loop gain 20 (Fig. 13), VOL 0.15 V at 4 mA, maximum
+* output swing VCC - 2 V. Level-1 devices: beta 11.7 mA/V^2 each, Vt 1.0 V,
+* lambda 0.067/V, which give gm 35 mS, Gol 20 and a 13 mA class-A current
+* at the midpoint. The unbuffered HC04 (74HCV04 on the EDC parts table) is
+* the same die family; a different vendor's gate moves gm and Gol.
+*
+* Compare with rainwarrior's sweep: NES about 16 Hz single-pole high-pass
+* (nesdev thread 17745). The sweep script drives the pulse or TND pin for
+* .ac, puts an AC source on VCC for the supply gain, and runs .tran sines
+* at the APU's 0.3 V pin swing for distortion.
 
-.param a_ol=20 r_out=1k r_tv=47k r_follower=100 src=1
+.param r_tv=47k r_follower=100 src=1 vsup_ac=0 amp=0 fsig=1k rload_follow=3900
 
-* Sources: src=1 drives the pulse pin, src=2 the TND pin; the other is 0 V.
-Vp ad1 0 dc 0 ac {src==1 ? 1 : 0}
-Vt ad2 0 dc 0 ac {src==2 ? 1 : 0}
+Vcc vcc 0 dc 5 ac {vsup_ac}
+
+* Sources: src=1 drives the pulse pin, src=2 the TND pin; amp is the .tran
+* sine amplitude at the driven pin (0 for .ac).
+Vp ad1 0 dc 0.15 ac {src==1 ? 1 : 0} sin(0.15 {src==1 ? amp : 0} {fsig})
+Vt ad2 0 dc 0.15 ac {src==2 ? 1 : 0} sin(0.15 {src==2 ? amp : 0} {fsig})
 R4 ad1 n4 100
 R7 n4 sum 20k
 R3 ad2 n3 100
@@ -34,30 +43,37 @@ R8 n3 sum 12k
 R9 aux sum 20k
 Raux aux 0 1G
 C23 sum amp_in 1u
-* 74HC04 gate: self-biased at Vdd/2 through R6.
-B1 amp_o 0 V = 2.5 - a_ol*(V(amp_in) - 2.5)
-Ro amp_o out {r_out}
+* 74HC04 gate U9E, self-biased at about VCC/2 through R6.
+Mp out amp_in vcc vcc PMOS_HCU W=100u L=1u
+Mn out amp_in 0 0 NMOS_HCU W=100u L=1u
 R6 out amp_in 47k
 C21 out amp_in 220p
 C20 out 0 220p
 Lfc1 out mb 39u
 C4 mb 0 0.01u
-* Module: unity follower with an output resistance, coupling, choke, jack.
-E4 e4 0 mb 0 1
-Rf e4 e4r {r_follower}
-R7500 e4r 0 7500
-R3900 e4r 0 3900
-Cc e4r j1 1u
+* Module follower Q4 with its emitter loads, coupling, choke, jack.
+Q4 vcc mb e4 NPN_APPROX
+R7500 e4 0 7500
+R3900 e4 0 {rload_follow}
+Cc e4 j1 1u
 Cs1 j1 0 1n
 L68 j1 jack 68u
 Cs2 jack 0 1n
 Rtv jack 0 {r_tv}
 
+.model NMOS_HCU NMOS(LEVEL=1 VTO=1.0 KP=117u LAMBDA=0.067 TOX=20n)
+.model PMOS_HCU PMOS(LEVEL=1 VTO=-1.0 KP=117u LAMBDA=0.067 TOX=20n)
+.model NPN_APPROX NPN(IS=1e-14 BF=150 VAF=80 CJE=10p CJC=4p TF=0.5n)
+
 .control
 set wr_singlescale
 set wr_vecnames
+op
+print v(amp_in) v(out) v(e4) @mn[id]
 ac dec 40 1 200k
-wrdata ac.txt vdb(jack) vp(jack) vdb(out)
+wrdata ac.txt vdb(jack) vp(jack) vdb(out) vdb(mb)
+tran 2u 40m
+wrdata tran.txt v(ad1) v(ad2) v(out) v(jack)
 quit
 .endc
 .end

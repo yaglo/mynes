@@ -473,7 +473,11 @@ static inline bool preset_json_save(const PhysicalPreset *p, const char *path)
     fprintf(f, "    \"audio_hum_harmonic_3\": %.6f,\n", p->audio_hum_harmonic_3);
     fprintf(f, "    \"audio_noise_floor\": %.6f,\n",        p->audio_noise_floor);
     fprintf(f, "    \"audio_saturation_drive\": %.6f,\n",   p->audio_saturation_drive);
-    fprintf(f, "    \"audio_cable_length_m\": %.6f\n",      p->audio_cable_length_m);
+    fprintf(f, "    \"audio_cable_length_m\": %.6f,\n",      p->audio_cable_length_m);
+    fprintf(f, "    \"audio_gate_window_v\": %.6f,\n",       p->audio_gate_window_v);
+    fprintf(f, "    \"audio_pickup_mv\": %.6f,\n",           p->audio_pickup_mv);
+    fprintf(f, "    \"audio_tv_input_kohm\": %.6f,\n",       p->audio_tv_input_kohm);
+    fprintf(f, "    \"audio_rf_deemphasis\": %d\n",          p->audio_rf_deemphasis);
 
     fprintf(f, "}\n");
 
@@ -561,6 +565,10 @@ static inline void preset_json__assign(PhysicalPreset *p, PresetJsonSection sect
         else MATCH_FLOAT(PJSON_SEC_TOP, "audio_noise_floor",        p->audio_noise_floor)
         else MATCH_FLOAT(PJSON_SEC_TOP, "audio_saturation_drive",   p->audio_saturation_drive)
         else MATCH_FLOAT(PJSON_SEC_TOP, "audio_cable_length_m",     p->audio_cable_length_m)
+        else MATCH_FLOAT(PJSON_SEC_TOP, "audio_gate_window_v",      p->audio_gate_window_v)
+        else MATCH_FLOAT(PJSON_SEC_TOP, "audio_pickup_mv",          p->audio_pickup_mv)
+        else MATCH_FLOAT(PJSON_SEC_TOP, "audio_tv_input_kohm",      p->audio_tv_input_kohm)
+        else MATCH_INT(PJSON_SEC_TOP, "audio_rf_deemphasis",        p->audio_rf_deemphasis)
 
         /* ---- Video cable ---- */
         else MATCH_FLOAT(PJSON_SEC_VIDEO_CABLE, "length_meters",        p->video_cable.length_meters)

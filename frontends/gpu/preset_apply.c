@@ -46,16 +46,53 @@ static void apply_audio_preset(PresetCtx *ctx,const PhysicalPreset *p) {
     ctx->audio_chain->cable.capacitance=audio_length*audio_cap;
     ctx->audio_chain->cable.resistance=75.0f + audio_length*fmaxf(p->audio_cable.resistance_per_m,0.0f)
         + fmaxf(p->audio_cable.connector_resistance,0.0f);
-    if (p->audio_hum_frequency > 0) ctx->audio_chain->psu_hum.frequency = p->audio_hum_frequency;
-    ctx->audio_chain->psu_hum.harmonic_2 = p->audio_hum_harmonic_2;
-    ctx->audio_chain->psu_hum.harmonic_3 = p->audio_hum_harmonic_3;
-    ctx->audio_chain->psu_hum.amplitude=fmaxf(0,p->audio_psu_hum_amplitude);
-    ctx->audio_chain->psu_hum.enabled=p->audio_psu_hum_amplitude>0;
-    ctx->audio_chain->noise_floor.amplitude=fmaxf(0,p->audio_noise_floor);
-    ctx->audio_chain->noise_floor.enabled=p->audio_noise_floor>0;
-    ctx->audio_chain->amp_saturation.drive=fmaxf(1,p->audio_saturation_drive);
-    ctx->audio_chain->amp_saturation.enabled=p->audio_saturation_drive>1.01f;
-    audio_chain_prepare(ctx->audio_chain);
+    AudioChain *ac = ctx->audio_chain;
+    float mains = ctx->region == SIGNAL_REGION_PAL ? 50.0f : 60.0f;
+    /* Hum: the regulator's ripple sits at twice mains (audio_psu_hum_amplitude,
+     * from tools/circuits/nes001_psu.cir), mains pickup on the lead enters
+     * through what the shield lets past. One oscillator carries both: with
+     * pickup present it runs at mains and the ripple is its second harmonic. */
+    float ripple = fmaxf(0, p->audio_psu_hum_amplitude);
+    float shield = fminf(fmaxf(p->audio_cable.shield_effectiveness, 0.0f), 1.0f);
+    float pickup = fmaxf(0, p->audio_pickup_mv) * 1e-3f / AUDIO_JACK_VOLTS_PER_UNIT * (1.0f - shield);
+    if (pickup > 0) {
+        ac->psu_hum.frequency = mains;
+        ac->psu_hum.amplitude = pickup;
+        ac->psu_hum.harmonic_2 = ripple / pickup + p->audio_hum_harmonic_2;
+        ac->psu_hum.harmonic_3 = p->audio_hum_harmonic_3;
+    } else {
+        ac->psu_hum.frequency = p->audio_hum_frequency > 0 ? p->audio_hum_frequency : 2.0f * mains;
+        ac->psu_hum.amplitude = ripple;
+        ac->psu_hum.harmonic_2 = p->audio_hum_harmonic_2;
+        ac->psu_hum.harmonic_3 = p->audio_hum_harmonic_3;
+    }
+    ac->psu_hum.enabled = ac->psu_hum.amplitude > 0;
+    /* RF sound: no pre-emphasis in the console's modulator, so the set's
+     * de-emphasis (75 us System M, 50 us PAL) is a plain low-pass, and the
+     * FM link's hiss follows the video CNR in the RF stage: sound carrier
+     * 13 dB under vision (assumed for the NES modulator), 25 kHz deviation,
+     * 15 kHz audio, 200 kHz IF: S/N = CNR_sound + 16.6 dB, and 75 us
+     * de-emphasis adds about 13 dB (ITU-R BT.470 and standard FM theory). */
+    bool rf = p->connection == VIDEO_CONN_RF;
+    bool deemphasis = p->audio_rf_deemphasis == 1 || (p->audio_rf_deemphasis == 0 && rf);
+    ac->rf_deemphasis_us = deemphasis ? (ctx->region == SIGNAL_REGION_PAL ? 50.0f : 75.0f) : 0.0f;
+    float fm_noise = 0;
+    if (rf) {
+        float carrier = p->rf.carrier_level_dbm != 0 ? p->rf.carrier_level_dbm : -20.0f;
+        float noise = p->rf.noise_floor_dbm != 0 ? p->rf.noise_floor_dbm : -70.0f;
+        float sn_db = (carrier - noise) - 13.0f + 16.6f + (deemphasis ? 13.0f : 0.0f);
+        fm_noise = 0.7f * powf(10.0f, -sn_db / 20.0f) * 1.732f; /* full modulation about 0.7 units; uniform noise peak from rms */
+    }
+    float preset_noise = fmaxf(0, p->audio_noise_floor);
+    ac->noise_floor.amplitude = sqrtf(preset_noise * preset_noise + fm_noise * fm_noise);
+    ac->noise_floor.enabled = ac->noise_floor.amplitude > 0;
+    ac->amp_saturation.drive=fmaxf(1,p->audio_saturation_drive);
+    ac->amp_saturation.enabled=p->audio_saturation_drive>1.01f;
+    ac->rail_clip.enabled = p->audio_gate_window_v > 0;
+    ac->rail_clip.window = fmaxf(p->audio_gate_window_v, 0.1f) * 0.5f / AUDIO_JACK_VOLTS_PER_UNIT;
+    ac->rail_clip.knee = 0.15f;
+    ac->tv_input_coupling.resistance = (p->audio_tv_input_kohm > 0 ? p->audio_tv_input_kohm : 47.0f) * 1000.0f;
+    audio_chain_prepare(ac);
 }
 
 /* CPU-side portion of a preset apply — populates SignalPrecompute,
@@ -787,11 +824,16 @@ static PhysicalPreset preset_capture_live(void) {
     p.region             = signal_region_normalize(g_ctx->region);
     AudioChain *ac = g_ctx->audio_chain;
     p.audio_saturation_drive = ac->amp_saturation.drive;
-    p.audio_psu_hum_amplitude = ac->psu_hum.amplitude;
-    p.audio_hum_frequency = ac->psu_hum.frequency;
-    p.audio_hum_harmonic_2 = ac->psu_hum.harmonic_2;
-    p.audio_hum_harmonic_3 = ac->psu_hum.harmonic_3;
-    p.audio_noise_floor = ac->noise_floor.amplitude;
+    /* The chain's hum and noise are derived from these; read the sources back. */
+    p.audio_psu_hum_amplitude = preset_loaded.audio_psu_hum_amplitude;
+    p.audio_hum_frequency = preset_loaded.audio_hum_frequency;
+    p.audio_hum_harmonic_2 = preset_loaded.audio_hum_harmonic_2;
+    p.audio_hum_harmonic_3 = preset_loaded.audio_hum_harmonic_3;
+    p.audio_noise_floor = preset_loaded.audio_noise_floor;
+    p.audio_gate_window_v = preset_loaded.audio_gate_window_v;
+    p.audio_pickup_mv = preset_loaded.audio_pickup_mv;
+    p.audio_tv_input_kohm = preset_loaded.audio_tv_input_kohm;
+    p.audio_rf_deemphasis = preset_loaded.audio_rf_deemphasis;
 
     return p;
 }
@@ -1435,14 +1477,17 @@ void preset_ctx_init(PresetCtx *ctx) {
      * Audio chain stages (GPU verification path)
      * ================================================================ */
     n = 0;
-    menu_audio_chain[n++] = MI_FLOAT("Amp drive",       &ac->amp_saturation.drive,    0.1f, 1.0f, 6.0f, gpu_cb_audio_prepare, "%.1f");
-    menu_audio_chain[n++] = MI_FLOAT("PSU hum amp",     &ac->psu_hum.amplitude,       0.001f, 0.0f, 0.05f, gpu_cb_audio_prepare, "%.3f");
-    menu_audio_chain[n++] = MI_FLOAT("PSU hum freq",    &ac->psu_hum.frequency,       10.0f, 50.0f, 120.0f, gpu_cb_audio_prepare, "%.0f");
-    menu_audio_chain[n++] = MI_FLOAT("PSU 2nd harm",    &ac->psu_hum.harmonic_2,      0.05f, 0.0f, 1.0f, gpu_cb_audio_prepare, "%.2f");
-    menu_audio_chain[n++] = MI_FLOAT("PSU 3rd harm",    &ac->psu_hum.harmonic_3,      0.02f, 0.0f, 0.5f, gpu_cb_audio_prepare, "%.2f");
-    menu_audio_chain[n++] = MI_FLOAT("Noise amp",       &ac->noise_floor.amplitude,   0.001f, 0.0f, 0.05f, gpu_cb_audio_prepare, "%.3f");
+    menu_audio_chain[n++]=MI_FLOAT("Gate rail window Vpp", &preset_loaded.audio_gate_window_v,.25f,0,6,gpu_cb_audio_setup,"%.2f");
+    menu_audio_chain[n++]=MI_FLOAT("Cable pickup mV", &preset_loaded.audio_pickup_mv,.5f,0,50,gpu_cb_audio_setup,"%.1f");
+    menu_audio_chain[n++]=MI_FLOAT("TV input kohm", &preset_loaded.audio_tv_input_kohm,1,1,100,gpu_cb_audio_setup,"%.0f");
+    menu_audio_chain[n++]=MI_CYCLIC("RF sound de-emphasis", &preset_loaded.audio_rf_deemphasis,0,2,gpu_cb_audio_setup,"Auto|On|Off");
+    menu_audio_chain[n++]=MI_FLOAT("PSU ripple amp", &preset_loaded.audio_psu_hum_amplitude,0.0001f,0,0.05f,gpu_cb_audio_setup,"%.4f");
+    menu_audio_chain[n++]=MI_FLOAT("PSU ripple freq", &preset_loaded.audio_hum_frequency,10,0,240,gpu_cb_audio_setup,"%.0f");
+    menu_audio_chain[n++]=MI_FLOAT("Ripple 2nd harm", &preset_loaded.audio_hum_harmonic_2,0.05f,0,1,gpu_cb_audio_setup,"%.2f");
+    menu_audio_chain[n++]=MI_FLOAT("Ripple 3rd harm", &preset_loaded.audio_hum_harmonic_3,0.02f,0,0.5f,gpu_cb_audio_setup,"%.2f");
+    menu_audio_chain[n++]=MI_FLOAT("Extra noise amp", &preset_loaded.audio_noise_floor,0.001f,0,0.05f,gpu_cb_audio_setup,"%.3f");
     menu_audio_chain[n++]=MI_CYCLIC("Console audio circuit", &preset_loaded.console_variant,0,3,gpu_cb_audio_setup,"Famicom|NES front|NES top|Dendy");
-    menu_audio_chain[n++]=MI_CYCLIC("Speaker model", &preset_loaded.speaker_type,0,5,gpu_cb_audio_setup,"Small TV|Console TV|PVM|Arcade|Headphones|Famicom RF");
+    menu_audio_chain[n++]=MI_CYCLIC("Speaker model", &preset_loaded.speaker_type,0,7,gpu_cb_audio_setup,"Small TV|Console TV|PVM|Arcade|Headphones|Famicom RF|PVM-14L2|Toshiba 14AF43");
     menu_audio_chain[n++]=MI_FLOAT("Audio cable length m", &preset_loaded.audio_cable_length_m,.25f,0,20,gpu_cb_audio_setup,"%.2f");
     menu_audio_chain[n++]=MI_FLOAT("Audio cable C/m", &preset_loaded.audio_cable.capacitance_per_m,5e-12f,0,200e-12f,gpu_cb_audio_setup,"%.1e");
     menu_audio_chain[n++]=MI_FLOAT("Audio cable R/m", &preset_loaded.audio_cable.resistance_per_m,.1f,0,5,gpu_cb_audio_setup,"%.2f");

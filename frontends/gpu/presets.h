@@ -87,6 +87,10 @@ typedef struct {
     float audio_noise_floor;        /* peak noise level (0-0.02) */
     float audio_saturation_drive;   /* 1.0 = linear, 4.0 = heavy */
     float audio_cable_length_m;     /* audio cable length (may differ from video) */
+    float audio_gate_window_v;      /* console amplifier rail window, V peak to peak; 0 = no limit */
+    float audio_pickup_mv;          /* mains pickup on the audio lead before shielding, mV peak; 0 = none */
+    float audio_tv_input_kohm;      /* the set's line input resistance; 0 = 47 k */
+    int   audio_rf_deemphasis;      /* 0 = auto (on for RF), 1 = on, 2 = off */
 } PhysicalPreset;
 
 #endif /* PRESETS_H */

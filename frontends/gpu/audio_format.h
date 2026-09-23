@@ -15,9 +15,10 @@ typedef struct {
  * resistors and the 74HC04 gate's summing node gives 16.8 Hz (rainwarrior
  * measured about 16 Hz, nesdev thread 17745); R6 47k with C21 220 pF in the
  * feedback gives 15.4 kHz, and C4 0.01 uF at the output pin on the gate's
- * output resistance a second pole, 15.9 kHz at the assumed 1k (8 kHz at 2k,
- * 53 kHz at 300 ohm). The jack's 1 uF into the TV's input is the separate
- * TV coupling stage.
+ * output resistance a second pole: with the gate as a MOS pair fitted to
+ * the data sheet (gfs 35 mA/V, Gol 20) the deck's response is matched by a
+ * 21.5 kHz pole within 0.06 dB to 12 kHz. The jack's 1 uF into the TV's
+ * input is the separate TV coupling stage.
  * Famicom (HVC-001): C2 1 uF against R3//R4//R5 (10k, 20k, 12k) gives 37 Hz
  * (lidnariq; rainwarrior measured about 32 Hz). Its low-pass sits in the RF
  * modulator's sound path and is a generic figure.
@@ -25,8 +26,16 @@ typedef struct {
  * NES-001 values and the Dendy the Famicom high-pass with a generic
  * low-pass. */
 #define AUDIO_CORNERS_FAMICOM       ((AudioFilterCorners){ 37.0,     0.0, 10000.0 })
-#define AUDIO_CORNERS_NES_FRONT     ((AudioFilterCorners){ 16.8, 15900.0, 15400.0 })
-#define AUDIO_CORNERS_NES_TOP       ((AudioFilterCorners){ 16.8, 15900.0, 15400.0 })
+#define AUDIO_CORNERS_NES_FRONT     ((AudioFilterCorners){ 16.7, 21500.0, 15400.0 })
+#define AUDIO_CORNERS_NES_TOP       ((AudioFilterCorners){ 16.7, 21500.0, 15400.0 })
+
+/* Jack volts per unit of the core's mixer output. uXe and lidnariq saw
+ * about 0.3 V of swing on the APU pins (nesdev thread 56); the pulse pin's
+ * full mixer value is 0.2585 and the NES-001 gate takes it to the jack at
+ * -47k/20.1k with its finite loop gain (tools/circuits/nes001_audio.cir:
+ * 0.52 V peak), so one unit is about 2.0 V at the jack. An estimate, not a
+ * measurement: it scales every setting given in volts. */
+#define AUDIO_JACK_VOLTS_PER_UNIT   2.0f
 #define AUDIO_CORNERS_DENDY         ((AudioFilterCorners){ 37.0,     0.0,  8000.0 })
 
 /* Speaker model parameters. */
@@ -36,6 +45,7 @@ typedef struct {
     float bandwidth_high;   /* usable high-frequency limit (Hz) */
     float cabinet_q;        /* cabinet resonance Q factor (0.5-5.0) */
     float cone_breakup_hz;  /* frequency where cone breaks up (~5 kHz) */
+    float coupling_hp_hz;   /* amplifier output capacitor into the driver; 0 = none */
 } SpeakerParams;
 
 /* Predefined speaker profiles. */

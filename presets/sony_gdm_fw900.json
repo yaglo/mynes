@@ -123,10 +123,17 @@
     "brightness": 0.0,
     "contrast": 1.0,
     "chroma_gain": 1.0,
-    "audio_psu_hum_amplitude": 0,
+    "audio_psu_hum_amplitude": 0.00023,
     "audio_noise_floor": 0,
-    "audio_saturation_drive": 1,
+    "audio_saturation_drive": 1.0,
     "audio_cable_length_m": 1.0,
     "comb_notch_depth": 0.0,
-    "console_phase_distortion_ns": 30
+    "console_phase_distortion_ns": 30,
+    "audio_pickup_mv": 0.0,
+    "audio_hum_frequency": 120.0,
+    "audio_hum_harmonic_2": 0.2,
+    "audio_hum_harmonic_3": 0.05,
+    "audio_gate_window_v": 3.0,
+    "audio_tv_input_kohm": 47.0,
+    "audio_rf_deemphasis": 0
 }

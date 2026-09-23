@@ -3,8 +3,8 @@
 #include <string.h>
 
 #define BLOCK_BYTES (sizeof(AudioState) + AUDIO_BLOCK_CAPACITY * sizeof(float))
-_Static_assert(sizeof(AudioState) == 64, "audio shader state layout");
-_Static_assert(sizeof(AudioParams) == 192, "audio shader uniform layout");
+_Static_assert(sizeof(AudioState) == 72, "audio shader state layout");
+_Static_assert(sizeof(AudioParams) == 224, "audio shader uniform layout");
 
 bool audio_gpu_init(AudioGPUChain *a, SDL_GPUDevice *gpu,
                     AudioChain *chain, const char *shader_dir) {
