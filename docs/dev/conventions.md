@@ -165,9 +165,14 @@ const char *debug_format_cpu_flags(uint8_t p);
 
 ## Error Handling
 
-- ROM loading returns error codes (enum values):
+- `nes_rom_load()` and `nes_rom_load_data()` return 0 or a negative code
+  from `src/nes/rom.h`, and `nes_rom_error_str()` gives its message:
   ```c
-  typedef enum nes_error { NES_OK = 0, NES_ERROR_INVALID_ROM, ... } nes_error_t;
+  #define ROM_OK                0
+  #define ROM_ERR_FILE         -1  /* File not found or read error */
+  #define ROM_ERR_HEADER       -2  /* Invalid iNES header */
+  #define ROM_ERR_MAPPER       -3  /* Unsupported mapper */
+  #define ROM_ERR_ALLOC        -4  /* Memory allocation failed */
   ```
 - Test runner uses exit codes: 0=pass, 1=fail, 2=timeout, 3=ROM error.
 - Internal functions use NULL checks with early return.
