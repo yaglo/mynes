@@ -482,6 +482,17 @@ class EncodePipeline(unittest.TestCase):
             self.assertEqual(np.asarray(anim.convert("RGB")).tolist(),
                              np.asarray(Image.open(self.d(LENS) / "flicker.png").convert("RGB")).tolist())
 
+    def test_lossy_flicker_fallback(self):
+        """The flicker WebP falls back to lossy quality when lossless is over 5 MB."""
+        rect = recipes.flicker_geometry([78, 73, 100, 93.75], LENS)
+        out = Path(self.tmp) / "flicker-q90.webp"
+        Runner(quiet=True).run(recipes.flicker_webp_args(self.ctx.render_path(self.shot, "p_sony", LENS, False), out,
+                                                         rect, 0, quality=90))
+        self.assertEqual(runner_mod.verify_animation(out, frames=8, size=(rect.w, rect.h), fps=recipes.FLICKER_FPS), 8)
+        with Image.open(out) as anim, Image.open(self.d(LENS) / "flicker.png") as png:
+            got = np.asarray(anim.convert("RGB")).astype(np.int64)
+            self.assertLess(np.abs(got - np.asarray(png).astype(np.int64)).mean(), 4)
+
     def test_gainmap_jpegs(self):
         ok, reason = jobs_mod.gainmap_available()
         report = json.loads((self.ctx.clip_dir(self.shot, "p_sony") / "readme.json").read_text())
