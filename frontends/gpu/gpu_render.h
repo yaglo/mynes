@@ -46,6 +46,8 @@ typedef struct {
     int             hdr_gain_mode;       /* 0 = Auto: fit headroom, 1 = preset's emission gain only */
     float           hdr_boost;           /* Auto gain times this, 1 to 2; above 1 the peaks enter the shoulder */
     int             lab_fit;             /* subpixel lab: 1 = fit the lab half's own gain to its grille */
+    GPUDisplayParams lab_pass;           /* subpixel lab: this frame's lab half, for captures */
+    bool            lab_pass_active;
     int             panel_primaries;     /* 0 = sRGB, 1 = Display P3 when the layer can take it */
     int             lab_split;           /* subpixel lab: 0 off, 1 right half, 2 left half shows the lab grille */
     int             lab_reference;       /* subpixel lab: the other half shows 0 the shipped grille, 1 no grille, 2 mask/glass bypass */

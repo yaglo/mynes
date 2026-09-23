@@ -220,9 +220,16 @@ static bool capture_display(GPURenderCtx *ctx, const GPUDisplayParams *params,
         if (!cmd) goto done;
         /* Files are sRGB; only the window's layer takes P3. */
         GPUDisplayParams file_params=*params; file_params.output_p3=0;
-        if (owns_target)
+        if (owns_target) {
             gpu_display_render(ctx->gpu_disp,ctx->gpu,cmd,ctx->display_tex,
                 ctx->display_tex_w,ctx->display_tex_h,target,w,h,&file_params,viewport);
+            /* The subpixel lab's half goes into the file as it is on screen. */
+            if (ctx->lab_pass_active) {
+                GPUDisplayParams lab=ctx->lab_pass; lab.output_p3=0;
+                gpu_display_render(ctx->gpu_disp,ctx->gpu,cmd,ctx->display_tex,
+                    ctx->display_tex_w,ctx->display_tex_h,target,w,h,&lab,viewport);
+            }
+        }
         SDL_GPUCopyPass *copy=SDL_BeginGPUCopyPass(cmd);
         if (!copy) { SDL_CancelGPUCommandBuffer(cmd); goto done; }
         SDL_GPUTextureRegion region={.texture=target,.w=w,.h=h,.d=1};
@@ -513,6 +520,8 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
         bool lab = ctx->lab_split && !ctx->offscreen_w;
         GPUDisplayParams base = disp_params;
         if (lab && ctx->lab_reference) strip_mask(&base, ctx->lab_reference == 2);
+        capture_params = base;
+        ctx->lab_pass_active = false;
         gpu_display_render(ctx->gpu_disp, ctx->gpu, cmd,
                            ctx->display_tex, ctx->display_tex_w, ctx->display_tex_h,
                            swapchain_tex, (int)sw, (int)sh,
@@ -532,6 +541,7 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
             gpu_display_render(ctx->gpu_disp, ctx->gpu, cmd,
                                ctx->display_tex, ctx->display_tex_w, ctx->display_tex_h,
                                swapchain_tex, (int)sw, (int)sh, &lab, &viewport);
+            ctx->lab_pass = lab; ctx->lab_pass_active = true;
         }
     } else if (ctx->display_tex) {
         /* Passthrough blit with 4:3 aspect ratio.
