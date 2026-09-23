@@ -619,6 +619,22 @@ def fit(limit: int, settings: Sequence, build) -> tuple[object, int]:
     return last
 
 
+def fit_parallel(limit: int, settings: Sequence, build) -> tuple[object, int, list]:
+    """Build every setting at once, each to its own file: ``build(setting)``
+    returns (path, size). Returns the first setting whose file fits, its size,
+    and the other files to remove; the last setting's file is kept when none
+    fits. libwebp encodes on one core, so the candidates of a README clip take
+    the time of one instead of one after another."""
+    from concurrent.futures import ThreadPoolExecutor
+    if not settings:
+        raise RecipeError("fit needs at least one setting")
+    with ThreadPoolExecutor(max_workers=len(settings)) as pool:
+        results = list(pool.map(build, list(settings)))
+    setting, (path, size) = next(((s, r) for s, r in zip(settings, results) if r[1] <= limit),
+                                 (settings[-1], results[-1]))
+    return setting, size, [r[0] for r in results if r[0] != path]
+
+
 # ---------------------------------------------------------------------------
 # Guard
 

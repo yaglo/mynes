@@ -337,7 +337,7 @@ def record_one(ctx: Context, runner: Runner, shot: Shot, preset: str, r: Render,
         ctx.binary, rom, preset_path, state, out, seconds, replay=replay,
         record_after=shot.record_after, size=r.size, hdr=hdr, headroom=d.hdr_headroom,
         white_nits=d.hdr_white_nits, mask_alignment=mask_alignment_for(d, r.size), extra_args=d.record_args)
-    inputs = [state, preset_path, rom] + ([replay] if replay else [])
+    inputs = [state, preset_path, rom, ctx.binary] + ([replay] if replay else [])  # a rebuilt recorder renders again
     if runner.up_to_date([out, sidecar_path(out), provenance], inputs) and _recorded(provenance, frames, r.size, cmd):
         runner.say(f"up to date: {out}")
         return None
@@ -709,18 +709,24 @@ def encode_readme(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dict
     webp, png, hdr_png, jpg = d / "readme.webp", d / "readme.png", d / "readme-hdr.png", d / "readme-hdr.jpg"
     if _skip_if_fresh(runner, [webp, png, hdr_png], _inputs(sdr, hdr)):
         return None
-    with _discard_on_failure(runner, [webp, png, hdr_png, jpg, d / "readme-hdr.yuv"]):
+    candidates = {q: webp.with_name(f"readme.q{q}.webp") for q in recipes.README_QUALITIES}
+    with _discard_on_failure(runner, [webp, png, hdr_png, jpg, d / "readme-hdr.yuv", *candidates.values()]):
         source_frames = min(sdr.frames, shot.readme_frames)
         frames = recipes.readme_frames(source_frames)
         limit = recipes.LIMITS["readme_webp"]
 
-        def build(quality: int) -> int:
-            runner.run(recipes.readme_webp_args(sdr.path, webp, source_frames, quality, matrix=sdr.matrix,
+        def build(quality: int) -> tuple[Path, int]:
+            out = candidates[quality]
+            runner.run(recipes.readme_webp_args(sdr.path, out, source_frames, quality, matrix=sdr.matrix,
                                                 range_=sdr.range),
                        timeout=ENCODE_TIMEOUT, what=f"readme webp q{quality}")
-            return 0 if runner.dry_run else webp.stat().st_size
+            return out, (0 if runner.dry_run else out.stat().st_size)
 
-        quality, webp_size = recipes.fit(limit, recipes.README_QUALITIES, build)
+        quality, webp_size, others = recipes.fit_parallel(limit, recipes.README_QUALITIES, build)
+        if not runner.dry_run:
+            candidates[quality].replace(webp)
+            for other in others:
+                Path(other).unlink(missing_ok=True)
         runner.run(recipes.sdr_png_args(sdr.path, png, shot.thumbnail_frame, matrix=sdr.matrix, range_=sdr.range),
                    what="readme png")
         _hdr_frame(runner, hdr, shot.thumbnail_frame, d / "readme-hdr.yuv", "write readme-hdr.png as 16-bit PQ PNG",
@@ -755,20 +761,26 @@ def encode_flicker(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dic
     webp, png, hdr_png, jpg = d / "flicker.webp", d / "flicker.png", d / "flicker-hdr.png", d / "flicker-hdr.jpg"
     if _skip_if_fresh(runner, [webp, png, hdr_png], _inputs(sdr, hdr)):
         return None
-    with _discard_on_failure(runner, [webp, png, hdr_png, jpg, d / "flicker-hdr.yuv"]):
+    candidates = {q: webp.with_name(f"flicker.q{q}.webp") for q in recipes.FLICKER_QUALITIES}
+    with _discard_on_failure(runner, [webp, png, hdr_png, jpg, d / "flicker-hdr.yuv", *candidates.values()]):
         rect = recipes.flicker_geometry(shot.flicker_crop, size, ctx.flicker_scale)
         first = shot.flicker_first_frame
         if first + recipes.FLICKER_FRAMES > sdr.frames:
             raise PipelineError(f"flicker frames {first}..{first + recipes.FLICKER_FRAMES - 1} exceed the render")
         limit = recipes.LIMITS["flicker_webp"]
 
-        def build(quality) -> int:
-            runner.run(recipes.flicker_webp_args(sdr.path, webp, rect, first, quality=quality, matrix=sdr.matrix,
+        def build(quality) -> tuple[Path, int]:
+            out = candidates[quality]
+            runner.run(recipes.flicker_webp_args(sdr.path, out, rect, first, quality=quality, matrix=sdr.matrix,
                                                  range_=sdr.range),
                        timeout=ENCODE_TIMEOUT, what=f"flicker webp {quality}")
-            return 0 if runner.dry_run else webp.stat().st_size
+            return out, (0 if runner.dry_run else out.stat().st_size)
 
-        quality, webp_size = recipes.fit(limit, recipes.FLICKER_QUALITIES, build)
+        quality, webp_size, others = recipes.fit_parallel(limit, recipes.FLICKER_QUALITIES, build)
+        if not runner.dry_run:
+            candidates[quality].replace(webp)
+            for other in others:
+                Path(other).unlink(missing_ok=True)
         runner.run(recipes.sdr_png_args(sdr.path, png, first, matrix=sdr.matrix, range_=sdr.range, rect=rect),
                    what="flicker png")
         _hdr_frame(runner, hdr, first, d / "flicker-hdr.yuv",

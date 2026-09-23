@@ -162,7 +162,9 @@ class Cli(unittest.TestCase):
         self.assertEqual(out.count("-crf 14 -profile:v main10"), lens)
         self.assertEqual(out.count("-crf 14 -profile:v main "), lens)
         self.assertEqual(out.count("--cicp 9/16/9 --depth 10 --yuv 444"), (clips + crops) * 3)  # still and two crops
-        self.assertEqual(out.count("-c:v libwebp_anim"), readme * 2)  # readme.webp and flicker.webp
+        # Every README and flicker quality is encoded at once and the best kept.
+        self.assertEqual(out.count("-c:v libwebp_anim"),
+                         readme * (len(recipes.README_QUALITIES) + len(recipes.FLICKER_QUALITIES)))
         self.assertIn("hstack=inputs=3", out)
         self.assertIn("concat=n=5", out)
         self.assertIn(f"would merge {clips + crops} clip(s)", out)

@@ -109,8 +109,8 @@ is given them as absolute paths.
    `sdr.record.json`/`hdr.record.json` beside it (command, frames, rate, the
    recorder's sidecar, SHA-256 of ROM, state, replay and preset). `record`
    runs a pass again when its command changes (size, length, start frame,
-   HDR headroom and white, `record_args`), when the ROM, state, replay or
-   preset is newer, or when its last run failed: the `.record.json` is
+   HDR headroom and white, `record_args`), when the ROM, state, replay,
+   preset or the recorder binary is newer, or when its last run failed: the `.record.json` is
    removed before the recorder starts and written only after the checks
    pass.
 
@@ -180,10 +180,10 @@ In `out/<shot>/<preset>/<WxH>/`:
 | `crop-sdr.png`, `crop-sdr@1x.png` | crop | 1:1 detail crop of `still-sdr.png`, and its 2x2 average |
 | `crop-hdr.png`, `crop-hdr@1x.png` | crop | The same from the 16-bit HDR frame |
 | `crop-hdr.avif`, `crop-hdr@1x.avif` | crop | AVIF of each, as `still-hdr.avif` |
-| `flicker.webp` | crop | README presets: eight consecutive frames from `flicker_frame` at 1:1, 125 ms each (8 fps), lossless unless over 5 MB, then quality 95 to 80 |
+| `flicker.webp` | crop | README presets: eight consecutive frames from `flicker_frame` at 1:1, 125 ms each (8 fps), lossless unless over 5 MB, then the best of quality 95 to 80 (every candidate is encoded at once, libwebp using one core each) |
 | `flicker.png` | crop | Frame `flicker_frame` of the crop, lossless |
 | `flicker-hdr.png`, `flicker-hdr.jpg` | crop | The HDR crop, and a JPEG with the SDR crop as base image and a gain map toward the HDR one |
-| `readme.webp` | 1600x1200 | README presets: every second frame of the first `readme_seconds` at 30 fps (33 and 34 ms frames), quality lowered from 90 to 30 until under 10 MB |
+| `readme.webp` | 1600x1200 | README presets: every second frame of the first `readme_seconds` at 30 fps (33 and 34 ms frames), the highest quality from 90 to 30 that is under 10 MB, all candidates encoded at once |
 | `readme.png` | 1600x1200 | Frame `thumbnail_frame`, lossless |
 | `readme-hdr.png`, `readme-hdr.jpg` | 1600x1200 | The HDR frame, and its gain-map JPEG |
 
