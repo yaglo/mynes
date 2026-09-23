@@ -154,7 +154,9 @@ Fidelity checks:
 The generated MSL and SPIR-V are updated alongside GLSL. Runtime validation and
 image comparisons used Metal; Vulkan performance has not been measured.
 [Raw runs, shader hashes and capture hashes](gpu-filter-optimization-results.json)
-include the intermediate FIR-only run as well as both final repeats.
+include the intermediate FIR-only run as well as both final repeats. Its VHS SP
+capture hashes record the stage that existed then; the FM deck model that
+replaced it on 2026-09-23 renders different pictures.
 
 ## Scanline parallelism (2026-09-21)
 
