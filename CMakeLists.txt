@@ -522,6 +522,25 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
 
         # Stamp file tracks when build/shaders was last populated.
         set(SHADER_STAMP ${SHADER_OUT_DIR}/.compile_stamp)
+        # Renaming or deleting a shader leaves no input newer than the stamp
+        # (git mv keeps the file's mtime), so the step below would not rerun:
+        # build/shaders would keep the old outputs and lack the new ones. This
+        # file lists every shader file, is rewritten only when that list
+        # changes, and the step depends on it. It is kept outside
+        # build/shaders so that deleting that directory still rebuilds it.
+        set(SHADER_FILE_LIST ${CMAKE_BINARY_DIR}/CMakeFiles/mynes_shader_files.txt)
+        string(REPLACE ";" "\n" SHADER_FILE_LIST_TEXT "${ALL_GLSL_SOURCES};${SHADER_PREBUILT}\n")
+        set(SHADER_FILE_LIST_OLD "")
+        if(EXISTS ${SHADER_FILE_LIST})
+            file(READ ${SHADER_FILE_LIST} SHADER_FILE_LIST_OLD)
+        endif()
+        if(NOT SHADER_FILE_LIST_OLD STREQUAL SHADER_FILE_LIST_TEXT)
+            file(WRITE ${SHADER_FILE_LIST} "${SHADER_FILE_LIST_TEXT}")
+        endif()
+        set(SHADER_PRUNE ${CMAKE_COMMAND}
+            -DSHADER_SRC_DIR=${SHADER_SRC_DIR}
+            -DSHADER_OUT_DIR=${SHADER_OUT_DIR}
+            -P ${CMAKE_SOURCE_DIR}/cmake/PruneShaderOutputs.cmake)
         if(GLSLC_EXECUTABLE AND SPIRV_CROSS_EXECUTABLE AND MYNES_PYTHON3)
             set(MYNES_SHADER_SOURCE "compiled with ${GLSLC_EXECUTABLE}")
             # Hand the script the exact tools CMake found rather than whatever
@@ -533,8 +552,10 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
             add_custom_command(
                 OUTPUT ${SHADER_STAMP}
                 COMMAND ${SHADER_TOOL_ENV} ${SHADER_SRC_DIR}/compile_shaders.sh ${SHADER_OUT_DIR}
+                COMMAND ${SHADER_PRUNE}
                 COMMAND ${CMAKE_COMMAND} -E touch ${SHADER_STAMP}
                 DEPENDS ${ALL_GLSL_SOURCES} ${SHADER_SRC_DIR}/compile_shaders.sh
+                    ${SHADER_FILE_LIST} ${CMAKE_SOURCE_DIR}/cmake/PruneShaderOutputs.cmake
                 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
                 COMMENT "Compiling GPU shaders (GLSL -> SPIR-V -> MSL)"
                 VERBATIM
@@ -556,8 +577,10 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
                     -DSHADER_SRC_DIR=${SHADER_SRC_DIR}
                     -DSHADER_OUT_DIR=${SHADER_OUT_DIR}
                     -P ${CMAKE_SOURCE_DIR}/cmake/CopyPrebuiltShaders.cmake
+                COMMAND ${SHADER_PRUNE}
                 COMMAND ${CMAKE_COMMAND} -E touch ${SHADER_STAMP}
                 DEPENDS ${SHADER_PREBUILT} ${CMAKE_SOURCE_DIR}/cmake/CopyPrebuiltShaders.cmake
+                    ${SHADER_FILE_LIST} ${CMAKE_SOURCE_DIR}/cmake/PruneShaderOutputs.cmake
                 COMMENT "Copying committed GPU shaders (shader tools not installed)"
                 VERBATIM
             )
@@ -712,6 +735,11 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
                     -DSHADER_SRC_DIR=${SHADER_SRC_DIR}
                     -DSHADER_OUT_DIR=${SHADER_OUT_DIR}
                     -P ${CMAKE_SOURCE_DIR}/cmake/CheckShaderLayout.cmake)
+            add_test(NAME gpu_shader_prune_test
+                COMMAND ${CMAKE_COMMAND}
+                    -DWORK_DIR=${CMAKE_BINARY_DIR}/shader_prune_test
+                    -DPRUNE_SCRIPT=${CMAKE_SOURCE_DIR}/cmake/PruneShaderOutputs.cmake
+                    -P ${CMAKE_SOURCE_DIR}/cmake/TestPruneShaderOutputs.cmake)
         endif()
 
         # GPU image processor — run real pipeline on PNG screenshots

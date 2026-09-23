@@ -68,6 +68,10 @@ tree:
   `.spv`/`.msl` files into the same layout. Force this path for testing
   with `-DGLSLC_EXECUTABLE=NOTFOUND`.
 
+Either way the build then deletes every `.spv`/`.msl` in `build/shaders/`
+that no current `.glsl` produces, such as the outputs of a renamed or
+removed shader.
+
 After editing a `.glsl`, regenerate the committed copies and commit them
 together with the source:
 
