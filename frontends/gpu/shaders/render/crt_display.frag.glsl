@@ -92,6 +92,7 @@ layout(set = 3, binding = 0) uniform DisplayParams {
     vec4 phosphor_to_display[3];
     vec4 presentation; // x: host-refresh emission multiplier
     vec4 monitor; // x: 1 = FW900 physical variable-pitch grille; y: panel subpixels, 0 off, 1 RGB, 2 BGR
+    vec4 damper;  // x: aperture-grille damper wires; y: shadow height, face fraction; z, w: wire heights from the top
 };
 
 /* Mask coordinates are local to the CRT viewport. Each stripe is one
@@ -290,6 +291,18 @@ vec3 face_emission(vec2 sample_uv, vec2 face_pos) {
     return color;
 }
 
+// A damper wire (20-30 um tungsten, US5369330) crosses an aperture grille
+// and blocks the beam along its length, leaving a thin unlit band on the
+// phosphor. Returns the fraction of this pixel row left lit.
+float damper_light(float y) {
+    if(damper.x<0.5 || mask_type!=1 || mask_strength<=0.01) return 1.0;
+    float h=out_size.y, half_band=0.5*damper.y*h, top=y*h-0.5, bottom=y*h+0.5;
+    float lost=max(0.0,min(bottom,damper.z*h+half_band)-max(top,damper.z*h-half_band));
+    if(damper.x>1.5)
+        lost+=max(0.0,min(bottom,damper.w*h+half_band)-max(top,damper.w*h-half_band));
+    return 1.0-mask_strength*clamp(lost,0.0,1.0);
+}
+
 /* -----------------------------------------------------------------------
  * Main
  * ----------------------------------------------------------------------- */
@@ -300,7 +313,7 @@ void main() {
     vec2 sample_uv = clamp(uv, vec2(0.0), vec2(1.0));
     vec3 color;
     vec2 face_pos=gl_FragCoord.xy*mask_scale+mask_origin;
-    vec3 gain=vec3(1.0);
+    vec3 gain=vec3(damper_light(sample_uv.y));
 
     /* §5.3 cathode aging / non-uniformity — center dims faster than
      * edges, and the three guns age at different rates. Multiplicative

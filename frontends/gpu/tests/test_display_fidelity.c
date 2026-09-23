@@ -10,6 +10,7 @@
 #define H 128
 static int failures;
 static float center_row[W][3];
+static float row_mean[H][3];
 #define CHECK(x) do { if (!(x)) { fprintf(stderr,"Display FAIL %d: %s\n",__LINE__,#x); failures++; } } while(0)
 
 static void render_region(SDL_GPUDevice *gpu, GPUDisplay *d, SDL_GPUTexture *input,
@@ -28,10 +29,12 @@ static void render_region(SDL_GPUDevice *gpu, GPUDisplay *d, SDL_GPUTexture *inp
     CHECK(v!=NULL); avg[0]=avg[1]=avg[2]=0; *peak=0;
     if(v) {
         double sum[3]={0};
+        memset(row_mean,0,sizeof(row_mean));
         for(int i=0;i<W*H;i++) for(int c=0;c<3;c++) {
             float x=gpu_half_to_float(v[4*i+c]);
             CHECK(isfinite(x)); sum[c]+=x; *peak=fmaxf(*peak,x);
             if(i/W==H/2) center_row[i%W][c]=x;
+            row_mean[i/W][c]+=x/W;
         }
         for(int c=0;c<3;c++) avg[c]=(float)(sum[c]/(W*H));
         SDL_UnmapGPUTransferBuffer(gpu,download);
@@ -302,6 +305,28 @@ int test_display_fidelity(SDL_GPUDevice *gpu) {
     sub=(GPUDisplayParams){.mask_type=1,.mask_pitch_px=2.07f/3};
     gpu_display_fit_mask(&sub,true,1,2560.0f/2940,1664.0f/1912,0,0);
     CHECK(sub.panel_subpixels==0 && 3*sub.mask_pitch_px>=3);
+    // A 25 um damper wire on a face 0.4 pixels of wire per 128 rows, a
+    // quarter of the way down: the band [31.8, 32.2] darkens rows 31 and 32
+    // by 0.2 each and leaves every other row alone.
+    p.mask_pitch_px=1.0f/3; p.damper_wires=1; p.damper_y[0]=0.25f; p.damper_width=0.4f/H;
+    render(gpu,&d,input,target,&p,avg,&peak);
+    for(int c=0;c<3;c++) {
+        float lit=row_mean[20][c];
+        CHECK(fabsf(row_mean[31][c]/lit-0.8f)<0.01f);
+        CHECK(fabsf(row_mean[32][c]/lit-0.8f)<0.01f);
+        CHECK(fabsf(row_mean[30][c]/lit-1.0f)<0.001f);
+        CHECK(fabsf(row_mean[33][c]/lit-1.0f)<0.001f);
+        CHECK(fabsf(row_mean[96][c]/lit-1.0f)<0.001f);
+    }
+    // Two wires, and none on a shadow mask.
+    p.damper_wires=2; p.damper_y[1]=0.75f;
+    render(gpu,&d,input,target,&p,avg,&peak);
+    CHECK(fabsf(row_mean[95][0]/row_mean[20][0]-0.8f)<0.01f);
+    p.mask_type=0;
+    render(gpu,&d,input,target,&p,avg,&peak);
+    CHECK(fabsf(row_mean[31][0]/row_mean[20][0]-1.0f)<0.01f);
+    p.mask_type=1; p.damper_wires=0;
+
     // Host fitting must use the drawable/panel ratio, not the 256-pixel source.
     // A 1470-point desktop backed at 2x on a 2560-pixel panel is not a 2940-pixel panel.
     GPUDisplayParams fit={.mask_type=1,.mask_pitch_px=2.24f};

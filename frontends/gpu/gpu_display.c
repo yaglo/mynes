@@ -645,10 +645,15 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
             float phosphor_to_display[3][4];
             float pulse_gain, _pulse_pad[3];
             float monitor_model, panel_subpixels, _monitor_pad[2];
+            float damper_wires, damper_width, damper_y0, damper_y1;
         } crt_ubo = {0};
 
         crt_ubo.monitor_model = params->monitor_model;
         crt_ubo.panel_subpixels = (float)params->panel_subpixels;
+        crt_ubo.damper_wires = params->mask_type==1 ? (float)params->damper_wires : 0.0f;
+        crt_ubo.damper_width = params->damper_width;
+        crt_ubo.damper_y0 = params->damper_y[0];
+        crt_ubo.damper_y1 = params->damper_y[1];
         crt_ubo.pulse_gain = params->pulse_enabled ? params->pulse_gain : 1;
         float phosphor_matrix[3][3];
         crt_phosphor_matrix(params->phosphor_gamut,phosphor_matrix);
@@ -795,6 +800,13 @@ void gpu_display_params_from_tv(GPUDisplayParams *out, const TVDisplayParams *tv
     out->phosphor_gamut = tv->phosphor_gamut;
     out->mask_row_pitch = 0;
     out->mask_scale_x = out->mask_scale_y = 1;
+    /* A damper wire shadows a band of the grille as tall as its diameter.
+     * Without a face height the band cannot be sized, so no wire is drawn. */
+    out->damper_wires = tv->face_height_mm > 0.0f && tv->damper_wire_um > 0.0f
+                        ? (tv->damper_wires < 0 ? 0 : tv->damper_wires > 2 ? 2 : tv->damper_wires) : 0;
+    out->damper_y[0] = tv->damper_y1;
+    out->damper_y[1] = tv->damper_y2;
+    out->damper_width = tv->face_height_mm > 0.0f ? tv->damper_wire_um * 0.001f / tv->face_height_mm : 0.0f;
     out->mask_origin_x = out->mask_origin_y = 0;
     out->mask_pitch_px = tv->mask_pitch_px;
     if (tv->mask_triads > 0.0f)

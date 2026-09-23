@@ -305,6 +305,11 @@ static inline bool preset_json_save(const PhysicalPreset *p, const char *path)
     fprintf(f, "        \"mask_pitch_px\": %.6f,\n",        p->tv.mask_pitch_px);
     fprintf(f, "        \"mask_strength\": %.6f,\n",        p->tv.mask_strength);
     fprintf(f, "        \"subpixel_layout\": %d,\n",        p->tv.subpixel_layout);
+    fprintf(f, "        \"face_height_mm\": %.6f,\n",        p->tv.face_height_mm);
+    fprintf(f, "        \"damper_wires\": %d,\n",           p->tv.damper_wires);
+    fprintf(f, "        \"damper_y1\": %.6f,\n",            p->tv.damper_y1);
+    fprintf(f, "        \"damper_y2\": %.6f,\n",            p->tv.damper_y2);
+    fprintf(f, "        \"damper_wire_um\": %.6f,\n",       p->tv.damper_wire_um);
     fprintf(f, "        \"persistence_ms\": %.6f,\n",       p->tv.persistence_ms);
     /* Glass. */
     fprintf(f, "        \"halation\": %.6f,\n",             p->tv.halation);
@@ -618,6 +623,11 @@ static inline void preset_json__assign(PhysicalPreset *p, PresetJsonSection sect
         else MATCH_FLOAT(PJSON_SEC_TV, "mask_pitch_mm",        p->tv.mask_pitch_px)
         else MATCH_FLOAT(PJSON_SEC_TV, "mask_strength",        p->tv.mask_strength)
         else MATCH_INT  (PJSON_SEC_TV, "subpixel_layout",      p->tv.subpixel_layout)
+        else MATCH_FLOAT(PJSON_SEC_TV, "face_height_mm",       p->tv.face_height_mm)
+        else MATCH_INT  (PJSON_SEC_TV, "damper_wires",         p->tv.damper_wires)
+        else MATCH_FLOAT(PJSON_SEC_TV, "damper_y1",            p->tv.damper_y1)
+        else MATCH_FLOAT(PJSON_SEC_TV, "damper_y2",            p->tv.damper_y2)
+        else MATCH_FLOAT(PJSON_SEC_TV, "damper_wire_um",       p->tv.damper_wire_um)
         else MATCH_FLOAT(PJSON_SEC_TV, "persistence_ms",       p->tv.persistence_ms)
         /* Glass. */
         else MATCH_FLOAT(PJSON_SEC_TV, "halation",             p->tv.halation)

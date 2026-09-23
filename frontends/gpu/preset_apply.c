@@ -1305,6 +1305,11 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_phosphor[n++] = MI_FLOAT("Persist G",       &vc->tv.persistence_g,       0.02f, 0.0f, 2.0f, gpu_cb_update_beam_params, "%.2f");
     menu_phosphor[n++] = MI_FLOAT("Persist B",       &vc->tv.persistence_b,       0.02f, 0.0f, 2.0f, gpu_cb_update_beam_params, "%.2f");
     menu_phosphor[n++] = MI_CYCLIC("Phosphor order",       &vc->tv.subpixel_layout,     0.0f, 2.0f, gpu_cb_update_beam_params, "RGB (legacy)|RGB|BGR");
+    menu_phosphor[n++] = MI_FLOAT("Face height mm", &vc->tv.face_height_mm, 1.0f, 0.0f, 600.0f, gpu_cb_update_beam_params, "%.1f");
+    menu_phosphor[n++] = MI_CYCLIC("Damper wires", &vc->tv.damper_wires, 0.0f, 2.0f, gpu_cb_update_beam_params, "None|One|Two");
+    menu_phosphor[n++] = MI_FLOAT("Damper 1 height", &vc->tv.damper_y1, 0.005f, 0.0f, 1.0f, gpu_cb_update_beam_params, "%.3f");
+    menu_phosphor[n++] = MI_FLOAT("Damper 2 height", &vc->tv.damper_y2, 0.005f, 0.0f, 1.0f, gpu_cb_update_beam_params, "%.3f");
+    menu_phosphor[n++] = MI_FLOAT("Damper wire um", &vc->tv.damper_wire_um, 1.0f, 0.0f, 100.0f, gpu_cb_update_beam_params, "%.0f");
     menu_phosphor[n++] = MI_FLOAT("Slow decay ms", &vc->tv.persistence_tail_ms, 1.0f, 0.0f, 100.0f, gpu_cb_update_beam_params, "%.3f");
     menu_phosphor[n++] = MI_FLOAT("Slow decay energy", &vc->tv.persistence_tail_weight, 0.01f, 0.0f, 1.0f, gpu_cb_update_beam_params, "%.3f");
     menu_phosphor[n++] = MI_FLOAT("R gamma offset", &vc->tv.phosphor_gamma_offset_r, 0.01f, -0.5f, 0.5f, gpu_cb_update_beam_params, "%.3f");

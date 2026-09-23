@@ -246,6 +246,10 @@ typedef struct {
     float mask_pitch_px;        /* phosphor cell spacing in drawable pixels */
     float mask_strength;        /* phosphor mask blend (0=off, 0.6=visible, 1.0=full) */
     int   subpixel_layout;      /* 0=none, 1=RGB stripe, 2=BGR stripe */
+    float face_height_mm;       /* visible face height; 0 = unknown */
+    int   damper_wires;         /* aperture-grille damper wires, 0-2 */
+    float damper_y1, damper_y2; /* wire heights, fraction of the face from the top */
+    float damper_wire_um;       /* damper wire diameter, micrometres */
     float persistence_ms;       /* fast exponential time constant, ms; estimated per tube */
     float persistence_tail_ms;  /* optional slow time constant, ms */
     float persistence_tail_weight; /* fraction of integrated light in slow component */
