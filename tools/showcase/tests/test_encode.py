@@ -16,6 +16,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from fractions import Fraction
@@ -23,6 +24,7 @@ from pathlib import Path
 
 from pipeline import jobs as jobs_mod
 from pipeline import recipes, shots
+from pipeline import runner as runner_mod
 from pipeline.runner import (PipelineError, Runner, animation_durations, ffmpeg_has, have_tool, image_info,
                              probe_video, run_jobs, tool)
 
@@ -80,6 +82,7 @@ def peak_patch(size, inset: int = 0):
     return slice(h * 3 // 4 + 4 + inset, h - 4 - inset), slice(w // 16 + inset, w // 16 + w // 8 - inset)
 
 
+HDR_COLOUR = jobs_mod.HDR_COLOUR
 HDR_TAGS = ["-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc",
             "-color_range", "tv"]
 
@@ -340,23 +343,69 @@ class EncodePipeline(unittest.TestCase):
             got = decode(path, size, frame=10)
             self.assertGreater(got[h * 5 // 8, x].mean(), 200, path.name)
 
+    def backup(self, *paths):
+        """Copy files aside and put them back when the test ends."""
+        for path in paths:
+            saved = path.with_name(path.name + ".saved")
+            shutil.copy2(path, saved)
+            self.addCleanup(shutil.move, saved, path)
+
     def test_fast_uses_videotoolbox(self):
         if not ffmpeg_has("encoders", ["hevc_videotoolbox"])["hevc_videotoolbox"]:
             self.skipTest("no hevc_videotoolbox")
-        ctx = jobs_mod.Context(shot_list=self.shot_list, out=self.out, presets_dir=self.presets_dir, fast=True)
-        runner = Runner(quiet=True, force=True)
-        out = self.d(STAGE[1]) / "stage-hdr-hevc.mp4"
-        backup = out.with_suffix(".slow.mp4")
-        shutil.copy2(out, backup)
-        try:
-            note = jobs_mod.encode_video(ctx, runner, self.shot, "p_sony", STAGE[1], recipes.STAGE_OUTPUTS[0])
+        fast = jobs_mod.Context(shot_list=self.shot_list, out=self.out, presets_dir=self.presets_dir, fast=True)
+        cases = ((STAGE[1], recipes.STAGE_OUTPUTS[0], "yuv420p10le", HDR_COLOUR, r"^hvc1\.2\.4\."),
+                 (LENS, recipes.LENS_OUTPUTS[2], "yuv420p", jobs_mod.SDR_COLOUR, r"^hvc1\.1\.6\."))
+        for size, spec, pix_fmt, colour, codecs in cases:
+            out = self.d(size) / spec.file
+            self.backup(out, jobs_mod.encode_record_path(out))
+            # No --force: the full encode is newer than the render, but was made by another command.
+            runner = Runner(quiet=True)
+            note = jobs_mod.encode_video(fast, runner, self.shot, "p_sony", size, spec)
+            self.assertEqual(len(runner.ran), 1, spec.name)
             self.assertIn("hevc_videotoolbox", runner.ran[0])
-            self.assertRegex(note["codecs"], r"^hvc1\.2\.4\.")
+            self.assertRegex(note["codecs"], codecs)
             info = probe_video(out)
-            self.assertEqual((info.frames, info.pix_fmt, info.colour["color_transfer"]),
-                             (FRAMES, "yuv420p10le", "smpte2084"))
+            self.assertEqual((info.frames, info.width, info.height, info.pix_fmt), (FRAMES, *size, pix_fmt))
+            self.assertEqual({k: info.colour[k] for k in colour}, colour)
+            self.assertEqual(jobs_mod.read_encode_record(out)["encoder"], "hevc_videotoolbox")
+        said = []
+        runner = Runner(quiet=True)
+        runner.say = said.append
+        jobs_mod.collect_clip(self.install_ctx(Path(self.tmp)), runner, self.shot, "p_sony")
+        self.assertTrue(any("stage-hdr-hevc.mp4, lens-sdr-hevc.mp4 made with --fast" in s for s in said), said)
+        # A later run without --fast encodes the file again with libx265.
+        size, spec = cases[0][:2]
+        runner = Runner(quiet=True)
+        jobs_mod.encode_video(self.ctx, runner, self.shot, "p_sony", size, spec)
+        self.assertIn("libx265", runner.ran[0])
+        self.assertEqual(jobs_mod.read_encode_record(self.d(size) / spec.file)["fast"], False)
+
+    def test_a_failed_encode_leaves_nothing_behind(self):
+        """A file that fails its checks is deleted, so the next run encodes it
+        again and install cannot copy it."""
+        out = self.d(STAGE[1]) / "stage-sdr.mp4"
+        record = jobs_mod.encode_record_path(out)
+        self.backup(out, record)
+        real = tool("ffmpeg")
+        cut = Path(self.tmp) / "ffmpeg-cut"
+        cut.write_text(f"#!{sys.executable}\nimport os, sys\na = sys.argv[1:]\n"
+                       f"os.execv({real!r}, [{real!r}] + a[:-1] + ['-frames:v', '10', a[-1]])\n")
+        cut.chmod(0o755)
+        runner_mod.configure_tools(str(cut), tool("ffprobe"))
+        try:
+            with self.assertRaises(PipelineError) as cm:
+                jobs_mod.encode_video(self.ctx, Runner(quiet=True, force=True), self.shot, "p_sony", STAGE[1],
+                                      recipes.STAGE_OUTPUTS[2])
         finally:
-            shutil.move(backup, out)
+            runner_mod.configure_tools()
+        self.assertIn("10 frames, expected 60", str(cm.exception))
+        self.assertFalse(out.exists())
+        self.assertFalse(record.exists())
+        runner = Runner(quiet=True)
+        jobs_mod.encode_video(self.ctx, runner, self.shot, "p_sony", STAGE[1], recipes.STAGE_OUTPUTS[2])
+        self.assertEqual(len(runner.ran), 1)
+        self.assertEqual(probe_video(out).frames, FRAMES)
 
     # -- posters, stills, crops ----------------------------------------------
     def test_posters_come_from_the_render_of_their_size(self):

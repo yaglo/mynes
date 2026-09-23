@@ -179,7 +179,13 @@ with fewer frames and the same length.
 
 `--fast` encodes the HEVC files with `hevc_videotoolbox` (`-q:v` 70 for the
 stage, 80 for lens clips; it writes no HDR10 mastering or light-level SEI),
-SVT-AV1 at preset 10 and x264 at `veryfast`. Use it for previews.
+SVT-AV1 at preset 10 and x264 at `veryfast`. Use it for previews. Each stage
+and lens file has `<name>.encode.json` beside it with the command that made
+it, and `encode` makes the file again when that command differs from the one
+it would run, so a plain `encode` after `--fast` replaces the previews;
+`install` warns about any file still made with `--fast`. A job whose output
+fails its checks deletes what it wrote, so the next run builds it again and
+`install` cannot copy it.
 
 The encodes convert only pixel format and colour. HDR files go from the
 render's 4:4:4 to 10-bit 4:2:0 (`format=yuv420p10le`) and carry their colour

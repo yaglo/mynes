@@ -18,6 +18,7 @@ Output layout (--out, default tools/showcase/out): one directory per clip
 """
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import hashlib
 import json
@@ -469,6 +470,19 @@ def _skip_if_fresh(runner: Runner, outputs: list[Path], inputs: list[Path]) -> b
     return False
 
 
+@contextlib.contextmanager
+def _discard_on_failure(runner: Runner, outputs: list[Path]):
+    """Delete ``outputs`` when the block fails, so a file that failed its
+    checks is neither taken as up to date by the next run nor installed."""
+    try:
+        yield
+    except BaseException:
+        if not runner.dry_run:
+            for path in outputs:
+                path.unlink(missing_ok=True)
+        raise
+
+
 def _inputs(*facts: RenderFacts) -> list[Path]:
     paths = []
     for f in facts:
@@ -482,24 +496,56 @@ EXPECT = {  # (codec, hdr) -> ffprobe codec_name, pix_fmt
 }
 
 
+def encode_record_path(out: Path) -> Path:
+    """<name>.encode.json beside a stage or lens file: the command that made it."""
+    return out.with_name(out.stem + ".encode.json")
+
+
+def read_encode_record(out: Path) -> dict:
+    try:
+        data = json.loads(encode_record_path(out).read_text())
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def encode_video(ctx: Context, runner: Runner, shot: Shot, preset: str, size, spec: VideoOutput) -> dict | None:
     """A stage or lens file from the render of the same size, verified, with
-    its codecs string checked to be derivable."""
+    its codecs string checked to be derivable. <name>.encode.json keeps the
+    command, so a file made with other settings (--fast, say) is encoded
+    again even when it is newer than the render."""
     facts = render_facts(ctx, runner, shot, preset, size, spec.hdr)
     out = ctx.size_dir(shot, preset, size) / spec.file
-    if _skip_if_fresh(runner, [out], _inputs(facts)):
-        return None
+    record = encode_record_path(out)
     if spec.audio and not facts.audio:
         spec = dataclasses.replace(spec, audio=False)
-    cmd = recipes.video_args(facts.path, out, spec, cll=facts.cll if spec.hdr else None,
-                             matrix=facts.matrix, range_=facts.range, fast=ctx.fast)
-    runner.run(cmd, timeout=ENCODE_TIMEOUT, what=f"{spec.name} {shot.id}/{preset} {recipes.size_string(size)}")
-    if runner.dry_run:
-        return None
-    codec, pix_fmt = EXPECT[(spec.codec, spec.hdr)]
-    info = verify_video(out, frames=facts.frames, size=size, rate=facts.rate, audio=spec.audio,
-                        codec=codec, pix_fmt=pix_fmt, colour=HDR_COLOUR if spec.hdr else SDR_COLOUR)
-    return {"codecs": info.codecs, "bytes": out.stat().st_size}
+    cmd = [str(c) for c in recipes.video_args(facts.path, out, spec, cll=facts.cll if spec.hdr else None,
+                                              matrix=facts.matrix, range_=facts.range, fast=ctx.fast)]
+    stored = read_encode_record(out)
+    if stored.get("command") == cmd:
+        if _skip_if_fresh(runner, [out, record], _inputs(facts)):
+            return None
+    elif stored and out.exists():
+        why = (f"it was made {'with' if stored.get('fast') else 'without'} --fast" if stored.get("fast") != ctx.fast
+               else "its settings changed")
+        runner.say(f"encoding {out} again: {why}")
+    if not runner.dry_run:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        record.unlink(missing_ok=True)
+    with _discard_on_failure(runner, [out, record]):
+        runner.run(cmd, timeout=ENCODE_TIMEOUT, what=f"{spec.name} {shot.id}/{preset} {recipes.size_string(size)}")
+        if runner.dry_run:
+            return None
+        codec, pix_fmt = EXPECT[(spec.codec, spec.hdr)]
+        info = verify_video(out, frames=facts.frames, size=size, rate=facts.rate, audio=spec.audio,
+                            codec=codec, pix_fmt=pix_fmt, colour=HDR_COLOUR if spec.hdr else SDR_COLOUR)
+        codecs = info.codecs
+        runner.write_json(record, {"command": cmd, "fast": ctx.fast, "encoder": _encoder(cmd), "codecs": codecs})
+    return {"codecs": codecs, "bytes": out.stat().st_size}
+
+
+def _encoder(cmd: list[str]) -> str:
+    return cmd[cmd.index("-c:v") + 1] if "-c:v" in cmd else ""
 
 
 def encode_poster(ctx: Context, runner: Runner, shot: Shot, preset: str, size) -> dict | None:
@@ -508,11 +554,13 @@ def encode_poster(ctx: Context, runner: Runner, shot: Shot, preset: str, size) -
     out = ctx.size_dir(shot, preset, size) / "poster.webp"
     if _skip_if_fresh(runner, [out], [facts.path]):
         return None
-    runner.run(recipes.poster_args(facts.path, out, shot.thumbnail_frame, matrix=facts.matrix, range_=facts.range),
-               what=f"poster {shot.id}/{preset} {recipes.size_string(size)}")
-    if runner.dry_run:
-        return None
-    verify_image(out, frames=1, size=size)
+    with _discard_on_failure(runner, [out]):
+        runner.run(recipes.poster_args(facts.path, out, shot.thumbnail_frame, matrix=facts.matrix,
+                                       range_=facts.range),
+                   what=f"poster {shot.id}/{preset} {recipes.size_string(size)}")
+        if runner.dry_run:
+            return None
+        verify_image(out, frames=1, size=size)
     return {"bytes": out.stat().st_size}
 
 
@@ -553,36 +601,38 @@ def encode_still(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dict 
     sdr = render_facts(ctx, runner, shot, preset, size, False)
     hdr = render_facts(ctx, runner, shot, preset, size, True)
     d = ctx.size_dir(shot, preset, size)
-    if _skip_if_fresh(runner, [d / n for n in STILL_FILES + CROP_FILES], _inputs(sdr, hdr)):
+    outputs = [d / n for n in STILL_FILES + CROP_FILES]
+    if _skip_if_fresh(runner, outputs, _inputs(sdr, hdr)):
         return None
-    frame = shot.thumbnail_frame
-    rect = recipes.flicker_geometry(shot.flicker_crop, size, ctx.flicker_scale, even_size=True)
-    runner.run(recipes.sdr_png_args(sdr.path, d / "still-sdr.png", frame, matrix=sdr.matrix, range_=sdr.range),
-               what=f"still-sdr {shot.id}/{preset}")
-    runner.step(f"cut crop-sdr.png ({rect.crop_filter()}) and crop-sdr@1x.png (Image.reduce(2))",
-                lambda: (images.sdr_crop(d / "still-sdr.png", d / "crop-sdr.png", rect),
-                         images.sdr_reduce(d / "crop-sdr.png", d / "crop-sdr@1x.png")))
+    with _discard_on_failure(runner, outputs + [d / "still-hdr.yuv"]):
+        frame = shot.thumbnail_frame
+        rect = recipes.flicker_geometry(shot.flicker_crop, size, ctx.flicker_scale, even_size=True)
+        runner.run(recipes.sdr_png_args(sdr.path, d / "still-sdr.png", frame, matrix=sdr.matrix, range_=sdr.range),
+                   what=f"still-sdr {shot.id}/{preset}")
+        runner.step(f"cut crop-sdr.png ({rect.crop_filter()}) and crop-sdr@1x.png (Image.reduce(2))",
+                    lambda: (images.sdr_crop(d / "still-sdr.png", d / "crop-sdr.png", rect),
+                             images.sdr_reduce(d / "crop-sdr.png", d / "crop-sdr@1x.png")))
 
-    def hdr_work(rgb):
-        part = images.crop(rgb, rect)
-        return {**_write16(d / "still-hdr.png", rgb), **_write16(d / "crop-hdr.png", part),
-                **_write16(d / "crop-hdr@1x.png", images.box_average_2x2(part))}
+        def hdr_work(rgb):
+            part = images.crop(rgb, rect)
+            return {**_write16(d / "still-hdr.png", rgb), **_write16(d / "crop-hdr.png", part),
+                    **_write16(d / "crop-hdr@1x.png", images.box_average_2x2(part))}
 
-    levels = _hdr_frame(runner, hdr, frame, d / "still-hdr.yuv",
-                        f"write still-hdr.png, crop-hdr.png ({rect.crop_filter()}) and crop-hdr@1x.png "
-                        f"(2x2 box average) as 16-bit PQ PNGs", hdr_work)
-    for png in ("still-hdr.png", "crop-hdr.png", "crop-hdr@1x.png"):
-        avif = png.replace(".png", ".avif")
-        runner.run(recipes.avifenc_args(d / png, d / avif, clli=levels.get(png)), what=f"{avif} {shot.id}/{preset}")
-    if runner.dry_run:
-        return None
-    half = (rect.w // 2, rect.h // 2)
-    for name, want in (("still-sdr.png", size), ("still-hdr.png", size), ("crop-sdr.png", (rect.w, rect.h)),
-                       ("crop-sdr@1x.png", half), ("crop-hdr.png", (rect.w, rect.h)), ("crop-hdr@1x.png", half)):
-        verify_image(d / name, frames=1, size=want)
-    _verify_avif(d / "still-hdr.avif", size)
-    _verify_avif(d / "crop-hdr.avif", (rect.w, rect.h))
-    _verify_avif(d / "crop-hdr@1x.avif", half)
+        levels = _hdr_frame(runner, hdr, frame, d / "still-hdr.yuv",
+                            f"write still-hdr.png, crop-hdr.png ({rect.crop_filter()}) and crop-hdr@1x.png "
+                            f"(2x2 box average) as 16-bit PQ PNGs", hdr_work)
+        for png in ("still-hdr.png", "crop-hdr.png", "crop-hdr@1x.png"):
+            avif = png.replace(".png", ".avif")
+            runner.run(recipes.avifenc_args(d / png, d / avif, clli=levels.get(png)), what=f"{avif} {shot.id}/{preset}")
+        if runner.dry_run:
+            return None
+        half = (rect.w // 2, rect.h // 2)
+        for name, want in (("still-sdr.png", size), ("still-hdr.png", size), ("crop-sdr.png", (rect.w, rect.h)),
+                           ("crop-sdr@1x.png", half), ("crop-hdr.png", (rect.w, rect.h)), ("crop-hdr@1x.png", half)):
+            verify_image(d / name, frames=1, size=want)
+        _verify_avif(d / "still-hdr.avif", size)
+        _verify_avif(d / "crop-hdr.avif", (rect.w, rect.h))
+        _verify_avif(d / "crop-hdr@1x.avif", half)
     return {"crop": [rect.x, rect.y, rect.w, rect.h], "light_levels": levels}
 
 
@@ -640,30 +690,32 @@ def encode_readme(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dict
     webp, png, hdr_png, jpg = d / "readme.webp", d / "readme.png", d / "readme-hdr.png", d / "readme-hdr.jpg"
     if _skip_if_fresh(runner, [webp, png, hdr_png], _inputs(sdr, hdr)):
         return None
-    source_frames = min(sdr.frames, shot.readme_frames)
-    frames = recipes.readme_frames(source_frames)
-    limit = recipes.LIMITS["readme_webp"]
+    with _discard_on_failure(runner, [webp, png, hdr_png, jpg, d / "readme-hdr.yuv"]):
+        source_frames = min(sdr.frames, shot.readme_frames)
+        frames = recipes.readme_frames(source_frames)
+        limit = recipes.LIMITS["readme_webp"]
 
-    def build(quality: int) -> int:
-        runner.run(recipes.readme_webp_args(sdr.path, webp, source_frames, quality, matrix=sdr.matrix,
-                                            range_=sdr.range), timeout=ENCODE_TIMEOUT, what=f"readme webp q{quality}")
-        return 0 if runner.dry_run else webp.stat().st_size
+        def build(quality: int) -> int:
+            runner.run(recipes.readme_webp_args(sdr.path, webp, source_frames, quality, matrix=sdr.matrix,
+                                                range_=sdr.range),
+                       timeout=ENCODE_TIMEOUT, what=f"readme webp q{quality}")
+            return 0 if runner.dry_run else webp.stat().st_size
 
-    quality, webp_size = recipes.fit(limit, recipes.README_QUALITIES, build)
-    runner.run(recipes.sdr_png_args(sdr.path, png, shot.thumbnail_frame, matrix=sdr.matrix, range_=sdr.range),
-               what="readme png")
-    _hdr_frame(runner, hdr, shot.thumbnail_frame, d / "readme-hdr.yuv", "write readme-hdr.png as 16-bit PQ PNG",
-               lambda rgb: _write16(hdr_png, rgb))
-    gain = _gainmap(runner, png, hdr_png, jpg, size)
-    if runner.dry_run:
-        return None
-    try:
-        stored = verify_animation(webp, frames=frames, size=size, limit=limit)
-    except PipelineError as e:
-        raise PipelineError(f"{e}; lower readme_seconds for shot {shot.id!r} in shots.json "
-                            f"(now {shot.readme_seconds:g} s)") from e
-    verify_timing(webp, frames=frames, fps=recipes.README_FPS)
-    verify_image(png, frames=1, size=size)
+        quality, webp_size = recipes.fit(limit, recipes.README_QUALITIES, build)
+        runner.run(recipes.sdr_png_args(sdr.path, png, shot.thumbnail_frame, matrix=sdr.matrix, range_=sdr.range),
+                   what="readme png")
+        _hdr_frame(runner, hdr, shot.thumbnail_frame, d / "readme-hdr.yuv", "write readme-hdr.png as 16-bit PQ PNG",
+                   lambda rgb: _write16(hdr_png, rgb))
+        gain = _gainmap(runner, png, hdr_png, jpg, size)
+        if runner.dry_run:
+            return None
+        try:
+            stored = verify_animation(webp, frames=frames, size=size, limit=limit)
+        except PipelineError as e:
+            raise PipelineError(f"{e}; lower readme_seconds for shot {shot.id!r} in shots.json "
+                                f"(now {shot.readme_seconds:g} s)") from e
+        verify_timing(webp, frames=frames, fps=recipes.README_FPS)
+        verify_image(png, frames=1, size=size)
     note = {"readme_webp": {"quality": quality, "bytes": webp_size, "frames": frames, "stored_frames": stored,
                             "fps": recipes.README_FPS,
                             "source_frames": source_frames, "size": list(size), "embed_width": size[0] // 2},
@@ -684,31 +736,33 @@ def encode_flicker(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dic
     webp, png, hdr_png, jpg = d / "flicker.webp", d / "flicker.png", d / "flicker-hdr.png", d / "flicker-hdr.jpg"
     if _skip_if_fresh(runner, [webp, png, hdr_png], _inputs(sdr, hdr)):
         return None
-    rect = recipes.flicker_geometry(shot.flicker_crop, size, ctx.flicker_scale)
-    first = shot.flicker_first_frame
-    if first + recipes.FLICKER_FRAMES > sdr.frames:
-        raise PipelineError(f"flicker frames {first}..{first + recipes.FLICKER_FRAMES - 1} exceed the render")
-    limit = recipes.LIMITS["flicker_webp"]
+    with _discard_on_failure(runner, [webp, png, hdr_png, jpg, d / "flicker-hdr.yuv"]):
+        rect = recipes.flicker_geometry(shot.flicker_crop, size, ctx.flicker_scale)
+        first = shot.flicker_first_frame
+        if first + recipes.FLICKER_FRAMES > sdr.frames:
+            raise PipelineError(f"flicker frames {first}..{first + recipes.FLICKER_FRAMES - 1} exceed the render")
+        limit = recipes.LIMITS["flicker_webp"]
 
-    def build(quality) -> int:
-        runner.run(recipes.flicker_webp_args(sdr.path, webp, rect, first, quality=quality, matrix=sdr.matrix,
-                                             range_=sdr.range), timeout=ENCODE_TIMEOUT, what=f"flicker webp {quality}")
-        return 0 if runner.dry_run else webp.stat().st_size
+        def build(quality) -> int:
+            runner.run(recipes.flicker_webp_args(sdr.path, webp, rect, first, quality=quality, matrix=sdr.matrix,
+                                                 range_=sdr.range),
+                       timeout=ENCODE_TIMEOUT, what=f"flicker webp {quality}")
+            return 0 if runner.dry_run else webp.stat().st_size
 
-    quality, webp_size = recipes.fit(limit, recipes.FLICKER_QUALITIES, build)
-    runner.run(recipes.sdr_png_args(sdr.path, png, first, matrix=sdr.matrix, range_=sdr.range, rect=rect),
-               what="flicker png")
-    _hdr_frame(runner, hdr, first, d / "flicker-hdr.yuv",
-               f"write flicker-hdr.png ({rect.crop_filter()}) as 16-bit PQ PNG",
-               lambda rgb: _write16(hdr_png, images.crop(rgb, rect)))
-    gain = _gainmap(runner, png, hdr_png, jpg, (rect.w, rect.h))
-    if runner.dry_run:
-        runner.say(f"dry-run: flicker crop {rect} (NES {shot.flicker_crop} at "
-                   f"{recipes.nes_scale(size, ctx.flicker_scale)} render pixels per NES pixel)")
-        return None
-    stored = verify_animation(webp, frames=recipes.FLICKER_FRAMES, size=(rect.w, rect.h), limit=limit,
-                              fps=recipes.FLICKER_FPS)
-    verify_image(png, frames=1, size=(rect.w, rect.h))
+        quality, webp_size = recipes.fit(limit, recipes.FLICKER_QUALITIES, build)
+        runner.run(recipes.sdr_png_args(sdr.path, png, first, matrix=sdr.matrix, range_=sdr.range, rect=rect),
+                   what="flicker png")
+        _hdr_frame(runner, hdr, first, d / "flicker-hdr.yuv",
+                   f"write flicker-hdr.png ({rect.crop_filter()}) as 16-bit PQ PNG",
+                   lambda rgb: _write16(hdr_png, images.crop(rgb, rect)))
+        gain = _gainmap(runner, png, hdr_png, jpg, (rect.w, rect.h))
+        if runner.dry_run:
+            runner.say(f"dry-run: flicker crop {rect} (NES {shot.flicker_crop} at "
+                       f"{recipes.nes_scale(size, ctx.flicker_scale)} render pixels per NES pixel)")
+            return None
+        stored = verify_animation(webp, frames=recipes.FLICKER_FRAMES, size=(rect.w, rect.h), limit=limit,
+                                  fps=recipes.FLICKER_FPS)
+        verify_image(png, frames=1, size=(rect.w, rect.h))
     note = {"flicker_webp": {"quality": quality, "bytes": webp_size, "frames": recipes.FLICKER_FRAMES,
                              "stored_frames": stored,
                              "fps": recipes.FLICKER_FPS, "first_frame": first,
@@ -763,12 +817,13 @@ def build_feature(ctx: Context, runner: Runner, feature: Feature) -> dict | None
                                         font=font, audio=m0.audio, matrix=m0.matrix, range_=m0.range)
     else:
         raise PipelineError(f"unknown feature type {feature.type}")
-    runner.run(cmd, timeout=ENCODE_TIMEOUT, what=f"feature {feature.id}")
-    if runner.dry_run:
-        runner.say(f"dry-run: would verify {out}: {frames} frames, {recipes.size_string(size)}")
-        return None
-    info = verify_video(out, frames=frames, size=size, rate=m0.rate, audio=m0.audio, codec="h264",
-                        pix_fmt="yuv420p", colour=SDR_COLOUR)
+    with _discard_on_failure(runner, [out]):
+        runner.run(cmd, timeout=ENCODE_TIMEOUT, what=f"feature {feature.id}")
+        if runner.dry_run:
+            runner.say(f"dry-run: would verify {out}: {frames} frames, {recipes.size_string(size)}")
+            return None
+        info = verify_video(out, frames=frames, size=size, rate=m0.rate, audio=m0.audio, codec="h264",
+                            pix_fmt="yuv420p", colour=SDR_COLOUR)
     return {"frames": info.frames, "size": [info.width, info.height]}
 
 
@@ -818,6 +873,10 @@ def collect_clip(ctx: Context, runner: Runner, shot: Shot, preset: str) -> ClipI
         runner.say(f"skip {shot.id}/{preset}: not built: " + ", ".join(str(m) for m in missing[:3])
                    + (f" and {len(missing) - 3} more" if len(missing) > 3 else ""))
         return None
+    fast = [src.name for _spec, src, _rel in stage + lens if read_encode_record(src).get("fast")]
+    if fast:
+        runner.say(f"warning: {shot.id}/{preset}: {', '.join(fast)} made with --fast (hevc_videotoolbox, "
+                   f"no HDR10 metadata); run encode without --fast before publishing")
     sidecars = [read_sidecar(ctx.render_path(shot, preset, r.size, True)) or {}
                 for r in render_plan(ctx, shot, preset)]
     entry = {
