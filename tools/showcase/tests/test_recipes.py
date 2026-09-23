@@ -79,10 +79,10 @@ class Geometry(unittest.TestCase):
         self.assertEqual(recipes.flicker_geometry([62, 105, 100, 75]), Rect(930, 1260, 1500, 900))
         self.assertEqual(recipes.flicker_geometry([78, 73, 100, 93.75]), Rect(1170, 876, 1500, 1125))
 
-    def test_detail_crop_is_even(self):
-        r = recipes.flicker_geometry([62, 105, 100, 93.75], even_size=True)
-        self.assertEqual(r, Rect(930, 1260, 1500, 1124))
-        r = recipes.flicker_geometry([1, 1, 3, 3], (1920, 1440), even_size=True)
+    def test_detail_crop_is_a_multiple_of_6(self):
+        r = recipes.flicker_geometry([62, 105, 100, 93.75], align=6)
+        self.assertEqual(r, Rect(930, 1260, 1500, 1122))
+        r = recipes.flicker_geometry([1, 1, 3, 3], (1920, 1440), align=2)
         self.assertEqual((r.w % 2, r.h % 2), (0, 0))
 
     def test_square_scale_override(self):

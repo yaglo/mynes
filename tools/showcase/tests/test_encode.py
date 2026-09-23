@@ -243,6 +243,33 @@ class EncodePipeline(unittest.TestCase):
         ctx.shot_list.shots[0].lens = []
         plan = {r.size: (r.sdr_frames, r.hdr_frames) for r in jobs_mod.render_plan(ctx, ctx.shot_list.shots[0], "p_sony")}
         self.assertEqual(plan[LENS], (8, 1))  # the eight flicker frames; the HDR still and flicker frame 0
+        # A crop preset: the still frame at full size, and one encode job.
+        ctx.shot_list.shots[0].crops = ["p_jvc"]
+        plan = {r.size: (r.sdr_frames, r.hdr_frames, r.roles)
+                for r in jobs_mod.render_plan(ctx, ctx.shot_list.shots[0], "p_jvc")}
+        self.assertEqual(plan, {LENS: (1, 1, ("still",))})
+        self.assertEqual([j.id for j in jobs_mod.encode_jobs(ctx, [(ctx.shot_list.shots[0], "p_jvc")])],
+                         ["still:synth/p_jvc"])
+
+    def test_collect_crop_only_clip(self):
+        ctx = jobs_mod.Context(shot_list=shots.load(self.shot_list.path, self.presets_dir), out=self.out,
+                               presets_dir=self.presets_dir)
+        shot = ctx.shot_list.shots[0]
+        shot.crops = ["p_jvc"]
+        runner, said = self.listening_runner()
+        self.assertIsNone(jobs_mod.collect_clip(ctx, runner, shot, "p_jvc"))  # crops not encoded
+        self.assertTrue(said and said[0].startswith("skip synth/p_jvc: not built"), said)
+        d = ctx.size_dir(shot, "p_jvc", LENS)
+        d.mkdir(parents=True, exist_ok=True)
+        for name in jobs_mod.SITE_CROP_FILES:
+            (d / name).write_bytes(b"x")
+        got = jobs_mod.collect_clip(ctx, runner, shot, "p_jvc")
+        rect = recipes.flicker_geometry(shot.flicker_crop, LENS, align=jobs_mod.CROP_ALIGN)
+        self.assertEqual(got.entry, {"crop": {
+            "sdr": "assets/hero/synth/p_jvc/512x384/crop-sdr.png", "sdr_1x": "assets/hero/synth/p_jvc/512x384/crop-sdr@1x.png",
+            "hdr": "assets/hero/synth/p_jvc/512x384/crop-hdr.avif", "hdr_1x": "assets/hero/synth/p_jvc/512x384/crop-hdr@1x.avif",
+            "x": rect.x, "y": rect.y, "width": rect.w, "height": rect.h}})
+        self.assertEqual([rel for _src, rel in got.copies], [got.entry["crop"][k] for k in ("sdr", "sdr_1x", "hdr", "hdr_1x")])
 
     def test_renders_are_what_the_recorder_writes(self):
         info = probe_video(self.ctx.render_path(self.shot, "p_sony", LENS, True))
@@ -444,8 +471,8 @@ class EncodePipeline(unittest.TestCase):
 
     def test_detail_crops_are_1_to_1_with_exact_1x_averages(self):
         d = self.d(LENS)
-        rect = recipes.flicker_geometry([78, 73, 100, 93.75], LENS, even_size=True)
-        self.assertEqual(rect, recipes.Rect(156, 117, 200, 150))
+        rect = recipes.flicker_geometry([78, 73, 100, 93.75], LENS, align=jobs_mod.CROP_ALIGN)
+        self.assertEqual(rect, recipes.Rect(156, 117, 198, 150))  # 200x150 rounded down to multiples of 6
         with Image.open(d / "still-sdr.png") as still, Image.open(d / "crop-sdr.png") as crop, \
                 Image.open(d / "crop-sdr@1x.png") as small:
             self.assertEqual(np.asarray(crop).tolist(), np.asarray(still.crop(rect.box)).tolist())
@@ -617,8 +644,14 @@ class EncodePipeline(unittest.TestCase):
         self.assertEqual([g["id"] for g in merged["games"]], ["old", "synth"])
         self.assertEqual(json.loads((site / "assets" / "hero" / "manifest.json").read_text()), merged)
         runner2, said = self.listening_runner()
-        jobs_mod.install(self.install_ctx(site, with_crops=True), runner2, self.shot_list.select())
+        merged2 = jobs_mod.install(self.install_ctx(site, with_crops=True), runner2, self.shot_list.select())
         self.assertTrue((hero / "512x384" / "crop-hdr@1x.avif").exists())
+        rect = recipes.flicker_geometry(self.shot.flicker_crop, LENS, align=jobs_mod.CROP_ALIGN)
+        self.assertEqual(merged2["clips"]["synth"]["p_sony"]["crop"], {
+            "sdr": "assets/hero/synth/p_sony/512x384/crop-sdr.png", "sdr_1x": "assets/hero/synth/p_sony/512x384/crop-sdr@1x.png",
+            "hdr": "assets/hero/synth/p_sony/512x384/crop-hdr.avif", "hdr_1x": "assets/hero/synth/p_sony/512x384/crop-hdr@1x.avif",
+            "x": rect.x, "y": rect.y, "width": rect.w, "height": rect.h})
+        self.assertEqual(json.loads((site / "assets" / "hero" / "manifest.json").read_text()), merged2)
         self.assertEqual(runner2.ran, [])  # no commands
         copied = sorted(Path(s.rsplit(" -> ", 1)[1]).name for s in said if s.startswith("copy "))
         self.assertEqual(copied, sorted(jobs_mod.SITE_CROP_FILES))  # only the crops were new

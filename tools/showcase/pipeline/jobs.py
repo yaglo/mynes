@@ -55,6 +55,7 @@ STILL_FILES = ("still-sdr.png", "still-hdr.png", "still-hdr.avif")
 CROP_FILES = ("crop-sdr.png", "crop-sdr@1x.png", "crop-hdr.png", "crop-hdr@1x.png",
               "crop-hdr.avif", "crop-hdr@1x.avif")
 SITE_CROP_FILES = ("crop-sdr.png", "crop-sdr@1x.png", "crop-hdr.avif", "crop-hdr@1x.avif")
+CROP_ALIGN = 6  # detail crop sizes: whole device pixels at pixel ratios 1, 1.5, 2 and 3
 
 
 @dataclass
@@ -148,7 +149,9 @@ def render_plan(ctx: Context, shot: Shot, preset: str) -> list[Render]:
     README presets the eight flicker frames (SDR) or the first of them (HDR).
     At the README size the SDR pass runs readme_seconds and the HDR pass
     stops after the still frame. Emulation from a state and a replay is
-    deterministic, so those are the same frames the stage renders show."""
+    deterministic, so those are the same frames the stage renders show. A
+    crop preset (``shot.crops``) is recorded at full size for the still
+    frame only."""
     d = ctx.defaults
     plan: dict[tuple[int, int], list] = {}
 
@@ -157,8 +160,9 @@ def render_plan(ctx: Context, shot: Shot, preset: str) -> list[Render]:
         entry[0], entry[1] = max(entry[0], sdr), max(entry[1], hdr)
         entry[2].append(role)
 
-    for size in d.stage_sizes:
-        add(size, "stage", shot.frames, shot.frames)
+    if preset not in shot.crops:
+        for size in d.stage_sizes:
+            add(size, "stage", shot.frames, shot.frames)
     still = shot.thumbnail_frame + 1
     add(d.lens_size, "still", still, still)
     if preset in shot.lens:
@@ -440,6 +444,10 @@ def encode_jobs(ctx: Context, pairs: list[tuple[Shot, str]]) -> list[Job]:
     d = ctx.defaults
     for shot, preset in pairs:
         key = f"{shot.id}/{preset}"
+        if preset in shot.crops:
+            jobs.append(Job(id=f"still:{key}", description=f"still and crop {key}",
+                            run=lambda r, s=shot, p=preset: encode_still(ctx, r, s, p)))
+            continue
         for size in d.stage_sizes:
             tag = recipes.size_string(size)
             for spec in recipes.STAGE_OUTPUTS:
@@ -606,7 +614,7 @@ def encode_still(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dict 
         return None
     with _discard_on_failure(runner, outputs + [d / "still-hdr.yuv"]):
         frame = shot.thumbnail_frame
-        rect = recipes.flicker_geometry(shot.flicker_crop, size, ctx.flicker_scale, even_size=True)
+        rect = recipes.flicker_geometry(shot.flicker_crop, size, ctx.flicker_scale, align=CROP_ALIGN)
         runner.run(recipes.sdr_png_args(sdr.path, d / "still-sdr.png", frame, matrix=sdr.matrix, range_=sdr.range),
                    what=f"still-sdr {shot.id}/{preset}")
         runner.step(f"cut crop-sdr.png ({rect.crop_filter()}) and crop-sdr@1x.png (Image.reduce(2))",
@@ -845,7 +853,9 @@ def _source_entry(path: Path, rel: str, hdr: bool) -> dict:
 
 
 def collect_clip(ctx: Context, runner: Runner, shot: Shot, preset: str) -> ClipInstall | None:
-    """What one clip installs, or None (with the reason said) when a file is missing."""
+    """What one clip installs, or None (with the reason said) when a file is
+    missing. A crop preset installs its detail crop and nothing else; with
+    --with-crops every clip carries its crop too."""
     d = ctx.defaults
     copies: list[tuple[Path, str]] = []
     missing: list[Path] = []
@@ -858,15 +868,18 @@ def collect_clip(ctx: Context, runner: Runner, shot: Shot, preset: str) -> ClipI
         copies.append((src, rel))
         return src, rel
 
-    stage = [(spec, *want(size, spec.file)) for size in d.stage_sizes for spec in recipes.STAGE_OUTPUTS]
-    posters = [{"src": want(size, "poster.webp")[1], "width": size[0], "height": size[1]}
-               for size in sorted(d.stage_sizes, reverse=True)]
-    lens = [(spec, *want(d.lens_size, spec.file)) for spec in recipes.LENS_OUTPUTS] if preset in shot.lens else []
-    still_hdr = want(d.lens_size, "still-hdr.avif")[1]
-    still_sdr = want(d.lens_size, "still-sdr.png")[1]
-    if ctx.with_crops:
-        for name in SITE_CROP_FILES:
-            want(d.lens_size, name)
+    crop_only = preset in shot.crops
+    stage, posters, lens = [], [], []
+    if not crop_only:
+        stage = [(spec, *want(size, spec.file)) for size in d.stage_sizes for spec in recipes.STAGE_OUTPUTS]
+        posters = [{"src": want(size, "poster.webp")[1], "width": size[0], "height": size[1]}
+                   for size in sorted(d.stage_sizes, reverse=True)]
+        lens = [(spec, *want(d.lens_size, spec.file)) for spec in recipes.LENS_OUTPUTS] if preset in shot.lens else []
+        still_hdr = want(d.lens_size, "still-hdr.avif")[1]
+        still_sdr = want(d.lens_size, "still-sdr.png")[1]
+    crop = None
+    if crop_only or ctx.with_crops:
+        crop = crop_entry(ctx, shot, {name: want(d.lens_size, name)[1] for name in SITE_CROP_FILES})
     if missing:
         if runner.dry_run:
             return ClipInstall(shot, preset, copies, {})
@@ -877,6 +890,8 @@ def collect_clip(ctx: Context, runner: Runner, shot: Shot, preset: str) -> ClipI
     if fast:
         runner.say(f"warning: {shot.id}/{preset}: {', '.join(fast)} made with --fast (hevc_videotoolbox, "
                    f"no HDR10 metadata); run encode without --fast before publishing")
+    if crop_only:
+        return ClipInstall(shot, preset, copies, {"crop": crop})
     sidecars = _hdr_sidecars(ctx, shot, preset)
     entry = {
         "poster": posters,
@@ -890,7 +905,16 @@ def collect_clip(ctx: Context, runner: Runner, shot: Shot, preset: str) -> ClipI
     }
     if lens:
         entry["lens"] = [_source_entry(src, rel, spec.hdr) for spec, src, rel in lens]
+    if crop:
+        entry["crop"] = crop
     return ClipInstall(shot, preset, copies, entry)
+
+
+def crop_entry(ctx: Context, shot: Shot, rels: dict[str, str]) -> dict:
+    """The manifest's detail crop: its four files and where it sits in the still."""
+    rect = recipes.flicker_geometry(shot.flicker_crop, ctx.defaults.lens_size, ctx.flicker_scale, align=CROP_ALIGN)
+    return {"sdr": rels["crop-sdr.png"], "sdr_1x": rels["crop-sdr@1x.png"], "hdr": rels["crop-hdr.avif"],
+            "hdr_1x": rels["crop-hdr@1x.avif"], "x": rect.x, "y": rect.y, "width": rect.w, "height": rect.h}
 
 
 def _hdr_sidecars(ctx: Context, shot: Shot, preset: str) -> list[dict]:

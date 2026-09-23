@@ -129,7 +129,9 @@ is given them as absolute paths.
    and `max_fall`, or when no selected clip is complete (the manifest is then
    left as it was). It refuses, listing the 20 largest files, when the site's
    `assets/` would exceed `--budget-mb` (default 900; GitHub Pages sites must
-   stay under 1 GB). `--with-crops` also copies the detail crops.
+   stay under 1 GB). `--with-crops` also copies the detail crops and adds
+   `crop` to each clip's entry; a crop preset (see the shot list) installs
+   its crop and nothing else.
 
 5. Commit both repositories: `tools/showcase/shots.json` and any replays in
    mynes, `assets/hero/` in mynes-web (check `du -sh assets` first). The
@@ -145,6 +147,9 @@ and each pass runs until the last frame read from it:
 | 1920x1440 | the whole shot | the whole shot | stage clips and poster for 2x displays |
 | 960x720 | the whole shot | the whole shot | stage clips and poster for 1x displays |
 | 3840x2880 | the whole shot for lens clips and features; otherwise up to the still frame, or the eight flicker frames for README presets | the whole shot for lens clips; otherwise up to the still frame and the first flicker frame | lens clips, stills, detail crops, flicker crop, feature clips |
+
+A crop preset is recorded at 3840x2880 only, up to the still frame in both
+passes.
 | 1600x1200 | the first `readme_seconds` | up to the still frame | README media, presets in `readme` only |
 
 Emulation from a state and a replay is deterministic, so a short render
@@ -241,6 +246,11 @@ not installed:
    "still": {"hdr": "assets/hero/super-mario-bros/sony_pvm_14l2/3840x2880/still-hdr.avif",
              "sdr": "assets/hero/super-mario-bros/sony_pvm_14l2/3840x2880/still-sdr.png",
              "width": 3840, "height": 2880, "frame": 0},
+   "crop": {"sdr": "assets/hero/super-mario-bros/sony_pvm_14l2/3840x2880/crop-sdr.png",
+            "sdr_1x": "assets/hero/super-mario-bros/sony_pvm_14l2/3840x2880/crop-sdr@1x.png",
+            "hdr": "assets/hero/super-mario-bros/sony_pvm_14l2/3840x2880/crop-hdr.avif",
+            "hdr_1x": "assets/hero/super-mario-bros/sony_pvm_14l2/3840x2880/crop-hdr@1x.avif",
+            "x": 930, "y": 1260, "width": 1500, "height": 1122},
    "hdr": {"white_nits": 203, "headroom": 4.0, "max_cll": 812, "max_fall": 50}}}}}
 ```
 
@@ -253,7 +263,9 @@ so the same string works for `canPlayType` and
 `mediaCapabilities.decodingInfo`; stage files also carry AAC-LC audio.
 `poster` has one entry per stage size because the switcher shows a poster
 only at its own pixel size. `hdr` holds the largest `max_cll` and `max_fall`
-over the clip's HDR renders. Merging keeps presets, games, clips and
+over the clip's HDR renders. `crop` is the 1:1 detail crop of the still and
+its `@1x` files, with its position and size in the still; a clip installed
+without `--with-crops` has none, and a crop preset's clip has nothing else. Merging keeps presets, games, clips and
 top-level keys the run did not produce, replaces a produced clip's version 1
 keys (`video`, `still_size`, `full`), and merges `stage` and `lens` by `src`.
 
@@ -269,27 +281,39 @@ holding version 1 keys.
 
 | Shot | Game and scene | Length | Replay | Crop (NES px) | Lens | README |
 |---|---|---|---|---|---|---|
-| `super-mario-bros` | Super Mario Bros., World 1-1 running right | 6 s | right, jump | 62,105 100x93.75 | yes | PVM, Stas's |
+| `super-mario-bros` | Super Mario Bros., World 1-1 running right | 6 s | right, jump | 62,105 100x93.75 | PVM, Stas's; every other preset as a crop | PVM, Stas's |
 | `legend-of-zelda` | The Legend of Zelda, overworld start, walk up | 6 s | up | 78,97 100x93.75 | | |
 | `punch-out` | Punch-Out!!, first fight, crowd visible | 15 s | | 78,9 100x93.75 | | PVM |
 | `journey-to-silius` | Journey to Silius, stage 1 with the dithered sky | 15 s | right | 78,17 100x93.75 | | |
-| `castlevania-3` | Castlevania III, clock tower or the first stage | 6 s | right | 78,65 100x93.75 | yes | |
+| `castlevania-3` | Castlevania III, clock tower or the first stage | 6 s | right | 78,65 100x93.75 | PVM, Stas's | |
 | `blaster-master` | Blaster Master, area 1 driving right | 6 s | right | 78,97 100x93.75 | | |
 | `ninja-gaiden` | Ninja Gaiden, opening cutscene panel then gameplay | 15 s | | 78,65 100x93.75 | | |
 | `mega-man-2` | Mega Man 2, stage select flashing, then a boss intro | 15 s | Start at frame 120 | 78,65 100x93.75 | | |
-| `metroid` | Metroid, Brinstar start, bright shots on black | 6 s | right, fire | 78,97 100x93.75 | yes | |
+| `metroid` | Metroid, Brinstar start, bright shots on black | 6 s | right, fire | 78,97 100x93.75 | PVM, Stas's | |
 | `batman` | Batman, stage 1 | 6 s | right | 78,97 100x93.75 | | |
 
 Every shot is recorded on `sony_pvm_14l2`, `jvc_d_series_2000`,
 `toshiba_14af43`, `stass_favourite`, `vhs_sp_consumer` and
 `reference_composite`. `"lens": true` gives lens clips on all of a shot's
-presets; a list of presets limits them.
+presets; a list of presets limits them. The three lens shots have lens
+clips on the Sony PVM-14L2 and Stas's Favourite: a 6 s lens clip is about
+70 MB more on the site.
+
+`crops` lists presets that get the still frame and its detail crop but no
+clip. They are recorded for that one frame at full size, and the site shows
+the crop on the game's page and on the television's page. Super Mario
+Bros. lists every preset outside the six above in `crops`, so each
+television is on the site once (about 4 MB per crop).
 
 `flicker_crop` is in NES pixel coordinates (256x240) and may be fractional.
 The picture fills the 4:3 render, so on 3840x2880 one NES pixel is 15x12
 render pixels (NES pixels are 8:7): 100 pixels by 93.75 lines is the
 1500x1125 flicker crop, where a 100x75 region would be 1500x900. The detail
-crops use the same region with an even size (1500x1124, `@1x` 750x562).
+crops use the same region with a size that is a multiple of 6 (1500x1122,
+`@1x` 750x561): the site shows the crop at half its size on a 2x display
+and at the `@1x` size on a 1x display, and a multiple of 6 also lands on
+whole device pixels at pixel ratios 1.5 and 3, where browsers lay out in
+steps of 1/64 CSS px.
 `--flicker-scale 15` or `15x12` overrides the scale. `thumbnail_frame` picks
 the poster and still frame; the site freezes clips at frame 0, so leave it
 at 0 for shots on the site.
@@ -306,7 +330,7 @@ shots[]       id, title, scene, rom (glob), rom_exclude [globs], state (file in 
               replay (file in replays/), seconds, kind hero|feature, presets [],
               lens (true, or a list of presets), flicker_crop, caption, thumbnail_frame,
               flicker_frame, default_preset, readme [presets that get README media],
-              readme_seconds, region, record_after
+              readme_seconds, region, record_after, crops [presets with a detail crop only]
 features[]    id, type five-televisions|side-by-side, shot, presets [], labels [], caption,
               seconds_per_preset (five-televisions)
 ```

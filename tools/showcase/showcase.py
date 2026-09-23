@@ -126,7 +126,8 @@ def cmd_check(ctx: jobs_mod.Context, args, runner: Runner) -> int:
         f"HDR white {d.hdr_white_nits:g} nits, headroom {d.hdr_headroom:g}")
     for s in sl.shots:
         rect = recipes.flicker_geometry(s.flicker_crop, d.lens_size, ctx.flicker_scale)
-        say(f"  {s.id}: {s.seconds:g} s = {s.frames} frames, presets {len(s.presets)}, "
+        say(f"  {s.id}: {s.seconds:g} s = {s.frames} frames, presets {len(s.presets)}"
+            f"{f' and {len(s.crops)} crop-only' if s.crops else ''}, "
             f"crop {s.flicker_crop} = {rect.w}x{rect.h} px, lens {len(s.lens) or '-'}, readme {s.readme or '-'}")
         if s.thumbnail_frame != 0:
             warnings.append(f"{s.id}: thumbnail_frame {s.thumbnail_frame}: the site freezes clips at frame 0, "

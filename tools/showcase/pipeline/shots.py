@@ -55,6 +55,7 @@ class Shot:
     record_after: int = 2
     flicker_frame: int | None = None
     lens: list[str] = field(default_factory=list)
+    crops: list[str] = field(default_factory=list)  # a still frame and its detail crop, no clip
 
     @property
     def frames(self) -> int:
@@ -138,14 +139,14 @@ class ShotList:
             if unknown:
                 raise ShotListError(f"unknown shots: {', '.join(sorted(unknown))}")
         if wanted_presets:
-            unknown = wanted_presets - {p for s in self.shots for p in s.presets}
+            unknown = wanted_presets - {p for s in self.shots for p in s.presets + s.crops}
             if unknown:
                 raise ShotListError(f"presets not used by any shot: {', '.join(sorted(unknown))}")
         pairs = []
         for s in self.shots:
             if wanted_shots and s.id not in wanted_shots:
                 continue
-            for p in s.presets:
+            for p in s.presets + s.crops:
                 if wanted_presets and p not in wanted_presets:
                     continue
                 pairs.append((s, p))
@@ -154,7 +155,7 @@ class ShotList:
     def all_presets(self) -> list[str]:
         seen = list(self.defaults.presets)
         for s in self.shots:
-            for p in s.presets:
+            for p in s.presets + s.crops:
                 if p not in seen:
                     seen.append(p)
         return seen
@@ -272,6 +273,14 @@ def load(path: Path | str = DEFAULT_SHOTS_FILE, presets_dir: Path = PRESETS_DIR)
             lens = []
         elif not isinstance(lens, list):
             raise ShotListError(f"{where}: lens must be true, false or a list of presets")
+        crops = raw.get("crops", [])
+        if not isinstance(crops, list) or not all(isinstance(p, str) for p in crops):
+            raise ShotListError(f"{where}: crops must be a list of presets")
+        if len(set(crops)) != len(crops):
+            raise ShotListError(f"{where}: crops lists a preset twice")
+        bad = [p for p in crops if p in presets]
+        if bad:
+            raise ShotListError(f"{where}: crops repeat clip presets: {bad}")
         default_preset = raw.get("default_preset", presets[0])
         shot = Shot(
             id=sid,
@@ -294,6 +303,7 @@ def load(path: Path | str = DEFAULT_SHOTS_FILE, presets_dir: Path = PRESETS_DIR)
             record_after=int(raw.get("record_after", defaults.record_after)),
             flicker_frame=raw.get("flicker_frame"),
             lens=lens,
+            crops=list(crops),
         )
         if shot.seconds <= 0:
             raise ShotListError(f"{where}: seconds must be positive")

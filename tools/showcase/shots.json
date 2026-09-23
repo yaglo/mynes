@@ -1,13 +1,37 @@
 {
   "version": 2,
   "defaults": {
-    "seconds": {"hero": 6, "feature": 15},
-    "presets": ["sony_pvm_14l2", "jvc_d_series_2000", "toshiba_14af43",
-                "stass_favourite", "vhs_sp_consumer", "reference_composite"],
-    "flicker_crop": [78, 73, 100, 93.75],
+    "seconds": {
+      "hero": 6,
+      "feature": 15
+    },
+    "presets": [
+      "sony_pvm_14l2",
+      "jvc_d_series_2000",
+      "toshiba_14af43",
+      "stass_favourite",
+      "vhs_sp_consumer",
+      "reference_composite"
+    ],
+    "flicker_crop": [
+      78,
+      73,
+      100,
+      93.75
+    ],
     "record_after": 2,
-    "sizes": {"lens": "3840x2880", "stage": ["1920x1440", "960x720"], "readme": "1600x1200"},
-    "hdr": {"headroom": 4.0, "white_nits": 203},
+    "sizes": {
+      "lens": "3840x2880",
+      "stage": [
+        "1920x1440",
+        "960x720"
+      ],
+      "readme": "1600x1200"
+    },
+    "hdr": {
+      "headroom": 4.0,
+      "white_nits": 203
+    },
     "thumbnail_frame": 0,
     "region": "ntsc",
     "readme_seconds": 6,
@@ -17,12 +41,102 @@
     "font": null
   },
   "presets": {
-    "sony_pvm_14l2": {"name": "Sony PVM-14L2", "blurb": "Focused beam, fine aperture grille, D65, composite"},
-    "jvc_d_series_2000": {"name": "JVC D-Series", "blurb": "Cooler whites, curved slot mask, two-line comb, composite"},
-    "toshiba_14af43": {"name": "Toshiba 14AF", "blurb": "Softer beam, broad bright spot, three-line comb, composite"},
-    "stass_favourite": {"name": "Stas's Favourite", "blurb": "Worn slot-mask set over channel-3 RF, imperfect convergence, horizontal recovery"},
-    "vhs_sp_consumer": {"name": "VHS SP playback", "blurb": "Slightly noisy SP tape on a slot-mask consumer set: soft delayed colour, luma grain, dropouts"},
-    "reference_composite": {"name": "Reference composite", "blurb": "Neutral NTSC receiver and CRT in a dark room, no simulated wear"}
+    "sony_pvm_14l2": {
+      "name": "Sony PVM-14L2",
+      "blurb": "Focused beam, fine aperture grille, D65, composite"
+    },
+    "jvc_d_series_2000": {
+      "name": "JVC D-Series",
+      "blurb": "Cooler whites, curved slot mask, two-line comb, composite"
+    },
+    "toshiba_14af43": {
+      "name": "Toshiba 14AF",
+      "blurb": "Softer beam, broad bright spot, three-line comb, composite"
+    },
+    "stass_favourite": {
+      "name": "Stas's Favourite",
+      "blurb": "Worn slot-mask set over channel-3 RF, imperfect convergence, horizontal recovery"
+    },
+    "vhs_sp_consumer": {
+      "name": "VHS SP playback",
+      "blurb": "Slightly noisy SP tape on a slot-mask consumer set: soft delayed colour, luma grain, dropouts"
+    },
+    "reference_composite": {
+      "name": "Reference composite",
+      "blurb": "Neutral NTSC receiver and CRT in a dark room, no simulated wear"
+    },
+    "arcade_cabinet": {
+      "name": "Arcade cabinet",
+      "blurb": "Coarse shadow mask, current-dependent spot, 2C03 RGB palette"
+    },
+    "basement_tv": {
+      "name": "Basement TV",
+      "blurb": "Worn RF set: gun imbalance, dim glass, reception noise, hum"
+    },
+    "bedroom_rf_1990": {
+      "name": "Bedroom RF 1990",
+      "blurb": "In-line slot mask over channel-3 RF, soft chroma, cool highlights"
+    },
+    "commodore_1702": {
+      "name": "Compact video monitor",
+      "blurb": "Compact Y/C monitor, shadow mask, focused raster"
+    },
+    "dying_crt": {
+      "name": "Dying CRT",
+      "blurb": "Weak blue gun, soft corners, poor DC restoration, hum"
+    },
+    "famicom_kitchen": {
+      "name": "Famicom kitchen",
+      "blurb": "Small cool RF set under a kitchen light, coarse shadow mask"
+    },
+    "late_crt_wega": {
+      "name": "Late consumer aperture grille",
+      "blurb": "Consumer aperture grille, firm detail, composite edge color"
+    },
+    "living_room_1988": {
+      "name": "Living room 1988",
+      "blurb": "Rounded shadow-mask set in warm lamp light, composite"
+    },
+    "measured_glare_experiment": {
+      "name": "Lab: measured glass scatter",
+      "blurb": "Reference composite with a measured veiling-glare fit"
+    },
+    "nec_xm29_arcade": {
+      "name": "Large RGB monitor",
+      "blurb": "Large RGB monitor, fine shadow mask, tight focus, 2C03 palette"
+    },
+    "rca_colortrak_1986": {
+      "name": "Large consumer shadow mask",
+      "blurb": "Large soft shadow-mask set, warm whites, rounded geometry"
+    },
+    "retro_gaming_setup": {
+      "name": "Clean consumer grille",
+      "blurb": "Clean consumer aperture grille on Y/C, quiet color"
+    },
+    "sony_gdm_fw900": {
+      "name": "Sony GDM-FW900 and scaler",
+      "blurb": "Measured FW900 response behind a 5x scaler, composite"
+    },
+    "sony_pvm_20m4u": {
+      "name": "Fine aperture grille",
+      "blurb": "1200-triad aperture grille on Y/C, tight spots"
+    },
+    "studio_pvm": {
+      "name": "Studio aperture grille",
+      "blurb": "900-triad studio aperture grille on Y/C, narrow spots"
+    },
+    "vivid_living_room": {
+      "name": "Vivid living room",
+      "blurb": "Vivid composite set, 9300 K white, rich color"
+    },
+    "warm_desktop_monitor": {
+      "name": "Warm desktop monitor",
+      "blurb": "13-inch dot-mask desktop monitor on Y/C, 6000 K, desk-lamp glare"
+    },
+    "zenith_system_3": {
+      "name": "Zenith System 3",
+      "blurb": "19-inch 1981 slot-mask set on channel-3 RF, no comb, 9000 K white"
+    }
   },
   "shots": [
     {
@@ -30,14 +144,50 @@
       "title": "Super Mario Bros.",
       "scene": "World 1-1, running right past the first blocks",
       "rom": "*Super Mario Bros*.nes",
-      "rom_exclude": ["*Bros*2*", "*Bros*3*", "*Duck Hunt*", "*Track*"],
+      "rom_exclude": [
+        "*Bros*2*",
+        "*Bros*3*",
+        "*Duck Hunt*",
+        "*Track*"
+      ],
       "state": "super-mario-bros.s1",
       "replay": "super-mario-bros.replay",
       "kind": "hero",
-      "flicker_crop": [62, 105, 100, 93.75],
-      "lens": true,
+      "flicker_crop": [
+        62,
+        105,
+        100,
+        93.75
+      ],
+      "lens": [
+        "sony_pvm_14l2",
+        "stass_favourite"
+      ],
       "caption": "The frame everyone knows, through four televisions.",
-      "readme": ["sony_pvm_14l2", "stass_favourite"]
+      "readme": [
+        "sony_pvm_14l2",
+        "stass_favourite"
+      ],
+      "crops": [
+        "arcade_cabinet",
+        "basement_tv",
+        "bedroom_rf_1990",
+        "commodore_1702",
+        "dying_crt",
+        "famicom_kitchen",
+        "late_crt_wega",
+        "living_room_1988",
+        "measured_glare_experiment",
+        "nec_xm29_arcade",
+        "rca_colortrak_1986",
+        "retro_gaming_setup",
+        "sony_gdm_fw900",
+        "sony_pvm_20m4u",
+        "studio_pvm",
+        "vivid_living_room",
+        "warm_desktop_monitor",
+        "zenith_system_3"
+      ]
     },
     {
       "id": "legend-of-zelda",
@@ -47,7 +197,12 @@
       "state": "legend-of-zelda.s1",
       "replay": "legend-of-zelda.replay",
       "kind": "hero",
-      "flicker_crop": [78, 97, 100, 93.75],
+      "flicker_crop": [
+        78,
+        97,
+        100,
+        93.75
+      ],
       "caption": "Brown rock, green bush, the tunic: composite colour at its most familiar."
     },
     {
@@ -57,9 +212,16 @@
       "rom": "*Punch-Out*.nes",
       "state": "punch-out.s1",
       "kind": "feature",
-      "flicker_crop": [78, 9, 100, 93.75],
+      "flicker_crop": [
+        78,
+        9,
+        100,
+        93.75
+      ],
       "caption": "The dithered crowd resolves into a texture on a real tube.",
-      "readme": ["sony_pvm_14l2"]
+      "readme": [
+        "sony_pvm_14l2"
+      ]
     },
     {
       "id": "journey-to-silius",
@@ -69,7 +231,12 @@
       "state": "journey-to-silius.s1",
       "replay": "journey-to-silius.replay",
       "kind": "feature",
-      "flicker_crop": [78, 17, 100, 93.75],
+      "flicker_crop": [
+        78,
+        17,
+        100,
+        93.75
+      ],
       "caption": "Dither meant for composite blending: raw, PVM and RF side by side."
     },
     {
@@ -80,8 +247,16 @@
       "state": "castlevania-3.s1",
       "replay": "castlevania-3.replay",
       "kind": "hero",
-      "flicker_crop": [78, 65, 100, 93.75],
-      "lens": true,
+      "flicker_crop": [
+        78,
+        65,
+        100,
+        93.75
+      ],
+      "lens": [
+        "sony_pvm_14l2",
+        "stass_favourite"
+      ],
       "caption": "Fine sprite work and dark backgrounds: beam width and phosphor decay."
     },
     {
@@ -92,7 +267,12 @@
       "state": "blaster-master.s1",
       "replay": "blaster-master.replay",
       "kind": "hero",
-      "flicker_crop": [78, 97, 100, 93.75],
+      "flicker_crop": [
+        78,
+        97,
+        100,
+        93.75
+      ],
       "caption": "Smooth horizontal scrolling: dot crawl and comb filtering in motion."
     },
     {
@@ -100,10 +280,20 @@
       "title": "Ninja Gaiden",
       "scene": "Opening cutscene panel, then gameplay",
       "rom": "*Ninja Gaiden*.nes",
-      "rom_exclude": ["*II*", "*III*", "*2*", "*3*"],
+      "rom_exclude": [
+        "*II*",
+        "*III*",
+        "*2*",
+        "*3*"
+      ],
       "state": "ninja-gaiden.s1",
       "kind": "feature",
-      "flicker_crop": [78, 65, 100, 93.75],
+      "flicker_crop": [
+        78,
+        65,
+        100,
+        93.75
+      ],
       "caption": "Cinematic panels and a hard cut to gameplay."
     },
     {
@@ -114,7 +304,12 @@
       "state": "mega-man-2.s1",
       "replay": "mega-man-2.replay",
       "kind": "feature",
-      "flicker_crop": [78, 65, 100, 93.75],
+      "flicker_crop": [
+        78,
+        65,
+        100,
+        93.75
+      ],
       "caption": "Flashing tiles and a boss portrait: the same seconds on five televisions."
     },
     {
@@ -125,8 +320,16 @@
       "state": "metroid.s1",
       "replay": "metroid.replay",
       "kind": "hero",
-      "flicker_crop": [78, 97, 100, 93.75],
-      "lens": true,
+      "flicker_crop": [
+        78,
+        97,
+        100,
+        93.75
+      ],
+      "lens": [
+        "sony_pvm_14l2",
+        "stass_favourite"
+      ],
       "caption": "Bright shots on black: bloom, halation and beam growth."
     },
     {
@@ -134,11 +337,20 @@
       "title": "Batman",
       "scene": "Stage 1",
       "rom": "*Batman*.nes",
-      "rom_exclude": ["*Return*", "*Joker*", "*Robin*"],
+      "rom_exclude": [
+        "*Return*",
+        "*Joker*",
+        "*Robin*"
+      ],
       "state": "batman.s1",
       "replay": "batman.replay",
       "kind": "hero",
-      "flicker_crop": [78, 97, 100, 93.75],
+      "flicker_crop": [
+        78,
+        97,
+        100,
+        93.75
+      ],
       "caption": "Dark palettes and purple skies: black level and grey tracking."
     }
   ],
@@ -147,7 +359,13 @@
       "id": "five-televisions",
       "type": "five-televisions",
       "shot": "mega-man-2",
-      "presets": ["sony_pvm_14l2", "jvc_d_series_2000", "toshiba_14af43", "stass_favourite", "vhs_sp_consumer"],
+      "presets": [
+        "sony_pvm_14l2",
+        "jvc_d_series_2000",
+        "toshiba_14af43",
+        "stass_favourite",
+        "vhs_sp_consumer"
+      ],
       "seconds_per_preset": 3,
       "caption": "One game, fifteen seconds, five televisions."
     },
@@ -155,8 +373,16 @@
       "id": "raw-vs-pvm-vs-rf",
       "type": "side-by-side",
       "shot": "journey-to-silius",
-      "presets": ["reference_composite", "sony_pvm_14l2", "stass_favourite"],
-      "labels": ["Reference composite", "Sony PVM-14L2", "Channel-3 RF"],
+      "presets": [
+        "reference_composite",
+        "sony_pvm_14l2",
+        "stass_favourite"
+      ],
+      "labels": [
+        "Reference composite",
+        "Sony PVM-14L2",
+        "Channel-3 RF"
+      ],
       "caption": "Left to right: neutral composite, a studio monitor, a worn RF set."
     }
   ]

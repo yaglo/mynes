@@ -41,7 +41,11 @@ class RealShotList(unittest.TestCase):
         for s in sl.shots:
             if s.lens:
                 self.assertEqual(s.kind, "hero")
-                self.assertEqual(s.lens, s.presets)
+                self.assertEqual(s.lens, ["sony_pvm_14l2", "stass_favourite"])
+        # Super Mario Bros. has every other preset file as a crop-only preset.
+        mario = sl.shot("super-mario-bros")
+        self.assertEqual(sorted(mario.presets + mario.crops), sorted(p.stem for p in shots.PRESETS_DIR.glob("*.json")))
+        self.assertEqual([s.id for s in sl.shots if s.crops], ["super-mario-bros"])
         for s in sl.shots:
             if s.replay:
                 rows = shots.parse_replay((shots.REPLAYS_DIR / s.replay).read_text())
@@ -106,6 +110,16 @@ class Validation(unittest.TestCase):
         d = self.load(data).defaults
         self.assertEqual((d.lens_size, d.stage_sizes, d.readme_size), ((512, 384), [(256, 192), (128, 96)], (320, 240)))
         self.assertEqual((d.hdr_headroom, d.hdr_white_nits), (2.5, 100))
+
+    def test_crops(self):
+        sl = self.load(self.base(crops=["gamma"]))
+        self.assertEqual(sl.shots[0].crops, ["gamma"])
+        self.assertEqual([(s.id, p) for s, p in sl.select()], [("one", "alpha"), ("one", "beta"), ("one", "gamma")])
+        self.assertEqual([(s.id, p) for s, p in sl.select(None, ["gamma"])], [("one", "gamma")])
+        self.assertEqual(sl.all_presets(), ["alpha", "beta", "gamma"])
+        for bad in (["alpha"], "gamma", ["gamma", "gamma"], [1]):
+            with self.assertRaises(ShotListError):
+                self.load(self.base(crops=bad))
 
     def test_feature_kind_default_seconds(self):
         self.assertEqual(self.load(self.base(kind="feature")).shots[0].seconds, 15)

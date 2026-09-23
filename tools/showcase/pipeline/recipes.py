@@ -174,10 +174,6 @@ def size_string(size: Sequence[int]) -> str:
     return f"{size[0]}x{size[1]}"
 
 
-def even(n: int) -> int:
-    return n - (n % 2)
-
-
 def _round(v: float) -> int:
     return int(math.floor(v + 0.5))
 
@@ -244,14 +240,16 @@ def validate_nes_rect(crop: Sequence[float]) -> tuple[float, float, float, float
 
 
 def flicker_geometry(crop: Sequence[float], size: Sequence[int] = LENS_SIZE,
-                     scale: str | None = None, *, even_size: bool = False) -> Rect:
-    """The crop in render pixels, 1:1. ``even_size`` drops a trailing row or
-    column so that the 2x2 average of the @1x variant covers every pixel."""
+                     scale: str | None = None, *, align: int = 1) -> Rect:
+    """The crop in render pixels, 1:1. ``align`` rounds the size down to a
+    multiple: 2 keeps the 2x2 average of the @1x variant covering every
+    pixel, and 6 also puts the crop on whole device pixels at pixel ratios
+    1.5 and 3, where browsers lay out in steps of 1/64 CSS px."""
     x, y, w, h = validate_nes_rect(crop)
     sx, sy = nes_scale(size, scale)
     rw, rh = _round(w * sx), _round(h * sy)
-    if even_size:
-        rw, rh = even(rw), even(rh)
+    if align > 1:
+        rw, rh = rw - rw % align, rh - rh % align
     return Rect(_round(x * sx), _round(y * sy), rw, rh).clamp(size)
 
 

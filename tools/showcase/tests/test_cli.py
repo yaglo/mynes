@@ -92,14 +92,17 @@ class Cli(unittest.TestCase):
         lines = out.splitlines()
         recorder = "dry-run $ " + str(ROOT / "build" / "bin" / "mynes_gpu")
         clips = sum(len(s.presets) for s in sl.shots)
+        crops = sum(len(s.crops) for s in sl.shots)
         readme = sum(len(s.readme) for s in sl.shots)
         lens = sum(len(s.lens) for s in sl.shots)
         stage = len(sl.defaults.stage_sizes)
         # Every clip at each stage size and the full size, README clips also at
-        # 1600x1200, each size recorded twice (SDR and HDR).
-        self.assertEqual(out.count(recorder), (clips * (stage + 1) + readme) * 2)
+        # 1600x1200, crop presets at the full size only, each size recorded
+        # twice (SDR and HDR).
+        passes = clips * (stage + 1) + readme + crops
+        self.assertEqual(out.count(recorder), passes * 2)
         self.assertEqual(out.count("--offscreen 1600x1200"), readme * 2)
-        self.assertEqual(out.count("--record-hdr --record-headroom 4 --record-hdr-white 203"), clips * (stage + 1) + readme)
+        self.assertEqual(out.count("--record-hdr --record-headroom 4 --record-hdr-white 203"), passes)
         self.assertIn("--record-seconds 6 --record-after 2", out)
         self.assertIn("--record-seconds 15", out)
         self.assertIn("--input-replay", out)
@@ -134,9 +137,13 @@ class Cli(unittest.TestCase):
             argv = shlex.split(line.split("dry-run $ ", 1)[1].split("   # ", 1)[0])
             clip = Path(argv[argv.index("--record") + 1]).parts[-4:-2]
             passes.setdefault(clip, []).append(argv)
-        self.assertEqual(len(passes), clips)
+        self.assertEqual(len(passes), clips + crops)
         for (shot_id, preset), runs in passes.items():
             shot = sl.shot(shot_id)
+            if preset in shot.crops:
+                self.assertEqual(len(runs), 2, (shot_id, preset))  # the full-size still, SDR and HDR
+                self.assertTrue(all("--offscreen 3840x2880" in " ".join(a) and one in " ".join(a) for a in runs))
+                continue
             self.assertEqual(len(runs), 2 * (stage + 1 + (preset in shot.readme)), (shot_id, preset))
             for flag in ("--load-state", "--input-replay", "--record-after", "--preset"):
                 values = {a[a.index(flag) + 1] if flag in a else None for a in runs}
@@ -147,11 +154,11 @@ class Cli(unittest.TestCase):
         self.assertEqual(out.count("-c:v libx264 -profile:v high -preset slow -crf 18"), clips * stage)
         self.assertEqual(out.count("-crf 14 -profile:v main10"), lens)
         self.assertEqual(out.count("-crf 14 -profile:v main "), lens)
-        self.assertEqual(out.count("--cicp 9/16/9 --depth 10 --yuv 444"), clips * 3)
+        self.assertEqual(out.count("--cicp 9/16/9 --depth 10 --yuv 444"), (clips + crops) * 3)  # still and two crops
         self.assertEqual(out.count("-c:v libwebp_anim"), readme * 2)  # readme.webp and flicker.webp
         self.assertIn("hstack=inputs=3", out)
         self.assertIn("concat=n=5", out)
-        self.assertIn(f"would merge {clips} clip(s)", out)
+        self.assertIn(f"would merge {clips + crops} clip(s)", out)
         self.assertNotIn("zoompan", out)
         self.assertNotIn("flags=lanczos", out)
         self.assertFalse(self.out.exists())  # a dry run writes nothing

@@ -37,7 +37,8 @@ from .shots import Shot, ShotList, preset_name
 VERSION = 2
 HERO_PREFIX = "assets/hero"
 V1_CLIP_KEYS = ("video", "still_size", "full")
-CLIP_KEYS = ("poster", "stage", "lens", "still", "hdr")
+CLIP_KEYS = ("poster", "stage", "lens", "still", "hdr", "crop")
+CROP_KEYS = ("sdr", "sdr_1x", "hdr", "hdr_1x", "x", "y", "width", "height")
 SOURCE_KEYS = ("src", "type", "hdr", "width", "height", "bytes")
 STILL_KEYS = ("hdr", "sdr", "width", "height", "frame")
 HDR_KEYS = ("white_nits", "headroom", "max_cll", "max_fall")
@@ -241,6 +242,11 @@ def validate(manifest: dict) -> list[str]:
             if v2 and is_v1_clip(clip):
                 problems.append(f"{where}: version 1 keys in a version 2 manifest, which the site ignores: "
                                 + ", ".join(v1_keys(clip)))
+            crop = clip.get("crop")
+            if crop is not None:
+                missing = [k for k in CROP_KEYS if not isinstance(crop, dict) or k not in crop]
+                if missing:
+                    problems.append(f"{where}: crop lacks {', '.join(missing)}")
             if "stage" not in clip:
                 continue
             if "poster" not in clip:
