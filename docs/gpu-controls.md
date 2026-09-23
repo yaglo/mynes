@@ -23,7 +23,7 @@ player 2.
 | BACK / START | Select / Start |
 | GUIDE | Open or close the OSD menu |
 | RIGHT SHOULDER (held) | Fast-forward, up to 8x |
-| D-pad or stick while the menu or ROM browser is open | Navigate: SOUTH = Enter, EAST = Escape/back. Nothing reaches the game. |
+| D-pad or stick while the menu or ROM browser is open | Navigate: SOUTH = Enter, EAST = Escape/back. A held direction repeats after 400 ms, then every 80 ms, like a held arrow key. Nothing reaches the game. |
 | **Play hotkeys** | |
 | Escape or M | Open the OSD menu; inside it Escape backs out (closing at the top) and M closes. Escape never quits during play. |
 | Space, or **M → Game → Pause / Resume** | Pause / resume. The picture stays on screen with a PAUSED notice; audio continues cleanly on resume. |

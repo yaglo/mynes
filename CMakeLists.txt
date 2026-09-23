@@ -606,6 +606,11 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
             target_link_libraries(test_output PRIVATE ${MYNES_SDL3_TARGET} m)
             add_test(NAME gpu_output_tests COMMAND test_output)
 
+            # Held gamepad directions in the menu and ROM browser
+            add_executable(test_nav_repeat frontends/gpu/tests/test_nav_repeat.c)
+            target_include_directories(test_nav_repeat PRIVATE frontends/gpu)
+            add_test(NAME gpu_nav_repeat_tests COMMAND test_nav_repeat)
+
             # Signal precompute tests (DAC model, FIR design, windows)
             add_executable(test_signal_precompute frontends/gpu/tests/test_signal_precompute.c)
             target_include_directories(test_signal_precompute PRIVATE frontends/gpu)

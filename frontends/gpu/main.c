@@ -58,6 +58,7 @@
 #include "gpu_log.h"
 #include "gpu_osd.h"
 #include "recorder.h"
+#include "nav_repeat.h"
 
 /* Shared frontend helpers. */
 #include "browser.h"
@@ -128,6 +129,7 @@ typedef struct {
     uint8_t        buttons;      /* d-pad and face buttons */
     uint8_t        stick;        /* left stick past the deadzone */
     bool           fast_forward; /* right shoulder held */
+    NavRepeat      nav;          /* held direction in the menu or browser */
     char           name[48];
 } GamepadSlot;
 static uint8_t          keyboard_buttons[2];
@@ -618,6 +620,15 @@ static uint8_t gamepad_stick_mask(uint8_t stick, int axis, int value) {
     if (axis == SDL_GAMEPAD_AXIS_LEFTY)
         return (stick & ~0x30) | (value < -GAMEPAD_DEADZONE ? 0x10 : value > GAMEPAD_DEADZONE ? 0x20 : 0);
     return stick;
+}
+
+/* D-pad bits held right now. Presses made while a menu is open never reach
+ * `buttons`, so repeat reads the pad itself. */
+static uint8_t gamepad_dpad_held(SDL_Gamepad *pad) {
+    return (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_UP) ? 0x10 : 0) |
+           (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_DOWN) ? 0x20 : 0) |
+           (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_LEFT) ? 0x40 : 0) |
+           (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT) ? 0x80 : 0);
 }
 
 static SDL_Scancode direction_nav_key(uint8_t bit) {
@@ -1907,6 +1918,8 @@ int main(int argc, char **argv) {
                         SDL_Scancode nav = gamepad_nav_key(ev.gbutton.button);
                         if (nav != SDL_SCANCODE_UNKNOWN)
                             ui_navigate(nav, &console_changed, &static_frame_buf);
+                        uint8_t direction = gamepad_button_mask(ev.gbutton.button) & 0xf0;
+                        if (direction) nav_repeat_press(&g->nav, direction, SDL_GetTicks());
                         break;
                     }
                     uint8_t mask = gamepad_button_mask(ev.gbutton.button);
@@ -1919,13 +1932,15 @@ int main(int argc, char **argv) {
                     GamepadSlot *g = &gamepads[slot];
                     uint8_t before = g->stick;
                     g->stick = gamepad_stick_mask(before, ev.gaxis.axis, ev.gaxis.value);
-                    /* Only a fresh deflection navigates; holding the stick
-                     * past the deadzone repeats nothing. */
+                    /* A fresh deflection navigates at once; holding it repeats
+                     * from the loop below, like a d-pad press. */
                     uint8_t pressed = g->stick & ~before;
                     if (pressed && (browser_active || osd_menu_is_open))
                         for (uint8_t bit = 0x10; bit; bit <<= 1)
-                            if (pressed & bit)
+                            if (pressed & bit) {
                                 ui_navigate(direction_nav_key(bit), &console_changed, &static_frame_buf);
+                                nav_repeat_press(&g->nav, bit, SDL_GetTicks());
+                            }
                     break;
                 }
 
@@ -1943,6 +1958,17 @@ int main(int argc, char **argv) {
             }
         }
 
+        /* A d-pad or stick direction held in the menu or the browser repeats
+         * like a held arrow key (nav_repeat.h); outside them nothing does. */
+        for (int i = 0; i < 2; i++) {
+            GamepadSlot *g = &gamepads[i];
+            if (!g->pad || !(browser_active || osd_menu_is_open)) {
+                g->nav.direction = 0;
+                continue;
+            }
+            uint8_t direction = nav_repeat_poll(&g->nav, g->stick | gamepad_dpad_held(g->pad), SDL_GetTicks());
+            if (direction) ui_navigate(direction_nav_key(direction), &console_changed, &static_frame_buf);
+        }
         /* preset_apply.c asks for this notice from the G key and the OSD
          * toggle. Posted here, before the state requests below, it is timed
          * from the toggle like any other notice and runs out behind an open
