@@ -1,7 +1,7 @@
 # MyNES documentation
 
-Developer documentation lives here. Galleries, preset reviews, hardware
-research notes and the blog series moved to the project site:
+This directory holds the developer documentation. Galleries, preset reviews,
+hardware research notes and the blog series moved to the project site:
 [yaglo.github.io/mynes-web](https://yaglo.github.io/mynes-web/).
 
 ## Using the emulator
@@ -12,7 +12,7 @@ research notes and the blog series moved to the project site:
 - [Play on a real CRT over USB](crt-usb.md)
 - [Release and packaging](dev/release.md)
 
-## How it works
+## Architecture and design
 
 - [Architecture overview](architecture/overview.md)
 - [Timing and the master clock](architecture/timing.md)
@@ -25,7 +25,8 @@ research notes and the blog series moved to the project site:
 
 ## Measurements
 
-- [GPU benchmark results](gpu-benchmark-results.md) with the raw JSON beside it
+- [GPU benchmark results](gpu-benchmark-results.md), with the raw JSON in
+  [gpu-benchmark-results.json](gpu-benchmark-results.json)
 - [Presentation validation](architecture/gpu-realism-validation.md)
 - [Reproducible captures](../tools/review/README.md)
 

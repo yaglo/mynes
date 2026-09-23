@@ -1,46 +1,50 @@
 # MyNES
 
-A NES emulator that generates the console's composite video signal, decodes it
-the way a television would, and draws the beam, phosphors, mask and glass of a
-CRT. The emulation core is cycle accurate; the picture comes from signal
-processing, not from a post-process filter.
+MyNES is an NES emulator that generates the console's composite video signal,
+decodes it the way a television would, and draws the beam, phosphors, mask and
+glass of a CRT. The emulation core is cycle accurate: it passes 144 of 144
+[AccuracyCoin](tests/accuracy_coin/README.md) tests and the blargg CPU, PPU
+and APU suites. The picture is computed from the composite signal, with no
+post-process filter over the NES frame.
 
-[![Kirby's Adventure title through the JVC D-Series preset](docs/images/kirby-jvc.gif)](https://yaglo.github.io/mynes-web/gallery/showcase/)
+Flicker warning: the preview GIF alternates 2 frames at 25 Hz.
 
-*Actual output, alternating NTSC phases kept separate. More games, presets and
-4K captures on the [project site](https://yaglo.github.io/mynes-web/).*
+Preview: [Kirby's Adventure title screen on the JVC D-Series preset](docs/images/kirby-jvc.gif),
+consecutive frames with the alternating NTSC phases kept separate. The GIF is
+640×480 with a fixed palette, scaled down from 960×720 renders, which alters
+the mask pattern. The [Showcase page](https://yaglo.github.io/mynes-web/gallery/showcase/)
+and the [project site](https://yaglo.github.io/mynes-web/) have more games,
+presets and 3840×2880 captures.
 
-## What it does
+## Features
 
-- **Cycle-accurate 6502.** All official and unofficial opcodes are described as
-  cycle patterns in a small DSL; a compiler generates the C. The core passes
-  144 of 144 [AccuracyCoin](tests/accuracy_coin/README.md) tests and the blargg
-  CPU, PPU and APU suites.
-- **A signal, not a filter.** PPU colour codes drive a measured DAC model. The
-  waveform goes through a cable or RF path, comb or notch Y/C separation, the
-  colour decoder and the RGB amplifiers before it reaches the tube model.
-- **A tube that responds to the picture.** Beam width grows with current, bright
-  areas load the supply, phosphors decay, and aperture grille, slot and shadow
-  masks give the texture. Twenty-three presets range from a Sony PVM-14L2 to a
-  worn RF set and a VHS recording.
-- **Playable.** Gamepads with hot-plug, two players, battery saves, save-state
-  slots, fast-forward, NTSC and PAL, an on-screen menu for every control, and a
+- CPU: all official and unofficial 6502 opcodes are described as cycle
+  patterns in a small DSL, and a compiler generates the C code.
+- Video signal: PPU color codes drive a measured DAC model. The waveform goes
+  through a cable or RF path, comb or notch Y/C separation, the color decoder
+  and the RGB amplifiers before it reaches the tube model.
+- Tube: beam width grows with beam current, bright areas load the supply, and
+  phosphors decay. The mask is an aperture grille, a slot mask or a shadow
+  mask.
+- Presets: 23, including a Sony PVM-14L2, a worn RF set and a VHS recording.
+- Play: gamepads with hot-plug, 2 players, battery saves, save-state slots,
+  fast-forward, NTSC and PAL, an on-screen menu for every control, and a
   native macOS editor for the whole chain.
 
 Supported mappers: 0, 1, 2, 3, 4, 5, 7, 9, 10, 11, 34, 66, 69, 71, 206 and 227
 (NROM, MMC1, UxROM, CNROM, MMC3, MMC5, AxROM, MMC2, MMC4, Color Dreams,
-BNROM/NINA-001, GxROM, FME-7, Camerica, DxROM and the 1200-in-1 board). Unsupported boards report their mapper number
-in the ROM browser.
+BNROM/NINA-001, GxROM, FME-7, Camerica, DxROM and the 1200-in-1 board).
+Unsupported boards report their mapper number in the ROM browser.
 
 ## Download
 
-Builds for macOS (Apple Silicon) are on the
-[releases page](https://github.com/yaglo/mynes/releases). Linux builds from
-source below. Windows is untested. No ROMs are included.
+macOS builds for Apple Silicon are on the
+[releases page](https://github.com/yaglo/mynes/releases). On Linux, build from
+source as shown below. Windows is untested. No ROMs are included.
 
 ## Build from source
 
-macOS:
+### macOS
 
 ```bash
 brew install cmake
@@ -50,10 +54,10 @@ cmake -S . -B build && cmake --build build -j
 ```
 
 The first configure downloads and builds a pinned SDL3. `glslc` and
-`spirv-cross` are optional; without them the committed shader binaries are
-used.
+`spirv-cross` are optional; without them the build uses the committed shader
+binaries.
 
-Linux (Vulkan):
+### Linux (Vulkan)
 
 ```bash
 sudo apt install cmake libvulkan-dev libx11-dev libxext-dev libxrandr-dev \
@@ -62,8 +66,8 @@ cmake -S . -B build -DMYNES_BUNDLED_SDL3=ON && cmake --build build -j
 ./build/bin/mynes_gpu path/to/game.nes
 ```
 
-See [docs/dev/commands.md](docs/dev/commands.md) for options, the headless CI
-recipe, and the SDL2 frontend.
+[docs/dev/commands.md](docs/dev/commands.md) lists the build options, the
+headless CI recipe and the SDL2 frontend.
 
 ## Controls
 
@@ -93,14 +97,19 @@ PPU colour codes → NES DAC waveform → cable / RF receiver → Y/C separation
 
 Each stage is a compute shader with a CPU reference kernel and a unit test.
 The [pipeline reference](docs/gpu-pipeline-reference.md) lists every stage and
-its limits; the [blog series](https://yaglo.github.io/mynes-web/blog/) explains
-the ideas: timing as data, what the compiler knows about DMA, the signal nobody
-sees, and why the beam is not a line.
+its limits. The [blog series](https://yaglo.github.io/mynes-web/blog/) covers
+the 6502 timing DSL, DMA timing in the DSL compiler, the composite waveform
+and the size of the beam spot.
 
-Measurements: the full chain renders in about 7 ms per frame for the PVM
-preset at 2560×1920 on an Apple M5, and around 11 ms for the consumer sets.
-A render-scale option keeps 60 fps on slower GPUs.
-[Benchmark methodology](docs/gpu-benchmark-results.md).
+## Performance
+
+On an Apple M5 (24 GiB, Metal, Release build, measured 2026-09-21), the full
+GPU chain takes a median 7.3 ms per frame for the Sony PVM-14L2 preset at
+2560×1920. The JVC D-Series, Toshiba 14AF43 and Stas's Favourite presets take
+9.4 to 11.0 ms. The render scale setting (1, 0.75, 0.5 or auto) draws the beam
+and phosphor stages at that fraction of the viewport, which keeps 60 fps on
+slower GPUs. The method and raw data are in the
+[benchmark results](docs/gpu-benchmark-results.md).
 
 ## Tests
 
@@ -110,7 +119,9 @@ ctest --test-dir build --output-on-failure
 
 Unit tests, mapper tests, PAL APU ROM tests, the complete AccuracyCoin suite
 and the GPU kernel, preset and playback tests run on every push through
-GitHub Actions on Ubuntu and macOS.
+GitHub Actions on Ubuntu and macOS. On Ubuntu the GPU tests run on lavapipe
+(software Vulkan). `gpu_fidelity_tests` needs a hardware GPU and runs outside
+CI.
 
 ## Documentation
 
@@ -138,6 +149,8 @@ tools/              DSL compiler, test runner, Signal Studio, review scripts
 docs/               Developer documentation
 ```
 
-MyNES began in 2012; the current core is a C11 rewrite. The original is on the
-[`legacy`](https://github.com/yaglo/mynes/tree/legacy) branch.
+## History and license
+
+MyNES began in 2012. The current core is a C11 rewrite, and the original is
+on the [`legacy`](https://github.com/yaglo/mynes/tree/legacy) branch.
 [Contributing](CONTRIBUTING.md) · Apache-2.0 [license](LICENSE)
