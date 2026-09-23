@@ -406,9 +406,14 @@ static void composite_edge_phase(SDL_GPUDevice *gpu) {
     free(rgb); video_gpu_destroy(&v,gpu);
 }
 
-/* RGB modifications skip reception, but still drive the complete CRT.
- * Check the source against an independent 12-phase integral and verify a
- * phase change cannot introduce composite crawl into ideal RGB. */
+/* RGB sources skip reception, but still drive the complete CRT. Check
+ * the source against the 2C03's palette, three bits per gun, and verify a
+ * phase change cannot introduce composite crawl into RGB. */
+static const unsigned short rgb_2c03[64]={
+    0x333,0x014,0x006,0x326,0x403,0x503,0x510,0x420,0x320,0x120,0x031,0x040,0x022,0x000,0x000,0x000,
+    0x555,0x036,0x027,0x407,0x507,0x704,0x700,0x630,0x430,0x140,0x040,0x053,0x044,0x000,0x000,0x000,
+    0x777,0x357,0x447,0x637,0x707,0x737,0x740,0x750,0x660,0x360,0x070,0x276,0x077,0x000,0x000,0x000,
+    0x777,0x567,0x657,0x757,0x747,0x755,0x764,0x772,0x773,0x572,0x473,0x276,0x467,0x000,0x000,0x000};
 static void rgb_source(SDL_GPUDevice *gpu) {
     for (int region=0;region<2;region++) for(int connection=VIDEO_CONN_COMPONENT;connection<=VIDEO_CONN_DIRECT;connection++) {
         SignalPrecompute sp; VideoChain c; VideoGPUChain v;
@@ -420,7 +425,9 @@ static void rgb_source(SDL_GPUDevice *gpu) {
         CHECK(!chain_get_stage_enabled(&v.sig_chain,v.stage_raster));
         CHECK(video_gpu_upload_signal_table(&v,gpu,(float *)sp.table,region ? (float *)sp.table_alt : NULL,SIG_TABLE_ENTRIES,SIG_TABLE_STRIDE));
         CHECK(video_gpu_set_beam_params(&v,gpu,32,960,4,.2f,.3f));
-        float matrix[3][3]={{1,0,0},{0,1,0},{0,0,1}},bias[3]={0};
+        // An RGB source takes each row's luma column as its gun's gain, as
+        // the decoder matrix keeps the white drive and contrast there.
+        float matrix[3][3]={{1,0,0},{1,0,0},{1,0,0}},bias[3]={0};
         video_gpu_set_color_matrix(&v,matrix,bias);
         uint16_t indices[256*240];
         for(int i=0;i<256*240;i++) indices[i]=(uint16_t)((i/256)%64);
@@ -428,12 +435,7 @@ static void rgb_source(SDL_GPUDevice *gpu) {
         CHECK(video_gpu_process_full(&v,gpu,indices,0,sp.phase_line_adv,0,rgb));
         CHECK(video_gpu_process_full(&v,gpu,indices,8,sp.phase_line_adv,0,other));
         for(int code=0;code<64;code++) for(int channel=0;channel<3;channel++) {
-            double expected=0;
-            for(int phase=0;phase<12;phase++) {
-                double angle=(phase+sp.demod_rotate)*6.283185307179586/12;
-                double basis=channel==0 ? 1 : 2*(channel==1 ? cos(angle) : sin(angle));
-                expected+=sp.table[code][phase]*basis/12;
-            }
+            double expected=((rgb_2c03[code]>>(8-4*channel))&15)/7.0;
             int i=(code*sp.samples_per_line+128*sp.samples_per_pixel)*3+channel;
             CHECK(fabs(rgb[i]-expected)<.0001);
             CHECK(fabs(rgb[i]-other[i])<.000001);

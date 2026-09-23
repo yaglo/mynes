@@ -1,6 +1,6 @@
 {
     "name": "Arcade Cabinet",
-    "description": "Generic RGB arcade monitor with coarse shadow-mask dots, current-dependent spot growth and fine faceplate scatter. Ideal voltage-derived RGB source, not a stock NES output or a PlayChoice-10 palette emulation.",
+    "description": "Generic RGB arcade monitor with coarse shadow-mask dots, current-dependent spot growth and fine faceplate scatter. Fed by a 2C03 RGB PPU's own palette, three bits per gun; not a stock NES output.",
     "connection": "rgb",
     "comb_type": "none",
     "console_variant": 1,

@@ -1,6 +1,6 @@
 {
     "name": "Large RGB monitor",
-    "description": "Regulated large RGB monitor with a fine shadow mask and tighter focus than the arcade cabinet. Ideal voltage-derived RGB source; not a measured NEC model.",
+    "description": "Regulated large RGB monitor with a fine shadow mask and tighter focus than the arcade cabinet. Fed by a 2C03 RGB PPU's own palette; not a measured NEC model.",
     "connection": "rgb",
     "comb_type": "none",
     "console_variant": 1,

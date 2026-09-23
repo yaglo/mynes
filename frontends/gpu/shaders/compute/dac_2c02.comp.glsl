@@ -87,18 +87,22 @@ void main() {
     uint entry = pixel_val & 0x1FFu;
 
     if(source_mode==2u) {
-        // An ideal separated RGB modification: derive the cycle's DC and
-        // quadrature components from measured DAC voltages. This is not an
-        // RGB palette, and not an assertion that a stock 2C02 has RGB pins.
-        vec3 yiq=vec3(0.0);
-        float rotate=use_alt_table!=0u ? 3.0 : 4.0;
-        for(uint p=0u;p<12u;p++) {
-            float v=signal_table[entry*24u+p];
-            float phase=(float(p)+rotate)*6.28318530718/12.0;
-            yiq+=v*vec3(1.0,2.0*cos(phase),2.0*sin(phase))/12.0;
-        }
-        vec4 source=vec4(yiq,1.0);
-        vec3 rgb=vec3(dot(rgb_row_r,source),dot(rgb_row_g,source),dot(rgb_row_b,source));
+        // An RGB PPU: the 2C03's palette, three bits per gun (NESdev, PPU
+        // palettes), as gun voltages in sevenths. An emphasis bit drives its
+        // gun to full. The monitor's white drive, gun gains, contrast and
+        // brightness apply as the decoder's luma column and bias would;
+        // there is no chroma to take hue or saturation.
+        const uint rgb2c03[64]=uint[64](
+            0x333u,0x014u,0x006u,0x326u,0x403u,0x503u,0x510u,0x420u,0x320u,0x120u,0x031u,0x040u,0x022u,0x000u,0x000u,0x000u,
+            0x555u,0x036u,0x027u,0x407u,0x507u,0x704u,0x700u,0x630u,0x430u,0x140u,0x040u,0x053u,0x044u,0x000u,0x000u,0x000u,
+            0x777u,0x357u,0x447u,0x637u,0x707u,0x737u,0x740u,0x750u,0x660u,0x360u,0x070u,0x276u,0x077u,0x000u,0x000u,0x000u,
+            0x777u,0x567u,0x657u,0x757u,0x747u,0x755u,0x764u,0x772u,0x773u,0x572u,0x473u,0x276u,0x467u,0x000u,0x000u,0x000u);
+        uint code=rgb2c03[entry&63u], emphasis=(entry>>6u)&7u;
+        vec3 gun=vec3(float((code>>8u)&15u),float((code>>4u)&15u),float(code&15u))/7.0;
+        if((emphasis&1u)!=0u) gun.r=1.0;
+        if((emphasis&2u)!=0u) gun.g=1.0;
+        if((emphasis&4u)!=0u) gun.b=1.0;
+        vec3 rgb=vec3(rgb_row_r.x*gun.r+rgb_row_r.w,rgb_row_g.x*gun.g+rgb_row_g.w,rgb_row_b.x*gun.b+rgb_row_b.w);
         uint base=(sy*samples_per_line+px*samples_per_pixel)*3u;
         for(uint s=0u;s<samples_per_pixel;s++) {
             waveform[base+s*3u]=rgb.r;
