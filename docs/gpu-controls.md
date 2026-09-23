@@ -28,7 +28,7 @@ player 2.
 | Escape or M | Open the OSD menu; inside it Escape backs out (closing at the top) and M closes. Escape never quits during play. |
 | Space, or **M → Game → Pause / Resume** | Pause / resume. The picture stays on screen with a PAUSED notice; audio continues cleanly on resume. |
 | ` (backquote, held) | Fast-forward, up to 8x. Audio is muted while held and restarts cleanly on release. |
-| F, Globe+F, F11 or Alt+Return, or **M → Host display → Native fullscreen** | Toggle fullscreen. With **Panel pixels** mask sampling it switches the panel to its native mode, so a scaled desktop setting does not resample the picture. macOS's own Space fullscreen (the green button) is turned off for the same reason. |
+| F, Globe+F, F11 or Alt+Return, or **M → Host display → Native fullscreen** | Toggle fullscreen. With **Panel pixels** mask sampling it switches the panel to its native mode, so a scaled desktop setting does not resample the picture. macOS's own Space fullscreen (the green button) is turned off for the same reason. On a MacBook with a camera notch the picture fits below the camera housing, in the safe area macOS reports for the screen (the top 32 points); the band beside the notch stays black. |
 | R, or **M → Reset console (R)** | Reset the console with its cartridge and RAM retained |
 | G, or **M → Room reflections (G)** | Toggle simulated room reflections and glare |
 | F5 / F7, or **M → Game → Save state / Load state** | Save to / load from the current state slot (see [Saves and save states](#saves-and-save-states)) |

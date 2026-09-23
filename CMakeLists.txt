@@ -600,6 +600,12 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
             target_link_libraries(test_presentation PRIVATE m)
             add_test(NAME gpu_presentation_tests COMMAND test_presentation)
 
+            # Picture placement: safe area in pixels, tube-face fit
+            add_executable(test_output frontends/gpu/tests/test_output.c)
+            target_include_directories(test_output PRIVATE frontends/gpu)
+            target_link_libraries(test_output PRIVATE ${MYNES_SDL3_TARGET} m)
+            add_test(NAME gpu_output_tests COMMAND test_output)
+
             # Signal precompute tests (DAC model, FIR design, windows)
             add_executable(test_signal_precompute frontends/gpu/tests/test_signal_precompute.c)
             target_include_directories(test_signal_precompute PRIVATE frontends/gpu)

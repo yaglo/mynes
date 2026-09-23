@@ -189,6 +189,16 @@ static void beam_target_size(int win_w, int win_h, int aspect_w, int aspect_h,
     *out_w = scaled_h == h ? w : scaled_h * aspect_w / aspect_h;
 }
 
+/* Drawable pixels the tube face is fitted into, the same area gpu_render.c
+ * uses: fullscreen on a notched panel leaves out the camera housing, so the
+ * beam target follows the shorter picture instead of being resampled. */
+static void picture_area_size(SDL_Window *win, int *w, int *h) {
+    SDL_GetWindowSizeInPixels(win, w, h);
+    SDL_Rect safe = gpu_output_safe_area(win, *w, *h);
+    *w = safe.w;
+    *h = safe.h;
+}
+
 /* Browser + persistent config. Host UI is composited after the receiver. */
 static MynesConfig      mynes_config;
 static Browser          browser;
@@ -1358,7 +1368,7 @@ int main(int argc, char **argv) {
          * dimensions exactly. */
         {
             int win_pw, win_ph;
-            SDL_GetWindowSizeInPixels(window, &win_pw, &win_ph);
+            picture_area_size(window, &win_pw, &win_ph);
             if(offscreen_w) { win_pw=offscreen_w;win_ph=offscreen_h; }
             int beam_w, beam_h, beam_rps;
             beam_target_size(win_pw, win_ph, video_chain.tv.monitor_model==1 ? 16 : 4,
@@ -1367,7 +1377,7 @@ int main(int argc, char **argv) {
             beam_rps = beam_h / 240;
             if (beam_rps < 1) beam_rps = 1;
 
-            LOGV("Beam target: %dx%d (%d rps, window %dx%d, scale %.2f)\n",
+            LOGV("Beam target: %dx%d (%d rps, picture area %dx%d, scale %.2f)\n",
                  beam_w, beam_h, beam_rps, win_pw, win_ph, render_scale_effective());
             if (video_gpu_set_beam_params(&video_gpu_chain, gpu,
                                           beam_w, beam_h, beam_rps,
@@ -1944,7 +1954,7 @@ int main(int argc, char **argv) {
         // including offscreen mode.
         if (gpu_video_enabled && video_gpu_chain.beam_out_w>0) {
             int w,h;
-            SDL_GetWindowSizeInPixels(window,&w,&h);
+            picture_area_size(window,&w,&h);
             if(offscreen_w) { w=offscreen_w;h=offscreen_h; }
             beam_target_size(w,h,video_chain.tv.monitor_model==1 ? 16 : 4,
                              video_chain.tv.monitor_model==1 ? 10 : 3,render_scale_effective(),&w,&h);

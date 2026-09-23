@@ -52,6 +52,7 @@ typedef struct {
     float           effective_hdr_gain;  /* emission gain in use; 1 in SDR */
     GPUOutputGeometry output_geometry;
     int             drawable_w, drawable_h;
+    SDL_Rect        safe_area;           /* drawable pixels clear of a camera housing */
     float           effective_mask_triads;
     bool            hdr_enabled;         /* RGBA16F textures + HDR swapchain */
     bool            owns_display_tex;    /* false when using external beam texture */

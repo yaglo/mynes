@@ -12,6 +12,18 @@ void gpu_output_watch_globe(void) {}
 bool gpu_output_globe_key(const SDL_KeyboardEvent *key) { (void)key; return false; }
 #endif
 
+/* SDL's Cocoa backend sets the insets on entering fullscreen and clears them
+ * on leaving; the flag test keeps windows whole on platforms that report
+ * insets for windows as well. */
+SDL_Rect gpu_output_safe_area(SDL_Window *window, int drawable_w, int drawable_h) {
+    SDL_Rect safe;
+    int window_w,window_h;
+    if (!(SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) ||
+        !SDL_GetWindowSafeArea(window,&safe) || !SDL_GetWindowSize(window,&window_w,&window_h))
+        return (SDL_Rect){0,0,drawable_w,drawable_h};
+    return gpu_output_safe_pixels(safe,window_w,window_h,drawable_w,drawable_h);
+}
+
 bool gpu_output_toggle_fullscreen(SDL_Window *window, bool native) {
     if (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) {
         return SDL_SetWindowFullscreen(window,false);

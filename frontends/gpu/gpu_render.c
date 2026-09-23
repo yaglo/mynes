@@ -395,35 +395,27 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
             upload_raw_ppu_to_tex(ctx, cmd, ctx->raw_tex, ctx->raw_ppu_rgb);
     }
 
-    /* Fit the tube face: 4:3 TV or 16:10 FW900 with internal 4:3 scaling. */
+    /* Fit the tube face: 4:3 TV or 16:10 FW900 with internal 4:3 scaling,
+     * pillarboxed or letterboxed. Fullscreen fits it below a notched panel's
+     * camera housing. Integral viewport edges avoid fractional raster
+     * resampling. The shader places the mask by gl_FragCoord, so a viewport
+     * moved down by the inset keeps the mask on the same output pixels. */
     const float target_aspect = ctx->crt_shader_enabled && chain->tv.monitor_model==1 ? 16.0f/10.0f : 4.0f/3.0f;
-    float win_aspect = (float)sw / (float)sh;
-    float vp_x, vp_y, vp_w, vp_h;
-    if (win_aspect > target_aspect) {
-        /* Window wider than the tube — pillarbox (black bars on sides). */
-        vp_h = (float)sh;
-        vp_w = vp_h * target_aspect;
-        vp_x = ((float)sw - vp_w) * 0.5f;
-        vp_y = 0.0f;
-    } else {
-        /* Window taller than the tube — letterbox (black bars top/bottom). */
-        vp_w = (float)sw;
-        vp_h = vp_w / target_aspect;
-        vp_x = 0.0f;
-        vp_y = ((float)sh - vp_h) * 0.5f;
-    }
-
-    /* Integral viewport edges avoid fractional raster resampling. */
-    vp_w=floorf(vp_w);vp_h=floorf(vp_h);
-    vp_x=floorf(((float)sw-vp_w)*0.5f);vp_y=floorf(((float)sh-vp_h)*0.5f);
-    bool size_changed=ctx->drawable_w!=(int)sw || ctx->drawable_h!=(int)sh;
-    ctx->drawable_w=sw;ctx->drawable_h=sh;
+    SDL_Rect safe=ctx->offscreen_w ? (SDL_Rect){0,0,(int)sw,(int)sh}
+                                   : gpu_output_safe_area(ctx->window,(int)sw,(int)sh);
+    SDL_FRect picture=gpu_output_fit_picture(safe,target_aspect);
+    float vp_x=picture.x, vp_y=picture.y, vp_w=picture.w, vp_h=picture.h;
+    bool size_changed=ctx->drawable_w!=(int)sw || ctx->drawable_h!=(int)sh ||
+        memcmp(&ctx->safe_area,&safe,sizeof(safe))!=0;
+    ctx->drawable_w=sw;ctx->drawable_h=sh;ctx->safe_area=safe;
     if(ctx->offscreen_w) {
         ctx->output_geometry=(GPUOutputGeometry){.scale_x=1,.scale_y=1,
             .native_w=(int)sw,.native_h=(int)sh,.native_known=true};
     } else gpu_output_geometry(ctx->window,&ctx->output_geometry);
-    if(size_changed) fprintf(stderr,"Output: drawable %ux%u, panel %dx%d%s, panel/drawable %.6fx%.6f, mask %s\n",
-        sw,sh,ctx->output_geometry.native_w,ctx->output_geometry.native_h,
+    if(size_changed) fprintf(stderr,"Output: drawable %ux%u, safe area %dx%d at %d,%d, picture %.0fx%.0f at %.0f,%.0f, "
+        "panel %dx%d%s, panel/drawable %.6fx%.6f, mask %s\n",
+        sw,sh,safe.w,safe.h,safe.x,safe.y,vp_w,vp_h,vp_x,vp_y,
+        ctx->output_geometry.native_w,ctx->output_geometry.native_h,
         ctx->output_geometry.native_known ? "" : " (unknown)",
         ctx->output_geometry.scale_x,ctx->output_geometry.scale_y,
         ctx->mask_alignment ? "physical CRT pitch" : "integer panel periods");
