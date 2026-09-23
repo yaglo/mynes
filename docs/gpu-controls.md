@@ -678,7 +678,8 @@ canceller, sharpness, colour APC loop (100 Hz to 2 kHz), Y/C delay, head bows,
 field timing error with its persisting share, decay and period, line jitter,
 head-switch position and skews, and the deck seed. Y/C separation holds the
 TV's line PLL (frequency to 1 kHz, damping and V-blank gain to 3; 0 Hz keeps
-the generic loop) and the black clamp time constant in lines. The
+the generic loop) and the black clamp time constant in lines (2.3 by
+default; slower clamps turn less tape noise into whole-line flicker). The
 `VHS SP` preset pairs the deck with a consumer slot-mask CRT. Slow-decay time and
 energy are in Mask / phosphor. The additional tube controls are grouped with
 beam, gun, phosphor, glass and wear settings rather than hidden in preset JSON.

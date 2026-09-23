@@ -121,7 +121,7 @@ static GpuReceiverPLLParams receiver_pll_params(const VideoGPUChain *v) {
     }
     /* Keyed clamp: the back-porch measurement charges the clamp by this
      * fraction each line. */
-    double clamp_lines = tv->clamp_lines > 0 ? tv->clamp_lines : 64;
+    double clamp_lines = tv->clamp_lines > 0 ? tv->clamp_lines : VIDEO_CLAMP_LINES_DEFAULT;
     p.clamp_gain = (float)-expm1(-1 / clamp_lines);
     return p;
 }

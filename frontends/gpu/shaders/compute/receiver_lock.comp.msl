@@ -26,53 +26,80 @@ struct Measurement
 constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(32u, 1u, 1u);
 
 static inline __attribute__((always_inline))
-float crossing(thread const uint& base, thread const int& from, thread const int& to, thread const float& level0, device Raster& _39)
+float crossing_cycle(thread const uint& base, thread const int& from, thread const int& to, thread const float& level0, device Raster& _51)
 {
     float s = 0.0;
-    int _24 = from - 7;
-    for (int k = _24; k < (from + 5); k++)
+    int _36 = from - 7;
+    for (int k = _36; k < (from + 5); k++)
     {
-        s += _39.raster[base + uint(k)];
+        s += _51.raster[base + uint(k)];
     }
     float a = s / 12.0;
     for (int x = from; x < to; x++)
     {
-        s += (_39.raster[base + uint(x + 5)] - _39.raster[base + uint(x - 7)]);
+        s += (_51.raster[base + uint(x + 5)] - _51.raster[base + uint(x - 7)]);
         float b = s / 12.0;
         if ((a < level0) && (b >= level0))
         {
-            return (float(x) - 1.0) + ((level0 - a) / fast::max(b - a, 9.9999999747524270787835121154785e-07));
+            return (float(x) - 1.5) + ((level0 - a) / fast::max(b - a, 9.9999999747524270787835121154785e-07));
         }
         a = b;
     }
     return -1000000000.0;
 }
 
-kernel void main0(device Raster& _39 [[buffer(1)]], constant Params& _128 [[buffer(0)]], device Measurement& _284 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+static inline __attribute__((always_inline))
+float keyed_black(thread const uint& base, thread const float& edge, thread const int& spp, device Raster& _51)
+{
+    int start = int(round(edge + 0.5)) + (21 * spp);
+    float black = 0.0;
+    for (int x = 0; x < 24; x++)
+    {
+        black += _51.raster[base + uint(start + x)];
+    }
+    return black / 24.0;
+}
+
+static inline __attribute__((always_inline))
+float crossing_raw(thread const uint& base, thread const int& from, thread const int& to, thread const float& level0, device Raster& _51)
+{
+    for (int x = from; x < to; x++)
+    {
+        float a = _51.raster[base + uint(x - 1)];
+        float b = _51.raster[base + uint(x)];
+        if ((a < level0) && (b >= level0))
+        {
+            return (float(x) - 1.0) + ((level0 - a) / fast::max(b - a, 9.9999999747524270787835121154785e-07));
+        }
+    }
+    return -1000000000.0;
+}
+
+kernel void main0(device Raster& _51 [[buffer(1)]], constant Params& _229 [[buffer(0)]], device Measurement& _384 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
     uint line = gl_GlobalInvocationID.x;
-    if (line >= _128.count)
+    if (line >= _229.count)
     {
         return;
     }
-    uint base = line * _128.full_width;
-    int spp = int(_128.samples_per_dot);
+    uint base = line * _229.full_width;
+    int spp = int(_229.samples_per_dot);
     float porch = 0.0;
-    int _150 = 334 * spp;
-    for (int x = _150; x < (338 * spp); x++)
+    int _251 = 334 * spp;
+    for (int x = _251; x < (338 * spp); x++)
     {
-        porch += _39.raster[base + uint(x)];
+        porch += _51.raster[base + uint(x)];
     }
     porch /= float(4 * spp);
     float s = 0.0;
     for (int k = 0; k < 12; k++)
     {
-        s += _39.raster[base + uint(k)];
+        s += _51.raster[base + uint(k)];
     }
     float tip = s;
     for (int x_1 = 12; x_1 < (50 * spp); x_1++)
     {
-        s += (_39.raster[base + uint(x_1)] - _39.raster[base + uint(x_1 - 12)]);
+        s += (_51.raster[base + uint(x_1)] - _51.raster[base + uint(x_1 - 12)]);
         tip = fast::min(tip, s);
     }
     tip /= 12.0;
@@ -80,54 +107,64 @@ kernel void main0(device Raster& _39 [[buffer(1)]], constant Params& _128 [[buff
     bool vertical = tip < (porch - 0.07999999821186065673828125);
     for (int _dot = 80; _dot <= 300; _dot += 20)
     {
-        bool _273;
+        bool _373;
         if (vertical)
         {
-            _273 = _39.raster[base + uint(_dot * spp)] < threshold;
+            _373 = _51.raster[base + uint(_dot * spp)] < threshold;
         }
         else
         {
-            _273 = vertical;
+            _373 = vertical;
         }
-        vertical = _273;
+        vertical = _373;
     }
     if (vertical)
     {
-        _284.measurement[line] = float4(0.0, porch, -1.0, 0.0);
+        _384.measurement[line] = float4(0.0, porch, -1.0, 0.0);
         return;
     }
     if (tip >= (porch - 0.07999999821186065673828125))
     {
-        _284.measurement[line] = float4(0.0, porch, 0.0, 1000000.0);
+        _384.measurement[line] = float4(0.0, porch, 0.0, 1000000.0);
         return;
     }
     uint param = base;
     int param_1 = 8 * spp;
     int param_2 = 46 * spp;
     float param_3 = threshold;
-    float edge = crossing(param, param_1, param_2, param_3, _39);
-    if (edge < (-100000000.0))
+    float coarse = crossing_cycle(param, param_1, param_2, param_3, _51);
+    if (coarse < (-100000000.0))
     {
-        _284.measurement[line] = float4(0.0, porch, 0.0, 1000000.0);
+        _384.measurement[line] = float4(0.0, porch, 0.0, 1000000.0);
         return;
     }
-    int start = int(round(edge)) + (2 * spp);
-    float black = 0.0;
-    for (int x_2 = 0; x_2 < 156; x_2++)
+    int c0 = int(coarse);
+    int t0 = max((c0 - (17 * spp)), 0);
+    int t1 = max((c0 - (9 * spp)), (t0 + 1));
+    float pulse = 0.0;
+    for (int x_2 = t0; x_2 < t1; x_2++)
     {
-        black += _39.raster[base + uint(start + x_2)];
+        pulse += _51.raster[base + uint(x_2)];
     }
-    black /= 156.0;
+    pulse /= float(t1 - t0);
     uint param_4 = base;
-    int param_5 = max((8 * spp), (int(edge) - spp));
-    int param_6 = min((46 * spp), ((int(edge) + spp) + 1));
-    float param_7 = tip + (0.5 * (black - tip));
-    float again = crossing(param_4, param_5, param_6, param_7, _39);
-    if (again > (-100000000.0))
+    float param_5 = coarse;
+    int param_6 = spp;
+    float black = keyed_black(param_4, param_5, param_6, _51);
+    uint param_7 = base;
+    int param_8 = max((8 * spp), (c0 - spp));
+    int param_9 = min((46 * spp), ((c0 + spp) + 1));
+    float param_10 = pulse + (0.5 * fast::min(porch - pulse, 0.335025370121002197265625));
+    float edge = crossing_raw(param_7, param_8, param_9, param_10, _51);
+    if (edge < (-100000000.0))
     {
-        edge = again;
+        edge = coarse;
     }
-    float offset = edge - (25.0 * float(spp));
+    uint param_11 = base;
+    float param_12 = edge;
+    int param_13 = spp;
+    black = keyed_black(param_11, param_12, param_13, _51);
+    float offset = edge - ((25.0 * float(spp)) - 0.5);
     int shift = int(round(offset));
     uint bstart = uint((31 * spp) + shift);
     uint n = uint((11 * spp) / 12) * 12u;
@@ -136,20 +173,20 @@ kernel void main0(device Raster& _39 [[buffer(1)]], constant Params& _128 [[buff
     for (uint x_3 = 0u; x_3 < n; x_3++)
     {
         float p = (float(int(bstart + x_3) - (65 * spp)) * 6.283185482025146484375) / 12.0;
-        float v = _39.raster[(base + bstart) + x_3] - black;
+        float v = _51.raster[(base + bstart) + x_3] - black;
         c += (v * cos(p));
         sn += (v * sin(p));
     }
     float amplitude = (2.0 * length(float2(c, sn))) / float(n);
-    float _484;
-    if (_128.region == 1u)
+    float _613;
+    if (_229.region == 1u)
     {
-        _484 = ((line & 1u) == 1u) ? 1.5 : 4.5;
+        _613 = ((line & 1u) == 1u) ? 1.5 : 4.5;
     }
     else
     {
-        _484 = 5.5;
+        _613 = 5.5;
     }
-    float burst_axis = _484;
-    _284.measurement[line] = float4(precise::atan2(-sn, c) - ((burst_axis * 6.283185482025146484375) / 12.0), black, amplitude, offset);
+    float burst_axis = _613;
+    _384.measurement[line] = float4(precise::atan2(-sn, c) - ((burst_axis * 6.283185482025146484375) / 12.0), black, amplitude, offset);
 }

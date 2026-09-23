@@ -109,7 +109,7 @@ static void preset_apply_cpu_state_ex(PresetCtx *ctx, const PhysicalPreset *p,
     }
     /* Presets saved before the keyed clamp had a time constant carry no
      * value; show the generic one rather than a zero. */
-    if (tv->clamp_lines <= 0) tv->clamp_lines = 64;
+    if (tv->clamp_lines <= 0) tv->clamp_lines = VIDEO_CLAMP_LINES_DEFAULT;
     /* A vhs block without "model": 2 described the earlier filtered-noise
      * stage; its keys mean nothing to the FM deck. Enabled ones fall back
      * to the SP consumer deck (and the TV loop it was measured with). */
@@ -1226,7 +1226,7 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_comb[n++] = MI_FLOAT("H PLL Hz (0=AFC)", &vc->tv.h_pll_hz, 10, 0, 1000, gpu_cb_update_rc_params, "%.0f");
     menu_comb[n++] = MI_FLOAT("H PLL damping", &vc->tv.h_pll_damping, .05f, .1f, 2, gpu_cb_update_rc_params, "%.2f");
     menu_comb[n++] = MI_FLOAT("H PLL V-blank gain", &vc->tv.h_pll_vblank_gain, .1f, 1, 3, gpu_cb_update_rc_params, "%.1f");
-    menu_comb[n++] = MI_FLOAT("Black clamp lines", &vc->tv.clamp_lines, 1, 2, 500, gpu_cb_update_rc_params, "%.0f");
+    menu_comb[n++] = MI_FLOAT("Black clamp lines", &vc->tv.clamp_lines, .5f, 1, 500, gpu_cb_update_rc_params, "%.1f");
     const int menu_comb_count=n;
 
     /* ================================================================

@@ -532,7 +532,7 @@ static void head_switch(SDL_GPUDevice *gpu) {
  * of the decoded field's temporal variance that sits in whole rows stays
  * small. */
 typedef struct { double head_diff, band_diff, row_share; } ChainGrey;
-static ChainGrey chain_grey(SDL_GPUDevice *gpu, const VHSParams *deck) {
+static ChainGrey chain_grey(SDL_GPUDevice *gpu, const VHSParams *deck, float clamp_lines) {
     enum { FRAMES = 12, SETTLE = 4, X0 = 200, X1 = 1900, XSTEP = 4, Y0 = 8, Y1 = 232, BANDS = 8 };
     SignalPrecompute sp; VideoChain c; VideoGPUChain v;
     ChainGrey r = {0, 0, 0};
@@ -541,6 +541,7 @@ static ChainGrey chain_grey(SDL_GPUDevice *gpu, const VHSParams *deck) {
     c.tv.noise_level = 0; c.console_psu_hum = 0;
     c.vhs = *deck;
     c.tv.h_pll_hz = 250; c.tv.h_pll_damping = 0.7f; c.tv.h_pll_vblank_gain = 2.5f;
+    c.tv.clamp_lines = clamp_lines;
     CHECK(video_gpu_init(&v, gpu, &c, "shaders/compute", sp.fir_y, sp.fir_y_n, sp.fir_c, sp.fir_c_n, sp.fir_q, sp.fir_q_n));
     CHECK(video_gpu_upload_signal_table(&v, gpu, (float *)sp.table, NULL, SIG_TABLE_ENTRIES, SIG_TABLE_STRIDE));
     CHECK(vhs_gpu_enabled(&v.vhs, &v.sig_chain) == (deck->enabled != 0));
@@ -602,21 +603,28 @@ static ChainGrey chain_grey(SDL_GPUDevice *gpu, const VHSParams *deck) {
 }
 
 static void chain_black_level(SDL_GPUDevice *gpu) {
-    if (getenv("VHS_CHAIN_DIAG")) { VHSParams off = deck_params(); off.enabled = 0; fprintf(stderr, "control run, deck off\n"); chain_grey(gpu, &off); }
     VHSParams p = deck_params(); clean_tape(&p);
     p.dropout_scale = 0; p.line_jitter_ns = 0; p.tbe_varying_ns = 0;
     p.skew_ba_ns = 1700; p.skew_ab_ns = -80;    /* interchange steps: the worst case */
-    ChainGrey timing = chain_grey(gpu, &p);
-    printf("VHS chain, timing only: head A minus head B luminance %+.3f%%, largest band %.3f%%\n",
+    ChainGrey timing = chain_grey(gpu, &p, VIDEO_CLAMP_LINES_DEFAULT);
+    printf("VHS chain, timing only: head A minus head B luminance %+.4f%%, largest band %.4f%%\n",
            100 * timing.head_diff, 100 * timing.band_diff);
     CHECK(fabs(timing.head_diff) < 0.0005);
     CHECK(timing.band_diff < 0.002);
-    VHSParams q = deck_params();
-    ChainGrey noisy = chain_grey(gpu, &q);
-    printf("VHS chain, defaults: head difference %+.3f%%, whole-row share of the temporal variance %.1f%%\n",
-           100 * noisy.head_diff, 100 * noisy.row_share);
-    CHECK(fabs(noisy.head_diff) < 0.002);
-    CHECK(noisy.row_share < 0.10);
+    /* With tape noise, the whole-row share of the decoded field's temporal
+     * variance follows the TV's clamp time constant: the clamp turns the
+     * porch noise it measures into whole-line offsets. */
+    const float clamps[3] = {VIDEO_CLAMP_LINES_DEFAULT, 8, 64};
+    double share[3];
+    for (int k = 0; k < 3; k++) {
+        VHSParams q = deck_params();
+        ChainGrey noisy = chain_grey(gpu, &q, clamps[k]);
+        share[k] = noisy.row_share;
+        if (k == 0) CHECK(fabs(noisy.head_diff) < 0.002);
+    }
+    printf("VHS chain, defaults: whole-row share of the temporal variance %.1f%% / %.1f%% / %.1f%% with a %.1f / 8 / 64 line clamp\n",
+           100 * share[0], 100 * share[1], 100 * share[2], VIDEO_CLAMP_LINES_DEFAULT);
+    CHECK(share[0] > share[1] && share[1] > share[2] && share[2] < 0.05);
 }
 
 int test_vhs_fidelity(SDL_GPUDevice *gpu) {

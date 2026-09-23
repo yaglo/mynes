@@ -202,23 +202,38 @@ stable.
 ### TV sync separator and black clamp
 
 A VCR moves lines by up to a few microseconds, and the receiver has to
-follow without turning timing into level. The sync separator averages the
-composite over one subcarrier cycle before slicing, takes the sync tip as
-the lowest such average over the first 50 dots and slices halfway between
-tip and porch, first against the front porch window and then against the
-back porch it measures behind the edge it found, over dots 8 to 46 (3 us
-early to 4 us late). The black level is the mean of three whole subcarrier
-cycles of the back porch after the burst, 20.5 to 25 dots behind the sync
-trailing edge, where the deck's band-limited burst tail leaves only the
-fraction of a cycle its slope covers. Measuring on the burst tail itself,
-as the earlier 46-49 dot window did, gave a level that depended on where the
-carrier fell against the sync, and with the deck's fixed carrier grid that
-turned the head-switch timing into a 1.2% luminance alternation at 30 Hz.
-The measurement charges a keyed clamp with a time constant in lines
-(`clamp_lines`, generic 64 lines: a jungle IC clamp of 100 nF charged at
-about 1 mA/V over a 2 us key) that holds through vertical retrace, in place
-of the earlier 0.35 per line, which re-clamped every line to its own porch
-and turned the deck's fine grain into whole-line flicker.
+follow without turning timing into level. The sync separator first finds
+the trailing edge on the composite averaged over one subcarrier cycle,
+anywhere from 3 us early to 4 us late (dots 8 to 46), where the earlier
+separator searched only 1.3 us around the nominal edge and lost lock on
+VCR lines. It then slices the raw samples within a dot of that edge, with
+the tip and black windows placed relative to the edge instead of the line
+start: the tip over 8 dots of the pulse's interior, the slice halfway to the
+front porch capped at half the NES sync depth, and black over two whole
+subcarrier cycles 21 to 24 dots behind the edge. With the sync where the
+NES puts it these are the earlier fixed windows, so clean composite and RF
+pictures keep their level and position (within 1e-3 linear RMS on the
+Contra boss frame through the PVM, Toshiba and RF presets; RF differs only
+in which noise crossings each line picks, with the same edge jitter).
+
+The black measurement charges a keyed clamp with a time constant in lines
+(`clamp_lines`, a menu item under Y/C separation, saved with the preset).
+Its default is the receiver's earlier fixed 0.35 per line, 2.3 lines; no
+measured value for a named TV has been found. The clamp now holds through
+vertical retrace instead of taking the first line after it outright, which
+moves the top rows of an AC-coupled picture by a few 1e-4. The clamp time
+constant decides how much tape noise becomes whole-line flicker: through
+the whole chain on a flat grey field with the deck's defaults, the whole-row
+share of the decoded luma's temporal variance is 17.8% at 2.3 lines, 6.4% at
+8 and 2.8% at 64.
+
+The 30 Hz head-alternating brightness the review measured (1.2% on flat
+grey with the interchange skews) is gone with this receiver at the default
+clamp: head A and head B fields decode within 0.006%, and every band of
+rows within 0.034%. A black window placed a dot earlier, 20 dots behind the
+edge, doubles the whole-row share (the deck's burst tail still reaches it);
+one placed later runs into the NES border, which carries the backdrop
+colour.
 
 ### Left out
 
@@ -271,8 +286,8 @@ RF:
 | Dropout without compensator | +49.9 IRE | +54 | |
 | 0.25 um defect, extra noise | 2.2 IRE RMS | 2.4 | |
 | Head switch, 1 us steps: line before, switch line before and after x_switch, line after | 0 / 0 / 1000 / 1000 ns, no shear | | |
-| Whole chain, flat grey, timing only: head A against head B luminance | 0.001%, worst band of rows 0.007% | | 1.2% |
-| Whole chain, flat grey, deck defaults: whole-row share of the temporal variance of decoded Y | 2.8% | | 16% |
+| Whole chain, flat grey, timing only: head A against head B luminance | 0.006%, worst band of rows 0.034% | | 1.2% |
+| Whole chain, flat grey, deck defaults: whole-row share of the temporal variance of decoded Y, 2.3 / 8 / 64 line clamp | 17.8% / 6.4% / 2.8% | | 16% |
 
 The noise is independent between lines (r = 0.007) and frames (r = -0.006),
 with a flat per-column variance (5.5%) and no lattice at the earlier stage's
@@ -303,15 +318,15 @@ displacement is larger because the timing is now the measured transport
 residual after the TV's line PLL (about 15 ns mid-field), with a new component
 every field instead of a glide.
 
-The whole-line share was a TV effect, not the deck's: at the deck output it
-is 1.5% (`gpu_fidelity_tests`), and it reached 16% at the TV's decoded luma
-and 40% on screen while the receiver clamped every line to its own 0.56 us
-back-porch average with a gain of 0.35, with the beam spot smoothing the
-fine grain and leaving the whole-line offsets as they were. With the keyed
-clamp's 64-line time constant the share at the decoded luma is 2.8%. The
-on-screen table above was measured before the clamp, the band calibration
-and the same-deck skews; the whole-chain rows in the kernel table are the
-current figures.
+The whole-line share is a TV effect, not the deck's: at the deck output it
+is 1.5% (`gpu_fidelity_tests`), 17.8% at the TV's decoded luma with the
+default clamp, and it measured 40% on screen, where the beam spot smooths
+the fine grain and leaves the whole-line offsets as they are. A slower
+clamp lowers it (see the TV sync separator and black clamp section); the
+default stays at the earlier rate until a TV's clamp is measured. The
+on-screen table above was measured before the band calibration and the
+same-deck skews; the whole-chain rows in the kernel table are the current
+figures.
 
 GPU time of the two kernels on an M5 (10-core GPU), measured interleaved
 with the earlier kernel in the same run: the tape stage takes 0.73 ms and playback 0.12 ms (median;
