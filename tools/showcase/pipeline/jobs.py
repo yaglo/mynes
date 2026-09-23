@@ -249,6 +249,21 @@ def read_sidecar(render: Path) -> dict | None:
     return data
 
 
+# What the recorder's default masters decode as: libx264 yuv444p for SDR,
+# ProRes 4444 (10-bit in the file, decoded by ffmpeg as 12-bit) for HDR.
+# 4:2:0 would subsample the chroma behind the stills and crops and put a
+# crop's edges on the chroma grid.
+RENDER_PIX_FMTS = {False: ("yuv444p",), True: tuple(recipes.HDR_RAW_FORMATS)}
+
+
+def render_format_problem(pix_fmt: str, hdr: bool) -> str | None:
+    allowed = RENDER_PIX_FMTS[hdr]
+    if pix_fmt in allowed:
+        return None
+    return (f"pixel format {pix_fmt or 'unknown'}, expected {' or '.join(allowed)}: the stills and crops need "
+            f"a 4:4:4 master (unset MYNES_RECORD_CODEC_ARGS/MYNES_RECORD_HDR_CODEC_ARGS and record it again)")
+
+
 def _has_levels(sidecar: dict | None) -> bool:
     return bool(sidecar) and all(isinstance(sidecar.get(k), (int, float)) for k in ("max_cll", "max_fall"))
 
@@ -321,6 +336,9 @@ def record_one(ctx: Context, runner: Runner, shot: Shot, preset: str, r: Render,
                    + (", BT.2020 PQ tags, max_cll and max_fall in the sidecar" if hdr else ""))
         return None
     info = verify_video(out, frames=frames, size=r.size, colour=HDR_COLOUR if hdr else None)
+    problem = render_format_problem(info.pix_fmt, hdr)
+    if problem:
+        raise PipelineError(f"{out}: {problem}")
     if not info.audio_codec:
         runner.say(f"warning: {out} has no audio stream")
     sidecar = read_sidecar(out)
@@ -388,6 +406,9 @@ def render_facts(ctx: Context, runner: Runner, shot: Shot, preset: str, size, hd
                                 f"again (showcase.py --shots {shot.id} --presets {preset} record)")
         if (info.width, info.height) != r.size:
             raise PipelineError(f"{path} is {info.width}x{info.height}, not {recipes.size_string(r.size)}")
+        problem = render_format_problem(info.pix_fmt, hdr)
+        if problem:
+            raise PipelineError(f"{path}: {problem}")
         sidecar = read_sidecar(path) or {}
         if hdr and not _has_levels(sidecar):
             raise PipelineError(f"{sidecar_path(path)} lacks max_cll and max_fall")

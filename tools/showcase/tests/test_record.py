@@ -11,7 +11,7 @@ from unittest import mock
 
 from pipeline import jobs as jobs_mod
 from pipeline import shots
-from pipeline.runner import Runner, have_tool, probe_video, run_jobs
+from pipeline.runner import PipelineError, Runner, have_tool, probe_video, run_jobs
 
 HERE = Path(__file__).resolve().parent
 HAVE_FFMPEG = have_tool("ffmpeg") and have_tool("ffprobe")
@@ -111,6 +111,30 @@ class Record(unittest.TestCase):
             values = {c["argv"][c["argv"].index(flag) + 1] for c in calls}
             self.assertEqual(len(values), 1, (flag, values))
         self.assertEqual({c["argv"][-1] for c in calls}, {str(self.root / "roms" / "Synth Beta (U).nes")})
+
+    def test_shell_settings_do_not_reach_the_recorder(self):
+        shell = {"MYNES_RECORD_CODEC_ARGS": "-c:v libx264 -preset ultrafast -pix_fmt yuv420p",
+                 "MYNES_RECORD_HDR_CODEC_ARGS": "-c:v libx265 -pix_fmt yuv420p10le",
+                 "MYNES_OFFSCREEN_HEADROOM": "1.6", "MYNES_REVIEW_OSD": "1"}
+        with mock.patch.dict(os.environ, shell):
+            result, _ = self.record()
+        self.assertEqual(result.failed, {})
+        for call in self.calls():
+            self.assertFalse(set(shell) & set(call["env"]), call["env"])
+            self.assertEqual(call["env"]["MYNES_REVIEW_NO_INPUT"], "1")
+        self.assertEqual(probe_video(self.render(STAGE, False)).pix_fmt, "yuv444p")
+        self.assertIn(probe_video(self.render(STAGE, True)).pix_fmt, ("yuv444p10le", "yuv444p12le"))
+
+    def test_a_420_render_is_refused(self):
+        with mock.patch.dict(os.environ, {"FAKE_RECORDER_CODEC_ARGS": "-c:v libx264 -preset ultrafast -pix_fmt yuv420p"}):
+            result, ctx = self.record()
+        self.assertEqual(len(result.failed), 6)
+        self.assertTrue(all("pixel format yuv420p, expected yuv444p" in e or "expected yuv444p10le" in e
+                            for e in result.failed.values()), result.failed)
+        self.assertFalse(self.render(STAGE, False).with_name("sdr.record.json").exists())
+        with self.assertRaises(PipelineError) as cm:  # encode refuses the render too
+            jobs_mod.render_facts(ctx, Runner(quiet=True), ctx.shot_list.shots[0], "p_a", STAGE, False)
+        self.assertIn("4:4:4", str(cm.exception))
 
 
 if __name__ == "__main__":

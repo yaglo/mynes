@@ -288,8 +288,11 @@ rows, no comments.
 ## The recorder
 
 Per clip and size the pipeline runs these two commands from the repository
-root, with `XDG_CONFIG_HOME` pointing at a private directory and
-`MYNES_REVIEW_NO_INPUT=1`:
+root, with `XDG_CONFIG_HOME` pointing at a private directory,
+`MYNES_REVIEW_NO_INPUT=1`, and without `MYNES_RECORD_CODEC_ARGS`,
+`MYNES_RECORD_HDR_CODEC_ARGS`, `MYNES_OFFSCREEN_HEADROOM` or the
+`MYNES_REVIEW_*` variables from your shell, so the recorder writes its
+default masters:
 
 ```
 build/bin/mynes_gpu --offscreen WxH --sdr --mask-alignment pixels \
@@ -311,7 +314,10 @@ state load; `--input-replay` frame numbers counted from the first recorded
 frame; `--record-hdr` writing BT.2020 PQ, tagged in the file; and `OUT.json`
 beside `OUT.mov` with `frames`, `rate`, `width`, `height`, `hdr`,
 `white_nits`, `headroom`, plus `max_cll` and `max_fall` for HDR. After each
-run the pipeline checks the frame count, size, HDR tags and sidecar.
+run the pipeline checks the frame count, size, HDR tags, sidecar and pixel
+format: 4:4:4 (`yuv444p` for SDR; ProRes 4444, which ffmpeg decodes as
+`yuv444p12le`, for HDR). A 4:2:0 render would subsample the chroma behind
+the stills and crops, so `record` and `encode` refuse one.
 `defaults.record_args` appends extra flags (for example
 `--room-reflections`).
 

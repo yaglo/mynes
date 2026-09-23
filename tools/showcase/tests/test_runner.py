@@ -159,8 +159,13 @@ class Tools(unittest.TestCase):
         self.assertIsNone(runner_mod.ffmpeg_version_tuple(None))
 
     def test_env_for_capture(self):
-        env = runner_mod.env_for_capture({"MYNES_REVIEW_INPUT_SCRIPT": "x", "PATH": "/bin"}, Path("/cfg"))
-        self.assertNotIn("MYNES_REVIEW_INPUT_SCRIPT", env)
+        shell = {"MYNES_REVIEW_INPUT_SCRIPT": "x", "PATH": "/bin",
+                 "MYNES_RECORD_CODEC_ARGS": "-c:v h264_videotoolbox -b:v 90M -pix_fmt yuv420p",
+                 "MYNES_RECORD_HDR_CODEC_ARGS": "-c:v libx265", "MYNES_OFFSCREEN_HEADROOM": "1.6"}
+        env = runner_mod.env_for_capture(shell, Path("/cfg"))
+        for key in ("MYNES_REVIEW_INPUT_SCRIPT", "MYNES_RECORD_CODEC_ARGS", "MYNES_RECORD_HDR_CODEC_ARGS",
+                    "MYNES_OFFSCREEN_HEADROOM"):
+            self.assertNotIn(key, env)
         self.assertEqual(env["XDG_CONFIG_HOME"], "/cfg")
         self.assertEqual(env["MYNES_REVIEW_NO_INPUT"], "1")
         self.assertEqual(env["PATH"], "/bin")

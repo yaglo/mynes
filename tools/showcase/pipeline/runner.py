@@ -598,11 +598,20 @@ def summarize(result: JobResult, runner: Runner) -> None:
         runner.say(f"  failed {jid}: {err.splitlines()[0] if err else ''}")
 
 
+# Variables the emulator reads that would change a capture. The codec
+# overrides replace the recorder's 4:4:4 masters (the documented fast choice
+# is 4:2:0 H.264), and the headroom variable changes the offscreen target.
+CAPTURE_ENV_REMOVED = ("MYNES_REVIEW_INPUT_SCRIPT", "MYNES_REVIEW_START_FRAME", "MYNES_REVIEW_OSD",
+                       "MYNES_REVIEW_FRAME", "MYNES_REVIEW_PRESET", "MYNES_PLAYBACK_FRAMES",
+                       "MYNES_RECORD_CODEC_ARGS", "MYNES_RECORD_HDR_CODEC_ARGS", "MYNES_OFFSCREEN_HEADROOM")
+
+
 def env_for_capture(base: dict | None = None, config_home: Path | None = None) -> dict:
-    """Isolated config so the maintainer's own settings never leak into a capture."""
+    """Isolated config so the maintainer's own settings never leak into a
+    capture: the recorder writes its default masters, H.264 4:4:4 for SDR
+    and ProRes 4444 for HDR."""
     env = dict(base or os.environ)
-    for key in ("MYNES_REVIEW_INPUT_SCRIPT", "MYNES_REVIEW_START_FRAME", "MYNES_REVIEW_OSD",
-                "MYNES_REVIEW_FRAME", "MYNES_REVIEW_PRESET", "MYNES_PLAYBACK_FRAMES"):
+    for key in CAPTURE_ENV_REMOVED:
         env.pop(key, None)
     env["MYNES_REVIEW_NO_INPUT"] = "1"
     env["MYNES_FFMPEG"] = tool("ffmpeg")
