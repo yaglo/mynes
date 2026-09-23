@@ -73,3 +73,9 @@ coverage/
 # Showcase pipeline: save states copied from the emulator and the rendered outputs
 tools/showcase/states/
 tools/showcase/out/
+
+# Writing rules and their checker are kept outside the repository.
+STYLE.md
+tools/check_style.py
+tools/test_check_style.py
+tools/stylelib/
