@@ -1,5 +1,6 @@
 /* Causality and landing-map checks through the actual CRT compute stages. */
 #include "video_gpu.h"
+#include "post_pipeline.h"
 #include "signal_precompute.h"
 #include <math.h>
 #include <stdio.h>
@@ -12,6 +13,12 @@ static int failures;
 int test_crt_load(SDL_GPUDevice *gpu) {
     SignalPrecompute sp; VideoChain c; VideoGPUChain v;
     signal_precompute_init(&sp,0);
+    /* The map is built at one output pixel per dot of the 256-wide face; the
+     * picture sits inside the receiver's active line, so pixel x lands on a
+     * dot of the picture as the raster window says. */
+    float active_dots, picture_left, active_lines, picture_top;
+    post_pipeline_raster_window(0, sp.samples_per_pixel, &active_dots, &picture_left, &active_lines, &picture_top);
+    #define LANDED(px) ((((px)+.5f)/256.f*active_dots-picture_left)*sp.samples_per_pixel)
     video_chain_init_preset(&c,VIDEO_CONN_COMPOSITE,VIDEO_COMB_NONE,0);
     memset(&c.tv,0,sizeof(c.tv)); c.tv.gamma=1; c.tv.h_size=c.tv.v_size=1;
     c.console_psu_hum=0;
@@ -41,7 +48,7 @@ int test_crt_load(SDL_GPUDevice *gpu) {
         CHECK(load[120*256+127]>load[120*256+32]);
         CHECK(load[256*240+120] > .15f);
         CHECK(gpu_buffer_download(gpu,v.buf_deflection_x,landing,256*240*4*sizeof(float)));
-        CHECK(fabsf(landing[(120*256+192)*4]-(192.5f*sp.samples_per_pixel))<.01f);
+        CHECK(fabsf(landing[(120*256+192)*4]-LANDED(192))<.01f);
     }
     CHECK(fabsf(before[1]-before[0])<1e-6f); // A future patch cannot darken earlier pixels.
     CHECK(after[1]<after[0]-.01f);          // Its rail depletion persists to the right.
@@ -112,7 +119,7 @@ int test_crt_load(SDL_GPUDevice *gpu) {
         CHECK(gpu_buffer_download(gpu,v.buf_deflection_x,landing,256*240*4*sizeof(float)));
         CHECK(gpu_buffer_download(gpu,v.buf_deflection_y,focus,256*240*4*sizeof(float)));
         float x=landing[(120*256+192)*4], f=focus[(120*256+192)*4+3];
-        CHECK((x-(192.5f*sp.samples_per_pixel))*sign>1);
+        CHECK((x-LANDED(192))*sign>1);
         CHECK(f>1.01f);
         v.beam_frame_counter+=100;
         CHECK(chain_run(&v.sig_chain,gpu));
@@ -137,14 +144,14 @@ int test_crt_load(SDL_GPUDevice *gpu) {
     CHECK(chain_run(&v.sig_chain,gpu));
     CHECK(!v.sig_chain.stages[v.stage_deflection].reuse_output);
     CHECK(gpu_buffer_download(gpu,v.buf_deflection_x,landing,256*240*4*sizeof(float)));
-    CHECK(fabsf(landing[(120*256+192)*4]-(original_x-.1f*sp.samples_per_line))<.01f);
+    CHECK(fabsf(landing[(120*256+192)*4]-(original_x-.1f*active_dots*sp.samples_per_pixel))<.01f);
     c.tv.h_pos=0;
     c.tv.hv_sag=0; c.tv.focus_breathing=0; c.tv.overscan=.04f;
     CHECK(chain_run(&v.sig_chain,gpu));
     CHECK(gpu_buffer_download(gpu,v.buf_deflection_x,landing,256*240*4*sizeof(float)));
     // Overscan expands the picture: a right-side pixel samples closer to
     // the source center, and the illuminated raster still fills the tube.
-    CHECK(landing[(120*256+192)*4]<192.5f*sp.samples_per_pixel-8);
+    CHECK(landing[(120*256+192)*4]<LANDED(192)-8);
     CHECK(landing[(120*256+254)*4+3]>.99f);
     // Underscan changes the landing coordinates, not beam intensity through
     // an arbitrary UV-width raster fade. The beam sampler owns source bounds.

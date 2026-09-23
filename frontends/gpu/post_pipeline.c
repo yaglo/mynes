@@ -113,6 +113,29 @@ static bool matrix_decode_rebind(struct SignalChainFwd *chain_fwd,
  * convergence out of beam_profile.comp so the beam stage only deposits
  * light using a precomputed raster field.
  * ------------------------------------------------------------------- */
+/* The receiver scans the tube face over the standard active line and active
+ * field (ITU-R BT.470: NTSC line 63.556 us with 10.9 us of blanking and a
+ * 1.5 us front porch, 21 blanked lines per field; PAL line 64 us with 12 us
+ * of blanking, a 1.5 us front porch and 25 blanked lines), locked to the
+ * console's sync. The console's picture starts 65 dots after its sync
+ * (video_gpu.c, active offset) with the vertical sync pulses at lines 245
+ * or 270 of its 262 or 312-line frame (raster_encode.comp.glsl), so the
+ * picture's place on the face follows from the dot period alone: NES dots
+ * are 8:7 and a set with no overscan shows blanking either side. */
+void post_pipeline_raster_window(int region, int samples_per_pixel, float *active_dots, float *picture_left,
+                                 float *active_lines, float *picture_top) {
+    bool pal = region == SIGNAL_REGION_PAL;
+    double dot_us = 1e6 * samples_per_pixel / signal_region_sample_rate_hz(region);
+    double line_us = pal ? 64.0 : 1e6 / 15734.264, blanking_us = pal ? 12.0 : 10.9, front_porch_us = 1.5;
+    double blanked_lines = pal ? 25.0 : 21.0, frame_lines = pal ? 312.0 : 262.0, vsync_line = pal ? 270.0 : 245.0;
+    double sync_to_active_lines = pal ? 22.5 : 18.0;   /* broad pulses start 2.5 or 3 lines into the blanking */
+    const double picture_start_dot = 65.0;
+    *active_dots = (float)((line_us - blanking_us) / dot_us);
+    *picture_left = (float)(picture_start_dot - (blanking_us - front_porch_us) / dot_us);
+    *active_lines = (float)(frame_lines - blanked_lines);
+    *picture_top = (float)((frame_lines - vsync_line) - sync_to_active_lines);
+}
+
 typedef struct {
     uint32_t signal_w;
     uint32_t out_w;
@@ -155,6 +178,10 @@ typedef struct {
     float top_band_start;
     float top_band_end;
     float top_edge_width;
+    float active_dots;
+    float picture_left;
+    float active_lines;
+    float picture_top;
 } DeflectionParams;
 
 static bool deflection_rebind(struct SignalChainFwd *chain_fwd,
@@ -213,6 +240,8 @@ static bool deflection_rebind(struct SignalChainFwd *chain_fwd,
     p.top_edge_skew       = tv ? tv->top_edge_skew : 0.0f;
     p.top_band_start      = tv ? tv->top_band_start : 18.0f;
     p.top_band_end        = tv ? tv->top_band_end : 34.0f;
+    post_pipeline_raster_window(vgc->signal_fmt.region, vgc->signal_fmt.samples_per_pixel,
+                                &p.active_dots, &p.picture_left, &p.active_lines, &p.picture_top);
     p.top_edge_width      = tv ? tv->top_edge_width : 0.08f;
 
     // Regulated geometry is independent of image content and scan time.

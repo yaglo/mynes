@@ -44,4 +44,11 @@ void post_pipeline_install_matrix_typed(VideoGPUChain *vgc);
 void post_pipeline_install_load_typed(VideoGPUChain *vgc);
 void post_pipeline_install_deflection_typed(VideoGPUChain *vgc);
 
+/* Where the console's 256x240 picture sits on the receiver's active raster,
+ * in dots and lines: dots across the active line, dots from its left edge to
+ * the picture, lines in the active field, lines from its top to the picture
+ * (negative when the picture's first line is in the blanking). */
+void post_pipeline_raster_window(int region, int samples_per_pixel, float *active_dots, float *picture_left,
+                                 float *active_lines, float *picture_top);
+
 #endif /* POST_PIPELINE_H */
