@@ -183,6 +183,7 @@ and F6 selects the next slot; **M → Game** offers the same as State slot,
 Save state and Load state. Loading unpauses, resets the picture history and
 the CRT's temporal state (phosphor persistence, supply sag) so the restored
 picture does not blend with the one it replaces, and restarts audio cleanly.
+The first picture shown after a load is the first frame run from the state.
 A load that fails leaves the running game untouched and says why, in a notice
 and on stderr: an empty slot, a state from another ROM (CRC or mapper
 mismatch), a different region, a corrupted file, or a state written by a
