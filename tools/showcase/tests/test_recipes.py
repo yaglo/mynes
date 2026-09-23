@@ -307,6 +307,19 @@ class NoResampling(unittest.TestCase):
             ["ffmpeg", "-i", "m.mov", "-s", "960x720", "o.mp4"],
             ["ffmpeg", "-i", "m.mov", "-vf", "scale", "o.mp4"],
             ["ffmpeg", "-i", "m.mov", "-vf", "fps=30", "o.mp4"],
+            # Aliases, stream specifiers and instance names reach the same check.
+            ["ffmpeg", "-i", "m.mov", "-lavfi", "scale=960:720", "o.mp4"],
+            ["ffmpeg", "-i", "m.mov", "-filter:v:0", "scale=960:720", "o.mp4"],
+            ["ffmpeg", "-i", "m.mov", "-filter", "scale=960:720", "o.mp4"],
+            ["ffmpeg", "-i", "m.mov", "-vf:0", "scale=960:720", "o.mp4"],
+            ["ffmpeg", "-i", "m.mov", "-vf", "scale@a=960:720", "o.mp4"],
+            ["ffmpeg", "-i", "m.mov", "-s:v:0", "960x720", "o.mp4"],
+            ["ffmpeg", "-i", "m.mov", "-video_size:v", "960x720", "o.mp4"],
+            # Graphs in files cannot be checked, so they are refused.
+            ["ffmpeg", "-i", "m.mov", "-filter_complex_script", "g.txt", "o.mp4"],
+            ["ffmpeg", "-i", "m.mov", "-filter_script:v", "g.txt", "o.mp4"],
+            ["ffmpeg", "-i", "m.mov", "-/vf", "g.txt", "o.mp4"],
+            ["ffmpeg", "-i", "m.mov", "-/filter_complex", "g.txt", "o.mp4"],
         ]
         for cmd in bad:
             self.assertIsNotNone(recipes.resampling_problem(cmd), shlex.join(cmd))
@@ -315,6 +328,9 @@ class NoResampling(unittest.TestCase):
         ok = ["ffmpeg", "-f", "rawvideo", "-video_size", "64x48", "-i", "-",
               "-vf", "select='eq(n\\,3)',crop=10:10:0:0", "o.png"]
         self.assertIsNone(recipes.resampling_problem(ok))
+        audio = ["ffmpeg", "-i", "m.mov", "-filter:a", "aresample=48000", "-af", "volume=2",
+                 "-filter_complex_threads", "4", "-vf", "scale@c=in_color_matrix=bt601,format=rgb24", "o.mp4"]
+        self.assertIsNone(recipes.resampling_problem(audio))
 
 
 class Fit(unittest.TestCase):

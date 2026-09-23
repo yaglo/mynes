@@ -36,7 +36,10 @@ the pick, and the recorder gets the same ffmpeg through `MYNES_FFMPEG`.
   output pixels, so each size is recorded by the emulator at that size.
   Filters convert pixel format and colour only, and crops cut whole pixels.
   The runner refuses any ffmpeg command with a filter that could change the
-  picture size (`resampling_problem` in `pipeline/recipes.py`). The one
+  picture size, in any graph option (`-vf`, `-filter`, `-lavfi`,
+  `-filter_complex`, with or without a stream specifier), an output `-s` or
+  `-video_size`, or a graph read from a file (`resampling_problem` in
+  `pipeline/recipes.py`). The one
   reduction is the `@1x` variant of a detail crop: the exact 2x2 average
   that Pillow's `Image.reduce(2)` computes.
 - The SDR and HDR renders of a clip come from the same state and replay, so

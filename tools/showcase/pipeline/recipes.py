@@ -605,21 +605,43 @@ ALLOWED_FILTERS = {"select", "setpts", "trim", "crop", "format", "scale", "setpa
 SCALE_OPTIONS = {"in_color_matrix", "out_color_matrix", "in_range", "out_range"}
 
 
+# Options that carry a filter graph, by name before any ":" stream specifier.
+# -filter with an audio specifier (-filter:a) is not checked; -af is audio.
+GRAPH_OPTIONS = {"vf", "filter", "lavfi", "filter_complex"}
+# Options that set the picture size, with or without a stream specifier.
+SIZE_OPTIONS = {"s", "video_size"}
+# Options whose graph lives in a file the guard cannot see.
+SCRIPT_OPTIONS = {"filter_script", "filter_complex_script"}
+
+
 def resampling_problem(cmd: Sequence[str]) -> str | None:
     """Why an ffmpeg command could resample the picture, or None.
 
-    Checks every filter graph against ALLOWED_FILTERS, every scale filter for
-    size options, and output size options (-s, -video_size after the inputs)."""
+    Checks every filter graph (-vf, -filter, -lavfi, -filter_complex, with
+    any stream specifier) against ALLOWED_FILTERS and every scale filter for
+    size options; refuses output size options (-s, -video_size after the
+    inputs) and graphs read from files (-filter_script,
+    -filter_complex_script, or an option given as -/name FILE)."""
     args = [str(a) for a in cmd]
     last_input = max((i for i, a in enumerate(args) if a == "-i"), default=-1)
     for i, arg in enumerate(args):
-        if arg in ("-s", "-s:v", "-video_size") and i > last_input:
+        if not arg.startswith("-") or arg == "-" or i == 0:
+            continue
+        if arg.startswith("-/"):
+            return f"{arg} reads its value from a file"
+        name, _, spec = arg[1:].partition(":")
+        if name in SCRIPT_OPTIONS:
+            return f"{arg} reads a filter graph from a file"
+        if name in SIZE_OPTIONS and i > last_input:
             return f"output size option {arg}"
-        if arg not in ("-vf", "-filter:v", "-filter_complex") or i + 1 >= len(args):
+        if name not in GRAPH_OPTIONS or i + 1 >= len(args):
+            continue
+        if name == "filter" and spec.startswith("a"):
             continue
         for chain in args[i + 1].split(";"):
             for item in _split_filters(chain):
                 name, _, options = item.partition("=")
+                name = name.partition("@")[0]
                 if name not in ALLOWED_FILTERS:
                     return f"filter {name!r} is not one of the non-resampling filters"
                 if name == "scale":
