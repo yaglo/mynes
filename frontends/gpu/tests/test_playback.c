@@ -34,13 +34,14 @@ static bool next(Playback *p, PlaybackFrame *frame) {
     return false;
 }
 
-/* The most frames 1x NTSC pacing can start in ns nanoseconds, counted from
- * one picture's start_ns to a later one's. The deadline advances one period
- * per frame and a worker that fell behind catches up at most three periods
- * before it rebases, so at most ns/period + 3 frames follow the first.
- * start_ns is read a moment after the deadline check; one frame covers that. */
-static unsigned frames_1x_allows(Uint64 ns) {
-    Uint64 period=(Uint64)(signal_region_frame_ms(0)*1000000.0); /* as playback.c */
+/* The most frames pacing at speed times the NTSC rate can start in ns
+ * nanoseconds, counted from one picture's start_ns to a later one's. The
+ * deadline advances one period per frame and a worker that fell behind
+ * catches up at most three periods before it rebases, so at most
+ * ns/period + 3 frames follow the first. start_ns is read a moment after
+ * the deadline check; one frame covers that. */
+static unsigned frames_paced(Uint64 ns, double speed) {
+    Uint64 period=(Uint64)(signal_region_frame_ms(0)*1000000.0/speed); /* at 1x as playback.c */
     return (unsigned)(ns/period)+4;
 }
 
@@ -254,8 +255,8 @@ int main(void) {
      * a period at 1x, at most an eighth at 8x, which the wait rounds up to
      * whole milliseconds, plus a millisecond to wake up. A busy host takes
      * CPU from the 8x worker, which then waits less, so this holds at any
-     * load. The frame count must also outrun 1x pacing, which takes CPU: the
-     * run goes on until it does, for up to 5 s. If it never did, the test
+     * load. The frame count must also outrun 1.5x pacing, which takes CPU:
+     * the run goes on until it does, for up to 5 s. If it never did, the test
      * reports a skip when the host starved the worker: the process had less
      * than 90% of a core, or even the 1x waits were no longer than 8x allows. */
     const char *fast_skip=NULL;
@@ -272,7 +273,7 @@ int main(void) {
         for(Uint64 end=SDL_GetTicks()+400;SDL_GetTicks()<end;SDL_Delay(1)) read_pictures(p,&normal);
         unsigned normal_frames=normal.last-normal.first;
         Uint64 normal_ns=normal.last_ns-normal.first_ns,normal_wait=median_gap(&normal);
-        CHECK(normal_frames<=frames_1x_allows(normal_ns)); /* the bound holds at 1x */
+        CHECK(normal_frames<=frames_paced(normal_ns,1)); /* the bound holds at 1x */
         playback_pause(p);
         CHECK(SDL_GetAudioStreamQueued(stream)==0);
         controls.speed=8;
@@ -290,7 +291,7 @@ int main(void) {
             fast_frames=fast.last-fast.first;
             fast_ns=fast.last_ns-fast.first_ns;
             Uint64 elapsed=SDL_GetTicks()-begin;
-            if(elapsed>=400 && fast_frames>frames_1x_allows(fast_ns)) break; /* at least 400 ms as at 1x */
+            if(elapsed>=400 && fast_frames>frames_paced(fast_ns,1.5)) break; /* at least 400 ms as at 1x */
             if(elapsed>=5000) break;
         }
         double core=(double)(clock()-cpu)/CLOCKS_PER_SEC/((SDL_GetTicks()-begin)/1000.0);
@@ -298,11 +299,11 @@ int main(void) {
         CHECK(next(p,&frame)); /* still running */
         CHECK(!queued_while_fast);
         CHECK(fast.gaps>=10 && fast_wait<=wait_limit);
-        bool outran=fast_frames>frames_1x_allows(fast_ns);
+        bool outran=fast_frames>frames_paced(fast_ns,1.5);
         if(!outran && (normal.gaps<5 || normal_wait<=wait_limit))
             fast_skip="the 1x worker waited no longer than 8x allows";
         else if(!outran && core<0.9)
-            fast_skip="8x did not outrun 1x pacing with less than 90% of a core";
+            fast_skip="8x did not outrun 1.5x pacing with less than 90% of a core";
         else CHECK(outran);
         controls.speed=1;
         playback_controls(p,&controls);
@@ -311,9 +312,9 @@ int main(void) {
         CHECK(SDL_GetAudioStreamQueued(stream)>0); /* audio flows again after fast-forward */
         playback_pause(p);
         playback_destroy(p);
-        printf("Playback speed: %u frames in %.0f ms at 1x, %u in %.0f ms at 8x (1x allows %u); "
+        printf("Playback speed: %u frames in %.0f ms at 1x, %u in %.0f ms at 8x (1.5x allows %u); "
                "median wait %.2f ms at 1x, %.2f ms at 8x; %.0f%% of a core at 8x\n",
-               normal_frames,normal_ns/1e6,fast_frames,fast_ns/1e6,frames_1x_allows(fast_ns),
+               normal_frames,normal_ns/1e6,fast_frames,fast_ns/1e6,frames_paced(fast_ns,1.5),
                normal_wait/1e6,fast_wait/1e6,core*100);
     }
     /* A main-thread visit runs between frames, holds the next frame back for
