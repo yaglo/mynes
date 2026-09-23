@@ -107,9 +107,21 @@ static void preset_apply_cpu_state_ex(PresetCtx *ctx, const PhysicalPreset *p,
         rf->agc_attack_ms=-signal_region_frame_ms(new_region)/logf(.9f);
         rf->agc_release_ms=-signal_region_frame_ms(new_region)/logf(.98f);
     }
-    if(ctx->video_chain->vhs.drift_ms<=0) ctx->video_chain->vhs.drift_ms=180;
-    if(ctx->video_chain->vhs.luma_bandwidth<=0) ctx->video_chain->vhs.luma_bandwidth=2.5e6f;
-    if(ctx->video_chain->vhs.chroma_bandwidth<=0) ctx->video_chain->vhs.chroma_bandwidth=.35e6f;
+    /* A vhs block without "model": 2 described the earlier filtered-noise
+     * stage; its keys mean nothing to the FM deck. Enabled ones fall back
+     * to the SP consumer deck (and the TV loop it was measured with). */
+    VHSParams *vhs = &ctx->video_chain->vhs;
+    if (vhs->model < VHS_MODEL_FM) {
+        if (vhs->enabled) {
+            fprintf(stderr, "vhs: preset uses the pre-2 VHS model; loaded SP consumer defaults\n");
+            if (tv->h_pll_hz <= 0) {
+                tv->h_pll_hz = 250;
+                tv->h_pll_damping = 0.7f;
+                tv->h_pll_vblank_gain = 2.5f;
+            }
+        }
+        vhs_params_defaults(vhs);
+    }
     ctx->video_chain->console_coupling_R = p->console_coupling_R>0 ? p->console_coupling_R : 75.0f;
     ctx->video_chain->console_coupling_C = p->console_coupling_C;
     ctx->video_chain->console_amp_bw = p->console_amp_bw;
@@ -975,7 +987,7 @@ bool preset_manage(uint32_t op, int index, uint32_t revision,
 static OSDMenuItem menu_dac[4];           /* Stage 1: DAC / connection / phase */
 static OSDMenuItem menu_console[5];       /* Stage 2: console output */
 static OSDMenuItem menu_cable[9];         /* Stage 3: cable transmission */
-static OSDMenuItem menu_comb[6];          /* Stage 5: separation + display smoothing */
+static OSDMenuItem menu_comb[9];          /* Stage 5: separation + display smoothing */
 static OSDMenuItem menu_chroma[8];        /* Stage 6-7: chroma demod */
 static OSDMenuItem menu_luma[8];          /* Stage 8: luma processing */
 static OSDMenuItem menu_color_decode[13]; /* Stage 9: matrix decode */
@@ -985,7 +997,7 @@ static OSDMenuItem menu_phosphor[48];     /* Stage 12: phosphor screen */
 static OSDMenuItem menu_glass[48];        /* Stage 13: CRT glass + service geometry */
 static OSDMenuItem menu_env[48];           /* Stage 14: environment */
 static OSDMenuItem menu_audio_chain[16];
-static OSDMenuItem menu_rf[7],menu_vhs[15];
+static OSDMenuItem menu_rf[7],menu_vhs[32];
 
 /* Mid-level submenus. menu_video[] + preset_menu_root[] are forward-
  * declared near the top of this file so the save action can reach them. */
@@ -1195,6 +1207,9 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_comb[n++] = MI_FLOAT("Temporal blend",     &ctx->video_gpu_chain->temporal_blend, 0.05f, 0.0f, 0.5f, gpu_cb_update_beam_params, "%.2f");
     menu_comb[n++] = MI_FLOAT("Motion threshold",   &vc->tv.motion_threshold, 0.01f, 0.0f, 0.30f, gpu_cb_update_beam_params, "%.2f");
     menu_comb[n++] = MI_FLOAT("H AFC (ms, 0=auto)", &vc->tv.h_afc_tau_ms, 0.1f, 0.0f, 10.0f, gpu_cb_update_rc_params, "%.2f");
+    menu_comb[n++] = MI_FLOAT("H PLL Hz (0=AFC)", &vc->tv.h_pll_hz, 10, 0, 2000, gpu_cb_update_rc_params, "%.0f");
+    menu_comb[n++] = MI_FLOAT("H PLL damping", &vc->tv.h_pll_damping, .05f, .1f, 2, gpu_cb_update_rc_params, "%.2f");
+    menu_comb[n++] = MI_FLOAT("H PLL V-blank gain", &vc->tv.h_pll_vblank_gain, .1f, 1, 5, gpu_cb_update_rc_params, "%.1f");
     const int menu_comb_count=n;
 
     /* ================================================================
@@ -1431,20 +1446,34 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_rf[n++]=MI_FLOAT("AGC release ms", &vc->rf.agc_release_ms, 1,1,1000,gpu_cb_reinit_stages,"%.1f");
     n=0;
     menu_vhs[n++]=MI_TOGGLE("NTSC composite/RF tape", &vc->vhs.enabled,gpu_cb_redesign_firs);
-    menu_vhs[n++]=MI_FLOAT("Luma bandwidth Hz", &vc->vhs.luma_bandwidth, 100000,500000,3000000,gpu_cb_redesign_firs,"%.0f");
-    menu_vhs[n++]=MI_FLOAT("Chroma bandwidth Hz", &vc->vhs.chroma_bandwidth, 10000,100000,600000,gpu_cb_redesign_firs,"%.0f");
-    menu_vhs[n++]=MI_FLOAT("Chroma delay ns", &vc->vhs.chroma_delay_ns, 10,-1000,1000,gpu_cb_redesign_firs,"%.0f");
-    menu_vhs[n++]=MI_FLOAT("Line timing error ns", &vc->vhs.timebase_ns, 5,0,300,gpu_cb_redesign_firs,"%.0f");
-    menu_vhs[n++]=MI_FLOAT("Color phase error deg", &vc->vhs.chroma_phase_deg, .5f,0,20,gpu_cb_redesign_firs,"%.1f");
-    menu_vhs[n++]=MI_FLOAT("Wideband noise", &vc->vhs.noise, .001f,0,.05f,gpu_cb_redesign_firs,"%.3f");
-    menu_vhs[n++]=MI_FLOAT("Luma grain RMS", &vc->vhs.luma_noise_rms, .001f,0,.05f,gpu_cb_redesign_firs,"%.3f");
-    menu_vhs[n++]=MI_FLOAT("Chroma noise RMS", &vc->vhs.chroma_noise_rms, .001f,0,.05f,gpu_cb_redesign_firs,"%.3f");
-    menu_vhs[n++]=MI_FLOAT("Transport drift ms", &vc->vhs.drift_ms, 10,20,1000,gpu_cb_redesign_firs,"%.0f");
-    menu_vhs[n++]=MI_FLOAT("Head switching ns", &vc->vhs.head_switch_ns, 20,0,700,gpu_cb_redesign_firs,"%.0f");
-    menu_vhs[n++]=MI_FLOAT("Dropouts per second", &vc->vhs.dropout_rate, .1f,0,10,gpu_cb_redesign_firs,"%.1f");
-    menu_vhs[n++]=MI_FLOAT("Dropout depth", &vc->vhs.dropout_depth, .05f,0,1,gpu_cb_redesign_firs,"%.2f");
-    menu_vhs[n++]=MI_FLOAT("Playback luma peaking", &vc->vhs.luma_peaking, .05f,0,1,gpu_cb_redesign_firs,"%.2f");
-    menu_vhs[n++]=MI_FLOAT("Playback luma tail", &vc->vhs.luma_smear, .05f,0,1,gpu_cb_redesign_firs,"%.2f");
+    menu_vhs[n++]=MI_FLOAT("White clip %", &vc->vhs.white_clip_pct, 5,110,250,gpu_cb_redesign_firs,"%.0f");
+    menu_vhs[n++]=MI_FLOAT("Dark clip % below sync", &vc->vhs.dark_clip_pct, 5,0,100,gpu_cb_redesign_firs,"%.0f");
+    menu_vhs[n++]=MI_FLOAT("FM sync tip Hz", &vc->vhs.fm_sync_hz, 50000,3000000,4000000,gpu_cb_redesign_firs,"%.0f");
+    menu_vhs[n++]=MI_FLOAT("FM white Hz", &vc->vhs.fm_white_hz, 50000,4000000,5400000,gpu_cb_redesign_firs,"%.0f");
+    menu_vhs[n++]=MI_FLOAT("RF C/N0 dB Hz", &vc->vhs.rf_cnr_dbhz, .5f,80,110,gpu_cb_redesign_firs,"%.1f");
+    menu_vhs[n++]=MI_FLOAT("Tape tilt dB/MHz", &vc->vhs.tape_tilt_db_per_mhz, .1f,-6,0,gpu_cb_redesign_firs,"%.1f");
+    menu_vhs[n++]=MI_FLOAT("Modulation noise Hz", &vc->vhs.mod_noise_hz, 100,0,10000,gpu_cb_redesign_firs,"%.0f");
+    menu_vhs[n++]=MI_FLOAT("Head B noise dB", &vc->vhs.head_b_noise_db, .1f,-3,3,gpu_cb_redesign_firs,"%.1f");
+    menu_vhs[n++]=MI_FLOAT("Chroma noise IRE", &vc->vhs.chroma_noise_ire, .05f,0,5,gpu_cb_redesign_firs,"%.2f");
+    menu_vhs[n++]=MI_FLOAT("Dropout rate x", &vc->vhs.dropout_scale, .1f,0,20,gpu_cb_redesign_firs,"%.1f");
+    menu_vhs[n++]=MI_TOGGLE("Dropout compensator", &vc->vhs.doc,gpu_cb_redesign_firs);
+    menu_vhs[n++]=MI_FLOAT("DOC threshold dB", &vc->vhs.doc_threshold_db, 1,-30,-3,gpu_cb_redesign_firs,"%.0f");
+    menu_vhs[n++]=MI_FLOAT("Canceller split Hz", &vc->vhs.canceller_split_hz, 50000,100000,2000000,gpu_cb_redesign_firs,"%.0f");
+    menu_vhs[n++]=MI_FLOAT("Canceller limit IRE", &vc->vhs.canceller_limit_ire, .5f,0,15,gpu_cb_redesign_firs,"%.1f");
+    menu_vhs[n++]=MI_FLOAT("Sharpness", &vc->vhs.sharpness, .05f,0,1,gpu_cb_redesign_firs,"%.2f");
+    menu_vhs[n++]=MI_FLOAT("Detail limit IRE", &vc->vhs.detail_limit_ire, 1,0,50,gpu_cb_redesign_firs,"%.0f");
+    menu_vhs[n++]=MI_FLOAT("Colour APC loop Hz", &vc->vhs.apc_loop_hz, 50,100,5000,gpu_cb_redesign_firs,"%.0f");
+    menu_vhs[n++]=MI_FLOAT("Y/C delay ns", &vc->vhs.yc_delay_ns, 10,-500,500,gpu_cb_redesign_firs,"%.0f");
+    menu_vhs[n++]=MI_FLOAT("Head bow scale", &vc->vhs.bow_scale, .1f,0,5,gpu_cb_redesign_firs,"%.1f");
+    menu_vhs[n++]=MI_FLOAT("Field timing error ns", &vc->vhs.tbe_varying_ns, 2,0,500,gpu_cb_redesign_firs,"%.0f");
+    menu_vhs[n++]=MI_FLOAT("Timing slow share", &vc->vhs.tbe_slow_fraction, .05f,0,1,gpu_cb_redesign_firs,"%.2f");
+    menu_vhs[n++]=MI_FLOAT("Timing slow ms", &vc->vhs.tbe_slow_tau_ms, 20,20,5000,gpu_cb_redesign_firs,"%.0f");
+    menu_vhs[n++]=MI_FLOAT("Line jitter ns", &vc->vhs.line_jitter_ns, 1,0,100,gpu_cb_redesign_firs,"%.0f");
+    menu_vhs[n++]=MI_FLOAT("Switch lines before V", &vc->vhs.switch_lines_before_vsync, .5f,0,20,gpu_cb_redesign_firs,"%.1f");
+    menu_vhs[n++]=MI_FLOAT("Skew B to A ns", &vc->vhs.skew_ba_ns, 20,-5000,5000,gpu_cb_redesign_firs,"%.0f");
+    menu_vhs[n++]=MI_FLOAT("Skew A to B ns", &vc->vhs.skew_ab_ns, 20,-5000,5000,gpu_cb_redesign_firs,"%.0f");
+    menu_vhs[n++]=MI_INT("Deck seed", &vc->vhs.deck_seed, 1,0,9999,gpu_cb_redesign_firs,"%d");
+    const int menu_vhs_count=n;
 
     /* Everyday picture controls, then the physical chain and tube service controls. */
     menu_picture[0] = menu_luma[4];
@@ -1465,7 +1494,7 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_video[n++] = MI_SUB("Console output", menu_console, menu_console_count);
     menu_video[n++] = MI_SUB("Cable", menu_cable, menu_cable_count);
     menu_video[n++] = MI_SUB("RF receiver",menu_rf,7);
-    menu_video[n++] = MI_SUB("VHS recording / playback",menu_vhs,15);
+    menu_video[n++] = MI_SUB("VHS recording / playback",menu_vhs,menu_vhs_count);
     menu_video[n++] = MI_SUB("Y/C separation", menu_comb, menu_comb_count);
     menu_video[n++] = MI_SUB("Chroma decoder", menu_chroma, menu_chroma_count);
     menu_video[n++] = MI_SUB("Luma response", menu_luma, menu_luma_count);

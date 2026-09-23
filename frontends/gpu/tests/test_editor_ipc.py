@@ -104,7 +104,7 @@ with tempfile.TemporaryDirectory(prefix="mynes-editor-") as tmp:
             edit(12, b"Slow decay (ms)")
             edit(.03, b"Slow decay energy")
             edit(.65, b"RF IF asymmetry")
-            edit(160, b"Chroma delay ns")
+            edit(160, b"Y/C delay ns")
             edit(.2, b"Matte scatter")
             edit(24, b"Recovery (us)")
             revision, active, dirty, entries = command(2, active, revision)
@@ -116,7 +116,7 @@ with tempfile.TemporaryDirectory(prefix="mynes-editor-") as tmp:
             assert saved["tv"]["persistence_tail_ms"]==12
             assert abs(saved["tv"]["persistence_tail_weight"]-.03)<1e-5
             assert abs(saved["rf"]["if_asymmetry"]-.65)<1e-5
-            assert saved["vhs"]["chroma_delay_ns"]==160
+            assert saved["vhs"]["yc_delay_ns"]==160
             assert abs(saved["tv"]["antiglare_blur"]-.2)<1e-5
             assert saved["tv"]["video_recovery_us"]==24
             revision, active, dirty, entries = command(4, active, revision, "Renamed CRT")

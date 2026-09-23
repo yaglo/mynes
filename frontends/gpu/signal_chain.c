@@ -28,7 +28,8 @@ static const char *kernel_shader_names[CHAIN_KERNEL_COUNT] = {
     [CHAIN_KERNEL_BEAM]       = "beam_profile.comp.spv",
     [CHAIN_KERNEL_RF]         = "rf_mod_demod.comp.spv",
     [CHAIN_KERNEL_RF_IF] = "rf_if.comp.spv",
-    [CHAIN_KERNEL_VHS] = "vhs.comp.spv",
+    [CHAIN_KERNEL_VHS_TAPE] = "vhs_tape.comp.spv",
+    [CHAIN_KERNEL_VHS_PLAYBACK] = "vhs_playback.comp.spv",
     [CHAIN_KERNEL_OSD] = "osd.comp.spv",
     [CHAIN_KERNEL_VIDEO_AMP]  = "video_amp.comp.spv",
     [CHAIN_KERNEL_H_BLUR_RGB] = "h_blur_rgb.comp.spv",
@@ -58,7 +59,8 @@ static const int kernel_workgroup_x[CHAIN_KERNEL_COUNT] = {
     [CHAIN_KERNEL_BEAM]       = 16,   /* 16×16 for 2D dispatch */
     [CHAIN_KERNEL_RF]         = 256,
     [CHAIN_KERNEL_RF_IF] = 256,
-    [CHAIN_KERNEL_VHS] = 256,
+    [CHAIN_KERNEL_VHS_TAPE] = 224,     /* one threadgroup per line */
+    [CHAIN_KERNEL_VHS_PLAYBACK] = 224,
     [CHAIN_KERNEL_OSD] = 256,
     [CHAIN_KERNEL_VIDEO_AMP]  = 256,
     [CHAIN_KERNEL_H_BLUR_RGB] = 256,
@@ -89,7 +91,8 @@ static const int kernel_resources[CHAIN_KERNEL_COUNT][3] = {
     [CHAIN_KERNEL_BEAM]       = { 3, 1, 1 },  /* RGB + landing maps → RGBA_out */
     [CHAIN_KERNEL_RF] = { 1, 1, 1 }, /* voltage -> complex noisy carrier */
     [CHAIN_KERNEL_RF_IF] = { 2, 1, 1 }, /* complex carrier + IF taps -> detected voltage */
-    [CHAIN_KERNEL_VHS] = { 2, 1, 1 },
+    [CHAIN_KERNEL_VHS_TAPE] = { 4, 3, 1 },     /* composite, filters, lines, defects -> Y, C, mask */
+    [CHAIN_KERNEL_VHS_PLAYBACK] = { 4, 1, 1 }, /* Y, C, mask, filters -> composite */
     [CHAIN_KERNEL_OSD] = { 1, 1, 1 },
     [CHAIN_KERNEL_VIDEO_AMP]  = { 1, 1, 1 },  /* RGB_in → RGB_out */
     [CHAIN_KERNEL_H_BLUR_RGB] = { 0, 2, 1 },  /* RGB_in + RGB_out as readwrite */
@@ -337,6 +340,8 @@ static SDL_GPUBuffer *resolve_buf_ref(const SignalChain *chain,
     case CBR_EXT1:      return stage->external[1];
     case CBR_EXT2:      return stage->external[2];
     case CBR_EXT3:      return stage->external[3];
+    case CBR_EXT4:      return stage->external[4];
+    case CBR_EXT5:      return stage->external[5];
     }
     return NULL;
 }
@@ -500,7 +505,6 @@ void chain_stage_set_default_io(ChainStage *s) {
         s->ro_count = 0;
         break;
 
-    case CHAIN_KERNEL_VHS:
     case CHAIN_KERNEL_FIR:
         /* Reads buf[src] + tap buffer, writes buf[dst]. Flips. */
         s->ro[0] = CBR_BUF_SRC; s->ro[1] = CBR_TAPS; s->ro_count = 2;

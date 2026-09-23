@@ -463,6 +463,8 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
             frontends/gpu/gpu_compute.c
             frontends/gpu/gpu_display.c
             frontends/gpu/video_gpu.c
+            frontends/gpu/vhs_deck.c
+            frontends/gpu/vhs_gpu.c
             frontends/gpu/chroma_pipeline.c
             frontends/gpu/post_pipeline.c
             frontends/gpu/signal_chain.c
@@ -642,6 +644,14 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
                     COMMAND ${MYNES_PYTHON3} ${CMAKE_SOURCE_DIR}/frontends/gpu/tests/test_preset_controls.py)
             endif()
 
+            # VHS deck host model: filter design, transport table, dropouts
+            add_executable(test_vhs_deck
+                frontends/gpu/tests/test_vhs_deck.c
+                frontends/gpu/vhs_deck.c)
+            target_include_directories(test_vhs_deck PRIVATE frontends/gpu)
+            target_link_libraries(test_vhs_deck PRIVATE ${MYNES_SDL3_TARGET} m)
+            add_test(NAME gpu_vhs_deck_tests COMMAND test_vhs_deck)
+
             # JSON preset save/load round-trip + string enum tests
             add_executable(test_preset_json
                 frontends/gpu/tests/test_preset_json.c
@@ -701,6 +711,8 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
                 frontends/gpu/tests/test_pipeline.c
                 frontends/gpu/gpu_compute.c
                 frontends/gpu/video_gpu.c
+                frontends/gpu/vhs_deck.c
+                frontends/gpu/vhs_gpu.c
                 frontends/gpu/chroma_pipeline.c
                 frontends/gpu/post_pipeline.c
                 frontends/gpu/signal_chain.c
@@ -715,7 +727,7 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
             add_test(NAME gpu_pipeline_test COMMAND test_pipeline)
             get_target_property(PIPELINE_TEST_SOURCES test_pipeline SOURCES)
             list(REMOVE_ITEM PIPELINE_TEST_SOURCES frontends/gpu/tests/test_pipeline.c)
-            add_executable(test_fidelity frontends/gpu/tests/test_fidelity.c frontends/gpu/tests/test_display_fidelity.c frontends/gpu/tests/test_crt_load.c frontends/gpu/tests/test_osd.c frontends/gpu/gpu_osd.c frontends/shared/browser.c frontends/gpu/gpu_display.c ${PIPELINE_TEST_SOURCES})
+            add_executable(test_fidelity frontends/gpu/tests/test_fidelity.c frontends/gpu/tests/test_display_fidelity.c frontends/gpu/tests/test_vhs_fidelity.c frontends/gpu/tests/test_crt_load.c frontends/gpu/tests/test_osd.c frontends/gpu/gpu_osd.c frontends/shared/browser.c frontends/gpu/gpu_display.c ${PIPELINE_TEST_SOURCES})
             target_include_directories(test_fidelity PRIVATE frontends/gpu frontends/shared)
             target_link_libraries(test_fidelity PRIVATE nes_static ${MYNES_SDL3_TARGET} m)
             add_dependencies(test_fidelity gpu_shaders)
@@ -749,6 +761,8 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
             tools/gpu_process.c
             frontends/gpu/gpu_compute.c
             frontends/gpu/video_gpu.c
+            frontends/gpu/vhs_deck.c
+            frontends/gpu/vhs_gpu.c
             frontends/gpu/chroma_pipeline.c
             frontends/gpu/post_pipeline.c
             frontends/gpu/signal_chain.c

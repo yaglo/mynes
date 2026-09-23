@@ -166,20 +166,37 @@ static void make_distinctive_preset(PhysicalPreset *p)
     p->rf.if_asymmetry = 0.8;
     p->rf.tuning_offset_hz = 75000;
     p->vhs.enabled = 1;
-    p->vhs.luma_bandwidth = 2500000;
-    p->vhs.chroma_bandwidth = 350000;
-    p->vhs.chroma_delay_ns = 125;
-    p->vhs.timebase_ns = 35;
-    p->vhs.chroma_phase_deg = 1.5;
-    p->vhs.noise = 0.004;
-    p->vhs.luma_noise_rms = 0.008;
-    p->vhs.chroma_noise_rms = 0.004;
-    p->vhs.drift_ms = 180;
-    p->vhs.head_switch_ns = 100;
-    p->vhs.dropout_rate = 0.15;
-    p->vhs.dropout_depth = 0.65;
-    p->vhs.luma_peaking = 0.12;
-    p->vhs.luma_smear = 0.08;
+    p->vhs.model = 2;
+    p->vhs.white_clip_pct = 190;
+    p->vhs.dark_clip_pct = 35;
+    p->vhs.fm_sync_hz = 3.5e6f;
+    p->vhs.fm_white_hz = 4.6e6f;
+    p->vhs.rf_cnr_dbhz = 93.25f;
+    p->vhs.tape_tilt_db_per_mhz = -1.5f;
+    p->vhs.mod_noise_hz = 2500;
+    p->vhs.head_b_noise_db = 0.6f;
+    p->vhs.chroma_noise_ire = 0.9f;
+    p->vhs.dropout_scale = 2.5f;
+    p->vhs.doc = 1;
+    p->vhs.doc_threshold_db = -12;
+    p->vhs.canceller_split_hz = 7e5f;
+    p->vhs.canceller_limit_ire = 4;
+    p->vhs.sharpness = 0.3f;
+    p->vhs.detail_limit_ire = 12;
+    p->vhs.apc_loop_hz = 800;
+    p->vhs.yc_delay_ns = -40;
+    p->vhs.bow_scale = 1.5f;
+    p->vhs.tbe_varying_ns = 60;
+    p->vhs.tbe_slow_fraction = 0.3f;
+    p->vhs.tbe_slow_tau_ms = 500;
+    p->vhs.line_jitter_ns = 7;
+    p->vhs.switch_lines_before_vsync = 7;
+    p->vhs.skew_ba_ns = 1500;
+    p->vhs.skew_ab_ns = -120;
+    p->vhs.deck_seed = 7;
+    p->tv.h_pll_hz = 300;
+    p->tv.h_pll_damping = 0.8f;
+    p->tv.h_pll_vblank_gain = 2.0f;
 
     p->tv.persistence_ms  = 1.7f;
 
@@ -345,21 +362,38 @@ static int compare_presets(const PhysicalPreset *a, const PhysicalPreset *b,
     ASSERT_NEAR(b->tv.persistence_tail_weight,a->tv.persistence_tail_weight,FLOAT_TOL,"tv.persistence_tail_weight");
     ASSERT_NEAR(b->rf.if_asymmetry,a->rf.if_asymmetry,FLOAT_TOL,"rf.if_asymmetry");
     ASSERT_NEAR(b->rf.tuning_offset_hz,a->rf.tuning_offset_hz,FLOAT_TOL,"rf.tuning_offset_hz");
-    ASSERT_NEAR(b->vhs.enabled,a->vhs.enabled,FLOAT_TOL,"vhs.enabled");
-    ASSERT_NEAR(b->vhs.luma_bandwidth,a->vhs.luma_bandwidth,FLOAT_TOL,"vhs.luma_bandwidth");
-    ASSERT_NEAR(b->vhs.chroma_bandwidth,a->vhs.chroma_bandwidth,FLOAT_TOL,"vhs.chroma_bandwidth");
-    ASSERT_NEAR(b->vhs.chroma_delay_ns,a->vhs.chroma_delay_ns,FLOAT_TOL,"vhs.chroma_delay_ns");
-    ASSERT_NEAR(b->vhs.timebase_ns,a->vhs.timebase_ns,FLOAT_TOL,"vhs.timebase_ns");
-    ASSERT_NEAR(b->vhs.chroma_phase_deg,a->vhs.chroma_phase_deg,FLOAT_TOL,"vhs.chroma_phase_deg");
-    ASSERT_NEAR(b->vhs.noise,a->vhs.noise,FLOAT_TOL,"vhs.noise");
-    ASSERT_NEAR(b->vhs.luma_noise_rms,a->vhs.luma_noise_rms,FLOAT_TOL,"vhs.luma_noise_rms");
-    ASSERT_NEAR(b->vhs.chroma_noise_rms,a->vhs.chroma_noise_rms,FLOAT_TOL,"vhs.chroma_noise_rms");
-    ASSERT_NEAR(b->vhs.drift_ms,a->vhs.drift_ms,FLOAT_TOL,"vhs.drift_ms");
-    ASSERT_NEAR(b->vhs.head_switch_ns,a->vhs.head_switch_ns,FLOAT_TOL,"vhs.head_switch_ns");
-    ASSERT_NEAR(b->vhs.dropout_rate,a->vhs.dropout_rate,FLOAT_TOL,"vhs.dropout_rate");
-    ASSERT_NEAR(b->vhs.dropout_depth,a->vhs.dropout_depth,FLOAT_TOL,"vhs.dropout_depth");
-    ASSERT_NEAR(b->vhs.luma_peaking,a->vhs.luma_peaking,FLOAT_TOL,"vhs.luma_peaking");
-    ASSERT_NEAR(b->vhs.luma_smear,a->vhs.luma_smear,FLOAT_TOL,"vhs.luma_smear");
+    ASSERT_EQ_INT(b->vhs.enabled,a->vhs.enabled,"vhs.enabled");
+    ASSERT_EQ_INT(b->vhs.model,a->vhs.model,"vhs.model");
+    ASSERT_EQ_INT(b->vhs.doc,a->vhs.doc,"vhs.doc");
+    ASSERT_EQ_INT(b->vhs.deck_seed,a->vhs.deck_seed,"vhs.deck_seed");
+    ASSERT_NEAR(b->vhs.white_clip_pct,a->vhs.white_clip_pct,FLOAT_TOL,"vhs.white_clip_pct");
+    ASSERT_NEAR(b->vhs.dark_clip_pct,a->vhs.dark_clip_pct,FLOAT_TOL,"vhs.dark_clip_pct");
+    ASSERT_NEAR(b->vhs.fm_sync_hz,a->vhs.fm_sync_hz,FLOAT_TOL,"vhs.fm_sync_hz");
+    ASSERT_NEAR(b->vhs.fm_white_hz,a->vhs.fm_white_hz,FLOAT_TOL,"vhs.fm_white_hz");
+    ASSERT_NEAR(b->vhs.rf_cnr_dbhz,a->vhs.rf_cnr_dbhz,FLOAT_TOL,"vhs.rf_cnr_dbhz");
+    ASSERT_NEAR(b->vhs.tape_tilt_db_per_mhz,a->vhs.tape_tilt_db_per_mhz,FLOAT_TOL,"vhs.tape_tilt_db_per_mhz");
+    ASSERT_NEAR(b->vhs.mod_noise_hz,a->vhs.mod_noise_hz,FLOAT_TOL,"vhs.mod_noise_hz");
+    ASSERT_NEAR(b->vhs.head_b_noise_db,a->vhs.head_b_noise_db,FLOAT_TOL,"vhs.head_b_noise_db");
+    ASSERT_NEAR(b->vhs.chroma_noise_ire,a->vhs.chroma_noise_ire,FLOAT_TOL,"vhs.chroma_noise_ire");
+    ASSERT_NEAR(b->vhs.dropout_scale,a->vhs.dropout_scale,FLOAT_TOL,"vhs.dropout_scale");
+    ASSERT_NEAR(b->vhs.doc_threshold_db,a->vhs.doc_threshold_db,FLOAT_TOL,"vhs.doc_threshold_db");
+    ASSERT_NEAR(b->vhs.canceller_split_hz,a->vhs.canceller_split_hz,FLOAT_TOL,"vhs.canceller_split_hz");
+    ASSERT_NEAR(b->vhs.canceller_limit_ire,a->vhs.canceller_limit_ire,FLOAT_TOL,"vhs.canceller_limit_ire");
+    ASSERT_NEAR(b->vhs.sharpness,a->vhs.sharpness,FLOAT_TOL,"vhs.sharpness");
+    ASSERT_NEAR(b->vhs.detail_limit_ire,a->vhs.detail_limit_ire,FLOAT_TOL,"vhs.detail_limit_ire");
+    ASSERT_NEAR(b->vhs.apc_loop_hz,a->vhs.apc_loop_hz,FLOAT_TOL,"vhs.apc_loop_hz");
+    ASSERT_NEAR(b->vhs.yc_delay_ns,a->vhs.yc_delay_ns,FLOAT_TOL,"vhs.yc_delay_ns");
+    ASSERT_NEAR(b->vhs.bow_scale,a->vhs.bow_scale,FLOAT_TOL,"vhs.bow_scale");
+    ASSERT_NEAR(b->vhs.tbe_varying_ns,a->vhs.tbe_varying_ns,FLOAT_TOL,"vhs.tbe_varying_ns");
+    ASSERT_NEAR(b->vhs.tbe_slow_fraction,a->vhs.tbe_slow_fraction,FLOAT_TOL,"vhs.tbe_slow_fraction");
+    ASSERT_NEAR(b->vhs.tbe_slow_tau_ms,a->vhs.tbe_slow_tau_ms,FLOAT_TOL,"vhs.tbe_slow_tau_ms");
+    ASSERT_NEAR(b->vhs.line_jitter_ns,a->vhs.line_jitter_ns,FLOAT_TOL,"vhs.line_jitter_ns");
+    ASSERT_NEAR(b->vhs.switch_lines_before_vsync,a->vhs.switch_lines_before_vsync,FLOAT_TOL,"vhs.switch_lines_before_vsync");
+    ASSERT_NEAR(b->vhs.skew_ba_ns,a->vhs.skew_ba_ns,FLOAT_TOL,"vhs.skew_ba_ns");
+    ASSERT_NEAR(b->vhs.skew_ab_ns,a->vhs.skew_ab_ns,FLOAT_TOL,"vhs.skew_ab_ns");
+    ASSERT_NEAR(b->tv.h_pll_hz,a->tv.h_pll_hz,FLOAT_TOL,"tv.h_pll_hz");
+    ASSERT_NEAR(b->tv.h_pll_damping,a->tv.h_pll_damping,FLOAT_TOL,"tv.h_pll_damping");
+    ASSERT_NEAR(b->tv.h_pll_vblank_gain,a->tv.h_pll_vblank_gain,FLOAT_TOL,"tv.h_pll_vblank_gain");
 
     ASSERT_NEAR(b->tv.persistence_ms,     a->tv.persistence_ms,     FLOAT_TOL, "tv.persistence_ms");
 
@@ -483,10 +517,16 @@ static int test_save_load_roundtrip(void)
     ASSERT_TRUE(write_text_file(path, "{\"vhs\":{\"enabled\":false}}"), "write disabled VHS toggle");
     ASSERT_TRUE(preset_json_load(&dst, path) && dst.vhs.enabled == 0, "boolean VHS disable");
 
-    ASSERT_TRUE(dst.vhs.luma_noise_rms==0 && dst.vhs.chroma_noise_rms==0 &&
-                dst.vhs.head_switch_ns==0 && dst.vhs.dropout_rate==0 &&
-                dst.vhs.luma_peaking==0 && dst.vhs.luma_smear==0,
-                "missing VHS defects default off in older presets");
+    /* A block written before the FM deck has no model number; preset
+     * apply replaces it with the deck defaults. Its old keys are ignored. */
+    ASSERT_TRUE(write_text_file(path, "{\"vhs\":{\"enabled\":true,\"timebase_ns\":35,\"luma_noise_rms\":0.018}}"),
+                "write pre-2 VHS block");
+    ASSERT_TRUE(preset_json_load(&dst, path) && dst.vhs.enabled == 1 && dst.vhs.model == 0 &&
+                dst.vhs.rf_cnr_dbhz == 0, "pre-2 VHS block loads as model 0");
+    ASSERT_TRUE(write_text_file(path, "{\"vhs\":{\"model\":2,\"doc\":false,\"skew_ba_ns\":1200}}"),
+                "write model 2 VHS block");
+    ASSERT_TRUE(preset_json_load(&dst, path) && dst.vhs.model == 2 && dst.vhs.doc == 0 &&
+                dst.vhs.skew_ba_ns == 1200, "model 2 VHS keys");
 
     unlink(path);
     return 1;

@@ -17,7 +17,11 @@ void main() {
     black/=float(4u*spp);
     for(uint x=8u*spp;x<16u*spp;x++) tip+=raster[base+x];
     tip/=float(8u*spp);
-    float threshold=(black+tip)*0.5;
+    // Slice halfway up the sync pulse, measured from its tip. A late line
+    // (VCR playback runs up to 1.7 us off) puts picture or border into the
+    // front porch window; no sync is deeper than the NES's 264 mV, so the
+    // slice never rises above half of that.
+    float threshold=tip+0.5*min(black-tip,264.0/788.0);
     bool vertical=tip<black-0.08;
     for(uint dot=80u;dot<=300u;dot+=20u) vertical=vertical && raster[base+dot*spp]<threshold;
     if(vertical) { measurement[line]=vec4(0,black,-1,0); return; }

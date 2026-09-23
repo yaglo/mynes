@@ -9,6 +9,7 @@
 #include "video_chain.h"
 #include "gpu_compute.h"
 #include "signal_chain.h"
+#include "vhs_gpu.h"
 #include <stdbool.h>
 
 /* Maximum FIR tap count for luma and chroma filters. */
@@ -52,7 +53,7 @@ typedef struct {
     int stage_cable_rc;         /* Cable equivalent shunt-capacitance pole */
     int stage_tv_input_hp;      /* TV Input HP (RC, disabled) */
     int stage_rf;               /* RF Modulator/Demodulator (noise + hum) */
-    int stage_vhs;
+    VHSGpu vhs;                 /* VHS deck: tape and playback stages */
     int stage_rf_if;            /* complex receiver IF and envelope detector */
     int stage_agc;              /* Automatic Gain Control */
     int stage_ghosting;         /* Ghosting (cable impedance reflection) */

@@ -64,7 +64,8 @@ typedef enum {
     CHAIN_KERNEL_GUN_CURRENT,    /* gun voltage -> linear emitted current */
     CHAIN_KERNEL_RF_IF,          /* complex IF filter and envelope detector */
     CHAIN_KERNEL_OSD,            /* TV RGB menu, after receiver */
-    CHAIN_KERNEL_VHS,            /* recovered tape Y/C and timebase */
+    CHAIN_KERNEL_VHS_TAPE,       /* VHS record, transport, FM tape and demodulator */
+    CHAIN_KERNEL_VHS_PLAYBACK,   /* VHS dropout compensator, luma playback, 1H comb */
     CHAIN_KERNEL_COUNT
 } ChainKernelType;
 
@@ -78,7 +79,7 @@ typedef enum {
 /* Bindings and limits for explicit per-stage I/O. */
 #define CHAIN_STAGE_MAX_RO   4     /* max readonly buffer inputs per stage */
 #define CHAIN_STAGE_MAX_RW   3     /* max readwrite buffer outputs per stage */
-#define CHAIN_STAGE_MAX_EXT  4     /* max external buffer pointers per stage */
+#define CHAIN_STAGE_MAX_EXT  6     /* max external buffer pointers per stage */
 
 /* Symbolic references to the buffers a stage may read or write.
  * chain_run_cmd resolves these to concrete SDL_GPUBuffer* at dispatch
@@ -103,6 +104,8 @@ typedef enum {
     CBR_EXT1,            /* stage->external[1]                      */
     CBR_EXT2,            /* stage->external[2]                      */
     CBR_EXT3,            /* stage->external[3]                      */
+    CBR_EXT4,            /* stage->external[4]                      */
+    CBR_EXT5,            /* stage->external[5]                      */
 } ChainBufRef;
 
 /* Forward decls for the optional rebind hook. Used when a stage's

@@ -57,64 +57,214 @@ the NES's color-phase cycle.
 
 ## VHS
 
-`vhs_sp_consumer` records the NES composite signal and plays its recovered
-response into a consumer CRT. The tape stage precedes TV sync/burst reception.
-It separates a recovered luma lowpass from narrow chroma sidebands, adds envelope
-delay without delaying the chroma oscillator, and models small residual line
-clock/phase errors and playback noise. Sync and burst traverse the same path.
-It is active only for NTSC composite/RF; component, RGB and separated Y/C inputs
-bypass this composite recording path.
+`vhs_sp_consumer` records the NES composite signal on an NTSC SP consumer
+deck and plays it back into a slot-mask CRT. Two compute stages run on every
+raster line before TV sync and burst reception: `vhs_tape` (record,
+transport, FM tape, demodulator) and `vhs_playback` (dropout compensator,
+luma playback, 1H chroma comb). The host builds a timing table and a dropout
+list for each frame in `vhs_deck.c`. The stage is active only for NTSC
+composite and RF; separated, component and RGB inputs bypass it. Units inside
+the kernels are IRE referenced to the input sync. The deck's keyed AGC holds
+NES sync at -40 IRE (119.4 IRE per chain unit) and the deck outputs 7.14 mV per
+IRE, so its output is standard level, 8% above the NES itself.
 
-The format architecture follows the luma-FM/color-under distinction described
-in [JVC's HR-S8000U manual](https://library.mikesservers.com/J/JVC/HRS-8000U/HRS8000U_OM_SONY.pdf)
-and [US6459848B1](https://patents.google.com/patent/US6459848B1/en), which identifies
-VHS chroma at 629 kHz. Here that down/up conversion is collapsed into its
-recovered response. 2.5 MHz luma, 0.35 MHz chroma, delay and error strengths are
-estimated playback characteristics. Playback luma equalization now adds a DC-neutral
-high-frequency shelf and a causal tail while retaining the separation filter's
-stopband. Separate luma and chroma noise envelopes use signal-sample coordinates;
-luma mixes fine grain with a longer horizontal component, while chroma noise
-occupies narrow envelopes around the reconstructed subcarrier. Their RMS
-controls specify voltage before the receiver, not final screenshot pixel noise.
+### Record
 
-Transport timing and colour-phase errors interpolate continuously through a
-random field over successive source frames. Grain is renewed each source frame.
-Optional head-switch displacement is confined to the last six active picture
-lines (usually cropped by overscan). Dropouts are sparse horizontal reductions
-of recovered signal with a local noise increase. These are phenomenological
-playback defects; magnetic recording, FM threshold/demodulation, tracking servos,
-tape speed and VHS audio remain outside the model. No particular deck's noise
-spectrum or transport constants are claimed as measured.
+- Luma: third-order Bessel low-pass at 3.4 MHz with a colour trap (Q 2),
+  more than 40 dB down at fsc (IEC 60774-1 6.1.1). IEC pre-emphasis, time
+  constant 1.3 us and X = 4 (IEC fig. 23), clipped at 160% white and 40% below
+  sync tip (IEC 6.1.2; JVC table 3-2-1 gives +10/-5% and +-10%). Deviation
+  3.4 MHz at sync tip to 4.4 MHz at white (IEC table 1).
+- Chroma: second-order Butterworth band-pass at fsc +-0.5 MHz on the
+  composite, a product detector on the fixed 12-sample carrier grid, and a
+  record ACC that holds the burst envelope at 20 IRE. The burst is recorded
+  6 dB hot, so the colour-under noise on it is halved.
 
-After the September 22 4K review, the SP preset uses 0.018 luma and 0.004
-chroma RMS, 180 ms transport correlation, 100 ns switching displacement,
-and 0.15 dropouts/second at 65% peak loss. Chroma delay is 250 ns. Receiver
-brightness 0.08 and luma contrast 0.94 make ordinary black grain visible while
-keeping the white patch within 1% of its previous output. These are authored
-preset choices; see the [before/after audit](https://yaglo.github.io/mynes-web/gallery/presets/). The noise is upstream of receiver
-clamping, bandwidth limits, and the tube's gun cutoff: below-black NES colours
-can remain visually quiet. A mandatory 10–15/255 black pedestal or 1–2 NES-pixel
-chroma displacement would not be a format-wide physical calibration.
-All playback controls are available under Video → VHS recording / playback;
-older saved profiles retain their legacy noise and default new defects to zero.
+### Transport and tape
 
-Actual GPU tests preserve DC grey and the 3.58 MHz carrier, while attenuating
-an upper sideband 1 MHz away from the carrier by more than 49 dB relative to the
-carrier. Tests also check noise RMS, horizontal/vertical and inter-frame
-correlation, smoothly changing timing, switching-band and dropout locality,
-maximum offsets across workgroup/line boundaries, and DC preservation with
-playback equalization. This checks the implemented model, not a particular
-VCR's measured response.
+The recorded frequency and the colour envelope are read back at t - tau(t)
+from the timing table. The carrier grid itself never moves: the deck's
+up-converter is built from a crystal fsc reference locked to burst (APC) and
+40 fH locked to the playback sync (AFC) (JVC colour playback). Timing moves
+luma and chroma content by the same amount and leaves the hue alone. The
+earlier stage shifted the whole composite, which rotated hue by 1.29 degrees
+per ns of timing error.
 
-Validation on 2026-09-22: Metal readback measured 0.00999 luma RMS for a
-0.010 request, adjacent-sample correlation 0.981 and adjacent-line correlation
-−0.003. Five targeted suites passed (fidelity, preset JSON, control coverage,
-signal precomputation, and complete pipeline). Matching 1280×960 captures were
-inspected. The complete VHS video-chain benchmark, 60 frames after 12 warm-up
-frames, averaged 6.680 ms at 1280×960 and 12.463 ms at 2560×1920. These are
-CPU-submit-to-GPU-fence times, excluding emulation, audio, vsync and readback;
-they are not a physical presentation-cadence measurement or a before/after
-speedup claim.
+The timing table (per raster line, per frame) is a pure function of the deck
+seed and the emulated frame number, measured on a Panasonic PV-7450 capture
+(DH):
+
+- a fixed bow per head, fitted with 10 scan harmonics: 77 ns RMS on head A,
+  39 ns on head B;
+- a varying part of 48 ns RMS over 22 scan harmonics (45.4 and 23.3 ns in the
+  first two), 40% of it persisting with a 0.4 s decorrelation and 60% new
+  every field (field-to-field correlation 0.31 at lag 1, DH 0.41);
+- 5 ns RMS of white per-line jitter;
+- the head switch 6.5 H before vertical sync (NES line 238.5; JVC, IEC 5-8 H),
+  with steps of +1700 ns (B to A) and -80 ns (A to B), a 1.5 dB RF envelope
+  sag over the 3 lines before it and a random RF phase jump at it. The steps
+  are interchange values: a tape played on the deck that recorded it should
+  skew less, but that case was not measured.
+
+The deck's own filters and delay line hold the output about 1 us behind its
+input. The table removes that fixed delay, so the TV sees the timing error and
+not a constant offset.
+
+On tape, the FM carrier gets 2700 Hz RMS of modulation noise below 0.4 MHz,
+the record high-pass (third order at 1.6 MHz: 24 dB down at 629 kHz, 13 dB at
+1 MHz, IEC fig. 22) and a head/tape pole giving -2 dB/MHz across the deviation
+(DH carrier level: +0.8 dB at 3.45 MHz, -1.2 dB at 4.45 MHz). Playback adds
+white RF noise at a carrier-to-noise density of 95.5 dB Hz (head B 0.8 dB
+worse) and the playback RF filters (second-order high-pass at 1.4 MHz, JVC
+fig. 3-2-12; second-order low-pass at 6 MHz). A limiter and pulse-count
+discriminator (JVC's delay-line switching demodulator) turn the phase advance
+per sample into luma, which then passes a third-order Bessel at 3.0 MHz
+(JVC fig. 3-2-16), de-emphasis, the noise canceller (the high band above
+0.5 MHz, limited to +-3 IRE, is subtracted; US4698696 gives 0.3-1 MHz and 2-5%
+of white), a two-tap aperture (233 ns, k = 0.2) and the Y delay line. The Y
+delay is computed from the group delays of the actual filters.
+
+The colour-under envelope gets 0.8 IRE of noise per component (DH), the
+playback band-pass (second order, 0.5 MHz), the APC/AFC residual phase and
+the 1H comb (current line plus the glass delay line, 227.5 carrier cycles).
+The APC residual comes from a second-order loop at 1 kHz (an assumption: JVC
+calls APC comparatively rapid) driven by the timing and by 2.1 degrees per line
+of burst measurement noise (DH); it is 2.3 degrees RMS per line and settles
+within the vertical blanking after the 1.7 us step.
+
+Luma RF runs at 12 fsc as an analytic signal. The record FM high-pass removes
+more than 10 dB below 1 MHz, so the sidebands a real signal folds around 0 Hz
+are already gone. Every IIR filter is a set of first-order partial-fraction
+sections from the bilinear transform, each factor prewarped at its own corner,
+run as a two-level scan across the threadgroup.
+
+### Dropouts
+
+Dropouts are placed on tape from the DH rates: 32.8 per second reaching
+-6 dB, 13.3 at -10 dB, 8.0 at -15 dB, 5.5 at -20 dB, 4.25 at -30 dB and 1.5 at
+-40 dB. Their length depends on depth (median 2.1 us for -6 to -10 dB,
+15.5 us to -15 dB, 42 us to -20 dB, 43 us to -30 dB, 70 us deeper). 31% of
+them continue on the next track 1.5 H later (DH), up to four tracks, each
+0.6-1 times as deep. The rates count every event, so births are divided by
+the 1.278 events each produces. Depth sets a head-to-tape spacing; Wallace
+spacing loss, 54.6 d f / v dB at 5.8 m/s, costs a 1 um defect 37 dB at 3.9 MHz
+but only 5.9 dB at 629 kHz, which is why the colour survives most dropouts.
+
+The dropout detector integrates the RF envelope over 0.35 us and switches at
+-15 dB with 1.94 dB of hysteresis (vhs-decode). The compensator substitutes
+the recovered luma one glass delay line earlier, up to four lines back (JVC
+recirculating loop), with a click at each switch from the random phase jump
+between two FM signals. Without it the pulse-count discriminator turns the
+lost carrier into a white streak. Shallow dropouts only raise the noise.
+
+### TV line PLL
+
+The VHS preset sets the TV's horizontal loop to a second-order PLL at 250 Hz
+with damping 0.7, its detector gain raised 2.5 times for the 21 lines from
+vertical sync (TDA2579: head-change jumps are restored within the vertical
+blanking). It free-runs through lines without a sync edge and is never reset,
+so the head switch bends the top of the next field. A 1 us step at line 238.5
+leaves -72 ns at the first picture line, -52 ns at line 20 and -3 ns at line
+40. The 250 Hz bandwidth is an assumption, and the largest single control over
+how much tape timing the viewer sees: at 100 Hz the mid-field residual is
+99 ns RMS, at 500 Hz 8 ns. The sync slicer now works halfway up the sync
+pulse from its tip, so a late line does not move the slice onto picture or
+border in the front porch window.
+
+### Left out
+
+- Chroma crosstalk from the adjacent track: the 1H comb cancels it where the
+  neighbouring picture is vertically uniform; about -25 dB of half the colour
+  step remains at colour boundaries.
+- Luma crosstalk: NES fields are 262 lines, so the neighbour's syncs are 0.5 H
+  off. With 5 um of tracking error that is about 1 IRE at 1.1 MHz after
+  de-emphasis and 0.4 IRE after the canceller.
+- The Hi-Fi audio beat at carrier - 1.7 MHz, the tracking bar, LP and EP, ACC
+  settling (the NES burst is constant) and a head DC offset.
+
+### Tests and measurements
+
+`gpu_vhs_deck_tests` checks the host model: filter responses (record Y
+-136 dB at fsc; record FM high-pass -24.4 dB at 629 kHz and -12.6 dB at
+1 MHz; tape slope +0.97 / -1.10 dB), tables identical for the same seed and
+frame, field correlation 0.31 at lag 1 and 0.06 at lag 24, no line in the
+spectrum of the per-frame timing change (peak 2.5 times the median), switch
+steps equal to the skews, line-to-line jitter 7.04 ns (5 ns times root 2),
+32.6 dropouts per second at -6 dB, 5.76 at -20 dB and a recurrence of 0.303.
+
+`gpu_fidelity_tests` runs both kernels on synthetic NES rasters and compares
+them with a numpy reference model built from exact analog responses and real
+RF:
+
+| Property | GPU | Reference | Earlier stage |
+|---|---|---|---|
+| Grey $10 level | 80.00 IRE | 80.0 | |
+| Output burst | 39.8 IRE p-p | 40 | |
+| Luma noise 0-2.4 MHz at black, canceller off | 0.873 IRE | 0.87 | about 2.0 |
+| White / black noise | 1.285 | 1.26 | 1.0 |
+| Share below 0.5 MHz / 2-2.9 MHz | 6.7% / 46.3% | 6% / 49% | 42% below 0.5 MHz |
+| Noise autocorrelation 0.5 / zero | 87 / 140 ns | 93 ns | 222 / over 300 ns |
+| Luma noise with canceller | 0.54 IRE, 28% below 0.5 MHz | 0.49-0.62, 21-28% | |
+| Chroma noise | 0.53 IRE per component, adjacent lines 0.47 | 0.53-0.55, 0.46-0.49 | 0.51, 0 |
+| Hue change under timing error | 0.001 deg | 0.00 | 1.29 deg per ns |
+| Edge displacement per ns of timing | 1.001 | 0.999 | |
+| $0F-$30 rise shortfall at 1 / 3 us | 21.2 / 4.1 IRE | 22.0 / 4.5 | none |
+| $0F-$30 fall excess at 1 us | 13.5 IRE | 14.9 | none |
+| White clip 200%: shortfall at 0.5 us | 16.0 IRE | 15.8 | |
+| Dropout with compensator: output minus line above | +0.02 IRE | within 1 | |
+| Dropout without compensator | +78.9 IRE | +54 | |
+| 0.25 um defect, extra noise | 3.4 IRE RMS | 2.4 | |
+
+The noise is independent between lines (r = 0.007) and frames (r = -0.006),
+with a flat per-column variance (5.5%) and no lattice at the earlier stage's
+8.59- and 143-sample spacings.
+
+On screen (1024x768, 60 frames of the same static fields as the review of the
+earlier stage, then Super Mario Bros.), [see the before and after
+values](#vhs-screen-measurements).
+
+<a id="vhs-screen-measurements"></a>
+| Measurement | Earlier stage | FM deck |
+|---|---|---|
+| Blue field, per-row colour against the clean run: ΔE76 RMS / max | 4.64 / 28.9 | 0.79 / 24.2 |
+| Blue field, per-row a* correlation between frames at lag 1 / 5 | 0.97 / 0.68 | 0.14 / 0.15 |
+| Super Mario Bros. sky, per-row colour against VHS off: ΔE76 RMS / max | 6.45 / 25.7 | 1.29 / 5.3 |
+| Bars, edge displacement RMS | 6.8 ns | 14.4 ns |
+| Bars, edge displacement correlation between frames | 0.58 | -0.13 |
+| Bars, edge motion power below 4 Hz | 60% | 12% |
+| Grey grain, RMS relative to the level | 3.7% | 1.2% |
+| Grey grain, horizontal correlation 0.5 point | 337 ns | 185 ns |
+| Grey grain, kurtosis / correlation between frames | 2.88 / 0.00 | 3.04 / 0.02 |
+| Grey grain, share of variance in whole lines | 27% | 40% |
+
+The rows with the largest ΔE76 are dropouts. The per-row a* pattern that
+remains correlated (0.14-0.23 at every lag, higher at even lags) is the
+per-head bow left in the APC residual, which repeats with each head. Edge
+displacement is larger because the timing is now the measured transport
+residual after the TV's line PLL (about 15 ns mid-field), with a new component
+every field instead of a glide.
+
+The whole-line share is a TV effect, not the deck's: at the deck output it is
+1.5% (`gpu_fidelity_tests`), at the TV's decoded luma 16%, and on screen 40%.
+The receiver clamps every line to its own 0.56 us back-porch average with a
+gain of 0.35. The beam spot then smooths the fine grain and leaves the
+whole-line offsets as they are. With a clamp gain of 0.02 per line the on-screen share
+falls to 13%. The TV clamp's time constant is a generic value, not a
+measured one; a measured clamp model would settle it.
+
+GPU time of the two kernels on an M5 (10-core GPU), measured interleaved
+with the earlier kernel in the same run: the tape stage takes 0.73 ms and playback 0.12 ms (median;
+0.88 ms together), against 1.93 ms for the earlier 129-tap stage. The complete
+VHS chain benchmark (`--benchmark`, 60 frames after 12) measured 8.2 ms at
+1280x960 and 11.2-11.4 ms at 1920x1440, 1.0-1.4 ms below the earlier stage in
+the same session; at 2560x1920 both builds measured 16.5-16.7 ms.
+
+Presets saved before this model have no `"model": 2` in their `vhs` block.
+When such a block is enabled, the SP consumer defaults replace it, the TV
+gets the 250 Hz line PLL if it had none, and one line goes to stderr:
+`vhs: preset uses the pre-2 VHS model; loaded SP consumer defaults`. All deck
+controls are under Signal chain > VHS recording / playback; the line PLL is
+under Y/C separation.
 
 ## Raster edge and fixed glass aperture
 
