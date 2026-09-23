@@ -36,7 +36,7 @@ from . import shots as shots_mod
 from .codecs import mime_type
 from .recipes import VideoOutput
 from .runner import (Job, PipelineError, Runner, env_for_capture, find_font, probe_video, tool,
-                     verify_animation, verify_image, verify_video)
+                     verify_animation, verify_image, verify_timing, verify_video)
 from .shots import Feature, Shot, ShotList
 
 SHOWCASE_DIR = shots_mod.SHOWCASE_DIR
@@ -625,6 +625,7 @@ def encode_readme(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dict
     except PipelineError as e:
         raise PipelineError(f"{e}; lower readme_seconds for shot {shot.id!r} in shots.json "
                             f"(now {shot.readme_seconds:g} s)") from e
+    verify_timing(webp, frames=frames, fps=recipes.README_FPS)
     verify_image(png, frames=1, size=size)
     note = {"readme_webp": {"quality": quality, "bytes": webp_size, "frames": frames, "stored_frames": stored,
                             "fps": recipes.README_FPS,
@@ -668,7 +669,8 @@ def encode_flicker(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dic
         runner.say(f"dry-run: flicker crop {rect} (NES {shot.flicker_crop} at "
                    f"{recipes.nes_scale(size, ctx.flicker_scale)} render pixels per NES pixel)")
         return None
-    stored = verify_animation(webp, frames=recipes.FLICKER_FRAMES, size=(rect.w, rect.h), limit=limit)
+    stored = verify_animation(webp, frames=recipes.FLICKER_FRAMES, size=(rect.w, rect.h), limit=limit,
+                              fps=recipes.FLICKER_FPS)
     verify_image(png, frames=1, size=(rect.w, rect.h))
     note = {"flicker_webp": {"quality": quality, "bytes": webp_size, "frames": recipes.FLICKER_FRAMES,
                              "stored_frames": stored,

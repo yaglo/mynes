@@ -254,11 +254,11 @@ class Stills(unittest.TestCase):
         self.assertIn("trim=end_frame=361,select=", s)
         self.assertIn("setpts=N/(30*TB),scale=in_color_matrix=bt601:in_range=tv,format=bgra", s)
         self.assertIn("-frames:v 181", s)
-        self.assertIn("-c:v libwebp_anim -lossless 0 -quality 80", s)
+        self.assertIn("-fps_mode passthrough -enc_time_base 1:1000 -c:v libwebp_anim -lossless 0 -quality 80", s)
         r = Rect(930, 1260, 1500, 1125)
         s = shlex.join(recipes.flicker_webp_args("sdr.mov", "f.webp", r, 10))
         self.assertIn("trim=start_frame=10:end_frame=18,setpts=N/(8*TB),crop=1500:1125:930:1260", s)
-        self.assertIn("-lossless 1", s)
+        self.assertIn("-enc_time_base 1:1000 -c:v libwebp_anim -lossless 1", s)  # whole-ms durations
         self.assertIn("-frames:v 8", s)
         self.assertIn("-lossless 0 -quality 90", shlex.join(recipes.flicker_webp_args("s", "f", r, 10, quality=90)))
 

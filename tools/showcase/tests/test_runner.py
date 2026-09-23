@@ -138,6 +138,20 @@ class Discovery(unittest.TestCase):
             runner_mod.configure_tools()
 
 
+class AnimationTiming(unittest.TestCase):
+    def test_even_steps(self):
+        self.assertIsNone(runner_mod.timing_problem([125] * 8, 8, 8))
+        self.assertIsNone(runner_mod.timing_problem([250, 125, 375, 250], 8, 8))  # merged identical frames
+        self.assertIsNone(runner_mod.timing_problem([33, 34, 33] * 10, 30, 30))    # 1000/30 in whole ms
+
+    def test_uneven_steps(self):
+        # libwebp_anim timed in 1/60.0988 s units: 7.51 ticks per 125 ms.
+        problem = runner_mod.timing_problem([133, 116, 133, 117, 133, 116, 133, 125], 8, 8)
+        self.assertIn("frame 1 starts at 133 ms", problem)
+        self.assertIn("lasts 1125 ms", runner_mod.timing_problem([125] * 9, 8, 8))
+        self.assertIn("duration 0", runner_mod.timing_problem([125, 0], 2, 8))
+
+
 class Tools(unittest.TestCase):
     def test_versions(self):
         self.assertEqual(runner_mod.ffmpeg_version_tuple("ffmpeg version 6.1.1-3ubuntu5 Copyright"), (6, 1))

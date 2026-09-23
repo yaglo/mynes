@@ -66,6 +66,10 @@ GAINMAP_QUALITY = 0.9
 FFMPEG_BASE = ("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-nostdin")
 PASSTHROUGH = ("-fps_mode", "passthrough")
 FASTSTART = ("-movflags", "+faststart")
+# WebP frame durations are whole milliseconds. Without this, libwebp_anim
+# times frames in 1/rate units of the render (1/60.0988 s), and the 125 ms
+# steps of an 8 fps loop came out as 133, 116, 133, 117 ms.
+WEBP_TIME_BASE = ("-enc_time_base", "1:1000")
 STAGE_AUDIO = ("-c:a", "aac", "-b:a", "128k")
 FEATURE_AUDIO = ("-c:a", "aac", "-b:a", "192k")
 
@@ -476,7 +480,7 @@ def readme_webp_args(src: Path | str, out: Path | str, source_frames: int, quali
     graph = (f"trim=end_frame={source_frames},select='not(mod(n\\,2))',setpts=N/({fps}*TB),"
              f"{to_rgb(matrix, range_, 'bgra')}")
     return [*FFMPEG_BASE, "-i", str(src), "-an", "-vf", graph,
-            "-frames:v", str(readme_frames(source_frames)), *PASSTHROUGH,
+            "-frames:v", str(readme_frames(source_frames)), *PASSTHROUGH, *WEBP_TIME_BASE,
             "-c:v", "libwebp_anim", "-lossless", "0", "-quality", str(quality),
             "-compression_level", "6", "-loop", "0", str(out)]
 
@@ -488,7 +492,7 @@ def flicker_webp_args(src: Path | str, out: Path | str, rect: Rect, first_frame:
     graph = (f"trim=start_frame={first_frame}:end_frame={first_frame + frames},"
              f"setpts=N/({fps}*TB),{rect.crop_filter()},{to_rgb(matrix, range_, 'bgra')}")
     cmd = [*FFMPEG_BASE, "-i", str(src), "-an", "-vf", graph,
-           "-frames:v", str(frames), *PASSTHROUGH, "-c:v", "libwebp_anim"]
+           "-frames:v", str(frames), *PASSTHROUGH, *WEBP_TIME_BASE, "-c:v", "libwebp_anim"]
     if quality == "lossless":
         cmd += ["-lossless", "1"]
     else:

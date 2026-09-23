@@ -23,8 +23,8 @@ from pathlib import Path
 
 from pipeline import jobs as jobs_mod
 from pipeline import recipes, shots
-from pipeline.runner import (PipelineError, Runner, ffmpeg_has, have_tool, image_info, probe_video, run_jobs,
-                             tool)
+from pipeline.runner import (PipelineError, Runner, animation_durations, ffmpeg_has, have_tool, image_info,
+                             probe_video, run_jobs, tool)
 
 try:
     import numpy as np
@@ -412,12 +412,16 @@ class EncodePipeline(unittest.TestCase):
         self.assertEqual(report["readme_webp"]["frames"], 30)
         self.assertEqual(report["readme_webp"]["embed_width"], README[0] // 2)
         self.assertEqual(image_info(self.d(README) / "readme.webp"), (30, README))
+        durations = animation_durations(self.d(README) / "readme.webp")
+        self.assertEqual(set(durations), {33, 34})  # 30 fps in whole milliseconds
+        self.assertEqual(sum(durations), 1000)
         self.assertEqual(image_info(self.d(README) / "readme.png"), (1, README))
         flicker = report["flicker_webp"]
         rect = recipes.flicker_geometry([78, 73, 100, 93.75], LENS)
         self.assertEqual(flicker["crop_px"], [rect.x, rect.y, rect.w, rect.h])
         self.assertEqual(flicker["quality"], "lossless")
         self.assertEqual(image_info(self.d(LENS) / "flicker.webp"), (8, (rect.w, rect.h)))
+        self.assertEqual(animation_durations(self.d(LENS) / "flicker.webp"), [125] * 8)  # an even 8 fps
         with Image.open(self.d(LENS) / "flicker.png") as png, Image.open(self.d(LENS) / "still-sdr.png") as still:
             self.assertEqual(np.asarray(png).tolist(), np.asarray(still.crop(rect.box)).tolist())
         with Image.open(self.d(LENS) / "flicker.webp") as anim:  # lossless: frame 0 is the PNG exactly

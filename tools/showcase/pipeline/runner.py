@@ -293,14 +293,55 @@ def verify_image(path: Path, *, frames: int | None = None, size: Sequence[int] |
     return n, dims, bytes_
 
 
-def verify_animation(path: Path, *, frames: int, size: Sequence[int], limit: int | None = None) -> int:
-    """An animated WebP of up to ``frames`` frames. libwebp's animation encoder
-    stores a run of identical frames as one longer frame, so a still stretch
-    of picture gives fewer frames, never more."""
+def animation_durations(path: Path) -> list[int]:
+    """Each stored frame's duration in milliseconds (Pillow sets it on load)."""
+    from PIL import Image
+    durations = []
+    with Image.open(path) as im:
+        for i in range(getattr(im, "n_frames", 1)):
+            im.seek(i)
+            im.load()
+            durations.append(int(im.info.get("duration") or 0))
+    return durations
+
+
+def timing_problem(durations: Sequence[int], frames: int, fps: float) -> str | None:
+    """Why stored frame durations do not play ``frames`` frames at ``fps``.
+
+    Each stored frame must start within 1 ms of a multiple of 1000/fps (a
+    merged run of identical frames starts where its first frame would), and
+    the loop must last frames * 1000/fps to within 1 ms."""
+    period = 1000.0 / fps
+    start = 0
+    for i, d in enumerate(durations):
+        if d <= 0:
+            return f"frame {i} has duration {d} ms"
+        if abs(start - round(start / period) * period) > 1:
+            return f"frame {i} starts at {start} ms, off the {period:g} ms grid ({list(durations)})"
+        start += d
+    if abs(start - frames * period) > 1:
+        return f"the loop lasts {start} ms, expected {frames * period:g} ms ({list(durations)})"
+    return None
+
+
+def verify_animation(path: Path, *, frames: int, size: Sequence[int], limit: int | None = None,
+                     fps: float | None = None) -> int:
+    """An animated WebP of up to ``frames`` frames, each shown for 1/fps s.
+    libwebp's animation encoder stores a run of identical frames as one
+    longer frame, so a still stretch of picture gives fewer frames, never
+    more, and the same total length."""
     n, _dims, _bytes = verify_image(path, size=size, limit=limit)
     if not 1 <= n <= frames:
         raise PipelineError(f"{path}: {n} frames, expected at most {frames}")
+    if fps:
+        verify_timing(path, frames=frames, fps=fps)
     return n
+
+
+def verify_timing(path: Path, *, frames: int, fps: float) -> None:
+    problem = timing_problem(animation_durations(path), frames, fps)
+    if problem:
+        raise PipelineError(f"{path}: {problem}")
 
 
 # ---------------------------------------------------------------------------

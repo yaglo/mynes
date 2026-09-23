@@ -154,10 +154,10 @@ In `out/<shot>/<preset>/<WxH>/`:
 | `crop-sdr.png`, `crop-sdr@1x.png` | crop | 1:1 detail crop of `still-sdr.png`, and its 2x2 average |
 | `crop-hdr.png`, `crop-hdr@1x.png` | crop | The same from the 16-bit HDR frame |
 | `crop-hdr.avif`, `crop-hdr@1x.avif` | crop | AVIF of each, as `still-hdr.avif` |
-| `flicker.webp` | crop | README presets: eight consecutive frames from `flicker_frame` at 1:1, 8 fps, lossless unless over 5 MB, then quality 95 to 80 |
+| `flicker.webp` | crop | README presets: eight consecutive frames from `flicker_frame` at 1:1, 125 ms each (8 fps), lossless unless over 5 MB, then quality 95 to 80 |
 | `flicker.png` | crop | Frame `flicker_frame` of the crop, lossless |
 | `flicker-hdr.png`, `flicker-hdr.jpg` | crop | The HDR crop, and a JPEG with the SDR crop as base image and a gain map toward the HDR one |
-| `readme.webp` | 1600x1200 | README presets: every second frame of the first `readme_seconds` at 30 fps, quality lowered from 90 to 30 until under 10 MB |
+| `readme.webp` | 1600x1200 | README presets: every second frame of the first `readme_seconds` at 30 fps (33 and 34 ms frames), quality lowered from 90 to 30 until under 10 MB |
 | `readme.png` | 1600x1200 | Frame `thumbnail_frame`, lossless |
 | `readme-hdr.png`, `readme-hdr.jpg` | 1600x1200 | The HDR frame, and its gain-map JPEG |
 
