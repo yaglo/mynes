@@ -23,6 +23,7 @@ typedef struct {
     bool            gpu_display_enabled;
     bool            crt_shader_enabled;
     bool            display_bypass;      /* mask and glass off; phosphor colour, gain and shoulder stay */
+    bool            output_p3;           /* the window's layer takes extended linear Display P3 */
     int             room_reflections_enabled; /* host preference, independent of preset */
     Uint64          room_reflections_notice_until;
     int             presentation_mode;   /* GPU_PRESENT_*; host preference only */
@@ -43,6 +44,7 @@ typedef struct {
     int             panel_subpixels;     /* host panel order: 0 unknown/off, 1 RGB stripe, 2 BGR */
     int             effective_panel_subpixels; /* 0 while the desktop resamples the output */
     int             hdr_gain_mode;       /* 0 = Auto: fit headroom, 1 = preset's emission gain only */
+    int             panel_primaries;     /* 0 = sRGB, 1 = Display P3 when the layer can take it */
     float           effective_hdr_gain;  /* emission gain in use; 1 in SDR */
     GPUOutputGeometry output_geometry;
     int             drawable_w, drawable_h;

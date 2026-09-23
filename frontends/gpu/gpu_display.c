@@ -666,6 +666,17 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
         crt_ubo.pulse_gain = params->pulse_enabled ? params->pulse_gain : 1;
         float phosphor_matrix[3][3];
         crt_phosphor_matrix(params->phosphor_gamut,phosphor_matrix);
+        if (params->output_p3) {
+            /* Linear sRGB to linear Display P3 (both D65), after the phosphors. */
+            static const float to_p3[3][3]={{0.8224621f,0.1775380f,0.0f},
+                {0.0331941f,0.9668058f,0.0f},{0.0170827f,0.0723974f,0.9105199f}};
+            float m[3][3];
+            for(int i=0;i<3;i++) for(int j=0;j<3;j++) {
+                m[i][j]=0;
+                for(int k=0;k<3;k++) m[i][j]+=to_p3[i][k]*phosphor_matrix[k][j];
+            }
+            memcpy(phosphor_matrix,m,sizeof(m));
+        }
         for(int i=0;i<3;i++) {
             for(int j=0;j<3;j++) crt_ubo.phosphor_to_display[i][j]=phosphor_matrix[i][j];
             crt_ubo.phosphor_to_display[i][3]=0;

@@ -207,9 +207,11 @@ static bool capture_display(GPURenderCtx *ctx, const GPUDisplayParams *params,
     if(target && tb) {
         SDL_GPUCommandBuffer *cmd=SDL_AcquireGPUCommandBuffer(ctx->gpu);
         if (!cmd) goto done;
+        /* Files are sRGB; only the window's layer takes P3. */
+        GPUDisplayParams file_params=*params; file_params.output_p3=0;
         if (owns_target)
             gpu_display_render(ctx->gpu_disp,ctx->gpu,cmd,ctx->display_tex,
-                ctx->display_tex_w,ctx->display_tex_h,target,w,h,params,viewport);
+                ctx->display_tex_w,ctx->display_tex_h,target,w,h,&file_params,viewport);
         SDL_GPUCopyPass *copy=SDL_BeginGPUCopyPass(cmd);
         if (!copy) { SDL_CancelGPUCommandBuffer(cmd); goto done; }
         SDL_GPUTextureRegion region={.texture=target,.w=w,.h=h,.d=1};
@@ -481,6 +483,7 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
         /* Mask/glass bypass is an A/B against the same picture: the gain is
          * fitted with the mask on so only the mask and the glass go away;
          * phosphor colour, beam and geometry stay. */
+        disp_params.output_p3 = ctx->output_p3;
         if (ctx->display_bypass) {
             disp_params.mask_strength = 0; disp_params.damper_wires = 0; disp_params.panel_subpixels = 0;
             disp_params.halation_strength = 0; disp_params.glass_reflection = 0; disp_params.glass_glare = 0;

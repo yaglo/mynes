@@ -554,6 +554,12 @@ int test_display_fidelity(SDL_GPUDevice *gpu) {
     render(gpu,&d,input,target,&p,avg,&peak);
     CHECK(fabsf(avg[0]-.5f)<.001f && avg[1]==0 && avg[2]==0);
     CHECK(center_row[W/2][0]>.005f && center_row[W-1][0]==0);
+    // On a P3 layer the same red drives the panel's red at 82% and its
+    // green and blue a little; white stays white.
+    p.output_p3=1;
+    render(gpu,&d,input,target,&p,avg,&peak);
+    CHECK(fabsf(avg[0]-.5f*.8224621f)<.002f && fabsf(avg[1]-.5f*.0331941f)<.001f && fabsf(avg[2]-.5f*.0170827f)<.001f);
+    p.output_p3=0;
     // Wavelength-dependent scatter fractions must leave a uniform field
     // neutral, even for extreme user tint values and high HDR headroom.
     p.glass_reflection=0;p.halation_strength=.3f;

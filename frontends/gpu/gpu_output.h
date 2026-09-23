@@ -14,6 +14,12 @@ bool gpu_output_toggle_fullscreen(SDL_Window *window, bool native);
  * green button): that fullscreen runs at the scaled desktop size, which the
  * compositor resamples. Call before SDL_Init. */
 void gpu_output_disable_desktop_spaces(void);
+
+/* Give the window's HDR layer extended linear Display P3, so each channel
+ * drives the panel's own primary, or the extended linear sRGB SDL set up.
+ * Cheap to call every frame; it only touches the layer when the space
+ * differs. Returns whether the layer is P3 now. */
+bool gpu_output_apply_colorspace(SDL_Window *window, bool p3);
 /* Globe (fn) chords. SDL reports no modifier for the Globe key and the text
  * system still types the letter, so Globe+F would reach text fields as "f".
  * After SDL_Init, the filter drops text typed with Globe held and marks the

@@ -73,6 +73,7 @@ typedef struct {
     bool reuse_halation;           /* same source texture as previous presentation */
     float hdr_gain;                 /* output multiplier (1.0=normal) */
     float shoulder_knee;            /* output shoulder start, fraction of headroom; 0 = 0.75 */
+    int   output_p3;                /* target is linear Display P3, not linear sRGB */
     int   subpixel_layout;          /* 0=none, 1=RGB, 2=BGR */
     float overscan;                 /* bezel crop fraction per edge (0-0.08) */
     float keystone;                 /* trapezoidal distortion (-0.1 to +0.1) */

@@ -555,7 +555,9 @@ room-lit glass pedestal. Raising black floor does not illuminate blanked raster.
 ## Performance
 
 **M → Host display** holds the mask sampling choice, the panel's subpixel
-order (Off, RGB stripe, BGR stripe), HDR gain (Auto fits the display's
+order (Off, RGB stripe, BGR stripe), Panel primaries (P3 gives the window's layer
+the panel's own primaries where it can take them; sRGB is the compositor's
+conversion), HDR gain (Auto fits the display's
 headroom, Preset uses the preset's own; see the
 [pipeline reference](gpu-pipeline-reference.md)) and two host-side
 performance settings. None is a television setting; all are saved to

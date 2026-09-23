@@ -1,6 +1,7 @@
 #include "gpu_output.h"
 #import <AppKit/AppKit.h>
 #import <CoreGraphics/CoreGraphics.h>
+#import <QuartzCore/QuartzCore.h>
 #include <IOKit/graphics/IOGraphicsTypes.h>
 #include <math.h>
 
@@ -40,6 +41,31 @@ void gpu_output_geometry(SDL_Window *window, GPUOutputGeometry *out) {
     out->origin_y=(NSMaxY(screen.frame)-NSMaxY(rect))*yscale;
     out->native_w=native_w;out->native_h=native_h;out->native_known=true;
     out->resampled=fabsf(out->scale_x-1)>.001f || fabsf(out->scale_y-1)>.001f;
+}
+
+static CAMetalLayer *metal_layer(NSView *view) {
+    if ([view.layer isKindOfClass:[CAMetalLayer class]]) return (CAMetalLayer *)view.layer;
+    for (NSView *child in view.subviews) {
+        CAMetalLayer *layer=metal_layer(child);
+        if (layer) return layer;
+    }
+    return nil;
+}
+
+bool gpu_output_apply_colorspace(SDL_Window *window, bool p3) {
+    NSWindow *ns=(__bridge NSWindow *)SDL_GetPointerProperty(SDL_GetWindowProperties(window),
+        SDL_PROP_WINDOW_COCOA_WINDOW_POINTER,NULL);
+    CAMetalLayer *layer=ns ? metal_layer(ns.contentView) : nil;
+    if (!layer || layer.pixelFormat!=MTLPixelFormatRGBA16Float) return false;
+    CFStringRef wanted=p3 ? kCGColorSpaceExtendedLinearDisplayP3 : kCGColorSpaceExtendedLinearSRGB;
+    CFStringRef name=layer.colorspace ? CGColorSpaceGetName(layer.colorspace) : NULL;
+    if (!name || !CFEqual(name,wanted)) {
+        CGColorSpaceRef space=CGColorSpaceCreateWithName(wanted);
+        if (!space) return false;
+        layer.colorspace=space;
+        CGColorSpaceRelease(space);
+    }
+    return p3;
 }
 
 void gpu_output_disable_desktop_spaces(void) {

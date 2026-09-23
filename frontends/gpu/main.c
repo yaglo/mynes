@@ -979,6 +979,7 @@ int main(int argc, char **argv) {
         ? room_reflections_override : mynes_config.gpu_room_reflections;
     render_ctx.mask_alignment=mask_alignment_override>=0 ? mask_alignment_override : mynes_config.gpu_mask_alignment;
     render_ctx.hdr_gain_mode=mynes_config.gpu_hdr_gain_mode;
+    render_ctx.panel_primaries=mynes_config.gpu_panel_primaries;
     /* Captures and recordings are viewed on other panels: they use the saved
      * subpixel order only when asked for on the command line. */
     render_ctx.panel_subpixels=panel_subpixels_override>=0 ? panel_subpixels_override
@@ -1984,6 +1985,11 @@ int main(int argc, char **argv) {
         if (render_ctx.presentation_slot > 0) {
             /* Re-present phosphor light only. Do not advance the PPU, audio,
              * signal phase, beam history, CRT load or diagnostic frame count. */
+            /* The panel's own primaries, when the layer can take them. */
+            render_ctx.output_p3 = render_ctx.hdr_enabled && !offscreen_w
+                && gpu_output_apply_colorspace(window, render_ctx.panel_primaries==1);
+            static bool p3_logged;
+            if (render_ctx.output_p3 && !p3_logged) { p3_logged=true; LOGV("Output: extended linear Display P3\n"); }
             gpu_render_frame(&render_ctx, &video_chain);
             if (render_ctx.submit_ns)
                 render_ctx.presentation_slot = (render_ctx.presentation_slot + 1) % render_ctx.presentation_slots;

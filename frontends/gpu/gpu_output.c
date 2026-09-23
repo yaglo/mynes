@@ -1,6 +1,8 @@
 #include "gpu_output.h"
 #include <math.h>
 #ifndef __APPLE__
+bool gpu_output_apply_colorspace(SDL_Window *window, bool p3) { (void)window; (void)p3; return false; }
+
 void gpu_output_geometry(SDL_Window *window, GPUOutputGeometry *out) {
     (void)window;
     *out=(GPUOutputGeometry){.scale_x=1,.scale_y=1};
