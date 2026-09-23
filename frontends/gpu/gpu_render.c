@@ -478,6 +478,16 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
                       / gpu_display_white_peak(&disp_params, chain->tv.beam_fwhm_max);
             disp_params.hdr_gain = fminf(fit, 4.0f);
         }
+        /* Mask/glass bypass is an A/B against the same picture: the gain is
+         * fitted with the mask on so only the mask and the glass go away;
+         * phosphor colour, beam and geometry stay. */
+        if (ctx->display_bypass) {
+            disp_params.mask_strength = 0; disp_params.damper_wires = 0; disp_params.panel_subpixels = 0;
+            disp_params.halation_strength = 0; disp_params.glass_reflection = 0; disp_params.glass_glare = 0;
+            disp_params.antiglare_blur = 0; disp_params.ambient_light = 0; disp_params.vignette = 0;
+            disp_params.phosphor_grain = 0; disp_params.glass_tint = 1;
+            ctx->effective_panel_subpixels = 0;
+        }
         ctx->effective_hdr_gain = ctx->hdr_enabled ? (disp_params.hdr_gain > 0 ? disp_params.hdr_gain : 1) : 1;
         disp_params.sdr_white_level = ctx->hdr_enabled
             ? SDL_GetFloatProperty(props, SDL_PROP_WINDOW_SDR_WHITE_LEVEL_FLOAT, 1.0f) : 1.0f;

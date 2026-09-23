@@ -709,6 +709,7 @@ int main(int argc, char **argv) {
     int room_reflections_override=-1;
     int mask_alignment_override=-1,render_scale_override=-1,window_width=1280,window_height=960;
     int panel_subpixels_override=-1;
+    bool display_bypass_flag=false;
     char manual_screenshot_path[256];
     int exit_status = 0;
     int offscreen_w=0,offscreen_h=0;
@@ -773,6 +774,8 @@ int main(int argc, char **argv) {
             if(strcmp(mode,"pixels")==0) mask_alignment_override=0;
             else if(strcmp(mode,"physical")==0) mask_alignment_override=1;
             else { fprintf(stderr,"Mask alignment must be pixels or physical\n");return 1; }
+        } else if (strcmp(argv[i], "--display-bypass") == 0) {
+            display_bypass_flag=true;
         } else if (strcmp(argv[i], "--panel-subpixels") == 0 && i+1<argc) {
             const char *order=argv[++i];
             if(strcmp(order,"off")==0) panel_subpixels_override=0;
@@ -885,6 +888,8 @@ int main(int argc, char **argv) {
                    "  --sdr                 Use SDR output for display comparisons\n"
                    "  --native-fullscreen   Enter native panel mode (F toggles back)\n"
                    "  --mask-alignment M    pixels (default) or physical CRT pitch\n"
+                   "  --display-bypass      Show the beam without mask, glass or phosphor\n"
+                   "                        colour (M > Diagnostics > Mask/glass bypass)\n"
                    "  --panel-subpixels O   off, rgb or bgr: draw each colour at this panel's\n"
                    "                        subpixel (M > Host display; batch runs default off)\n"
                    "  --render-scale S      Internal CRT resolution: 1, 0.75, 0.5 or auto\n"
@@ -1213,6 +1218,7 @@ int main(int argc, char **argv) {
     preset_ctx.chain_vis = NULL;  /* set after chain_vis_create */
     preset_ctx.shader_dir = NULL; /* set after shader_dir_buf is resolved */
     preset_ctx.render_ctx = &render_ctx;
+    preset_ctx.display_bypass = display_bypass_flag;
     preset_ctx_init(&preset_ctx);
     {
         /* Game submenu: play controls that are not television settings. */
@@ -1412,6 +1418,7 @@ int main(int argc, char **argv) {
     render_ctx.gpu_disp = &gpu_disp;
     render_ctx.gpu_display_enabled = gpu_display_enabled;
     render_ctx.crt_shader_enabled = true;
+    render_ctx.display_bypass = display_bypass_flag;
     render_ctx.hdr_enabled = hdr_available;
 
     /* --- Chain visualiser --- */

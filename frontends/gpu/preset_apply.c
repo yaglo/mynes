@@ -520,7 +520,7 @@ static void gpu_cb_fullscreen(void) {
 }
 
 static void gpu_cb_display_bypass(void) {
-    g_ctx->render_ctx->crt_shader_enabled = !g_ctx->display_bypass;
+    g_ctx->render_ctx->display_bypass = g_ctx->display_bypass != 0;
 }
 
 static void gpu_cb_audio_backend(void) {

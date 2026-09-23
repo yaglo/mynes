@@ -143,7 +143,8 @@ void gpu_osd_render(uint32_t *rgba, const OSDMenuLevel *level, bool editing,
     text(rgba,x+8,y+40,line,0x10,1);
     // Subpixel drawing is active only on unscaled output; a scaled desktop
     // line already says how to get native pixels back.
-    const char *subpx=render->effective_panel_subpixels==1 ? " / RGB SUBPX"
+    const char *subpx=render->display_bypass ? " / MASK+GLASS BYPASS"
+                    : render->effective_panel_subpixels==1 ? " / RGB SUBPX"
                     : render->effective_panel_subpixels==2 ? " / BGR SUBPX" : "";
     if (render->offscreen_w)
         snprintf(line,sizeof(line),"%s%s",*subpx ? "OFFSCREEN PIXELS" : "OFFSCREEN DRAWABLE PIXELS",subpx);
