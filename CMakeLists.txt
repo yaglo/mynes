@@ -507,8 +507,13 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
         file(MAKE_DIRECTORY ${SHADER_OUT_DIR}/compute)
         file(MAKE_DIRECTORY ${SHADER_OUT_DIR}/render)
 
-        find_program(GLSLC_EXECUTABLE glslc)
-        find_program(SPIRV_CROSS_EXECUTABLE spirv-cross)
+        # An IDE can hand CMake a PATH without Homebrew's bin directory, and
+        # CMake's own search skips /opt/homebrew in some setups (3.28
+        # configuring for x86_64 on Apple silicon does), which sent a Mac with
+        # both tools installed to the copy path below. PATHS is searched after
+        # PATH, so a glslc on PATH still takes precedence.
+        find_program(GLSLC_EXECUTABLE glslc PATHS /opt/homebrew/bin /usr/local/bin)
+        find_program(SPIRV_CROSS_EXECUTABLE spirv-cross PATHS /opt/homebrew/bin /usr/local/bin)
         find_program(MYNES_PYTHON3 NAMES python3)
 
         file(GLOB GLSL_COMPUTE_SOURCES CONFIGURE_DEPENDS ${SHADER_SRC_DIR}/compute/*.comp.glsl)
@@ -543,6 +548,8 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
             -P ${CMAKE_SOURCE_DIR}/cmake/PruneShaderOutputs.cmake)
         if(GLSLC_EXECUTABLE AND SPIRV_CROSS_EXECUTABLE AND MYNES_PYTHON3)
             set(MYNES_SHADER_SOURCE "compiled with ${GLSLC_EXECUTABLE}")
+            message(STATUS "GPU shaders: compiling GLSL with ${GLSLC_EXECUTABLE}, "
+                "${SPIRV_CROSS_EXECUTABLE} and ${MYNES_PYTHON3}")
             # Hand the script the exact tools CMake found rather than whatever
             # PATH resolves to at build time.
             set(SHADER_TOOL_ENV ${CMAKE_COMMAND} -E env
@@ -567,10 +574,21 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
                 VERBATIM
             )
         else()
-            set(MYNES_SHADER_SOURCE "committed SPIR-V/MSL (glslc, spirv-cross or python3 not found)")
-            message(STATUS "Shader tools not found (glslc: ${GLSLC_EXECUTABLE}, "
-                "spirv-cross: ${SPIRV_CROSS_EXECUTABLE}, python3: ${MYNES_PYTHON3}) "
-                "- using the committed SPIR-V/MSL shaders")
+            set(MYNES_SHADER_MISSING "")
+            if(NOT GLSLC_EXECUTABLE)
+                list(APPEND MYNES_SHADER_MISSING glslc)
+            endif()
+            if(NOT SPIRV_CROSS_EXECUTABLE)
+                list(APPEND MYNES_SHADER_MISSING spirv-cross)
+            endif()
+            if(NOT MYNES_PYTHON3)
+                list(APPEND MYNES_SHADER_MISSING python3)
+            endif()
+            list(JOIN MYNES_SHADER_MISSING ", " MYNES_SHADER_MISSING)
+            set(MYNES_SHADER_SOURCE "committed SPIR-V/MSL (not found: ${MYNES_SHADER_MISSING})")
+            message(STATUS "GPU shaders: copying the committed SPIR-V/MSL, not found: "
+                "${MYNES_SHADER_MISSING}; to use a tool installed elsewhere, set "
+                "GLSLC_EXECUTABLE, SPIRV_CROSS_EXECUTABLE or MYNES_PYTHON3")
             add_custom_command(
                 OUTPUT ${SHADER_STAMP}
                 COMMAND ${CMAKE_COMMAND}

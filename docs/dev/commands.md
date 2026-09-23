@@ -72,6 +72,12 @@ Either way the build then deletes every `.spv`/`.msl` in `build/shaders/`
 that no current `.glsl` produces, such as the outputs of a renamed or
 removed shader.
 
+CMake looks for `glslc` and `spirv-cross` on `PATH`, then in
+`/opt/homebrew/bin` and `/usr/local/bin`, so a configure started from an
+IDE whose `PATH` lacks Homebrew still compiles. A `GPU shaders:` line in
+the configure log gives the tools it will compile with, or the ones it did
+not find.
+
 After editing a `.glsl`, regenerate the committed copies and commit them
 together with the source:
 
