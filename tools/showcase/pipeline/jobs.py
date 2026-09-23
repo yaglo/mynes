@@ -945,6 +945,15 @@ def describe_site_file(site: Path, rel: str, kind: str) -> dict:
         return {}
 
 
+def _same_file(src: Path, dst: Path) -> bool:
+    """copy2 keeps the modification time, so a site file with the build's
+    size and time is the file install copied; any other is replaced."""
+    if not dst.is_file():
+        return False
+    a, b = src.stat(), dst.stat()
+    return a.st_size == b.st_size and a.st_mtime_ns == b.st_mtime_ns
+
+
 def install(ctx: Context, runner: Runner, pairs: list[tuple[Shot, str]]) -> dict | None:
     """Copy each complete clip into <site>/assets/hero/<shot>/<preset>/ and merge
     manifest.json, unless the site's assets/ would exceed the budget. The
@@ -978,7 +987,7 @@ def install(ctx: Context, runner: Runner, pairs: list[tuple[Shot, str]]) -> dict
         raise PipelineError(f"{path}: cannot merge into this manifest: {e!r}") from e
     for src, rel in copies:
         dst = site / rel
-        if runner.dry_run or not runner.up_to_date([dst], [src]):
+        if runner.dry_run or runner.force or not _same_file(src, dst):
             runner.copy(src, dst)
     if runner.dry_run:
         runner.say(f"dry-run: would merge {len(clips)} clip(s) into {path}")

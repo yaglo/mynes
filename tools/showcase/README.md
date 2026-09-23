@@ -117,13 +117,15 @@ options after it.
 
 4. Install into the site (part of `all` when `--site` is given). Each complete
    clip is copied to `assets/hero/<shot>/<preset>/<WxH>/` and merged into
-   `assets/hero/manifest.json`; entries the run did not produce are kept.
-   `install` reads and merges the manifest before it copies anything, and
-   stops without copying when the manifest does not parse or when no selected
-   clip is complete (the manifest is then left as it was). It refuses, listing
-   the 20 largest files, when the site's `assets/` would exceed `--budget-mb`
-   (default 900; GitHub Pages sites must stay under 1 GB). `--with-crops` also
-   copies the detail crops.
+   `assets/hero/manifest.json`; entries the run did not produce are kept. A
+   file is copied when the site's copy differs from the build in size or
+   modification time (the copy keeps the build's time), so a file restored by
+   `git checkout` is replaced too. `install` reads and merges the manifest
+   before it copies anything, and stops without copying when the manifest does
+   not parse or when no selected clip is complete (the manifest is then left
+   as it was). It refuses, listing the 20 largest files, when the site's
+   `assets/` would exceed `--budget-mb` (default 900; GitHub Pages sites must
+   stay under 1 GB). `--with-crops` also copies the detail crops.
 
 5. Commit both repositories: `tools/showcase/shots.json` and any replays in
    mynes, `assets/hero/` in mynes-web (check `du -sh assets` first). The

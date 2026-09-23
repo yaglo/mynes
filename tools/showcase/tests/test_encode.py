@@ -616,10 +616,23 @@ class EncodePipeline(unittest.TestCase):
         self.assertEqual([p["id"] for p in merged["presets"]], ["legacy", *PRESETS])
         self.assertEqual([g["id"] for g in merged["games"]], ["old", "synth"])
         self.assertEqual(json.loads((site / "assets" / "hero" / "manifest.json").read_text()), merged)
-        runner2 = Runner(quiet=True)
+        runner2, said = self.listening_runner()
         jobs_mod.install(self.install_ctx(site, with_crops=True), runner2, self.shot_list.select())
         self.assertTrue((hero / "512x384" / "crop-hdr@1x.avif").exists())
-        self.assertEqual(runner2.ran, [])  # no commands, and only the crops were new
+        self.assertEqual(runner2.ran, [])  # no commands
+        copied = sorted(Path(s.rsplit(" -> ", 1)[1]).name for s in said if s.startswith("copy "))
+        self.assertEqual(copied, sorted(jobs_mod.SITE_CROP_FILES))  # only the crops were new
+        # A site file that differs from the build is replaced, even when it is newer.
+        stale = hero / "256x192" / "stage-sdr.mp4"
+        shutil.copy(self.d(STAGE[1]) / "stage-sdr.mp4", stale)
+        os.utime(stale, None)
+        runner3, said = self.listening_runner()
+        merged = jobs_mod.install(self.install_ctx(site), runner3, self.shot_list.select())
+        self.assertEqual([s for s in said if s.startswith("copy ")],
+                         [f"copy {self.d(STAGE[0]) / 'stage-sdr.mp4'} -> {stale}"])
+        self.assertEqual(stale.read_bytes(), (self.d(STAGE[0]) / "stage-sdr.mp4").read_bytes())
+        entry = next(e for e in merged["clips"]["synth"]["p_sony"]["stage"] if e["src"].endswith("256x192/stage-sdr.mp4"))
+        self.assertEqual((entry["width"], entry["bytes"]), (256, stale.stat().st_size))
 
     def test_install_reads_the_manifest_before_copying(self):
         for i, text in enumerate(('{"version": 2, "clips": {', "[1, 2]", '{"clips": {"synth": {"p_sony": "oops"}}}')):
