@@ -717,7 +717,8 @@ static void browser_key(BrowserKey key, bool *console_changed, uint8_t **static_
 /* A file opened from Finder (SDL reports it as a drop with window ID 0) or
  * dropped on the window. It loads like a browser pick and closes the
  * browser and the menu; a file that does not load leaves the game running
- * and says why, in the browser when it is open, else in a notice. */
+ * and says why, in the browser when it is open, else in a notice. That
+ * notice closes the menu too, since no notice is drawn over the menu. */
 static void drop_file(const char *path, bool *console_changed, uint8_t **static_frame) {
     int re = open_rom(path, console_changed, static_frame);
     if (re == ROM_OK) {
@@ -732,6 +733,7 @@ static void drop_file(const char *path, bool *console_changed, uint8_t **static_
         const char *name = strrchr(path, '/');
         char value[96];
         snprintf(value, sizeof(value), "%s: %s", name ? name + 1 : path, nes_rom_error_str(re));
+        close_osd_menu();
         show_notice("OPEN ROM FAILED", value);
     }
 }
