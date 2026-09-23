@@ -428,7 +428,7 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
 
     if (ctx->display_tex && ctx->gpu_display_enabled && (ctx->crt_shader_enabled || !ctx->owns_display_tex)) {
         /* Beam light, glass scattering and final host-display adaptation. */
-        GPUDisplayParams disp_params;
+        GPUDisplayParams disp_params = {0};
         gpu_display_params_from_tv(&disp_params, &chain->tv,
                                    ctx->display_tex_w, ctx->display_tex_h,
                                    (int)vp_w, (int)vp_h);
@@ -464,14 +464,19 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
         disp_params.output_hdr = ctx->hdr_enabled;
         SDL_PropertiesID props = SDL_GetWindowProperties(ctx->window);
         disp_params.hdr_headroom = gpu_render_headroom(ctx);
-        /* Auto HDR gain spends the display's headroom on full-white scanline
-         * centres: emission is scaled so they reach 90% of the current peak.
-         * Never below the preset's own gain, at most 4x. Offscreen captures
-         * keep the preset's gain so recordings do not depend on the host. */
-        float preset_gain = disp_params.hdr_gain > 0 ? disp_params.hdr_gain : 1;
-        if (ctx->crt_shader_enabled && ctx->hdr_enabled && !ctx->offscreen_w && ctx->hdr_gain_mode == 0) {
-            float fit = 0.9f * disp_params.hdr_headroom / gpu_display_scanline_peak(chain->tv.beam_fwhm_max);
-            disp_params.hdr_gain = fmaxf(preset_gain, fminf(fit, 4.0f));
+        /* Auto HDR gain puts the brightest phosphor of a full-white field,
+         * a stripe centre on a scanline centre, at 95% of the display's peak
+         * and starts the output shoulder there, so white keeps its line and
+         * stripe shape at the most light the panel has. Squeezing brighter
+         * peaks into the panel flattens them: lines measure taller and the
+         * gaps fill. The gain may fall below 1; a CRT's white is dimmer
+         * than the panel's. At most 4x. Offscreen HDR captures fit the
+         * headroom they are given, so they stay reproducible. */
+        if (ctx->crt_shader_enabled && ctx->hdr_enabled && ctx->hdr_gain_mode == 0) {
+            disp_params.shoulder_knee = 0.95f;
+            float fit = disp_params.shoulder_knee * disp_params.hdr_headroom
+                      / gpu_display_white_peak(&disp_params, chain->tv.beam_fwhm_max);
+            disp_params.hdr_gain = fminf(fit, 4.0f);
         }
         ctx->effective_hdr_gain = ctx->hdr_enabled ? (disp_params.hdr_gain > 0 ? disp_params.hdr_gain : 1) : 1;
         disp_params.sdr_white_level = ctx->hdr_enabled

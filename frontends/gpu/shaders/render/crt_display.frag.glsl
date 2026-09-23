@@ -91,7 +91,7 @@ layout(set = 3, binding = 0) uniform DisplayParams {
     vec2 mask_scale, mask_origin;
     vec4 phosphor_to_display[3];
     vec4 presentation; // x: host-refresh emission multiplier
-    vec4 monitor; // x: 1 = FW900 physical variable-pitch grille; y: panel subpixels, 0 off, 1 RGB, 2 BGR
+    vec4 monitor; // x: 1 = FW900 physical variable-pitch grille; y: panel subpixels, 0 off, 1 RGB, 2 BGR; z: shoulder knee
     vec4 damper;  // x: aperture-grille damper wires; y: shadow height, face fraction; z, w: wire heights from the top
 };
 
@@ -538,8 +538,10 @@ void main() {
     // Output adaptation, not tube physics. A continuous shoulder preserves
     // highlight gradients and RGB ratios when the host lacks phosphor peak
     // headroom. Independent channel clipping used to wash out the grille.
+    // Auto HDR gain fits white under a higher knee, leaving the shoulder
+    // only for light above white's peak.
     float peak=max(max(color.r,color.g),color.b);
-    float limit=max(hdr_headroom,1.0), knee=0.75*limit;
+    float limit=max(hdr_headroom,1.0), knee=monitor.z*limit;
     if (peak>knee) {
         float mapped=knee+(limit-knee)*(peak-knee)/(peak-knee+limit-knee);
         color*=mapped/peak;

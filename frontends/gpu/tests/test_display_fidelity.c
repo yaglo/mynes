@@ -359,9 +359,22 @@ int test_display_fidelity(SDL_GPUDevice *gpu) {
     CHECK(fabsf(row_mean[31][0]/row_mean[20][0]-1.0f)<0.01f);
     p.mask_type=1; p.damper_wires=0;
 
-    // Auto HDR gain divides the headroom by the scanline peak factor: the
-    // PVM's 0.6-line white lines peak 1.57x above a white field's average,
-    // the old 0.9-line lines 1.11x, merged 2-line lines not at all.
+    // Auto HDR gain needs the brightest pixel of a white field. The C
+    // estimate must match what the shader draws: exact stripes with and
+    // without subpixels, the band-limited grille, dot and slot masks.
+    const struct { int type, subpixels; float triad; } peaks[]={
+        {1,1,2.0f},{1,0,3.0f},{1,1,4.0f},{1,1,2.074f},{1,0,7.2f},
+        {0,0,3.0f},{0,0,4.0f},{0,0,6.0f},{0,0,7.5f},{0,0,12.0f},{2,0,4.0f},{2,0,6.0f},{2,0,9.0f}};
+    for(unsigned i=0;i<sizeof(peaks)/sizeof(peaks[0]);i++) {
+        p.mask_type=peaks[i].type; p.panel_subpixels=peaks[i].subpixels; p.mask_pitch_px=peaks[i].triad/3;
+        render(gpu,&d,input,target,&p,avg,&peak);
+        CHECK(fabsf(peak/0.25f/gpu_display_white_peak(&p,0)-1)<0.01f);
+    }
+    p.mask_type=1; p.panel_subpixels=0;
+
+    // The scanline part of that peak: 0.6-line white lines peak 1.57x above
+    // a white field's average, 0.9-line lines 1.11x, merged 2-line lines
+    // not at all.
     CHECK(fabsf(gpu_display_scanline_peak(0.6f)-1.566f)<0.005f);
     CHECK(fabsf(gpu_display_scanline_peak(2.0f)-1.0f)<0.001f);
     CHECK(fabsf(gpu_display_scanline_peak(0.9f)-1.112f)<0.005f);

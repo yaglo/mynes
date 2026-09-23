@@ -599,23 +599,23 @@ fragment main0_out main0(main0_in in [[stage_in]], constant DisplayParams& _235 
     }
     float peak = fast::max(fast::max(color.x, color.y), color.z);
     float limit = fast::max(_235.hdr_headroom, 1.0);
-    float knee = 0.75 * limit;
+    float knee = _235.monitor.z * limit;
     if (peak > knee)
     {
         float mapped = knee + (((limit - knee) * (peak - knee)) / (((peak - knee) + limit) - knee));
         color *= (mapped / peak);
     }
-    float3 _1765;
+    float3 _1766;
     if (_235.output_hdr != 0)
     {
-        _1765 = color * _235.sdr_white_level;
+        _1766 = color * _235.sdr_white_level;
     }
     else
     {
         float3 param_12 = color;
-        _1765 = srgb_encode(param_12);
+        _1766 = srgb_encode(param_12);
     }
-    color = _1765;
+    color = _1766;
     out.frag_color = float4(color, 1.0);
     return out;
 }

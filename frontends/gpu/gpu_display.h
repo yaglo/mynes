@@ -72,6 +72,7 @@ typedef struct {
     float pulse_gain;              /* zero is a genuinely dark refresh */
     bool reuse_halation;           /* same source texture as previous presentation */
     float hdr_gain;                 /* output multiplier (1.0=normal) */
+    float shoulder_knee;            /* output shoulder start, fraction of headroom; 0 = 0.75 */
     int   subpixel_layout;          /* 0=none, 1=RGB, 2=BGR */
     float overscan;                 /* bezel crop fraction per edge (0-0.08) */
     float keystone;                 /* trapezoidal distortion (-0.1 to +0.1) */
@@ -162,6 +163,10 @@ void gpu_display_params_from_tv(GPUDisplayParams *out, const TVDisplayParams *tv
  * this factor: Gaussian lines of the given FWHM, one line apart. It is 1
  * when neighbouring lines merge into a flat field. */
 float gpu_display_scanline_peak(float fwhm_lines);
+
+/* Brightest point of a full-white field over its average: the scanline
+ * peak times the fitted phosphor mask's peak coverage at its strength. */
+float gpu_display_white_peak(const GPUDisplayParams *p, float fwhm_lines);
 
 /* Fit the mask to the host panel, independently of the stored CRT preset.
  * Integer RGB-triad/row periods in pixel mode trade exact CRT pitch for stability.

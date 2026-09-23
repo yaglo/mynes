@@ -30,25 +30,33 @@
  * horizontal bridges stagger between neighbouring RGB groups.
  * Coverage and mipmaps are linear; they describe phosphor area, not sRGB.
  * This replaces 16 procedural mask evaluations per display pixel. */
+enum { MASK_SIDE = 128, MASK_SUB = 4 };
+
+/* Samples, of 16, open to each colour in one texel of the tile. */
+static void mask_tile_texel(bool slots, int x, int y, int count[3]) {
+    count[0]=count[1]=count[2]=0;
+    for (int sy=0; sy<MASK_SUB; sy++) for (int sx=0; sx<MASK_SUB; sx++) {
+        float py=(y+(sy+0.5f)/MASK_SUB)*2.0f/MASK_SIDE;
+        float px=(x+(sx+0.5f)/MASK_SUB)*(slots ? 6.0f : 3.0f)/MASK_SIDE;
+        if(slots) py+=((int)floorf(px/3)%2)*0.5f;
+        else px+=(int)floorf(py)*1.5f;
+        float dx=px-floorf(px)-0.5f, dy=py-floorf(py)-0.5f;
+        bool open=slots ? fabsf(dx)<0.42f && fabsf(dy)<0.37f
+            : (dx*dx/(0.42f*0.42f)+dy*dy/(0.40f*0.40f))<1.0f;
+        if (open) count[(int)floorf(px)%3]++;
+    }
+}
+
 static SDL_GPUTexture *create_mask_tile(SDL_GPUDevice *gpu, bool slots) {
-    enum { SIDE = 128, SUB = 4 };
+    enum { SIDE = MASK_SIDE };
     // Exact half-float encodings of 0/16 .. 16/16 sample coverage. Eight-bit
     // mip rounding biased the primaries differently at small mask pitches.
     static const Uint16 coverage[17]={0,0x2c00,0x3000,0x3200,0x3400,0x3500,0x3600,0x3700,
         0x3800,0x3880,0x3900,0x3980,0x3a00,0x3a80,0x3b00,0x3b80,0x3c00};
     Uint16 pixels[SIDE*SIDE*4];
     for (int y=0; y<SIDE; y++) for (int x=0; x<SIDE; x++) {
-        int count[3]={0};
-        for (int sy=0; sy<SUB; sy++) for (int sx=0; sx<SUB; sx++) {
-            float py=(y+(sy+0.5f)/SUB)*2.0f/SIDE;
-            float px=(x+(sx+0.5f)/SUB)*(slots ? 6.0f : 3.0f)/SIDE;
-            if(slots) py+=((int)floorf(px/3)%2)*0.5f;
-            else px+=(int)floorf(py)*1.5f;
-            float dx=px-floorf(px)-0.5f, dy=py-floorf(py)-0.5f;
-            bool open=slots ? fabsf(dx)<0.42f && fabsf(dy)<0.37f
-                : (dx*dx/(0.42f*0.42f)+dy*dy/(0.40f*0.40f))<1.0f;
-            if (open) count[(int)floorf(px)%3]++;
-        }
+        int count[3];
+        mask_tile_texel(slots,x,y,count);
         for (int c=0;c<3;c++) pixels[(y*SIDE+x)*4+c]=coverage[count[c]];
         pixels[(y*SIDE+x)*4+3]=0x3c00;
     }
@@ -644,12 +652,13 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
             float _color_pad[2];
             float phosphor_to_display[3][4];
             float pulse_gain, _pulse_pad[3];
-            float monitor_model, panel_subpixels, _monitor_pad[2];
+            float monitor_model, panel_subpixels, shoulder_knee, _monitor_pad;
             float damper_wires, damper_width, damper_y0, damper_y1;
         } crt_ubo = {0};
 
         crt_ubo.monitor_model = params->monitor_model;
         crt_ubo.panel_subpixels = (float)params->panel_subpixels;
+        crt_ubo.shoulder_knee = params->shoulder_knee > 0 ? params->shoulder_knee : 0.75f;
         crt_ubo.damper_wires = params->mask_type==1 ? (float)params->damper_wires : 0.0f;
         crt_ubo.damper_width = params->damper_width;
         crt_ubo.damper_y0 = params->damper_y[0];
@@ -884,6 +893,110 @@ float gpu_display_scanline_peak(float fwhm_lines) {
     double sigma = fwhm_lines / 2.354820045, peak = 0;
     for (int k = -8; k <= 8; k++) peak += exp(-(double)(k * k) / (2 * sigma * sigma));
     return (float)(peak / (2.5066282746310002 * sigma));
+}
+
+static double sinc_pi(double x) {
+    return fabs(x) < 1e-4 ? 1.0 : sin(M_PI * x) / (M_PI * x);
+}
+
+/* The most light one pixel draws from a colour's phosphor, over that
+ * colour's mean, in a white field. Mirrors aperture_mask() and
+ * phosphor_mask() in crt_display.frag.glsl. */
+static float mask_coverage_peak(const GPUDisplayParams *p) {
+    float pitch = fmaxf(p->mask_pitch_px, 0.05f);
+    float sx = p->mask_scale_x > 0 ? p->mask_scale_x : 1, sy = p->mask_scale_y > 0 ? p->mask_scale_y : 1;
+    if (p->mask_type == 1) {
+        float period = 3.0f * pitch;
+        if (fabsf(period - roundf(period)) < 0.001f && p->monitor_model != 1)
+            return fminf(period * 0.28f, 1.0f) / 0.28f;
+        float sampled = period / fmaxf(sx, 1);
+        int order = (int)fminf(floorf(sampled * 0.5f), 16);
+        if (order < 1) return 1;
+        double t = (order / sampled - 0.45) / 0.05;
+        double transition = t <= 0 ? 1 : t >= 1 ? 0 : 1 - t * t * (3 - 2 * t);
+        double best = 0;
+        for (int i = 0; i < 256; i++) {
+            double sum = 1;
+            for (int n = 1; n <= order; n++) {
+                double w0 = fmax(1.0 - (double)n / order, 0), w1 = 1.0 - (double)n / (order + 1);
+                sum += 2 * sinc_pi(n * 0.28) * sinc_pi(n / sampled)
+                     * (w0 + (w1 - w0) * transition) * cos(2 * M_PI * n * i / 256);
+            }
+            best = fmax(best, sum);
+        }
+        return (float)best;
+    }
+    /* Dot and slot masks: the tile's box-filtered mip chain, sampled
+     * trilinearly at the level the GPU derives from the shader's gradients,
+     * at the pixel centres of a 256-pixel square. Colours straddle coarse
+     * texels differently, so each is checked. */
+    bool slots = p->mask_type == 2;
+    enum { LEVELS = 8 };
+    static float mips[2][3][MASK_SIDE * MASK_SIDE * 2];
+    static int offset[LEVELS];
+    static bool ready[2];
+    if (!ready[slots]) {
+        for (int l = 1; l < LEVELS; l++) offset[l] = offset[l - 1] + (MASK_SIDE >> (l - 1)) * (MASK_SIDE >> (l - 1));
+        for (int y = 0; y < MASK_SIDE; y++) for (int x = 0; x < MASK_SIDE; x++) {
+            int count[3];
+            mask_tile_texel(slots, x, y, count);
+            for (int c = 0; c < 3; c++) mips[slots][c][y * MASK_SIDE + x] = count[c] / 16.0f;
+        }
+        for (int c = 0; c < 3; c++) for (int l = 1; l < LEVELS; l++) {
+            int side = MASK_SIDE >> l;
+            const float *src = mips[slots][c] + offset[l - 1];
+            float *dst = mips[slots][c] + offset[l];
+            for (int y = 0; y < side; y++) for (int x = 0; x < side; x++) {
+                const float *q = src + 2 * y * (2 * side) + 2 * x;
+                dst[y * side + x] = (q[0] + q[1] + q[2 * side] + q[2 * side + 1]) / 4;
+            }
+        }
+        ready[slots] = true;
+    }
+    float row = p->mask_row_pitch > 0 ? p->mask_row_pitch : pitch * (slots ? 2.4f : 0.8660254f);
+    double px = (slots ? 6 : 3) * pitch, py = 2 * row;
+    double lod = fmin(fmax(log2(fmax(fmaxf(sx, 1) / px, fmaxf(sy, 1) / py) * MASK_SIDE), 0), LEVELS - 1);
+    int l0 = (int)lod, l1 = l0 < LEVELS - 1 ? l0 + 1 : l0;
+    double blend = lod - l0, best = 0;
+    for (int c = 0; c < 3; c++) {
+        const float *m = mips[slots][c];
+        double dc = m[offset[LEVELS - 1]];
+        if (dc <= 0) continue;
+        for (int j = 0; j < 256; j++) for (int i = 0; i < 256; i++) {
+            double u = ((i + 0.5) * sx + p->mask_origin_x) / px, v = ((j + 0.5) * sy + p->mask_origin_y) / py;
+            double value = 0;
+            for (int k = 0; k < 2; k++) {
+                int l = k ? l1 : l0, side = MASK_SIDE >> l;
+                double tx = (u - floor(u)) * side - 0.5, ty = (v - floor(v)) * side - 0.5;
+                int x0 = (int)floor(tx), y0 = (int)floor(ty);
+                double ax = tx - x0, ay = ty - y0, sum = 0;
+                for (int dy = 0; dy < 2; dy++) for (int dx = 0; dx < 2; dx++) {
+                    int x = (x0 + dx + side) % side, y = (y0 + dy + side) % side;
+                    sum += m[offset[l] + y * side + x] * (dx ? ax : 1 - ax) * (dy ? ay : 1 - ay);
+                }
+                value += sum * (k ? blend : 1 - blend);
+            }
+            best = fmax(best, value / dc);
+        }
+    }
+    double t = (fmaxf(sx, 1) / (3 * pitch) - 0.40) / 0.10;
+    double unresolved = t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t);
+    return (float)(best + (1 - best) * unresolved);
+}
+
+float gpu_display_white_peak(const GPUDisplayParams *p, float fwhm_lines) {
+    static GPUDisplayParams last;
+    static float coverage = 1;
+    static bool valid;
+    if (!valid || p->mask_type != last.mask_type || p->monitor_model != last.monitor_model
+        || p->mask_pitch_px != last.mask_pitch_px || p->mask_row_pitch != last.mask_row_pitch
+        || p->mask_scale_x != last.mask_scale_x || p->mask_scale_y != last.mask_scale_y
+        || p->mask_origin_x != last.mask_origin_x || p->mask_origin_y != last.mask_origin_y) {
+        last = *p; valid = true;
+        coverage = mask_coverage_peak(p);
+    }
+    float mask = p->mask_strength > 0.01f ? 1 + p->mask_strength * (coverage - 1) : 1;
+    return gpu_display_scanline_peak(fwhm_lines) * mask;
 }
 
 void gpu_display_fit_mask(GPUDisplayParams *p, bool pixel_aligned, int panel_subpixels,
