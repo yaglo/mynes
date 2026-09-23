@@ -488,11 +488,17 @@ class EncodePipeline(unittest.TestCase):
         if not ok:
             self.assertIsNone(report["readme_gainmap"])
             self.skipTest(reason)
-        for jpg, size in ((self.d(README) / "readme-hdr.jpg", README),
-                          (self.d(LENS) / "flicker-hdr.jpg", tuple(report["flicker_webp"]["crop_px"][2:]))):
+        for jpg, png, size in ((self.d(README) / "readme-hdr.jpg", self.d(README) / "readme.png", README),
+                               (self.d(LENS) / "flicker-hdr.jpg", self.d(LENS) / "flicker.png",
+                                tuple(report["flicker_webp"]["crop_px"][2:]))):
             frames, got = image_info(jpg)
             self.assertEqual((frames, got), (2, size))  # the base image and the gain map (MPO)
             self.assertIn(b"urn:iso:std:iso:ts:21496:-1", jpg.read_bytes())
+            # The base image is the SDR render, so a viewer without HDR shows the SDR picture.
+            with Image.open(jpg) as base, Image.open(png) as sdr:
+                base.seek(0)
+                error = np.abs(np.asarray(base.convert("RGB")).astype(np.int64) - np.asarray(sdr.convert("RGB")))
+            self.assertLess(error.mean(), 3, jpg.name)
 
     # -- features ------------------------------------------------------------
     def test_features(self):
