@@ -547,13 +547,18 @@ class EncodePipeline(unittest.TestCase):
 
     # -- install -------------------------------------------------------------
     def make_site(self, name: str) -> Path:
+        """A site with a version 1 manifest: one clip with a video, a poster
+        and a still, as the live site has them."""
         site = Path(self.tmp) / name
         (site / "assets" / "hero").mkdir(parents=True)
         (site / "assets" / "old.bin").write_bytes(b"\0" * 300_000)
+        shutil.copy(self.d(STAGE[1]) / "stage-sdr.mp4", site / "assets" / "old.mp4")
+        shutil.copy(self.d(STAGE[1]) / "poster.webp", site / "assets" / "old.webp")
         existing = {"fps": 60.0988, "aspect": [4, 3],
                     "presets": [{"id": "legacy", "name": "Legacy", "blurb": "keep me"}],
                     "games": [{"id": "old", "title": "Old", "scene": "s", "default_preset": "legacy"}],
-                    "clips": {"old": {"legacy": {"video": "assets/old.mp4"}}},
+                    "clips": {"old": {"legacy": {"video": "assets/old.mp4", "poster": "assets/old.webp",
+                                                 "still": "assets/old.4k.webp", "still_size": [512, 384]}}},
                     "features": {"push-in": {"video": "assets/hero/features/push-in.mp4"}}}
         (site / "assets" / "hero" / "manifest.json").write_text(json.dumps(existing))
         return site
@@ -561,10 +566,17 @@ class EncodePipeline(unittest.TestCase):
     def install_ctx(self, site: Path, **kw) -> jobs_mod.Context:
         return jobs_mod.Context(shot_list=self.shot_list, out=self.out, presets_dir=self.presets_dir, site=site, **kw)
 
+    def listening_runner(self) -> tuple[Runner, list[str]]:
+        said = []
+        runner = Runner(quiet=True)
+        runner.say = said.append
+        return runner, said
+
     def test_install_and_manifest(self):
         site = self.make_site("site")
-        runner = Runner(quiet=True)
+        runner, said = self.listening_runner()
         merged = jobs_mod.install(self.install_ctx(site), runner, self.shot_list.select())
+        self.assertFalse([s for s in said if s.startswith("manifest warning")], said)
         hero = site / "assets" / "hero" / "synth" / "p_sony"
         for size in STAGE:
             for name in ("stage-hdr-hevc.mp4", "stage-hdr-av1.mp4", "stage-sdr.mp4", "poster.webp"):
@@ -593,7 +605,13 @@ class EncodePipeline(unittest.TestCase):
         self.assertEqual(clip["hdr"], {"white_nits": WHITE_NITS, "headroom": 4.0,
                                        "max_cll": max(s["max_cll"] for (z, h), s in self.sidecars.items() if h),
                                        "max_fall": max(s["max_fall"] for (z, h), s in self.sidecars.items() if h)})
-        self.assertEqual(merged["clips"]["old"], {"legacy": {"video": "assets/old.mp4"}})
+        # The version 1 clip is rewritten in version 2 form, with what its files say about themselves.
+        old = self.d(STAGE[1]) / "stage-sdr.mp4"
+        self.assertEqual(merged["clips"]["old"], {"legacy": {
+            "stage": [{"src": "assets/old.mp4", "type": f'video/mp4; codecs="{probe_video(old).codecs}"',
+                       "hdr": False, "width": 128, "height": 96, "bytes": old.stat().st_size}],
+            "still": {"hdr": None, "sdr": "assets/old.4k.webp", "width": 512, "height": 384, "frame": 0},
+            "poster": [{"src": "assets/old.webp", "width": 128, "height": 96}]}})
         self.assertEqual(merged["features"], {"push-in": {"video": "assets/hero/features/push-in.mp4"}})
         self.assertEqual([p["id"] for p in merged["presets"]], ["legacy", *PRESETS])
         self.assertEqual([g["id"] for g in merged["games"]], ["old", "synth"])
@@ -602,6 +620,17 @@ class EncodePipeline(unittest.TestCase):
         jobs_mod.install(self.install_ctx(site, with_crops=True), runner2, self.shot_list.select())
         self.assertTrue((hero / "512x384" / "crop-hdr@1x.avif").exists())
         self.assertEqual(runner2.ran, [])  # no commands, and only the crops were new
+
+    def test_install_with_nothing_built_leaves_the_manifest(self):
+        site = self.make_site("site-empty")
+        path = site / "assets" / "hero" / "manifest.json"
+        before = path.read_text()
+        empty = jobs_mod.Context(shot_list=self.shot_list, out=Path(self.tmp) / "nothing-built",
+                                 presets_dir=self.presets_dir, site=site)
+        with self.assertRaises(PipelineError) as cm:
+            jobs_mod.install(empty, Runner(quiet=True), self.shot_list.select())
+        self.assertIn("nothing to install", str(cm.exception))
+        self.assertEqual(path.read_text(), before)  # still version 1: no clip to write
 
     def test_install_refuses_over_budget(self):
         site = self.make_site("site-small")

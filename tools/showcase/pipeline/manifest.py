@@ -20,13 +20,16 @@ MediaCapabilities accepts; stage files also carry AAC-LC audio.
 Merging never drops a preset, game or clip this run did not produce, keeps
 top-level keys it does not know (a v1 "features" map, for example), and
 replaces a produced clip's v1 keys (video, still_size, full) with v2 ones.
-Stage and lens lists merge by "src"."""
+Stage and lens lists merge by "src". The site reads the version once for the
+whole file, so a version 1 clip the run did not produce is rewritten in
+version 2 form (upgrade_clip): its video becomes a one-entry SDR stage list,
+its still or full image a still of frame 0, a poster path a poster list."""
 from __future__ import annotations
 
 import copy
 import json
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
 
 from . import recipes
 from .shots import Shot, ShotList, preset_name
@@ -86,6 +89,57 @@ def _merge_sources(existing, produced: list[dict]) -> list[dict]:
     return [dict(s) for s in produced] + kept
 
 
+# describe(src, kind) gives what the site file says about itself: for kind
+# "video" {type, width, height, bytes}, for "image" {width, height}; {} when
+# the file is missing or unreadable.
+Describe = Callable[[str, str], dict]
+
+
+def is_v1_clip(clip) -> bool:
+    """A clip with keys the site reads only from a version 1 manifest. A
+    poster path is not one: the site reads it in either version."""
+    return isinstance(clip, dict) and (any(k in clip for k in V1_CLIP_KEYS) or isinstance(clip.get("still"), str))
+
+
+def v1_keys(clip: dict) -> list[str]:
+    return [k for k in ("video", "full", "still_size") if k in clip] + (
+        ["still"] if isinstance(clip.get("still"), str) else [])
+
+
+def upgrade_clip(clip: dict, describe: Describe | None = None) -> dict:
+    """A version 1 clip in version 2 form, other keys kept.
+
+    video -> stage [{src, type, hdr: false, width, height, bytes}]; full (the
+    lossless PNG) or else still, with still_size -> still {hdr: null, sdr,
+    width, height, frame: 0}; a poster path -> [{src, width, height}]. Sizes,
+    byte counts and the codecs string come from ``describe`` when the file
+    is on the site; version 1 held none of them."""
+    def about(src: str, kind: str) -> dict:
+        return dict(describe(src, kind) or {}) if describe else {}
+
+    def dims(src: str) -> dict:
+        return {k: v for k, v in about(src, "image").items() if k in ("width", "height")}
+
+    out = {k: copy.deepcopy(v) for k, v in clip.items() if k not in V1_CLIP_KEYS and k not in ("still", "poster")}
+    video = clip.get("video")
+    if isinstance(video, str) and video and "stage" not in clip:
+        out["stage"] = [{"src": video, "type": "video/mp4", "hdr": False, **about(video, "video")}]
+    full, still = clip.get("full"), clip.get("still")
+    image = full if isinstance(full, str) and full else still if isinstance(still, str) and still else None
+    if image:
+        size = clip.get("still_size")
+        known = {"width": size[0], "height": size[1]} if isinstance(size, list) and len(size) == 2 else dims(image)
+        out["still"] = {"hdr": None, "sdr": image, **known, "frame": 0}
+    elif isinstance(still, dict):
+        out["still"] = copy.deepcopy(still)
+    poster = clip.get("poster")
+    if isinstance(poster, str) and poster:
+        out["poster"] = [{"src": poster, **dims(poster)}]
+    elif poster is not None and not isinstance(poster, str):
+        out["poster"] = copy.deepcopy(poster)
+    return out
+
+
 def merge_clip(existing: dict | None, produced: dict) -> dict:
     clip = dict(existing or {})
     for key in V1_CLIP_KEYS:
@@ -103,10 +157,13 @@ def merge_clip(existing: dict | None, produced: dict) -> dict:
 
 
 def build(shot_list: ShotList, produced: dict[str, dict[str, dict]], *,
-          existing: dict | None = None, presets_dir: Path | None = None, region: str = "ntsc") -> dict:
+          existing: dict | None = None, presets_dir: Path | None = None, region: str = "ntsc",
+          describe: Describe | None = None) -> dict:
     """Merge what this run installed into ``existing`` (a v1 or v2 manifest, or None).
 
-    ``produced`` is {shot_id: {preset: clip}} with clip keys from CLIP_KEYS."""
+    ``produced`` is {shot_id: {preset: clip}} with clip keys from CLIP_KEYS.
+    Every other clip still in version 1 form is upgraded (upgrade_clip), so
+    the version 2 file holds no version 1 clip."""
     old = copy.deepcopy(existing) if existing else {}
     meta = shot_list.preset_meta
     old_presets = {e["id"]: e for e in old.get("presets", []) if isinstance(e, dict) and "id" in e}
@@ -122,6 +179,10 @@ def build(shot_list: ShotList, produced: dict[str, dict[str, dict]], *,
         game = clips.setdefault(shot_id, {})
         for preset, entry in by_preset.items():
             game[preset] = merge_clip(game.get(preset), entry)
+    for by_preset in clips.values():
+        for preset, clip in by_preset.items():
+            if is_v1_clip(clip):
+                by_preset[preset] = upgrade_clip(clip, describe)
     out = {"version": VERSION, "fps": old.get("fps", recipes.FPS_BY_REGION[region]),
            "aspect": old.get("aspect", [4, 3]), "presets": presets, "games": games, "clips": clips}
     for key, value in old.items():
@@ -145,14 +206,14 @@ def dump(manifest: dict) -> str:
 
 
 def validate(manifest: dict) -> list[str]:
-    """Problems a site would trip over; empty when the manifest is consistent.
-    v1 clips (no "stage") are left to the site's v1 reader."""
+    """Problems a site would trip over; empty when the manifest is consistent."""
     problems = []
     preset_ids = {p.get("id") for p in manifest.get("presets", [])}
     game_ids = {g.get("id") for g in manifest.get("games", [])}
     for g in manifest.get("games", []):
         if g.get("default_preset") not in preset_ids:
             problems.append(f"game {g.get('id')!r}: default_preset {g.get('default_preset')!r} not in presets")
+    v2 = manifest.get("version") == VERSION
     for game, presets in manifest.get("clips", {}).items():
         if game not in game_ids:
             problems.append(f"clips for unknown game {game!r}")
@@ -160,16 +221,19 @@ def validate(manifest: dict) -> list[str]:
             where = f"clip {game}/{preset}"
             if preset not in preset_ids:
                 problems.append(f"{where}: preset not listed")
+            if v2 and is_v1_clip(clip):
+                problems.append(f"{where}: version 1 keys in a version 2 manifest, which the site ignores: "
+                                + ", ".join(v1_keys(clip)))
             if "stage" not in clip:
                 continue
-            for key in ("poster", "still", "hdr"):
-                if key not in clip:
-                    problems.append(f"{where}: no {key!r}")
+            if "poster" not in clip:
+                problems.append(f"{where}: no 'poster'")
             posters = clip.get("poster")
             if isinstance(posters, list):
                 for i, poster in enumerate(posters):
                     if not isinstance(poster, dict) or not all(k in poster for k in ("src", "width", "height")):
                         problems.append(f"{where}: poster[{i}] needs src, width and height")
+            hdr_sources = False
             for key in ("stage", "lens"):
                 for i, source in enumerate(clip.get(key, [])):
                     missing = [k for k in SOURCE_KEYS if k not in source]
@@ -177,13 +241,17 @@ def validate(manifest: dict) -> list[str]:
                         problems.append(f"{where}: {key}[{i}] lacks {', '.join(missing)}")
                     elif 'codecs="' not in source["type"]:
                         problems.append(f"{where}: {key}[{i}] type has no codecs")
+                    hdr_sources = hdr_sources or source.get("hdr") is True
             if not clip["stage"]:
                 problems.append(f"{where}: empty stage list")
-            still = clip.get("still", {})
-            missing = [k for k in STILL_KEYS if k not in still]
-            if missing:
-                problems.append(f"{where}: still lacks {', '.join(missing)}")
-            missing = [k for k in HDR_KEYS if k not in clip.get("hdr", {})]
-            if missing:
-                problems.append(f"{where}: hdr lacks {', '.join(missing)}")
+            if "still" in clip:
+                missing = [k for k in STILL_KEYS if k not in (clip["still"] or {})]
+                if missing:
+                    problems.append(f"{where}: still lacks {', '.join(missing)}")
+            if "hdr" in clip:
+                missing = [k for k in HDR_KEYS if k not in clip["hdr"]]
+                if missing:
+                    problems.append(f"{where}: hdr lacks {', '.join(missing)}")
+            elif hdr_sources:
+                problems.append(f"{where}: HDR sources but no 'hdr'")
     return problems

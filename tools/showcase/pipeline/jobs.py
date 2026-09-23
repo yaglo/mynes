@@ -36,7 +36,7 @@ from . import recipes
 from . import shots as shots_mod
 from .codecs import mime_type
 from .recipes import VideoOutput
-from .runner import (Job, PipelineError, Runner, env_for_capture, find_font, probe_video, tool,
+from .runner import (Job, PipelineError, Runner, env_for_capture, find_font, image_info, probe_video, tool,
                      verify_animation, verify_image, verify_timing, verify_video)
 from .shots import Feature, Shot, ShotList
 
@@ -910,15 +910,36 @@ def assets_budget(site: Path, copies: list[tuple[Path, str]]) -> tuple[int, list
     return sum(size for size, _, _ in ranked), ranked
 
 
+def describe_site_file(site: Path, rel: str, kind: str) -> dict:
+    """What a version 1 manifest left out about a file on the site: size,
+    bytes and codecs string for a video, size for an image."""
+    path = site / rel
+    if not path.is_file():
+        return {}
+    try:
+        if kind == "video":
+            info = probe_video(path)
+            return {"type": mime_type(info.codecs), "width": info.width, "height": info.height,
+                    "bytes": path.stat().st_size}
+        _frames, (w, h) = image_info(path)
+        return {"width": w, "height": h}
+    except (PipelineError, OSError, ValueError):
+        return {}
+
+
 def install(ctx: Context, runner: Runner, pairs: list[tuple[Shot, str]]) -> dict | None:
     """Copy each complete clip into <site>/assets/hero/<shot>/<preset>/ and merge
-    manifest.json, unless the site's assets/ would exceed the budget."""
+    manifest.json, unless the site's assets/ would exceed the budget. The
+    manifest is left alone (with an error) when no selected clip is complete."""
     if not ctx.site:
         raise PipelineError("install needs the site directory (mynes-web checkout)")
     site = ctx.site
     if not runner.dry_run and not site.is_dir():
         raise PipelineError(f"site directory {site} does not exist")
+    manifest_path = site / manifest_mod.HERO_PREFIX / "manifest.json"
     clips = [c for c in (collect_clip(ctx, runner, s, p) for s, p in pairs) if c]
+    if not clips:
+        raise PipelineError(f"nothing to install: no selected clip is complete; {manifest_path} is unchanged")
     copies = [c for clip in clips for c in clip.copies]
     total, ranked = assets_budget(site, copies)
     budget = int(ctx.budget_mb * recipes.MB)
@@ -934,7 +955,6 @@ def install(ctx: Context, runner: Runner, pairs: list[tuple[Shot, str]]) -> dict
         dst = site / rel
         if runner.dry_run or not runner.up_to_date([dst], [src]):
             runner.copy(src, dst)
-    manifest_path = site / manifest_mod.HERO_PREFIX / "manifest.json"
     if runner.dry_run:
         runner.say(f"dry-run: would merge {len(clips)} clip(s) into {manifest_path}")
         return None
@@ -943,7 +963,8 @@ def install(ctx: Context, runner: Runner, pairs: list[tuple[Shot, str]]) -> dict
         produced.setdefault(clip.shot.id, {})[clip.preset] = clip.entry
     existing = manifest_mod.load(manifest_path) if manifest_path.exists() else None
     merged = manifest_mod.build(ctx.shot_list, produced, existing=existing, presets_dir=ctx.presets_dir,
-                                region=ctx.shot_list.defaults.region)
+                                region=ctx.shot_list.defaults.region,
+                                describe=lambda rel, kind: describe_site_file(site, rel, kind))
     for problem in manifest_mod.validate(merged):
         runner.say(f"manifest warning: {problem}")
     runner.write_text(manifest_path, manifest_mod.dump(merged))

@@ -112,12 +112,13 @@ options after it.
    removed before the recorder starts and written only after the checks
    pass.
 
-4. Install into the site (part of `all` when `--site` is given). Each
-   complete clip is copied to `assets/hero/<shot>/<preset>/<WxH>/` and merged
-   into `assets/hero/manifest.json`; entries the run did not produce are
-   kept. `install` refuses, listing the 20 largest files, when the site's
-   `assets/` would exceed `--budget-mb` (default 900; GitHub Pages sites must
-   stay under 1 GB). `--with-crops` also copies the detail crops.
+4. Install into the site (part of `all` when `--site` is given). Each complete
+   clip is copied to `assets/hero/<shot>/<preset>/<WxH>/` and merged into
+   `assets/hero/manifest.json`; entries the run did not produce are kept. When
+   no selected clip is complete, `install` stops and leaves the manifest as it
+   was. It refuses, listing the 20 largest files, when the site's `assets/`
+   would exceed `--budget-mb` (default 900; GitHub Pages sites must stay under
+   1 GB). `--with-crops` also copies the detail crops.
 
 5. Commit both repositories: `tools/showcase/shots.json` and any replays in
    mynes, `assets/hero/` in mynes-web (check `du -sh assets` first). The
@@ -244,6 +245,14 @@ only at its own pixel size. `hdr` holds the largest `max_cll` and `max_fall`
 over the clip's HDR renders. Merging keeps presets, games, clips and
 top-level keys the run did not produce, replaces a produced clip's version 1
 keys (`video`, `still_size`, `full`), and merges `stage` and `lens` by `src`.
+
+The site reads `version` once for the whole file, so a version 1 clip that
+stays in a version 2 manifest is rewritten in version 2 form: its `video`
+becomes a one-entry SDR `stage` list, its `full` PNG (or else its `still`)
+with `still_size` becomes `still` with frame 0 and no HDR file, and a `poster`
+path becomes a one-entry list. Sizes, byte counts and the codecs string are
+read from the files on the site. The manifest warnings list any clip still
+holding version 1 keys.
 
 ## The shot list
 

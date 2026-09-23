@@ -74,6 +74,13 @@ V1 = {
 }
 
 
+def describe(src, kind):
+    """What install reads from the site's files, for the version 1 clips."""
+    if kind == "video":
+        return {"type": 'video/mp4; codecs="avc1.64001f"', "width": 960, "height": 720, "bytes": 4321}
+    return {"width": 960, "height": 720}
+
+
 class Build(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -104,7 +111,7 @@ class Build(unittest.TestCase):
     def test_merge_keeps_everything_not_produced(self):
         existing = copy.deepcopy(V1)
         m = manifest.build(self.shot_list, {"mario": {"sony_pvm_14l2": clip()}}, existing=existing,
-                           presets_dir=self.presets_dir)
+                           presets_dir=self.presets_dir, describe=describe)
         self.assertEqual(existing, V1)  # input untouched
         self.assertEqual(m["version"], 2)
         self.assertEqual([p["id"] for p in m["presets"]],
@@ -115,7 +122,13 @@ class Build(unittest.TestCase):
         self.assertEqual(by_id["stass_favourite"]["name"], "Stas's Favourite")  # kept: no override
         self.assertEqual([g["id"] for g in m["games"]], ["kirby-title", "mario"])
         self.assertEqual(next(g for g in m["games"] if g["id"] == "mario")["title"], "Super Mario Bros.")
-        self.assertEqual(m["clips"]["kirby-title"], V1["clips"]["kirby-title"])
+        # Clips the run did not produce stay, in version 2 form: the site reads
+        # the version once for the whole file.
+        self.assertEqual(m["clips"]["kirby-title"], {"jvc_d_series_2000": {
+            "stage": [{"src": "assets/images/showcase/kirby.mp4", "type": 'video/mp4; codecs="avc1.64001f"',
+                       "hdr": False, "width": 960, "height": 720, "bytes": 4321}],
+            "poster": [{"src": "assets/hero/kirby-title/jvc.poster.webp", "width": 960, "height": 720}]}})
+        # A poster path alone is read by the site in either version.
         self.assertEqual(m["clips"]["mario"]["jvc_d_series_2000"], V1["clips"]["mario"]["jvc_d_series_2000"])
         sony = m["clips"]["mario"]["sony_pvm_14l2"]
         for key in ("video", "full", "still_size"):  # v1 keys of a produced clip give way to v2
@@ -123,6 +136,31 @@ class Build(unittest.TestCase):
         self.assertEqual(sony["still"], clip()["still"])
         self.assertEqual(sony["note"], "kept")
         self.assertEqual(m["features"], V1["features"])  # unknown top-level keys survive
+        self.assertEqual(manifest.validate(m), [])
+
+    def test_upgrade_v1_clips(self):
+        """What the site's version 1 reader takes from a clip, in version 2 keys."""
+        self.assertEqual(manifest.upgrade_clip(V1["clips"]["mario"]["sony_pvm_14l2"]), {
+            "note": "kept",
+            "stage": [{"src": "assets/images/showcase/old.mp4", "type": "video/mp4", "hdr": False}],
+            "still": {"hdr": None, "sdr": "assets/images/old.png", "width": 3840, "height": 2880, "frame": 0}})
+        self.assertEqual(manifest.upgrade_clip({"still": "a/still.webp", "poster": "a/p.webp"}, describe),
+                         {"still": {"hdr": None, "sdr": "a/still.webp", "width": 960, "height": 720, "frame": 0},
+                          "poster": [{"src": "a/p.webp", "width": 960, "height": 720}]})
+        self.assertEqual(manifest.upgrade_clip({"video": "gone.mp4"}, lambda src, kind: {}),
+                         {"stage": [{"src": "gone.mp4", "type": "video/mp4", "hdr": False}]})
+        v2 = clip()
+        self.assertFalse(manifest.is_v1_clip(v2))
+        self.assertFalse(manifest.is_v1_clip({"poster": "a/p.webp"}))
+        self.assertEqual(manifest.upgrade_clip(v2), v2)
+
+    def test_validate_flags_v1_clips_in_a_v2_manifest(self):
+        m = manifest.build(self.shot_list, {"mario": {"sony_pvm_14l2": clip()}}, presets_dir=self.presets_dir)
+        m["clips"]["mario"]["stass_favourite"] = {"video": "a.mp4", "still": "a.webp", "still_size": [3840, 2880]}
+        problems = manifest.validate(m)
+        self.assertEqual(problems, ["clip mario/stass_favourite: version 1 keys in a version 2 manifest, which "
+                                    "the site ignores: video, still_size, still"])
+        m["clips"]["mario"]["stass_favourite"] = {"poster": "a.webp"}
         self.assertEqual(manifest.validate(m), [])
 
     def test_sources_merge_by_src(self):
