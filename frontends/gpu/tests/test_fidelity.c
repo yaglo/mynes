@@ -675,7 +675,7 @@ static void receiver(SDL_GPUDevice *gpu) {
             measurements[line*4+3]=3*spp;
         }
         measurements[20*4+2]=-1; // vertical retrace mutes chroma
-        GpuReceiverPLLParams pp={32,width,spp,(uint32_t)region,0,{0}};
+        GpuReceiverPLLParams pp={32,width,spp,(uint32_t)region};
         int loop=chain_add_stage(&sc,"PLL test",CHAIN_KERNEL_RECEIVER_PLL,&pp,sizeof(pp),1,1);
         ChainStage *pll=&sc.stages[loop]; pll->io_typed=true;
         pll->ro_count=1;pll->ro[0]=CBR_AUX0;pll->rw_count=1;pll->rw[0]=CBR_AUX1;

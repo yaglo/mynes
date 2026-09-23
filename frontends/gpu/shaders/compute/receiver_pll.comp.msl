@@ -24,9 +24,13 @@ struct Params
     uint samples_per_dot;
     uint region;
     float h_response;
-    float reserved0;
-    float reserved1;
-    float reserved2;
+    float h_kp;
+    float h_ki;
+    float h_vblank_gain;
+    uint h_pll;
+    uint h_vblank_lines;
+    uint reserved0;
+    uint reserved1;
 };
 
 struct Measurement
@@ -42,36 +46,105 @@ float wrap(thread const float& p)
     return mod(p + 3.1415927410125732421875, 6.283185482025146484375) - 3.1415927410125732421875;
 }
 
-kernel void main0(device Reference& _26 [[buffer(2)]], constant Params& _32 [[buffer(0)]], const device Measurement& _69 [[buffer(1)]])
+kernel void main0(device Reference& _26 [[buffer(2)]], constant Params& _32 [[buffer(0)]], device Measurement& _87 [[buffer(1)]])
 {
     float4 state = _26.reference[_32.count];
+    float4 _46;
+    if (_32.h_pll != 0u)
+    {
+        _46 = _26.reference[_32.count + 1u];
+    }
+    else
+    {
+        _46 = float4(0.0);
+    }
+    float4 loop = _46;
     float advance = (float(_32.full_width % 12u) * 6.283185482025146484375) / 12.0;
     bool acquire = true;
+    float _145;
+    float _217;
+    float _235;
+    float4 _331;
     for (uint line = 0u; line < _32.count; line++)
     {
-        float4 m = _69.measurement[line];
+        float4 m = _87.measurement[line];
         float param = state.x + advance;
         state.x = wrap(param);
         bool sync = abs(m.w) < (8.0 * float(_32.samples_per_dot));
+        float predicted = state.w;
+        if (_32.h_pll != 0u)
+        {
+            bool vertical = m.z < 0.0;
+            bool _129;
+            if (vertical)
+            {
+                _129 = loop.z == 0.0;
+            }
+            else
+            {
+                _129 = vertical;
+            }
+            if (_129)
+            {
+                loop.y = 0.0;
+            }
+            loop.z = float(vertical);
+            if (loop.y < float(_32.h_vblank_lines))
+            {
+                _145 = _32.h_vblank_gain;
+            }
+            else
+            {
+                _145 = 1.0;
+            }
+            float g = _145;
+            loop.y = fast::min(loop.y + 1.0, 1000000.0);
+            if (sync && (!vertical))
+            {
+                float e = m.w - state.w;
+                loop.x += ((_32.h_ki * g) * e);
+                state.w += (((_32.h_kp * g) * e) + loop.x);
+            }
+            else
+            {
+                state.w += loop.x;
+            }
+        }
         if (m.z < 0.0)
         {
-            _26.reference[line] = float4(state.x, m.y, 0.0, state.w);
+            if (_32.h_pll != 0u)
+            {
+                _217 = predicted;
+            }
+            else
+            {
+                _217 = state.w;
+            }
+            _26.reference[line] = float4(state.x, m.y, 0.0, _217);
             acquire = true;
             continue;
         }
         if (sync)
         {
-            float horizontal = mix(state.w, m.w, _32.h_response);
-            bool _130;
-            if (acquire)
+            if (_32.h_pll != 0u)
             {
-                _130 = m.z > 0.00999999977648258209228515625;
+                _235 = state.w;
             }
             else
             {
-                _130 = acquire;
+                _235 = mix(state.w, m.w, _32.h_response);
             }
-            if (_130)
+            float horizontal = _235;
+            bool _257;
+            if (acquire)
+            {
+                _257 = m.z > 0.00999999977648258209228515625;
+            }
+            else
+            {
+                _257 = acquire;
+            }
+            if (_257)
             {
                 state = m;
                 acquire = false;
@@ -92,7 +165,17 @@ kernel void main0(device Reference& _26 [[buffer(2)]], constant Params& _32 [[bu
                     state.z *= 0.64999997615814208984375;
                 }
             }
-            if (_32.h_response > 0.0)
+            bool _310 = _32.h_response > 0.0;
+            bool _317;
+            if (!_310)
+            {
+                _317 = _32.h_pll != 0u;
+            }
+            else
+            {
+                _317 = _310;
+            }
+            if (_317)
             {
                 state.w = horizontal;
             }
@@ -101,7 +184,19 @@ kernel void main0(device Reference& _26 [[buffer(2)]], constant Params& _32 [[bu
         {
             state.z *= 0.64999997615814208984375;
         }
-        _26.reference[line] = state;
+        if (_32.h_pll != 0u)
+        {
+            _331 = float4(state.xyz, predicted);
+        }
+        else
+        {
+            _331 = state;
+        }
+        _26.reference[line] = _331;
     }
     _26.reference[_32.count] = state;
+    if (_32.h_pll != 0u)
+    {
+        _26.reference[_32.count + 1u] = loop;
+    }
 }

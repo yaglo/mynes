@@ -352,6 +352,9 @@ static inline bool preset_json_save(const PhysicalPreset *p, const char *path)
     /* Luma peaking (TV sharpness). */
     fprintf(f, "        \"luma_peaking\": %.6f,\n",         p->tv.luma_peaking);
     fprintf(f, "        \"h_afc_tau_ms\": %.6f,\n",         p->tv.h_afc_tau_ms);
+    fprintf(f, "        \"h_pll_hz\": %.6f,\n",             p->tv.h_pll_hz);
+    fprintf(f, "        \"h_pll_damping\": %.6f,\n",        p->tv.h_pll_damping);
+    fprintf(f, "        \"h_pll_vblank_gain\": %.6f,\n",    p->tv.h_pll_vblank_gain);
     fprintf(f, "        \"aperture_max_db\": %.6f,\n",         p->tv.aperture_max_db);
     fprintf(f, "        \"luma_notch_depth\": %.6f,\n",     p->tv.luma_notch_depth);
     /* Overscan / bezel crop. */
@@ -665,6 +668,9 @@ static inline void preset_json__assign(PhysicalPreset *p, PresetJsonSection sect
         /* Luma peaking / sharpness. */
         else MATCH_FLOAT(PJSON_SEC_TV, "luma_peaking",         p->tv.luma_peaking)
         else MATCH_FLOAT(PJSON_SEC_TV, "h_afc_tau_ms",         p->tv.h_afc_tau_ms)
+        else MATCH_FLOAT(PJSON_SEC_TV, "h_pll_hz",             p->tv.h_pll_hz)
+        else MATCH_FLOAT(PJSON_SEC_TV, "h_pll_damping",        p->tv.h_pll_damping)
+        else MATCH_FLOAT(PJSON_SEC_TV, "h_pll_vblank_gain",    p->tv.h_pll_vblank_gain)
         else MATCH_FLOAT(PJSON_SEC_TV, "aperture_max_db",         p->tv.aperture_max_db)
         else MATCH_FLOAT(PJSON_SEC_TV, "luma_notch_depth",     p->tv.luma_notch_depth)
         /* Overscan / bezel crop. */

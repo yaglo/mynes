@@ -292,10 +292,14 @@ typedef struct {
 } GpuVHSParams;
 
 /* Horizontal AFC is independent of the colour-burst PLL. Zero response
- * selects the legacy loop, including its frame acquisition behaviour. */
+ * selects the legacy loop, including its frame acquisition behaviour.
+ * h_pll selects a second-order loop (proportional h_kp, integral h_ki per
+ * line) whose detector gain is h_vblank_gain for h_vblank_lines from
+ * vertical sync; it keeps its state across frames. */
 typedef struct {
     uint32_t count, full_width, samples_per_dot, region;
-    float h_response, reserved[3];
+    float h_response, h_kp, h_ki, h_vblank_gain;
+    uint32_t h_pll, h_vblank_lines, reserved0, reserved1;
 } GpuReceiverPLLParams;
 
 /* Comb filter Y/C separator parameters (matches comb_filter.comp.glsl). */

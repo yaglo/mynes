@@ -204,6 +204,10 @@ typedef struct {
     float aperture_max_db;      /* >0: sharpness knob spans 0..this peak gain in dB;
                                 * 0: legacy generic amount. Frequency shape is approximate. */
     float h_afc_tau_ms;         /* horizontal phase response, ms; 0=legacy generic loop */
+    /* Second-order horizontal PLL (overrides h_afc_tau_ms when > 0):
+     * natural frequency, damping, and detector gain during the 21 lines
+     * from vertical sync (TDA2579 V-blank fast mode). */
+    float h_pll_hz, h_pll_damping, h_pll_vblank_gain;
     /* Fraction of residual carrier rejected in the Y FIR. 0.95 adds
      * 26 dB rejection at the carrier; 0 disables the horizontal trap.
      * Controls cross-luma, not cross-color in the separate chroma path.

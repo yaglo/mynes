@@ -106,9 +106,20 @@ static GpuReceiverPLLParams receiver_pll_params(const VideoGPUChain *v) {
     p.full_width = (uint32_t)v->raster_fmt.samples_per_line;
     p.samples_per_dot = (uint32_t)v->raster_fmt.samples_per_pixel;
     p.region = (uint32_t)v->raster_fmt.region;
-    if (v->chain->tv.h_afc_tau_ms > 0) {
+    const TVDisplayParams *tv = &v->chain->tv;
+    if (tv->h_pll_hz > 0) {
+        /* Second-order loop per line: Kp = 2 zeta wn, Ki = wn^2. */
+        double line_rate = signal_format_sample_rate_hz(&v->signal_fmt) / p.full_width;
+        double wn = 2 * M_PI * tv->h_pll_hz / line_rate;
+        double zeta = tv->h_pll_damping > 0 ? tv->h_pll_damping : 0.7;
+        p.h_pll = 1;
+        p.h_kp = (float)(2 * zeta * wn);
+        p.h_ki = (float)(wn * wn);
+        p.h_vblank_gain = tv->h_pll_vblank_gain > 0 ? tv->h_pll_vblank_gain : 1.0f;
+        p.h_vblank_lines = 21;
+    } else if (tv->h_afc_tau_ms > 0) {
         float line_ms = 1000.0f * p.full_width / signal_format_sample_rate_hz(&v->signal_fmt);
-        p.h_response = -expm1f(-line_ms / v->chain->tv.h_afc_tau_ms);
+        p.h_response = -expm1f(-line_ms / tv->h_afc_tau_ms);
     }
     return p;
 }
@@ -280,11 +291,13 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     }
     vgc->sig_chain.samples_per_line = fmt->samples_per_line;
 
-    vgc->buf_receiver = gpu_buffer_create(gpu, (Uint32)(fmt->lines + 1) * 4 * sizeof(float), GPU_BUF_READWRITE);
+    /* Per-line references, the carried loop state and the second-order
+     * horizontal loop's integrator and V-blank line count. */
+    vgc->buf_receiver = gpu_buffer_create(gpu, (Uint32)(fmt->lines + 2) * 4 * sizeof(float), GPU_BUF_READWRITE);
     vgc->buf_receiver_measurements = gpu_buffer_create(gpu, (Uint32)fmt->lines * 4 * sizeof(float), GPU_BUF_READWRITE);
     if (!vgc->buf_receiver || !vgc->buf_receiver_measurements) goto fail;
-    float receiver_zero[313 * 4] = {0};
-    if (!gpu_buffer_upload(gpu, vgc->buf_receiver, receiver_zero, (fmt->lines + 1) * 4 * sizeof(float))) goto fail;
+    float receiver_zero[314 * 4] = {0};
+    if (!gpu_buffer_upload(gpu, vgc->buf_receiver, receiver_zero, (fmt->lines + 2) * 4 * sizeof(float))) goto fail;
 
     /* ---- Upload FIR tap coefficients ---- */
     int taps_y_idx = chain_upload_taps(&vgc->sig_chain, gpu,
@@ -2000,9 +2013,9 @@ void video_gpu_reset_temporal_state(VideoGPUChain *vgc, SDL_GPUDevice *gpu)
     if (!vgc || !gpu) return;
 
     if (vgc->buf_receiver) {
-        float zeros[313 * 4] = {0};
+        float zeros[314 * 4] = {0};
         gpu_buffer_upload(gpu, vgc->buf_receiver, zeros,
-                          (Uint32)(vgc->raster_fmt.lines + 1) * 4 * sizeof(float));
+                          (Uint32)(vgc->raster_fmt.lines + 2) * 4 * sizeof(float));
     }
 
     if (vgc->buf_crt_load) {

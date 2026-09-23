@@ -947,7 +947,7 @@ bool preset_manage(uint32_t op, int index, uint32_t revision,
 static OSDMenuItem menu_dac[4];           /* Stage 1: DAC / connection / phase */
 static OSDMenuItem menu_console[5];       /* Stage 2: console output */
 static OSDMenuItem menu_cable[9];         /* Stage 3: cable transmission */
-static OSDMenuItem menu_comb[6];          /* Stage 5: separation + display smoothing */
+static OSDMenuItem menu_comb[9];          /* Stage 5: separation + display smoothing */
 static OSDMenuItem menu_chroma[8];        /* Stage 6-7: chroma demod */
 static OSDMenuItem menu_luma[8];          /* Stage 8: luma processing */
 static OSDMenuItem menu_color_decode[13]; /* Stage 9: matrix decode */
@@ -1167,6 +1167,9 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_comb[n++] = MI_FLOAT("Temporal blend",     &ctx->video_gpu_chain->temporal_blend, 0.05f, 0.0f, 0.5f, gpu_cb_update_beam_params, "%.2f");
     menu_comb[n++] = MI_FLOAT("Motion threshold",   &vc->tv.motion_threshold, 0.01f, 0.0f, 0.30f, gpu_cb_update_beam_params, "%.2f");
     menu_comb[n++] = MI_FLOAT("H AFC (ms, 0=auto)", &vc->tv.h_afc_tau_ms, 0.1f, 0.0f, 10.0f, gpu_cb_update_rc_params, "%.2f");
+    menu_comb[n++] = MI_FLOAT("H PLL Hz (0=AFC)", &vc->tv.h_pll_hz, 10, 0, 2000, gpu_cb_update_rc_params, "%.0f");
+    menu_comb[n++] = MI_FLOAT("H PLL damping", &vc->tv.h_pll_damping, .05f, .1f, 2, gpu_cb_update_rc_params, "%.2f");
+    menu_comb[n++] = MI_FLOAT("H PLL V-blank gain", &vc->tv.h_pll_vblank_gain, .1f, 1, 5, gpu_cb_update_rc_params, "%.1f");
     const int menu_comb_count=n;
 
     /* ================================================================

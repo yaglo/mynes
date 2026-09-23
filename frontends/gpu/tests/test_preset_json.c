@@ -165,6 +165,9 @@ static void make_distinctive_preset(PhysicalPreset *p)
     p->tv.persistence_tail_weight = 0.025;
     p->rf.if_asymmetry = 0.8;
     p->rf.tuning_offset_hz = 75000;
+    p->tv.h_pll_hz = 300;
+    p->tv.h_pll_damping = 0.8f;
+    p->tv.h_pll_vblank_gain = 2.0f;
     p->vhs.enabled = 1;
     p->vhs.luma_bandwidth = 2500000;
     p->vhs.chroma_bandwidth = 350000;
@@ -345,6 +348,9 @@ static int compare_presets(const PhysicalPreset *a, const PhysicalPreset *b,
     ASSERT_NEAR(b->tv.persistence_tail_weight,a->tv.persistence_tail_weight,FLOAT_TOL,"tv.persistence_tail_weight");
     ASSERT_NEAR(b->rf.if_asymmetry,a->rf.if_asymmetry,FLOAT_TOL,"rf.if_asymmetry");
     ASSERT_NEAR(b->rf.tuning_offset_hz,a->rf.tuning_offset_hz,FLOAT_TOL,"rf.tuning_offset_hz");
+    ASSERT_NEAR(b->tv.h_pll_hz,a->tv.h_pll_hz,FLOAT_TOL,"tv.h_pll_hz");
+    ASSERT_NEAR(b->tv.h_pll_damping,a->tv.h_pll_damping,FLOAT_TOL,"tv.h_pll_damping");
+    ASSERT_NEAR(b->tv.h_pll_vblank_gain,a->tv.h_pll_vblank_gain,FLOAT_TOL,"tv.h_pll_vblank_gain");
     ASSERT_NEAR(b->vhs.enabled,a->vhs.enabled,FLOAT_TOL,"vhs.enabled");
     ASSERT_NEAR(b->vhs.luma_bandwidth,a->vhs.luma_bandwidth,FLOAT_TOL,"vhs.luma_bandwidth");
     ASSERT_NEAR(b->vhs.chroma_bandwidth,a->vhs.chroma_bandwidth,FLOAT_TOL,"vhs.chroma_bandwidth");
