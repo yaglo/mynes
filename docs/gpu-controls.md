@@ -62,7 +62,10 @@ the old picture history (and any pause) before playback resumes.
 Room reflections start **off** and the choice is saved as a host setting,
 independent of the preset. Switching off retains each preset's light strengths
 and leaves bloom/internal glass scatter intact. The same toggle is also in
-**CRT / room → Glass / geometry** beside the glare controls. While browsing ROMs, R and G
+**CRT / room → Glass / geometry** beside the glare controls. G shows the new
+state in a notice for two seconds. In the menu the toggle's row shows the state;
+its notice runs out behind the menu on the same two-second clock, so closing the
+menu later shows no stale ROOM REFLECTIONS notice. While browsing ROMs, R and G
 are search input, not global shortcuts.
 
 For captures, `--room-reflections` and `--no-room-reflections` override the saved

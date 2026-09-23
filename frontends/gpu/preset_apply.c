@@ -516,7 +516,7 @@ static void gpu_cb_panel_subpixels(void) {
 static void gpu_cb_room_reflections(void) {
     g_ctx->config->gpu_room_reflections=g_ctx->render_ctx->room_reflections_enabled;
     mynes_config_save(g_ctx->config);
-    g_ctx->render_ctx->room_reflections_notice_until=SDL_GetTicks()+2000;
+    g_ctx->render_ctx->room_reflections_notice=true;
 }
 
 void preset_toggle_room_reflections(void) {

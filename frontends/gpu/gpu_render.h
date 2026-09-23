@@ -25,7 +25,7 @@ typedef struct {
     bool            display_bypass;      /* mask and glass off; phosphor colour, gain and shoulder stay */
     bool            output_p3;           /* the window's layer takes extended linear Display P3 */
     int             room_reflections_enabled; /* host preference, independent of preset */
-    Uint64          room_reflections_notice_until;
+    bool            room_reflections_notice;  /* toggled; main.c posts the notice */
     int             presentation_mode;   /* GPU_PRESENT_*; host preference only */
     float           dark_frame_level;
     int             presentation_slots, presentation_slot;

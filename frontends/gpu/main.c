@@ -1909,6 +1909,15 @@ int main(int argc, char **argv) {
             }
         }
 
+        /* preset_apply.c asks for this notice from the G key and the OSD
+         * toggle. Posted here, before the state requests below, it is timed
+         * from the toggle like any other notice and runs out behind an open
+         * menu. Posted only once no menu was open, it replaced the STATE
+         * SAVED or STATE LOADED notice of the menu action that closed it. */
+        if (render_ctx.room_reflections_notice) {
+            render_ctx.room_reflections_notice = false;
+            show_notice("ROOM REFLECTIONS (G)", render_ctx.room_reflections_enabled ? "ON" : "OFF");
+        }
         if (preset_ctx.console_reset_requested) {
             preset_ctx.console_reset_requested = false;
             if (rom_loaded && nes.mapper_loaded && !static_frame_buf) {
@@ -2093,12 +2102,6 @@ int main(int argc, char **argv) {
             osd_visible=true;
         } else {
             const char *notice=preset_cycle_notice();
-            /* preset_apply.c raises this from both the G key and the OSD
-             * toggle; consume it as a request for the shared notice. */
-            if (render_ctx.room_reflections_notice_until) {
-                render_ctx.room_reflections_notice_until=0;
-                show_notice("ROOM REFLECTIONS (G)",render_ctx.room_reflections_enabled ? "ON" : "OFF");
-            }
             if (SDL_GetTicks()<notice_until) {
                 gpu_osd_notice(osd_pixels,notice_title,notice_value);
                 osd_visible=true;
