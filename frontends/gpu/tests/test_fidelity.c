@@ -16,6 +16,7 @@ extern bool dispatch_h_blur_rgb_public(VideoGPUChain *, SDL_GPUCommandBuffer *);
 extern int test_display_fidelity(SDL_GPUDevice *gpu);
 extern int test_crt_load(SDL_GPUDevice *gpu);
 extern int test_osd(SDL_GPUDevice *gpu);
+extern int test_vhs_fidelity(SDL_GPUDevice *gpu);
 static int failures;
 #define CHECK(x) do { if (!(x)) { fprintf(stderr, "FAIL %d: %s\n", __LINE__, #x); failures++; } } while (0)
 
@@ -1162,6 +1163,7 @@ int main(void) {
     rgb_source(gpu);
     rf(gpu);
     rf_sidebands(gpu);
+    failures += test_vhs_fidelity(gpu);
     rf_temporal_continuity(gpu);
     dac_equivalence(gpu, SIGNAL_REGION_NTSC);
     dac_equivalence(gpu, SIGNAL_REGION_PAL);
