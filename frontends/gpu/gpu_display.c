@@ -644,13 +644,12 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
             float _color_pad[2];
             float phosphor_to_display[3][4];
             float pulse_gain, _pulse_pad[3];
-            float monitor_model, panel_subpixels, scanline_uv, _monitor_pad;
+            float monitor_model, panel_subpixels, _monitor_pad[2];
             float damper_wires, damper_width, damper_y0, damper_y1;
         } crt_ubo = {0};
 
         crt_ubo.monitor_model = params->monitor_model;
         crt_ubo.panel_subpixels = (float)params->panel_subpixels;
-        crt_ubo.scanline_uv = params->scanline_uv;
         crt_ubo.damper_wires = params->mask_type==1 ? (float)params->damper_wires : 0.0f;
         crt_ubo.damper_width = params->damper_width;
         crt_ubo.damper_y0 = params->damper_y[0];

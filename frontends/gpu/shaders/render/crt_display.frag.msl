@@ -89,83 +89,41 @@ struct main0_in
 };
 
 static inline __attribute__((always_inline))
-float damper_light(thread const float& y, constant DisplayParams& _234)
+float damper_light(thread const float& y, constant DisplayParams& _235)
 {
-    bool _1173 = _234.damper.x < 0.5;
-    bool _1180;
-    if (!_1173)
+    bool _994 = _235.damper.x < 0.5;
+    bool _1001;
+    if (!_994)
     {
-        _1180 = _234.mask_type != 1;
+        _1001 = _235.mask_type != 1;
     }
     else
     {
-        _1180 = _1173;
+        _1001 = _994;
     }
-    bool _1187;
-    if (!_1180)
+    bool _1008;
+    if (!_1001)
     {
-        _1187 = _234.mask_strength <= 0.00999999977648258209228515625;
+        _1008 = _235.mask_strength <= 0.00999999977648258209228515625;
     }
     else
     {
-        _1187 = _1180;
+        _1008 = _1001;
     }
-    if (_1187)
+    if (_1008)
     {
         return 1.0;
     }
-    float h = _234.out_size.y;
-    float half_band = (0.5 * _234.damper.y) * h;
+    float h = _235.out_size.y;
+    float half_band = (0.5 * _235.damper.y) * h;
     float top = (y * h) - 0.5;
     float bottom = (y * h) + 0.5;
-    float lost = fast::max(0.0, fast::min(bottom, (_234.damper.z * h) + half_band) - fast::max(top, (_234.damper.z * h) - half_band));
-    if (_234.damper.x > 1.5)
+    float lost = fast::max(0.0, fast::min(bottom, (_235.damper.z * h) + half_band) - fast::max(top, (_235.damper.z * h) - half_band));
+    if (_235.damper.x > 1.5)
     {
-        lost += fast::max(0.0, fast::min(bottom, (_234.damper.w * h) + half_band) - fast::max(top, (_234.damper.w * h) - half_band));
+        lost += fast::max(0.0, fast::min(bottom, (_235.damper.w * h) + half_band) - fast::max(top, (_235.damper.w * h) - half_band));
     }
-    return 1.0 - (_234.mask_strength * fast::clamp(lost, 0.0, 1.0));
-}
-
-static inline __attribute__((always_inline))
-float3 beam_light(thread const float2& p, constant DisplayParams& _234, texture2d<float> tex_composite, sampler tex_compositeSmplr)
-{
-    float3 v = fast::max(tex_composite.sample(tex_compositeSmplr, p).xyz, float3(0.0));
-    float3 _691;
-    if (_234.input_gamma > 0.0)
-    {
-        _691 = powr(v, float3(_234.input_gamma));
-    }
-    else
-    {
-        _691 = v;
-    }
-    return _691;
-}
-
-static inline __attribute__((always_inline))
-float3 line_peak_light(thread const float2& p, constant DisplayParams& _234, texture2d<float> tex_composite, sampler tex_compositeSmplr)
-{
-    float _771;
-    if (_234.monitor.z > 0.0)
-    {
-        _771 = _234.monitor.z;
-    }
-    else
-    {
-        _771 = 0.0041666668839752674102783203125;
-    }
-    float h = _771;
-    float2 param = p;
-    float3 peak = beam_light(param, _234, tex_composite, tex_compositeSmplr);
-    for (int i = 1; i <= 2; i++)
-    {
-        float2 d = float2(0.0, (0.25 * float(i)) * h);
-        float2 param_1 = fast::clamp(p + d, float2(0.0), float2(1.0));
-        peak = fast::max(peak, beam_light(param_1, _234, tex_composite, tex_compositeSmplr));
-        float2 param_2 = fast::clamp(p - d, float2(0.0), float2(1.0));
-        peak = fast::max(peak, beam_light(param_2, _234, tex_composite, tex_compositeSmplr));
-    }
-    return peak;
+    return 1.0 - (_235.mask_strength * fast::clamp(lost, 0.0, 1.0));
 }
 
 static inline __attribute__((always_inline))
@@ -174,6 +132,22 @@ float tube_hash(thread float2& p)
     p = fract(p * float2(123.339996337890625, 456.209991455078125));
     p += float2(dot(p, p + float2(45.31999969482421875)));
     return fract(p.x * p.y);
+}
+
+static inline __attribute__((always_inline))
+float3 beam_light(thread const float2& p, constant DisplayParams& _235, texture2d<float> tex_composite, sampler tex_compositeSmplr)
+{
+    float3 v = fast::max(tex_composite.sample(tex_compositeSmplr, p).xyz, float3(0.0));
+    float3 _581;
+    if (_235.input_gamma > 0.0)
+    {
+        _581 = powr(v, float3(_235.input_gamma));
+    }
+    else
+    {
+        _581 = v;
+    }
+    return _581;
 }
 
 static inline __attribute__((always_inline))
@@ -201,16 +175,16 @@ float stripe_window(thread const float& x, thread const float& period, thread co
 static inline __attribute__((always_inline))
 float sinc_pi(thread const float& x)
 {
-    float _86;
+    float _74;
     if (abs(x) < 9.9999997473787516355514526367188e-05)
     {
-        _86 = 1.0;
+        _74 = 1.0;
     }
     else
     {
-        _86 = sin(3.1415927410125732421875 * x) / (3.1415927410125732421875 * x);
+        _74 = sin(3.1415927410125732421875 * x) / (3.1415927410125732421875 * x);
     }
-    return _86;
+    return _74;
 }
 
 static inline __attribute__((always_inline))
@@ -225,26 +199,35 @@ float stripe_harmonic(thread const int& n, thread const int& order, thread const
 }
 
 static inline __attribute__((always_inline))
-float3 aperture_mask(thread const float& x, thread const float& pitch, constant DisplayParams& _234)
+float3 aperture_mask(thread const float& x, thread const float& pitch, constant DisplayParams& _235)
 {
     float period = 3.0 * fast::max(pitch, 0.0500000007450580596923828125);
-    bool _240 = _234.monitor.y > 0.5;
-    bool _247;
-    if (_240)
+    bool whole = abs(period - round(period)) < 0.001000000047497451305389404296875;
+    bool _242;
+    if (whole)
     {
-        _247 = _234.monitor.x != 1.0;
+        _242 = _235.monitor.x != 1.0;
     }
     else
     {
-        _247 = _240;
+        _242 = whole;
     }
-    if (_247)
+    if (_242)
     {
-        float3 offset = select(float3(0.20999999344348907470703125, 0.5, 0.790000021457672119140625), float3(0.790000021457672119140625, 0.5, 0.20999999344348907470703125), bool3(_234.subpixel_layout == 2));
-        float3 site = select(float3(0.16666667163372039794921875, 0.5, 0.833333313465118408203125), float3(0.833333313465118408203125, 0.5, 0.16666667163372039794921875), bool3(_234.monitor.y > 1.5));
+        float3 offset = select(float3(0.20999999344348907470703125, 0.5, 0.790000021457672119140625), float3(0.790000021457672119140625, 0.5, 0.20999999344348907470703125), bool3(_235.subpixel_layout == 2));
+        float3 _265;
+        if (_235.monitor.y > 1.5)
+        {
+            _265 = float3(0.833333313465118408203125, 0.5, 0.16666667163372039794921875);
+        }
+        else
+        {
+            _265 = select(float3(0.5), float3(0.16666667163372039794921875, 0.5, 0.833333313465118408203125), bool3(_235.monitor.y > 0.5));
+        }
+        float3 site = _265;
         float shift = fract(0.5 - (0.5 * period));
         float xs = x - shift;
-        if (abs(period - round(period)) < 0.001000000047497451305389404296875)
+        if (_235.monitor.y > 0.5)
         {
             float3 delta = site - fract((offset * period) + float3(shift));
             offset += ((delta - round(delta)) / float3(period));
@@ -263,7 +246,7 @@ float3 aperture_mask(thread const float& x, thread const float& pitch, constant 
         float param_11 = 0.2800000011920928955078125;
         return float3(stripe_window(param, param_1, param_2, param_3), stripe_window(param_4, param_5, param_6, param_7), stripe_window(param_8, param_9, param_10, param_11));
     }
-    float footprint = fast::max(1.0, _234.mask_scale.x);
+    float footprint = fast::max(1.0, _235.mask_scale.x);
     float sampled_period = period / footprint;
     int order = min(int(floor(sampled_period * 0.5)), 16);
     if (order < 1)
@@ -279,151 +262,95 @@ float3 aperture_mask(thread const float& x, thread const float& pitch, constant 
         float param_14 = sampled_period;
         coverage += (cos(phase * float(n)) * stripe_harmonic(param_12, param_13, param_14));
     }
-    float3 _401;
-    if (_234.subpixel_layout == 2)
+    float3 _402;
+    if (_235.subpixel_layout == 2)
     {
-        _401 = coverage.zyx;
+        _402 = coverage.zyx;
     }
     else
     {
-        _401 = coverage;
+        _402 = coverage;
     }
-    return _401;
+    return _402;
 }
 
 static inline __attribute__((always_inline))
-float3 phosphor_mask(thread const float2& pos, thread const float2& face_uv, constant DisplayParams& _234, texture2d<float> tex_mask, sampler tex_maskSmplr)
+float3 phosphor_mask(thread const float2& pos, thread const float2& face_uv, constant DisplayParams& _235, texture2d<float> tex_mask, sampler tex_maskSmplr)
 {
-    if (_234.monitor.x == 1.0)
+    if (_235.monitor.x == 1.0)
     {
         float t = face_uv.x - 0.5;
         float pitch_mm = 0.23000000417232513427734375 + ((0.1599999964237213134765625 * t) * t);
         float phase = 2498.513427734375 * atan((2.0 * t) * 0.4170288145542144775390625);
-        float pitch = ((_234.out_size.x * _234.mask_scale.x) * pitch_mm) / 1437.89404296875;
+        float pitch = ((_235.out_size.x * _235.mask_scale.x) * pitch_mm) / 1437.89404296875;
         float param = (phase * 3.0) * pitch;
         float param_1 = pitch;
-        return aperture_mask(param, param_1, _234);
+        return aperture_mask(param, param_1, _235);
     }
-    if (_234.mask_type == 1)
+    if (_235.mask_type == 1)
     {
         float param_2 = pos.x;
-        float param_3 = _234.mask_pitch_pixels;
-        return aperture_mask(param_2, param_3, _234);
+        float param_3 = _235.mask_pitch_pixels;
+        return aperture_mask(param_2, param_3, _235);
     }
-    float pitch_1 = fast::max(_234.mask_pitch_pixels, 0.0500000007450580596923828125);
-    float _591;
-    if (_234.mask_row_pitch > 0.0)
+    float pitch_1 = fast::max(_235.mask_pitch_pixels, 0.0500000007450580596923828125);
+    float _480;
+    if (_235.mask_row_pitch > 0.0)
     {
-        _591 = _234.mask_row_pitch;
+        _480 = _235.mask_row_pitch;
     }
     else
     {
-        _591 = pitch_1 * ((_234.mask_type == 2) ? 2.400000095367431640625 : 0.866025388240814208984375);
+        _480 = pitch_1 * ((_235.mask_type == 2) ? 2.400000095367431640625 : 0.866025388240814208984375);
     }
-    float row_pitch = _591;
-    float2 period = float2(((_234.mask_type == 2) ? 6.0 : 3.0) * pitch_1, 2.0 * row_pitch);
+    float row_pitch = _480;
+    float2 period = float2(((_235.mask_type == 2) ? 6.0 : 3.0) * pitch_1, 2.0 * row_pitch);
     float2 coord = pos / period;
     float3 dc = tex_mask.sample(tex_maskSmplr, float2(0.5), level(7.0)).xyz;
-    float2 footprint = fast::max(float2(1.0), _234.mask_scale) / period;
+    float2 footprint = fast::max(float2(1.0), _235.mask_scale) / period;
     float3 coverage = tex_mask.sample(tex_maskSmplr, coord, gradient2d(float2(footprint.x, 0.0), float2(0.0, footprint.y))).xyz / fast::max(dc, float3(0.001000000047497451305389404296875));
-    float unresolved = smoothstep(0.4000000059604644775390625, 0.5, fast::max(1.0, _234.mask_scale.x) / (3.0 * pitch_1));
+    float unresolved = smoothstep(0.4000000059604644775390625, 0.5, fast::max(1.0, _235.mask_scale.x) / (3.0 * pitch_1));
     coverage = mix(coverage, float3(1.0), float3(unresolved));
-    float3 _670;
-    if (_234.subpixel_layout == 2)
+    float3 _559;
+    if (_235.subpixel_layout == 2)
     {
-        _670 = coverage.zyx;
+        _559 = coverage.zyx;
     }
     else
     {
-        _670 = coverage;
+        _559 = coverage;
     }
-    return _670;
+    return _559;
 }
 
 static inline __attribute__((always_inline))
-float3 grille_within_peak(thread const float3& coverage, thread const float3& drive, constant DisplayParams& _234)
-{
-    float period = 3.0 * fast::max(_234.mask_pitch_pixels, 0.0500000007450580596923828125);
-    float peak_cover = 1.0;
-    if (_234.monitor.y > 0.5)
-    {
-        peak_cover = fast::min(1.0, 0.2800000011920928955078125 * period) / 0.2800000011920928955078125;
-    }
-    else
-    {
-        float sampled_period = period / fast::max(1.0, _234.mask_scale.x);
-        int order = min(int(floor(sampled_period * 0.5)), 16);
-        for (int n = 1; n <= order; n++)
-        {
-            int param = n;
-            int param_1 = order;
-            float param_2 = sampled_period;
-            peak_cover += stripe_harmonic(param, param_1, param_2);
-        }
-    }
-    if (peak_cover <= 1.00100004673004150390625)
-    {
-        return coverage;
-    }
-    float _476;
-    if (_234.hdr_gain > 0.0)
-    {
-        _476 = _234.hdr_gain;
-    }
-    else
-    {
-        _476 = 1.0;
-    }
-    float scale = (fast::max(_234.glass_tint, 0.001000000047497451305389404296875) * _476) * fast::max(_234.presentation.x, 0.001000000047497451305389404296875);
-    float limit = (0.75 * fast::max(_234.hdr_headroom, 1.0)) / scale;
-    float3 depth = fast::clamp(((float3(limit) / fast::max(drive, float3(9.9999999747524270787835121154785e-07))) - float3(1.0)) / float3(peak_cover - 1.0), float3(0.0), float3(1.0));
-    return float3(1.0) + ((coverage - float3(1.0)) * depth);
-}
-
-static inline __attribute__((always_inline))
-float3 phosphor_light(thread const float2& p, thread const float2& face_pos, thread float3& g_line_peak, constant DisplayParams& _234, texture2d<float> tex_mask, sampler tex_maskSmplr, texture2d<float> tex_composite, sampler tex_compositeSmplr)
+float3 phosphor_light(thread const float2& p, thread const float2& face_pos, constant DisplayParams& _235, texture2d<float> tex_mask, sampler tex_maskSmplr, texture2d<float> tex_composite, sampler tex_compositeSmplr)
 {
     float2 param = p;
-    float3 color = beam_light(param, _234, tex_composite, tex_compositeSmplr);
-    if (_234.degauss_tint > 0.001000000047497451305389404296875)
+    float3 color = beam_light(param, _235, tex_composite, tex_compositeSmplr);
+    if (_235.degauss_tint > 0.001000000047497451305389404296875)
     {
         float2 pos = (p - float2(0.5)) * 2.0;
         float3 lobes = float3(0.5) + (float3(pos.x, ((-0.5) * pos.x) + (0.866025388240814208984375 * pos.y), ((-0.5) * pos.x) - (0.866025388240814208984375 * pos.y)) * 0.25);
-        float3 lost = color * fast::clamp(lobes * ((_234.degauss_tint * dot(pos, pos)) * 0.119999997317790985107421875), float3(0.0), float3(0.5));
+        float3 lost = color * fast::clamp(lobes * ((_235.degauss_tint * dot(pos, pos)) * 0.119999997317790985107421875), float3(0.0), float3(0.5));
         color += (((lost.yzx + lost.zxy) * 0.5) - lost);
     }
-    if (_234.secondary_scatter > 0.001000000047497451305389404296875)
+    if (_235.secondary_scatter > 0.001000000047497451305389404296875)
     {
         float mean_excitation = ((color.x + color.y) + color.z) / 3.0;
-        color = mix(color, float3(mean_excitation), float3(fast::clamp(_234.secondary_scatter, 0.0, 1.0)));
+        color = mix(color, float3(mean_excitation), float3(fast::clamp(_235.secondary_scatter, 0.0, 1.0)));
     }
     float3 drive = color;
-    if (_234.mask_strength > 0.00999999977648258209228515625)
+    if (_235.mask_strength > 0.00999999977648258209228515625)
     {
         float2 param_1 = face_pos;
         float2 param_2 = p;
-        float3 coverage = phosphor_mask(param_1, param_2, _234, tex_mask, tex_maskSmplr);
-        bool _925 = _234.mask_type == 1;
-        bool _931;
-        if (_925)
-        {
-            _931 = _234.monitor.x != 1.0;
-        }
-        else
-        {
-            _931 = _925;
-        }
-        if (_931)
-        {
-            float3 param_3 = coverage;
-            float3 param_4 = g_line_peak;
-            coverage = grille_within_peak(param_3, param_4, _234);
-        }
-        color *= mix(float3(1.0), coverage, float3(_234.mask_strength));
+        float3 coverage = phosphor_mask(param_1, param_2, _235, tex_mask, tex_maskSmplr);
+        color *= mix(float3(1.0), coverage, float3(_235.mask_strength));
     }
-    if (_234.chromaticity_drive_shift > 0.001000000047497451305389404296875)
+    if (_235.chromaticity_drive_shift > 0.001000000047497451305389404296875)
     {
-        float s = fast::clamp(_234.chromaticity_drive_shift, 0.0, 1.0);
+        float s = fast::clamp(_235.chromaticity_drive_shift, 0.0, 1.0);
         float3 response = drive / (float3(1.0) + drive);
         color.z = (color.z * (1.0 - ((0.02999999932944774627685546875 * s) * response.z))) + (((0.039999999105930328369140625 * s) * response.y) * color.y);
         color.x *= (1.0 + ((0.0199999995529651641845703125 * s) * response.x));
@@ -432,48 +359,48 @@ float3 phosphor_light(thread const float2& p, thread const float2& face_pos, thr
 }
 
 static inline __attribute__((always_inline))
-float3 face_emission(thread const float2& sample_uv, thread const float2& face_pos, thread float3& g_line_peak, constant DisplayParams& _234, texture2d<float> tex_mask, sampler tex_maskSmplr, texture2d<float> tex_composite, sampler tex_compositeSmplr, texture2d<float> tex_halation, sampler tex_halationSmplr)
+float3 face_emission(thread const float2& sample_uv, thread const float2& face_pos, constant DisplayParams& _235, texture2d<float> tex_mask, sampler tex_maskSmplr, texture2d<float> tex_composite, sampler tex_compositeSmplr, texture2d<float> tex_halation, sampler tex_halationSmplr)
 {
     float2 param = sample_uv;
     float2 param_1 = face_pos;
-    float3 color = phosphor_light(param, param_1, g_line_peak, _234, tex_mask, tex_maskSmplr, tex_composite, tex_compositeSmplr);
-    if (_234.antiglare_blur > 0.001000000047497451305389404296875)
+    float3 color = phosphor_light(param, param_1, _235, tex_mask, tex_maskSmplr, tex_composite, tex_compositeSmplr);
+    if (_235.antiglare_blur > 0.001000000047497451305389404296875)
     {
-        float amount = fast::clamp(_234.antiglare_blur, 0.0, 1.0);
-        float2 radius = float2(amount * _234.mask_pitch_pixels) / fast::max(_234.mask_scale, float2(0.001000000047497451305389404296875));
+        float amount = fast::clamp(_235.antiglare_blur, 0.0, 1.0);
+        float2 radius = float2(amount * _235.mask_pitch_pixels) / fast::max(_235.mask_scale, float2(0.001000000047497451305389404296875));
         float2 dx = float2(radius.x, 0.0);
         float2 dy = float2(0.0, radius.y);
-        float2 param_2 = sample_uv + (dx / _234.out_size);
-        float2 param_3 = face_pos + (dx * _234.mask_scale);
-        float2 param_4 = sample_uv - (dx / _234.out_size);
-        float2 param_5 = face_pos - (dx * _234.mask_scale);
-        float2 param_6 = sample_uv + (dy / _234.out_size);
-        float2 param_7 = face_pos + (dy * _234.mask_scale);
-        float2 param_8 = sample_uv - (dy / _234.out_size);
-        float2 param_9 = face_pos - (dy * _234.mask_scale);
-        float3 blurred = (((phosphor_light(param_2, param_3, g_line_peak, _234, tex_mask, tex_maskSmplr, tex_composite, tex_compositeSmplr) + phosphor_light(param_4, param_5, g_line_peak, _234, tex_mask, tex_maskSmplr, tex_composite, tex_compositeSmplr)) + phosphor_light(param_6, param_7, g_line_peak, _234, tex_mask, tex_maskSmplr, tex_composite, tex_compositeSmplr)) + phosphor_light(param_8, param_9, g_line_peak, _234, tex_mask, tex_maskSmplr, tex_composite, tex_compositeSmplr)) * 0.25;
+        float2 param_2 = sample_uv + (dx / _235.out_size);
+        float2 param_3 = face_pos + (dx * _235.mask_scale);
+        float2 param_4 = sample_uv - (dx / _235.out_size);
+        float2 param_5 = face_pos - (dx * _235.mask_scale);
+        float2 param_6 = sample_uv + (dy / _235.out_size);
+        float2 param_7 = face_pos + (dy * _235.mask_scale);
+        float2 param_8 = sample_uv - (dy / _235.out_size);
+        float2 param_9 = face_pos - (dy * _235.mask_scale);
+        float3 blurred = (((phosphor_light(param_2, param_3, _235, tex_mask, tex_maskSmplr, tex_composite, tex_compositeSmplr) + phosphor_light(param_4, param_5, _235, tex_mask, tex_maskSmplr, tex_composite, tex_compositeSmplr)) + phosphor_light(param_6, param_7, _235, tex_mask, tex_maskSmplr, tex_composite, tex_compositeSmplr)) + phosphor_light(param_8, param_9, _235, tex_mask, tex_maskSmplr, tex_composite, tex_compositeSmplr)) * 0.25;
         color = mix(color, blurred, float3(amount));
     }
-    bool _1105 = _234.halation_strength > 0.001000000047497451305389404296875;
-    bool _1113;
-    if (!_1105)
+    bool _926 = _235.halation_strength > 0.001000000047497451305389404296875;
+    bool _934;
+    if (!_926)
     {
-        _1113 = _234.glass_reflection > 0.001000000047497451305389404296875;
+        _934 = _235.glass_reflection > 0.001000000047497451305389404296875;
     }
     else
     {
-        _1113 = _1105;
+        _934 = _926;
     }
-    if (_1113)
+    if (_934)
     {
         float3 halo = tex_halation.sample(tex_halationSmplr, sample_uv).xyz;
-        float3 tint = float3(_234.halation_tint_r, _234.halation_tint_g, _234.halation_tint_b);
+        float3 tint = float3(_235.halation_tint_r, _235.halation_tint_g, _235.halation_tint_b);
         if (((tint.x + tint.y) + tint.z) < 9.9999997473787516355514526367188e-05)
         {
             tint = float3(1.0);
         }
-        float3 h = fast::clamp(tint * _234.halation_strength, float3(0.0), float3(1.0));
-        float r = fast::clamp(_234.glass_reflection * 0.07999999821186065673828125, 0.0, 1.0);
+        float3 h = fast::clamp(tint * _235.halation_strength, float3(0.0), float3(1.0));
+        float r = fast::clamp(_235.glass_reflection * 0.07999999821186065673828125, 0.0, 1.0);
         color = mix(color, halo, float3(1.0) - ((float3(1.0) - h) * (1.0 - r)));
     }
     return color;
@@ -494,142 +421,126 @@ float3 srgb_encode(thread const float3& v)
     return select(v * 12.9200000762939453125, (powr(v, float3(0.4166666567325592041015625)) * 1.05499994754791259765625) - float3(0.054999999701976776123046875), v > float3(0.003130800090730190277099609375));
 }
 
-fragment main0_out main0(main0_in in [[stage_in]], constant DisplayParams& _234 [[buffer(0)]], texture2d<float> tex_mask [[texture(2)]], texture2d<float> tex_composite [[texture(0)]], texture2d<float> tex_halation [[texture(1)]], sampler tex_maskSmplr [[sampler(2)]], sampler tex_compositeSmplr [[sampler(0)]], sampler tex_halationSmplr [[sampler(1)]], float4 gl_FragCoord [[position]])
+fragment main0_out main0(main0_in in [[stage_in]], constant DisplayParams& _235 [[buffer(0)]], texture2d<float> tex_mask [[texture(2)]], texture2d<float> tex_composite [[texture(0)]], texture2d<float> tex_halation [[texture(1)]], sampler tex_maskSmplr [[sampler(2)]], sampler tex_compositeSmplr [[sampler(0)]], sampler tex_halationSmplr [[sampler(1)]], float4 gl_FragCoord [[position]])
 {
     main0_out out = {};
-    float3 g_line_peak = float3(0.0);
     float2 sample_uv = fast::clamp(in.uv, float2(0.0), float2(1.0));
-    float2 face_pos = (gl_FragCoord.xy * _234.mask_scale) + _234.mask_origin;
+    float2 face_pos = (gl_FragCoord.xy * _235.mask_scale) + _235.mask_origin;
     float param = sample_uv.y;
-    float3 gain = float3(damper_light(param, _234));
-    bool _1287 = _234.mask_type == 1;
-    bool _1293;
-    if (_1287)
+    float3 gain = float3(damper_light(param, _235));
+    bool _1110 = _235.cathode_center_dim > 0.001000000047497451305389404296875;
+    bool _1120;
+    if (!_1110)
     {
-        _1293 = _234.mask_strength > 0.00999999977648258209228515625;
+        _1120 = abs(_235.cathode_gain_r - 1.0) > 0.001000000047497451305389404296875;
     }
     else
     {
-        _1293 = _1287;
+        _1120 = _1110;
     }
-    if (_1293)
+    bool _1130;
+    if (!_1120)
     {
-        float2 param_1 = sample_uv;
-        g_line_peak = line_peak_light(param_1, _234, tex_composite, tex_compositeSmplr);
-    }
-    bool _1302 = _234.cathode_center_dim > 0.001000000047497451305389404296875;
-    bool _1312;
-    if (!_1302)
-    {
-        _1312 = abs(_234.cathode_gain_r - 1.0) > 0.001000000047497451305389404296875;
+        _1130 = abs(_235.cathode_gain_g - 1.0) > 0.001000000047497451305389404296875;
     }
     else
     {
-        _1312 = _1302;
+        _1130 = _1120;
     }
-    bool _1322;
-    if (!_1312)
+    bool _1140;
+    if (!_1130)
     {
-        _1322 = abs(_234.cathode_gain_g - 1.0) > 0.001000000047497451305389404296875;
+        _1140 = abs(_235.cathode_gain_b - 1.0) > 0.001000000047497451305389404296875;
     }
     else
     {
-        _1322 = _1312;
+        _1140 = _1130;
     }
-    bool _1332;
-    if (!_1322)
-    {
-        _1332 = abs(_234.cathode_gain_b - 1.0) > 0.001000000047497451305389404296875;
-    }
-    else
-    {
-        _1332 = _1322;
-    }
-    if (_1332)
+    if (_1140)
     {
         float2 cd = in.uv - float2(0.5);
         float r2 = dot(cd, cd) * 4.0;
-        float center_shape = 1.0 - (_234.cathode_center_dim * (1.0 - r2));
-        gain *= (float3(_234.cathode_gain_r, _234.cathode_gain_g, _234.cathode_gain_b) * center_shape);
+        float center_shape = 1.0 - (_235.cathode_center_dim * (1.0 - r2));
+        gain *= (float3(_235.cathode_gain_r, _235.cathode_gain_g, _235.cathode_gain_b) * center_shape);
     }
-    if (_234.emi_gradient > 0.001000000047497451305389404296875)
+    if (_235.emi_gradient > 0.001000000047497451305389404296875)
     {
         float bar = 1.0 - smoothstep(0.0, 0.60000002384185791015625, in.uv.x);
-        gain *= (1.0 + ((_234.emi_gradient * 0.100000001490116119384765625) * bar));
+        gain *= (1.0 + ((_235.emi_gradient * 0.100000001490116119384765625) * bar));
     }
-    if (_234.phosphor_grain > 0.001000000047497451305389404296875)
+    if (_235.phosphor_grain > 0.001000000047497451305389404296875)
     {
-        float2 param_2 = in.uv * float2(1800.0, 1400.0);
-        float _1397 = tube_hash(param_2);
-        float g = _1397;
-        gain *= (1.0 + ((_234.phosphor_grain * (g - 0.5)) * 2.0));
+        float2 param_1 = in.uv * float2(1800.0, 1400.0);
+        float _1205 = tube_hash(param_1);
+        float g = _1205;
+        gain *= (1.0 + ((_235.phosphor_grain * (g - 0.5)) * 2.0));
     }
-    if (_234.thermal_dome_amount > 0.001000000047497451305389404296875)
+    if (_235.thermal_dome_amount > 0.001000000047497451305389404296875)
     {
-        float mean_t = ((_234.thermal_r + _234.thermal_g) + _234.thermal_b) * 0.3333333432674407958984375;
-        float3 drift = float3(_234.thermal_r - mean_t, _234.thermal_g - mean_t, _234.thermal_b - mean_t);
-        gain *= (float3(1.0) + ((drift * _234.thermal_dome_amount) * 1.5));
+        float mean_t = ((_235.thermal_r + _235.thermal_g) + _235.thermal_b) * 0.3333333432674407958984375;
+        float3 drift = float3(_235.thermal_r - mean_t, _235.thermal_g - mean_t, _235.thermal_b - mean_t);
+        gain *= (float3(1.0) + ((drift * _235.thermal_dome_amount) * 1.5));
     }
     float3 color;
-    if (_234.monitor.y > 0.5)
+    if (_235.monitor.y > 0.5)
     {
-        float third = (_234.monitor.y > 1.5) ? (-0.3333333432674407958984375) : 0.3333333432674407958984375;
-        float2 step_uv = float2(third / _234.out_size.x, 0.0);
-        float2 step_face = float2(third * _234.mask_scale.x, 0.0);
-        float2 param_3 = fast::clamp(in.uv - step_uv, float2(0.0), float2(1.0));
-        float2 param_4 = face_pos - step_face;
-        float3 at_red = fast::max(face_emission(param_3, param_4, g_line_peak, _234, tex_mask, tex_maskSmplr, tex_composite, tex_compositeSmplr, tex_halation, tex_halationSmplr) * gain, float3(0.0));
-        float2 param_5 = sample_uv;
-        float2 param_6 = face_pos;
-        float3 at_green = fast::max(face_emission(param_5, param_6, g_line_peak, _234, tex_mask, tex_maskSmplr, tex_composite, tex_compositeSmplr, tex_halation, tex_halationSmplr) * gain, float3(0.0));
-        float2 param_7 = fast::clamp(in.uv + step_uv, float2(0.0), float2(1.0));
-        float2 param_8 = face_pos + step_face;
-        float3 at_blue = fast::max(face_emission(param_7, param_8, g_line_peak, _234, tex_mask, tex_maskSmplr, tex_composite, tex_compositeSmplr, tex_halation, tex_halationSmplr) * gain, float3(0.0));
-        color = float3(dot(_234.phosphor_to_display[0].xyz, at_red), dot(_234.phosphor_to_display[1].xyz, at_green), dot(_234.phosphor_to_display[2].xyz, at_blue));
+        float third = (_235.monitor.y > 1.5) ? (-0.3333333432674407958984375) : 0.3333333432674407958984375;
+        float2 step_uv = float2(third / _235.out_size.x, 0.0);
+        float2 step_face = float2(third * _235.mask_scale.x, 0.0);
+        float2 param_2 = fast::clamp(in.uv - step_uv, float2(0.0), float2(1.0));
+        float2 param_3 = face_pos - step_face;
+        float3 at_red = fast::max(face_emission(param_2, param_3, _235, tex_mask, tex_maskSmplr, tex_composite, tex_compositeSmplr, tex_halation, tex_halationSmplr) * gain, float3(0.0));
+        float2 param_4 = sample_uv;
+        float2 param_5 = face_pos;
+        float3 at_green = fast::max(face_emission(param_4, param_5, _235, tex_mask, tex_maskSmplr, tex_composite, tex_compositeSmplr, tex_halation, tex_halationSmplr) * gain, float3(0.0));
+        float2 param_6 = fast::clamp(in.uv + step_uv, float2(0.0), float2(1.0));
+        float2 param_7 = face_pos + step_face;
+        float3 at_blue = fast::max(face_emission(param_6, param_7, _235, tex_mask, tex_maskSmplr, tex_composite, tex_compositeSmplr, tex_halation, tex_halationSmplr) * gain, float3(0.0));
+        color = float3(dot(_235.phosphor_to_display[0].xyz, at_red), dot(_235.phosphor_to_display[1].xyz, at_green), dot(_235.phosphor_to_display[2].xyz, at_blue));
     }
     else
     {
-        float2 param_9 = sample_uv;
-        float2 param_10 = face_pos;
-        color = fast::max(face_emission(param_9, param_10, g_line_peak, _234, tex_mask, tex_maskSmplr, tex_composite, tex_compositeSmplr, tex_halation, tex_halationSmplr) * gain, float3(0.0));
-        color = float3(dot(_234.phosphor_to_display[0].xyz, color), dot(_234.phosphor_to_display[1].xyz, color), dot(_234.phosphor_to_display[2].xyz, color));
+        float2 param_8 = sample_uv;
+        float2 param_9 = face_pos;
+        color = fast::max(face_emission(param_8, param_9, _235, tex_mask, tex_maskSmplr, tex_composite, tex_compositeSmplr, tex_halation, tex_halationSmplr) * gain, float3(0.0));
+        color = float3(dot(_235.phosphor_to_display[0].xyz, color), dot(_235.phosphor_to_display[1].xyz, color), dot(_235.phosphor_to_display[2].xyz, color));
     }
-    color *= _234.glass_tint;
-    float2 param_11 = in.uv;
-    float param_12 = _234.vignette_strength;
-    color *= vignette_factor(param_11, param_12);
-    float _1569;
-    if (_234.hdr_gain > 0.0)
+    color *= _235.glass_tint;
+    float2 param_10 = in.uv;
+    float param_11 = _235.vignette_strength;
+    color *= vignette_factor(param_10, param_11);
+    float _1379;
+    if (_235.hdr_gain > 0.0)
     {
-        _1569 = _234.hdr_gain;
+        _1379 = _235.hdr_gain;
     }
     else
     {
-        _1569 = 1.0;
+        _1379 = 1.0;
     }
-    color *= (_1569 * _234.presentation.x);
-    color += float3(_234.ambient_light * 0.1500000059604644775390625);
-    if (_234.glass_glare > 0.001000000047497451305389404296875)
+    color *= (_1379 * _235.presentation.x);
+    color += float3(_235.ambient_light * 0.1500000059604644775390625);
+    if (_235.glass_glare > 0.001000000047497451305389404296875)
     {
         float2 env_uv = in.uv;
         float3 warm = float3(1.0);
-        if (_234.glass_glare_temp_k > 100.0)
+        if (_235.glass_glare_temp_k > 100.0)
         {
-            float t = _234.glass_glare_temp_k * 0.00999999977648258209228515625;
-            if (_234.glass_glare_temp_k <= 6600.0)
+            float t = _235.glass_glare_temp_k * 0.00999999977648258209228515625;
+            if (_235.glass_glare_temp_k <= 6600.0)
             {
                 warm.x = 1.0;
                 warm.y = fast::clamp((0.38999998569488525390625 * log(t)) - 0.630999982357025146484375, 0.0, 1.0);
-                float _1628;
-                if (_234.glass_glare_temp_k < 1900.0)
+                float _1439;
+                if (_235.glass_glare_temp_k < 1900.0)
                 {
-                    _1628 = 0.0;
+                    _1439 = 0.0;
                 }
                 else
                 {
-                    _1628 = fast::clamp((0.5429999828338623046875 * log(t - 10.0)) - 1.19599997997283935546875, 0.0, 1.0);
+                    _1439 = fast::clamp((0.5429999828338623046875 * log(t - 10.0)) - 1.19599997997283935546875, 0.0, 1.0);
                 }
-                warm.z = _1628;
+                warm.z = _1439;
             }
             else
             {
@@ -644,12 +555,12 @@ fragment main0_out main0(main0_in in [[stage_in]], constant DisplayParams& _234 
         float3 ceiling_c = warm * 0.449999988079071044921875;
         float3 env = mix(floor_c, wall_c, float3(smoothstep(0.0, 0.550000011920928955078125, h)));
         env = mix(env, ceiling_c, float3(smoothstep(0.550000011920928955078125, 1.0, h)));
-        float2 light_xy = float2(_234.glass_glare_light_x, 1.0 - _234.glass_glare_light_y);
+        float2 light_xy = float2(_235.glass_glare_light_x, 1.0 - _235.glass_glare_light_y);
         float2 d_light = env_uv - light_xy;
-        float sz = fast::max(_234.glass_glare_size, 0.0199999995529651641845703125);
+        float sz = fast::max(_235.glass_glare_size, 0.0199999995529651641845703125);
         float key_g = exp(((-(d_light.x * d_light.x)) / (((2.0 * sz) * sz) * 6.0)) - ((d_light.y * d_light.y) / (((2.0 * sz) * sz) * 1.0)));
         env += ((warm * key_g) * 1.7999999523162841796875);
-        float matte = fast::clamp(_234.antiglare_blur, 0.0, 1.0);
+        float matte = fast::clamp(_235.antiglare_blur, 0.0, 1.0);
         if (matte > 0.001000000047497451305389404296875)
         {
             float3 mean = (((floor_c + wall_c) + ceiling_c) * 0.333000004291534423828125) + (warm * 0.1500000059604644775390625);
@@ -659,24 +570,24 @@ fragment main0_out main0(main0_in in [[stage_in]], constant DisplayParams& _234 
         float edge_d = fast::min(edge_vec.x, edge_vec.y);
         float edge_boost = 1.0 + (0.25 * (1.0 - smoothstep(0.0, 0.07999999821186065673828125, edge_d)));
         float corner_fade = smoothstep(0.0, 0.039999999105930328369140625, sqrt(edge_vec.x * edge_vec.y));
-        color += ((((env * edge_boost) * corner_fade) * _234.glass_glare) * 1.60000002384185791015625);
+        color += ((((env * edge_boost) * corner_fade) * _235.glass_glare) * 1.60000002384185791015625);
     }
     float2 face = in.uv - float2(0.5);
     float face_r2 = dot(face, face);
-    float _1817;
-    if (_234.barrel_v != 0.0)
+    float _1628;
+    if (_235.barrel_v != 0.0)
     {
-        _1817 = _234.barrel_v;
+        _1628 = _235.barrel_v;
     }
     else
     {
-        _1817 = _234.barrel;
+        _1628 = _235.barrel;
     }
-    face *= (float2(1.0) + (float2(_234.barrel, _1817) * face_r2));
+    face *= (float2(1.0) + (float2(_235.barrel, _1628) * face_r2));
     face += float2(0.5);
     float2 coverage = fast::clamp(float2(0.5) + (fast::min(face, float2(1.0) - face) / fast::max(fwidth(face), float2(9.9999999747524270787835121154785e-07))), float2(0.0), float2(1.0));
-    color = mix(float3(_234.ambient_light * 0.1500000059604644775390625), color, float3(coverage.x * coverage.y));
-    if (_234.output_hdr == 0)
+    color = mix(float3(_235.ambient_light * 0.1500000059604644775390625), color, float3(coverage.x * coverage.y));
+    if (_235.output_hdr == 0)
     {
         float low = fast::min(fast::min(color.x, color.y), color.z);
         if (low < 0.0)
@@ -687,24 +598,24 @@ fragment main0_out main0(main0_in in [[stage_in]], constant DisplayParams& _234 
         color = fast::max(color, float3(0.0));
     }
     float peak = fast::max(fast::max(color.x, color.y), color.z);
-    float limit = fast::max(_234.hdr_headroom, 1.0);
+    float limit = fast::max(_235.hdr_headroom, 1.0);
     float knee = 0.75 * limit;
     if (peak > knee)
     {
         float mapped = knee + (((limit - knee) * (peak - knee)) / (((peak - knee) + limit) - knee));
         color *= (mapped / peak);
     }
-    float3 _1951;
-    if (_234.output_hdr != 0)
+    float3 _1765;
+    if (_235.output_hdr != 0)
     {
-        _1951 = color * _234.sdr_white_level;
+        _1765 = color * _235.sdr_white_level;
     }
     else
     {
-        float3 param_13 = color;
-        _1951 = srgb_encode(param_13);
+        float3 param_12 = color;
+        _1765 = srgb_encode(param_12);
     }
-    color = _1951;
+    color = _1765;
     out.frag_color = float4(color, 1.0);
     return out;
 }

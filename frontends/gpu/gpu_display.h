@@ -51,7 +51,6 @@ typedef struct {
     float mask_row_pitch;           /* 0 = physical aspect; otherwise fitted row spacing */
     float mask_scale_x, mask_scale_y, mask_origin_x, mask_origin_y;
     int   panel_subpixels;          /* host panel: 0 = sample pixel centres, 1 = RGB stripe, 2 = BGR */
-    float scanline_uv;              /* one scanline in beam-texture UV; 0 = 1/240 */
     int   damper_wires;             /* aperture-grille damper wires, 0-2 */
     float damper_y[2];              /* wire heights, fraction of the face from the top */
     float damper_width;             /* wire shadow height, fraction of the face height */
