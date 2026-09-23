@@ -12,9 +12,9 @@ Flicker warning: the preview GIF alternates 2 frames at 25 Hz.
 Preview: [Kirby's Adventure title screen on the JVC D-Series preset](docs/images/kirby-jvc.gif),
 consecutive frames with the alternating NTSC phases kept separate. The GIF is
 640×480 with a fixed palette, scaled down from 960×720 renders, which alters
-the mask pattern. The [Showcase page](https://yaglo.github.io/mynes-web/gallery/showcase/)
-and the [project site](https://yaglo.github.io/mynes-web/) have more games,
-presets and 3840×2880 captures.
+the mask pattern. The [Gallery](https://yaglo.github.io/mynes-web/gallery/) of
+the [project site](https://yaglo.github.io/mynes-web/) has more games, presets
+and 3840×2880 captures.
 
 ## Features
 
