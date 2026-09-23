@@ -439,8 +439,9 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
             disp_params.ambient_light = 0;
         }
         const GPUOutputGeometry *panel=&ctx->output_geometry;
-        gpu_display_fit_mask(&disp_params,ctx->mask_alignment==0,
+        gpu_display_fit_mask(&disp_params,ctx->mask_alignment==0,ctx->panel_subpixels,
             panel->scale_x,panel->scale_y,panel->origin_x,panel->origin_y);
+        ctx->effective_panel_subpixels=disp_params.panel_subpixels;
         ctx->effective_mask_triads=vp_w*panel->scale_x/(3*disp_params.mask_pitch_px);
         if (!ctx->crt_shader_enabled) {
             memset(&disp_params, 0, sizeof(disp_params));

@@ -11,7 +11,8 @@ static int compare(const void *a, const void *b) {
 }
 
 bool gpu_benchmark(VideoGPUChain *v, SDL_GPUDevice *gpu,
-                   const SignalPrecompute *sp, const char *render_shader_dir, bool pixel_aligned) {
+                   const SignalPrecompute *sp, const char *render_shader_dir, bool pixel_aligned,
+                   int panel_subpixels) {
     bool recompute_geometry = getenv("MYNES_BENCH_RECOMPUTE_GEOMETRY") != NULL;
     const int sizes[][2] = {{640,480}, {1280,960}, {1920,1440}, {2560,1920}};
     uint16_t codes[256*240];
@@ -39,7 +40,7 @@ bool gpu_benchmark(VideoGPUChain *v, SDL_GPUDevice *gpu,
         double ms[SAMPLES], total=0;
         GPUDisplayParams p;
         gpu_display_params_from_tv(&p,&v->chain->tv,w,h,w,h);
-        gpu_display_fit_mask(&p,pixel_aligned,1,1,0,0);
+        gpu_display_fit_mask(&p,pixel_aligned,panel_subpixels,1,1,0,0);
         p.output_hdr=1; p.hdr_headroom=4; p.sdr_white_level=1;
         SDL_WaitForGPUIdle(gpu);
         for (int frame=-WARMUP; ok && frame<SAMPLES; frame++) {

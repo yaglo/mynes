@@ -183,7 +183,7 @@ int test_display_fidelity(SDL_GPUDevice *gpu) {
     // It must average to neutral light, including with panel-pixel fitting on.
     p.monitor_model=1;
     GPUDisplayParams fwfit={.monitor_model=1,.mask_pitch_px=.08f};
-    gpu_display_fit_mask(&fwfit,true,1,1,0,0);
+    gpu_display_fit_mask(&fwfit,true,0,1,1,0,0);
     CHECK(fwfit.mask_pitch_px==.08f);
     render(gpu,&d,input,target,&p,avg,&peak);
     for(int c=0;c<3;c++) CHECK(fabsf(avg[c]-.25f)<.001f);
@@ -242,23 +242,83 @@ int test_display_fidelity(SDL_GPUDevice *gpu) {
         for(int c=0;c<3;c++) CHECK(fabsf(avg[c]-0.25f)<0.001f);
         for(int x=0;x<W;x++) for(int c=0;c<3;c++) CHECK(center_row[x][c]>=0);
     }
+    // Drawn on panel subpixels (RGB stripe), a one-pixel triad needs no
+    // computed stripes: every channel is flat and the panel's own red, green
+    // and blue columns form the grille. Energy per channel is unchanged.
+    p.mask_type=1; p.panel_subpixels=1; p.mask_pitch_px=1.0f/3;
+    render(gpu,&d,input,target,&p,avg,&peak);
+    for(int c=0;c<3;c++) {
+        CHECK(fabsf(avg[c]-0.25f)<0.001f);
+        float lo=1e9f,hi=-1e9f;
+        for(int x=0;x<W;x++) { lo=fminf(lo,center_row[x][c]); hi=fmaxf(hi,center_row[x][c]); }
+        CHECK(hi-lo<0.001f);
+    }
+    // A two-pixel triad lights one pixel's three subpixels and leaves the
+    // next pixel dark: no colour spills into the gap, so clipping at the
+    // display's peak cannot tint white.
+    p.mask_pitch_px=2.0f/3;
+    render(gpu,&d,input,target,&p,avg,&peak);
+    for(int x=0;x<W;x+=2) for(int c=0;c<3;c++) {
+        float lit=fmaxf(center_row[x][c],center_row[x+1][c]);
+        float gap=fminf(center_row[x][c],center_row[x+1][c]);
+        CHECK(fabsf(lit-0.5f)<0.002f && gap<0.002f);
+    }
+    for(int x=0;x<W;x++)
+        CHECK(fabsf(center_row[x][0]-center_row[x][1])<0.002f && fabsf(center_row[x][2]-center_row[x][1])<0.002f);
+    // A four-pixel triad: each colour's stripe moves onto the nearest
+    // subpixel of its colour (green is centred by the phase shift), so the
+    // light lands at 1.17, 2.50 and 3.83 pixels on an RGB panel and at 1.83,
+    // 2.50 and 3.17 on a BGR panel, modulo 4.
+    p.mask_pitch_px=4.0f/3;
+    const float expected_centre[2][3]={{7.0f/6,2.50f,23.0f/6},{11.0f/6,2.50f,19.0f/6}};
+    for(int order=1;order<=2;order++) {
+        p.panel_subpixels=order;
+        render(gpu,&d,input,target,&p,avg,&peak);
+        for(int c=0;c<3;c++) {
+            CHECK(fabsf(avg[c]-0.25f)<0.001f);
+            for(int x=0;x<W;x++) CHECK(center_row[x][c]>=0);
+            double re=0,im=0;
+            for(int x=0;x<W;x++) {
+                double phase=6.283185307179586*x/4.0;
+                re+=center_row[x][c]*cos(phase); im+=center_row[x][c]*sin(phase);
+            }
+            // Peak pixel index of the channel, then its subpixel centre.
+            double peak_index=fmod(atan2(im,re)/6.283185307179586*4.0+8.0,4.0);
+            int site=order==1 ? c : 2-c;
+            double centre=fmod(peak_index+(2*site+1)/6.0,4.0);
+            CHECK(fabs(centre-expected_centre[order-1][c])<0.05);
+        }
+    }
+    p.panel_subpixels=0;
+    // Fitting: with subpixels a 2.07-pixel nominal triad becomes two pixels,
+    // without them it stays at the three-pixel minimum, and a resampled
+    // desktop never gets subpixel drawing.
+    GPUDisplayParams sub={.mask_type=1,.mask_pitch_px=2.07f/3};
+    gpu_display_fit_mask(&sub,true,1,1,1,0,0);
+    CHECK(fabsf(3*sub.mask_pitch_px-2)<.00001f && sub.panel_subpixels==1);
+    sub=(GPUDisplayParams){.mask_type=1,.mask_pitch_px=2.07f/3};
+    gpu_display_fit_mask(&sub,true,0,1,1,0,0);
+    CHECK(fabsf(3*sub.mask_pitch_px-3)<.00001f && sub.panel_subpixels==0);
+    sub=(GPUDisplayParams){.mask_type=1,.mask_pitch_px=2.07f/3};
+    gpu_display_fit_mask(&sub,true,1,2560.0f/2940,1664.0f/1912,0,0);
+    CHECK(sub.panel_subpixels==0 && 3*sub.mask_pitch_px>=3);
     // Host fitting must use the drawable/panel ratio, not the 256-pixel source.
     // A 1470-point desktop backed at 2x on a 2560-pixel panel is not a 2940-pixel panel.
     GPUDisplayParams fit={.mask_type=1,.mask_pitch_px=2.24f};
-    gpu_display_fit_mask(&fit,true,2560.0f/2940,1664.0f/1912,13.25f,7.5f);
+    gpu_display_fit_mask(&fit,true,0,2560.0f/2940,1664.0f/1912,13.25f,7.5f);
     CHECK(fit.mask_pitch_px==2 && fit.mask_row_pitch==2);
     CHECK(fabsf(fit.mask_scale_x-2560.0f/2940)<.00001f && fit.mask_origin_x==13.25f);
     const int widths[]={640,1280,1333,1920,2560};
     for(unsigned i=0;i<sizeof(widths)/sizeof(widths[0]);i++) {
         TVDisplayParams tube={.mask_triads=1070};
         gpu_display_params_from_tv(&fit,&tube,W,H,widths[i],1000);
-        gpu_display_fit_mask(&fit,true,1,1,0,0);
+        gpu_display_fit_mask(&fit,true,0,1,1,0,0);
         CHECK(fit.mask_pitch_px>=1 && fabsf(3*fit.mask_pitch_px-roundf(3*fit.mask_pitch_px))<.00001f);
     }
     // Integer periods have no low-frequency envelope on a uniform field.
     // Moving/resizing the viewport must not move the screen-anchored mask.
     p.mask_type=1;p.mask_pitch_px=1;p.mask_strength=1;
-    gpu_display_fit_mask(&p,true,1,1,0,0);
+    gpu_display_fit_mask(&p,true,0,1,1,0,0);
     render(gpu,&d,input,target,&p,avg,&peak);
     memcpy(rgb_row,center_row,sizeof(rgb_row));
     for(int x=3;x<W;x++) for(int c=0;c<3;c++)

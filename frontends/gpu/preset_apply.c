@@ -490,6 +490,11 @@ static void gpu_cb_mask_alignment(void) {
     mynes_config_save(g_ctx->config);
 }
 
+static void gpu_cb_panel_subpixels(void) {
+    g_ctx->config->gpu_panel_subpixels=g_ctx->render_ctx->panel_subpixels;
+    mynes_config_save(g_ctx->config);
+}
+
 static void gpu_cb_room_reflections(void) {
     g_ctx->config->gpu_room_reflections=g_ctx->render_ctx->room_reflections_enabled;
     mynes_config_save(g_ctx->config);
@@ -964,7 +969,7 @@ static OSDMenuItem menu_rf[7],menu_vhs[15];
 static OSDMenuItem menu_audio_top[3];
 static OSDMenuItem menu_picture[9], menu_tube[5];
 static OSDMenuItem menu_diagnostics[1],menu_display[PRESET_MENU_DISPLAY_MAX];
-static int  menu_display_count = 4;
+static int  menu_display_count = 5;
 static OSDMenuItem menu_game[PRESET_MENU_GAME_MAX];
 static int  menu_game_count = 0;
 int         preset_menu_root_count = 9;
@@ -1454,9 +1459,10 @@ void preset_ctx_init(PresetCtx *ctx) {
     preset_menu_root[4] = MI_SUB("CRT / room", menu_tube, 5);
     preset_menu_root[5] = MI_SUB("Diagnostics", menu_diagnostics, 1);
     menu_display[0] = MI_CYCLIC("Mask sampling",&ctx->render_ctx->mask_alignment,0,1,gpu_cb_mask_alignment,"Panel pixels|CRT pitch");
-    menu_display[1] = make_item("Native fullscreen",OSD_MI_ACTION,NULL,0,0,0,NULL,NULL,0,gpu_cb_fullscreen,NULL);
-    menu_display[2] = MI_CYCLIC("Presentation",&ctx->render_ctx->presentation_mode,0,2,NULL,"Hold|BFI (high Hz)|60 Hz hold");
-    menu_display[3] = MI_FLOAT("Dark refresh",&ctx->render_ctx->dark_frame_level,.05f,0,1,NULL,"%.2f");
+    menu_display[1] = MI_CYCLIC("Panel subpixels",&ctx->render_ctx->panel_subpixels,0,2,gpu_cb_panel_subpixels,"Off|RGB stripe|BGR stripe");
+    menu_display[2] = make_item("Native fullscreen",OSD_MI_ACTION,NULL,0,0,0,NULL,NULL,0,gpu_cb_fullscreen,NULL);
+    menu_display[3] = MI_CYCLIC("Presentation",&ctx->render_ctx->presentation_mode,0,2,NULL,"Hold|BFI (high Hz)|60 Hz hold");
+    menu_display[4] = MI_FLOAT("Dark refresh",&ctx->render_ctx->dark_frame_level,.05f,0,1,NULL,"%.2f");
     preset_menu_root[6] = MI_SUB("Host display",menu_display,menu_display_count);
     preset_menu_root[7] = MI_TOGGLE("Room reflections (G)", &ctx->render_ctx->room_reflections_enabled, gpu_cb_room_reflections);
     /* Reset stays last: preset_menu_root_append() inserts before it. */

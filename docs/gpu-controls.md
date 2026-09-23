@@ -554,9 +554,13 @@ room-lit glass pedestal. Raising black floor does not illuminate blanked raster.
 
 ## Performance
 
-**M → Host display** holds two host-side performance settings. Neither is a
-television setting; both are saved to `config.json` beside the mask sampling
-choice and apply to every preset.
+**M → Host display** holds the mask sampling choice, the panel's subpixel
+order (Off, RGB stripe, BGR stripe; see the
+[pipeline reference](gpu-pipeline-reference.md)) and two host-side
+performance settings. None is a television setting; all are saved to
+`config.json` and apply to every preset. The status lines at the top of the
+menu show the effective triad count and, while subpixel drawing is active,
+`RGB SUBPX` or `BGR SUBPX`.
 
 ### Render scale
 

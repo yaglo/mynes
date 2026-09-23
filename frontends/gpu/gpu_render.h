@@ -39,6 +39,8 @@ typedef struct {
     int             source_phase;
     FILE           *presentation_trace;
     int             mask_alignment;      /* 0 = panel pixels, 1 = physical CRT pitch */
+    int             panel_subpixels;     /* host panel order: 0 unknown/off, 1 RGB stripe, 2 BGR */
+    int             effective_panel_subpixels; /* 0 while the desktop resamples the output */
     GPUOutputGeometry output_geometry;
     int             drawable_w, drawable_h;
     float           effective_mask_triads;

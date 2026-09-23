@@ -708,6 +708,7 @@ int main(int argc, char **argv) {
     bool benchmark = false, force_sdr = false, screenshot_requested = false, native_fullscreen = false;
     int room_reflections_override=-1;
     int mask_alignment_override=-1,render_scale_override=-1,window_width=1280,window_height=960;
+    int panel_subpixels_override=-1;
     char manual_screenshot_path[256];
     int exit_status = 0;
     int offscreen_w=0,offscreen_h=0;
@@ -772,6 +773,12 @@ int main(int argc, char **argv) {
             if(strcmp(mode,"pixels")==0) mask_alignment_override=0;
             else if(strcmp(mode,"physical")==0) mask_alignment_override=1;
             else { fprintf(stderr,"Mask alignment must be pixels or physical\n");return 1; }
+        } else if (strcmp(argv[i], "--panel-subpixels") == 0 && i+1<argc) {
+            const char *order=argv[++i];
+            if(strcmp(order,"off")==0) panel_subpixels_override=0;
+            else if(strcmp(order,"rgb")==0) panel_subpixels_override=1;
+            else if(strcmp(order,"bgr")==0) panel_subpixels_override=2;
+            else { fprintf(stderr,"Panel subpixels must be off, rgb or bgr\n");return 1; }
         } else if (strcmp(argv[i], "--render-scale") == 0 && i+1<argc) {
             const char *scale=argv[++i];
             if(strcmp(scale,"auto")==0) render_scale_override=RENDER_SCALE_AUTO;
@@ -878,6 +885,8 @@ int main(int argc, char **argv) {
                    "  --sdr                 Use SDR output for display comparisons\n"
                    "  --native-fullscreen   Enter native panel mode (F toggles back)\n"
                    "  --mask-alignment M    pixels (default) or physical CRT pitch\n"
+                   "  --panel-subpixels O   off, rgb or bgr: draw each colour at this panel's\n"
+                   "                        subpixel (M > Host display; batch runs default off)\n"
                    "  --render-scale S      Internal CRT resolution: 1, 0.75, 0.5 or auto\n"
                    "                        (default 1; auto starts at 1 and steps down\n"
                    "                        if the GPU cannot keep up; M > Host display)\n"
@@ -964,6 +973,10 @@ int main(int argc, char **argv) {
     render_ctx.room_reflections_enabled=room_reflections_override>=0
         ? room_reflections_override : mynes_config.gpu_room_reflections;
     render_ctx.mask_alignment=mask_alignment_override>=0 ? mask_alignment_override : mynes_config.gpu_mask_alignment;
+    /* Captures and recordings are viewed on other panels: they use the saved
+     * subpixel order only when asked for on the command line. */
+    render_ctx.panel_subpixels=panel_subpixels_override>=0 ? panel_subpixels_override
+        : (offscreen_w || screenshot_after > 0 || benchmark || record_path) ? 0 : mynes_config.gpu_panel_subpixels;
     render_scale_mode=render_scale_override>=0 ? render_scale_override : mynes_config.gpu_render_scale;
     render_scale_fixed=benchmark || offscreen_w!=0;
     low_latency=mynes_config.gpu_low_latency;
@@ -1417,7 +1430,8 @@ int main(int argc, char **argv) {
         char render_path[sizeof(shader_dir_buf) + 16];
         snprintf(render_path,sizeof(render_path),"%s/../render",shader_dir);
         printf("BENCH preset=%s\n",preset_path ? preset_path : preset_display_name(current_preset));
-        if (!gpu_video_enabled || !gpu_benchmark(&video_gpu_chain,gpu,&sig_state,render_path,render_ctx.mask_alignment==0)) {
+        if (!gpu_video_enabled || !gpu_benchmark(&video_gpu_chain,gpu,&sig_state,render_path,render_ctx.mask_alignment==0,
+                                                        render_ctx.panel_subpixels)) {
             fprintf(stderr,"Benchmark failed: %s\n",SDL_GetError());
             exit_status=1;
         }

@@ -91,7 +91,7 @@ layout(set = 3, binding = 0) uniform DisplayParams {
     vec2 mask_scale, mask_origin;
     vec4 phosphor_to_display[3];
     vec4 presentation; // x: host-refresh emission multiplier
-    vec4 monitor; // x: 1 = FW900 physical variable-pitch grille
+    vec4 monitor; // x: 1 = FW900 physical variable-pitch grille; y: panel subpixels, 0 off, 1 RGB, 2 BGR
 };
 
 /* Mask coordinates are local to the CRT viewport. Each stripe is one
@@ -105,8 +105,44 @@ layout(set = 3, binding = 0) uniform DisplayParams {
 float sinc_pi(float x) {
     return abs(x)<0.0001 ? 1.0 : sin(3.14159265359*x)/(3.14159265359*x);
 }
+// Share of one colour's stripes inside the one-pixel window centred at x,
+// normalised so a uniform field averages 1. A panel repeats each colour's
+// subpixel once per pixel, so this is the light that subpixel represents:
+// exact, nonnegative, and energy-preserving for any stripe period.
+float stripe_window(float x, float period, float offset, float fill) {
+    if(period<0.125) return 1.0;
+    float width=fill*period;
+    float first=floor((x-0.5-0.5*width)/period-offset);
+    float covered=0.0;
+    for(int i=0;i<12;i++) {
+        float centre=period*(first+float(i)+offset);
+        if(centre-0.5*width>x+0.5) break;
+        covered+=max(0.0,min(x+0.5,centre+0.5*width)-max(x-0.5,centre-0.5*width));
+    }
+    return covered/fill;
+}
 vec3 aperture_mask(float x, float pitch) {
     float period=3.0*max(pitch,0.05);
+    if(monitor.y>0.5 && monitor.x!=1.0) {
+        // Drawn on the panel's own subpixels. Stripe offsets per phosphor
+        // colour follow the tube's order; subpixel centres the panel's.
+        vec3 offset=subpixel_layout==2 ? vec3(0.79,0.50,0.21) : vec3(0.21,0.50,0.79);
+        vec3 site=monitor.y>1.5 ? vec3(5.0,3.0,1.0)/6.0 : vec3(1.0,3.0,5.0)/6.0;
+        // Move the grille so green stripes sit on green subpixel centres.
+        float shift=fract(0.5-0.5*period), xs=x-shift;
+        // At a whole-pixel period every stripe of a colour falls at the same
+        // place within its pixel; move that place onto the colour's own
+        // subpixel, as the integer period fit does for the triad. Without
+        // this, a two-pixel triad spills red and blue into the gap pixel
+        // but not green, and clipping at the display's peak tints white.
+        if(abs(period-round(period))<0.001) {
+            vec3 delta=site-fract(period*offset+shift);
+            offset+=(delta-round(delta))/period;
+        }
+        return vec3(stripe_window(xs,period,offset.r,0.28),
+                    stripe_window(xs,period,offset.g,0.28),
+                    stripe_window(xs,period,offset.b,0.28));
+    }
     float footprint=max(1.0,mask_scale.x);
     float sampled_period=period/footprint;
     int order=min(int(floor(sampled_period*0.5)),16);
@@ -221,18 +257,10 @@ vec3 phosphor_light(vec2 p, vec2 face_pos) {
     return color;
 }
 
-/* -----------------------------------------------------------------------
- * Main
- * ----------------------------------------------------------------------- */
-void main() {
-    /* Beam/raster geometry now lives in deflection.comp.glsl, so this
-     * pass only samples the already-landed beam texture and applies
-     * fixed screen/glass optics at the physical tube face. */
-    vec2 sample_uv = clamp(uv, vec2(0.0), vec2(1.0));
-    vec3 color;
-
-    vec2 face_pos=gl_FragCoord.xy*mask_scale+mask_origin;
-    color=phosphor_light(sample_uv,face_pos);
+// Light leaving the faceplate at one face position: phosphor emission
+// through the grille, the matte surface and glass scatter.
+vec3 face_emission(vec2 sample_uv, vec2 face_pos) {
+    vec3 color=phosphor_light(sample_uv,face_pos);
     // Fine surface scatter acts AFTER emission through the fixed grille.
     // Radius follows phosphor pitch, not source texture or UI-point size.
     if (antiglare_blur > 0.001) {
@@ -259,6 +287,20 @@ void main() {
         float r=clamp(glass_reflection*0.08,0.0,1.0);
         color=mix(color,halo,1.0-(1.0-h)*(1.0-r));
     }
+    return color;
+}
+
+/* -----------------------------------------------------------------------
+ * Main
+ * ----------------------------------------------------------------------- */
+void main() {
+    /* Beam/raster geometry now lives in deflection.comp.glsl, so this
+     * pass only samples the already-landed beam texture and applies
+     * fixed screen/glass optics at the physical tube face. */
+    vec2 sample_uv = clamp(uv, vec2(0.0), vec2(1.0));
+    vec3 color;
+    vec2 face_pos=gl_FragCoord.xy*mask_scale+mask_origin;
+    vec3 gain=vec3(1.0);
 
     /* §5.3 cathode aging / non-uniformity — center dims faster than
      * edges, and the three guns age at different rates. Multiplicative
@@ -270,7 +312,7 @@ void main() {
         vec2 cd = uv - 0.5;
         float r2 = dot(cd, cd) * 4.0;   /* 0 at center, ~1 at corners */
         float center_shape = 1.0 - cathode_center_dim * (1.0 - r2);
-        color *= vec3(cathode_gain_r, cathode_gain_g, cathode_gain_b)
+        gain *= vec3(cathode_gain_r, cathode_gain_g, cathode_gain_b)
                * center_shape;
     }
 
@@ -279,7 +321,7 @@ void main() {
      * retrace edge. Amplitude scaled by emi_gradient. */
     if (emi_gradient > 0.001) {
         float bar = 1.0 - smoothstep(0.0, 0.6, uv.x);
-        color *= (1.0 + emi_gradient * 0.1 * bar);
+        gain *= (1.0 + emi_gradient * 0.1 * bar);
     }
 
     /* §5.1 phosphor grain — fine high-frequency multiplicative noise,
@@ -287,7 +329,7 @@ void main() {
      * brightness perturbation rather than per-channel colour noise. */
     if (phosphor_grain > 0.001) {
         float g = tube_hash(uv * vec2(1800.0, 1400.0));
-        color *= (1.0 + phosphor_grain * (g - 0.5) * 2.0);
+        gain *= (1.0 + phosphor_grain * (g - 0.5) * 2.0);
     }
 
     /* §5.2 thermal-mask doming — the long-timescale per-channel
@@ -300,18 +342,30 @@ void main() {
         vec3 drift = vec3(thermal_r - mean_t,
                           thermal_g - mean_t,
                           thermal_b - mean_t);
-        color *= (vec3(1.0) + drift * thermal_dome_amount * 1.5);
+        gain *= (vec3(1.0) + drift * thermal_dome_amount * 1.5);
     }
 
     // Excited phosphors cannot emit negative light. Signed components are
     // valid only after converting this light to the host colour space.
-    color=max(color,vec3(0.0));
-
     // Express phosphor emission in the host's linear-sRGB colour space,
     // after the mask: a red phosphor is not an LCD's ideal red primary.
-    color=vec3(dot(phosphor_to_display[0].rgb,color),
-               dot(phosphor_to_display[1].rgb,color),
-               dot(phosphor_to_display[2].rgb,color));
+    if(monitor.y>0.5) {
+        // Each host channel shows the light at its own subpixel, a third of
+        // a pixel left or right of the centre (mirrored on BGR panels).
+        float third=monitor.y>1.5 ? -1.0/3.0 : 1.0/3.0;
+        vec2 step_uv=vec2(third/out_size.x,0.0), step_face=vec2(third*mask_scale.x,0.0);
+        vec3 at_red=max(face_emission(clamp(uv-step_uv,vec2(0.0),vec2(1.0)),face_pos-step_face)*gain,vec3(0.0));
+        vec3 at_green=max(face_emission(sample_uv,face_pos)*gain,vec3(0.0));
+        vec3 at_blue=max(face_emission(clamp(uv+step_uv,vec2(0.0),vec2(1.0)),face_pos+step_face)*gain,vec3(0.0));
+        color=vec3(dot(phosphor_to_display[0].rgb,at_red),
+                   dot(phosphor_to_display[1].rgb,at_green),
+                   dot(phosphor_to_display[2].rgb,at_blue));
+    } else {
+        color=max(face_emission(sample_uv,face_pos)*gain,vec3(0.0));
+        color=vec3(dot(phosphor_to_display[0].rgb,color),
+                   dot(phosphor_to_display[1].rgb,color),
+                   dot(phosphor_to_display[2].rgb,color));
+    }
 
     /* Apply glass tint (phosphor light attenuated through glass). */
     color *= glass_tint;

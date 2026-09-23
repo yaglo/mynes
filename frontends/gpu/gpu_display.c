@@ -644,10 +644,11 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
             float _color_pad[2];
             float phosphor_to_display[3][4];
             float pulse_gain, _pulse_pad[3];
-            float monitor_model, _monitor_pad[3];
+            float monitor_model, panel_subpixels, _monitor_pad[2];
         } crt_ubo = {0};
 
         crt_ubo.monitor_model = params->monitor_model;
+        crt_ubo.panel_subpixels = (float)params->panel_subpixels;
         crt_ubo.pulse_gain = params->pulse_enabled ? params->pulse_gain : 1;
         float phosphor_matrix[3][3];
         crt_phosphor_matrix(params->phosphor_gamut,phosphor_matrix);
@@ -864,17 +865,23 @@ void gpu_display_params_from_tv(GPUDisplayParams *out, const TVDisplayParams *tv
     out->glass_glare_temp_k  = tv->glass_glare_temp_k;
 }
 
-void gpu_display_fit_mask(GPUDisplayParams *p, bool pixel_aligned,
+void gpu_display_fit_mask(GPUDisplayParams *p, bool pixel_aligned, int panel_subpixels,
                          float scale_x, float scale_y, float origin_x, float origin_y) {
     p->mask_scale_x=fmaxf(scale_x,0.01f);p->mask_scale_y=fmaxf(scale_y,0.01f);
     p->mask_origin_x=origin_x;p->mask_origin_y=origin_y;
     p->mask_pitch_px*=p->mask_scale_x;
+    // Subpixels only line up with a desktop that is not resampled.
+    p->panel_subpixels=fabsf(p->mask_scale_x-1)<.001f && fabsf(p->mask_scale_y-1)<.001f
+        && panel_subpixels>=1 && panel_subpixels<=2 ? panel_subpixels : 0;
     if(p->monitor_model==1) return; // physical variable pitch; never quantize
     if(pixel_aligned) {
         // Quantize the RGB repeat, not each colour cell. A nominal 4.6-pixel
         // triad should become five pixels, not six. Filtered cell edges can
         // cover neighbouring pixels while the whole mask remains periodic.
-        p->mask_pitch_px=fmaxf(3,roundf(3*p->mask_pitch_px))/3;
+        // Drawn on the panel's own subpixels, a triad can be one pixel: the
+        // stripes then coincide with the panel's red, green and blue columns.
+        float min_triad=p->panel_subpixels ? 1.0f : 3.0f;
+        p->mask_pitch_px=fmaxf(min_triad,roundf(3*p->mask_pitch_px))/3;
         p->mask_row_pitch=fmaxf(1,roundf(p->mask_pitch_px*(p->mask_type==2 ? 2.4f : 0.8660254f)));
     }
 }

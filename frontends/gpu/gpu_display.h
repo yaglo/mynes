@@ -50,6 +50,7 @@ typedef struct {
     float mask_pitch_px;            /* one phosphor cell, in mask-coordinate pixels */
     float mask_row_pitch;           /* 0 = physical aspect; otherwise fitted row spacing */
     float mask_scale_x, mask_scale_y, mask_origin_x, mask_origin_y;
+    int   panel_subpixels;          /* host panel: 0 = sample pixel centres, 1 = RGB stripe, 2 = BGR */
     float halation_strength;        /* halation blend intensity */
     float halation_sigma;           /* scatter sigma / picture height; 0 = legacy kernel */
     float halation_tint_r;          /* halation bloom per-channel tint */
@@ -155,8 +156,10 @@ void gpu_display_params_from_tv(GPUDisplayParams *out, const TVDisplayParams *tv
                                  int comp_w, int comp_h, int win_w, int win_h);
 
 /* Fit the mask to the host panel, independently of the stored CRT preset.
- * Integer RGB-triad/row periods in pixel mode trade exact CRT pitch for stability. */
-void gpu_display_fit_mask(GPUDisplayParams *p, bool pixel_aligned,
+ * Integer RGB-triad/row periods in pixel mode trade exact CRT pitch for stability.
+ * With the panel's subpixel order known (1 RGB, 2 BGR), each colour is drawn at
+ * its own subpixel and a triad may be as small as one pixel; otherwise three. */
+void gpu_display_fit_mask(GPUDisplayParams *p, bool pixel_aligned, int panel_subpixels,
                          float scale_x, float scale_y, float origin_x, float origin_y);
 
 #endif /* GPU_DISPLAY_H */

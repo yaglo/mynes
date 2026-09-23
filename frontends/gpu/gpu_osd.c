@@ -138,9 +138,18 @@ void gpu_osd_render(uint32_t *rgba, const OSDMenuLevel *level, bool editing,
     snprintf(line,sizeof(line),"%dX%d / %s / %.0f TRIADS",render->drawable_w,render->drawable_h,
         render->mask_alignment ? "TUBE" : "PIXELS",render->effective_mask_triads);
     text(rgba,x+8,y+40,line,0x10,1);
-    snprintf(line,sizeof(line),"%s",render->offscreen_w ? "OFFSCREEN DRAWABLE PIXELS" : render->output_geometry.native_known
-        ? (render->output_geometry.resampled ? "SCALED DESKTOP / F NATIVE FULLSCREEN" : "NATIVE PANEL PIXELS")
-        : "DRAWABLE PIXELS / PANEL UNKNOWN");
+    // Subpixel drawing is active only on unscaled output; a scaled desktop
+    // line already says how to get native pixels back.
+    const char *subpx=render->effective_panel_subpixels==1 ? " / RGB SUBPX"
+                    : render->effective_panel_subpixels==2 ? " / BGR SUBPX" : "";
+    if (render->offscreen_w)
+        snprintf(line,sizeof(line),"%s%s",*subpx ? "OFFSCREEN PIXELS" : "OFFSCREEN DRAWABLE PIXELS",subpx);
+    else if (!render->output_geometry.native_known)
+        snprintf(line,sizeof(line),"DRAWABLE PIXELS / PANEL UNKNOWN");
+    else if (render->output_geometry.resampled)
+        snprintf(line,sizeof(line),"SCALED DESKTOP / F NATIVE FULLSCREEN");
+    else
+        snprintf(line,sizeof(line),"NATIVE PANEL PIXELS%s",subpx);
     if (render->presentation_mode == GPU_PRESENT_BFI) {
         if (render->presentation_slots>1)
             snprintf(line,sizeof(line),"BFI %dX / %.1f HZ / DIM %.2f",render->presentation_slots,
