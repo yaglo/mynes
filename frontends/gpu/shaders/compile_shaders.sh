@@ -68,7 +68,8 @@ get_resources() {
         comb_filter)    echo "1 2 2" ;;
         rf_mod_demod)   echo "1 1 1" ;;
         rf_if)          echo "1 2 1" ;;
-        vhs)            echo "1 2 1" ;;
+        vhs_tape)       echo "1 4 3" ;;
+        vhs_playback)   echo "1 4 1" ;;
         osd)            echo "1 1 1" ;;
         video_amp)      echo "1 1 1" ;;
         h_blur_rgb)     echo "1 0 2" ;;
@@ -103,14 +104,21 @@ bindings = re.findall(r'layout\s*\(\s*set\s*=\s*(\d+)\s*,\s*binding\s*=\s*(\d+)'
 if len(bindings) != len(set(bindings)):
     sys.exit('Duplicate descriptor binding: ' + sys.argv[1])
 PY
-    if ! "$GLSLC" -fshader-stage="$stage" "$glsl" -o "$spv" 2>&1; then
+    # Subgroup operations need SPIR-V 1.3 and Metal 2.1 (simd_shuffle_up).
+    # Other shaders keep the default targets so their output is unchanged.
+    local glslc_env=() msl_version=()
+    if grep -q 'GL_KHR_shader_subgroup' "$glsl"; then
+        glslc_env=(--target-env=vulkan1.1)
+        msl_version=(--msl-version 20100)
+    fi
+    if ! "$GLSLC" ${glslc_env[@]+"${glslc_env[@]}"} -fshader-stage="$stage" "$glsl" -o "$spv" 2>&1; then
         echo "    ERROR: glslc failed"
         ERRORS=$((ERRORS + 1))
         return 1
     fi
     echo "    -> $(basename "$spv")"
 
-    if ! "$SPIRV_CROSS" --msl "$spv" --output "$msl" 2>/dev/null; then
+    if ! "$SPIRV_CROSS" --msl ${msl_version[@]+"${msl_version[@]}"} "$spv" --output "$msl" 2>/dev/null; then
         echo "    ERROR: spirv-cross failed"
         ERRORS=$((ERRORS + 1))
         return 1
