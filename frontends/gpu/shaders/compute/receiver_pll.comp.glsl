@@ -1,7 +1,11 @@
 /* Generic line oscillator and burst loop. Detector work is parallel; this
  * short serial pass carries receiver state through lines and absent bursts.
- * Burst/clamp constants remain generic. h_response optionally constrains
- * horizontal tracking to a specified first-order time constant.
+ * The black clamp is keyed: each line's back-porch measurement charges
+ * the clamp with clamp_gain, 1 - exp(-1 / clamp lines), so a keyed clamp
+ * capacitor settles over the TV's clamp time constant and line noise does
+ * not become whole-line offsets. Burst constants remain generic.
+ * h_response optionally constrains horizontal tracking to a specified
+ * first-order time constant.
  *
  * h_pll selects a second-order horizontal PLL: e = sync - theta,
  * integrator += Ki g e, theta += Kp g e + integrator, with the detector gain
@@ -18,7 +22,7 @@ layout(set=1,binding=0) buffer Reference { vec4 reference[]; };
 layout(set=2,binding=0) uniform Params {
     uint count, full_width, samples_per_dot, region;
     float h_response, h_kp, h_ki, h_vblank_gain;
-    uint h_pll, h_vblank_lines, reserved0, reserved1;
+    uint h_pll, h_vblank_lines; float clamp_gain; uint reserved1;
 };
 const float TAU=6.28318530718;
 float wrap(float p) { return mod(p+TAU*0.5,TAU)-TAU*0.5; }
@@ -52,12 +56,16 @@ void main() {
             continue;
         }
         if(sync) {
+            // The keyed clamp charges on every line with a sync; only a
+            // receiver that has never locked takes the first line outright.
             // A specified horizontal loop keeps its state when the *colour*
-            // loop reacquires, including across frame boundaries/retrace.
+            // loop reacquires, including across frame boundaries/retrace,
+            // and so does the clamp: its capacitor holds through retrace.
             float horizontal=h_pll!=0u ? state.w : mix(state.w,m.w,h_response);
-            if(acquire && m.z>0.01) { state=m; acquire=false; }
+            bool fresh=state.y==0.0 && state.z==0.0 && state.w==0.0;
+            state.y=fresh ? m.y : mix(state.y,m.y,clamp_gain);
+            if(acquire && m.z>0.01) { state.xz=m.xz; if(fresh) state.w=m.w; acquire=false; }
             else {
-                state.y=mix(state.y,m.y,0.35);
                 state.w=mix(state.w,m.w,0.25);
                 if(m.z>0.01) {
                     state.x=wrap(state.x+0.25*wrap(m.x-state.x));

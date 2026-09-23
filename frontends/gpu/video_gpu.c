@@ -97,19 +97,32 @@ static GpuReceiverPLLParams receiver_pll_params(const VideoGPUChain *v) {
     p.region = (uint32_t)v->raster_fmt.region;
     const TVDisplayParams *tv = &v->chain->tv;
     if (tv->h_pll_hz > 0) {
-        /* Second-order loop per line: Kp = 2 zeta wn, Ki = wn^2. */
+        /* Second-order loop per line: Kp = 2 zeta wn, Ki = wn^2. The loop
+         * samples one sync edge per line, and its recurrence z^2 + (Kp g +
+         * Ki g - 2) z + (1 - Kp g) is stable only while Kp g < 2 and
+         * 4 - 2 Kp g - Ki g > 0. The natural frequency is held to 1 kHz
+         * and the V-blank gain to the value that keeps Kp g at or below
+         * 1.5 with a margin of 1 on the second bound, so no setting runs
+         * away during the 21 fast lines. */
         double line_rate = signal_format_sample_rate_hz(&v->signal_fmt) / p.full_width;
-        double wn = 2 * M_PI * tv->h_pll_hz / line_rate;
+        double wn = 2 * M_PI * fmin(tv->h_pll_hz, 1000) / line_rate;
         double zeta = tv->h_pll_damping > 0 ? tv->h_pll_damping : 0.7;
+        double kp = 2 * zeta * wn, ki = wn * wn;
+        double g = tv->h_pll_vblank_gain > 0 ? tv->h_pll_vblank_gain : 1.0;
+        g = fmin(g, fmin(1.5 / kp, 3 / (2 * kp + ki)));
         p.h_pll = 1;
-        p.h_kp = (float)(2 * zeta * wn);
-        p.h_ki = (float)(wn * wn);
-        p.h_vblank_gain = tv->h_pll_vblank_gain > 0 ? tv->h_pll_vblank_gain : 1.0f;
+        p.h_kp = (float)kp;
+        p.h_ki = (float)ki;
+        p.h_vblank_gain = (float)fmax(g, 1.0);
         p.h_vblank_lines = 21;
     } else if (tv->h_afc_tau_ms > 0) {
         float line_ms = 1000.0f * p.full_width / signal_format_sample_rate_hz(&v->signal_fmt);
         p.h_response = -expm1f(-line_ms / tv->h_afc_tau_ms);
     }
+    /* Keyed clamp: the back-porch measurement charges the clamp by this
+     * fraction each line. */
+    double clamp_lines = tv->clamp_lines > 0 ? tv->clamp_lines : 64;
+    p.clamp_gain = (float)-expm1(-1 / clamp_lines);
     return p;
 }
 static bool vhs_active(const VideoChain *c) {

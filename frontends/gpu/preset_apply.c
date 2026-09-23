@@ -107,6 +107,9 @@ static void preset_apply_cpu_state_ex(PresetCtx *ctx, const PhysicalPreset *p,
         rf->agc_attack_ms=-signal_region_frame_ms(new_region)/logf(.9f);
         rf->agc_release_ms=-signal_region_frame_ms(new_region)/logf(.98f);
     }
+    /* Presets saved before the keyed clamp had a time constant carry no
+     * value; show the generic one rather than a zero. */
+    if (tv->clamp_lines <= 0) tv->clamp_lines = 64;
     /* A vhs block without "model": 2 described the earlier filtered-noise
      * stage; its keys mean nothing to the FM deck. Enabled ones fall back
      * to the SP consumer deck (and the TV loop it was measured with). */
@@ -1220,9 +1223,10 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_comb[n++] = MI_FLOAT("Temporal blend",     &ctx->video_gpu_chain->temporal_blend, 0.05f, 0.0f, 0.5f, gpu_cb_update_beam_params, "%.2f");
     menu_comb[n++] = MI_FLOAT("Motion threshold",   &vc->tv.motion_threshold, 0.01f, 0.0f, 0.30f, gpu_cb_update_beam_params, "%.2f");
     menu_comb[n++] = MI_FLOAT("H AFC (ms, 0=auto)", &vc->tv.h_afc_tau_ms, 0.1f, 0.0f, 10.0f, gpu_cb_update_rc_params, "%.2f");
-    menu_comb[n++] = MI_FLOAT("H PLL Hz (0=AFC)", &vc->tv.h_pll_hz, 10, 0, 2000, gpu_cb_update_rc_params, "%.0f");
+    menu_comb[n++] = MI_FLOAT("H PLL Hz (0=AFC)", &vc->tv.h_pll_hz, 10, 0, 1000, gpu_cb_update_rc_params, "%.0f");
     menu_comb[n++] = MI_FLOAT("H PLL damping", &vc->tv.h_pll_damping, .05f, .1f, 2, gpu_cb_update_rc_params, "%.2f");
-    menu_comb[n++] = MI_FLOAT("H PLL V-blank gain", &vc->tv.h_pll_vblank_gain, .1f, 1, 5, gpu_cb_update_rc_params, "%.1f");
+    menu_comb[n++] = MI_FLOAT("H PLL V-blank gain", &vc->tv.h_pll_vblank_gain, .1f, 1, 3, gpu_cb_update_rc_params, "%.1f");
+    menu_comb[n++] = MI_FLOAT("Black clamp lines", &vc->tv.clamp_lines, 1, 2, 500, gpu_cb_update_rc_params, "%.0f");
     const int menu_comb_count=n;
 
     /* ================================================================

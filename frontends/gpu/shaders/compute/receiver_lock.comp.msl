@@ -1,7 +1,14 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+
 #include <metal_stdlib>
 #include <simd/simd.h>
 
 using namespace metal;
+
+struct Raster
+{
+    float raster[1];
+};
 
 struct Params
 {
@@ -11,11 +18,6 @@ struct Params
     uint region;
 };
 
-struct Raster
-{
-    float raster[1];
-};
-
 struct Measurement
 {
     float4 measurement[1];
@@ -23,100 +25,131 @@ struct Measurement
 
 constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(32u, 1u, 1u);
 
-kernel void main0(constant Params& _19 [[buffer(0)]], device Raster& _62 [[buffer(1)]], device Measurement& _157 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+static inline __attribute__((always_inline))
+float crossing(thread const uint& base, thread const int& from, thread const int& to, thread const float& level0, device Raster& _39)
+{
+    float s = 0.0;
+    int _24 = from - 7;
+    for (int k = _24; k < (from + 5); k++)
+    {
+        s += _39.raster[base + uint(k)];
+    }
+    float a = s / 12.0;
+    for (int x = from; x < to; x++)
+    {
+        s += (_39.raster[base + uint(x + 5)] - _39.raster[base + uint(x - 7)]);
+        float b = s / 12.0;
+        if ((a < level0) && (b >= level0))
+        {
+            return (float(x) - 1.0) + ((level0 - a) / fast::max(b - a, 9.9999999747524270787835121154785e-07));
+        }
+        a = b;
+    }
+    return -1000000000.0;
+}
+
+kernel void main0(device Raster& _39 [[buffer(1)]], constant Params& _128 [[buffer(0)]], device Measurement& _284 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
     uint line = gl_GlobalInvocationID.x;
-    if (line >= _19.count)
+    if (line >= _128.count)
     {
         return;
     }
-    uint base = line * _19.full_width;
-    uint spp = _19.samples_per_dot;
-    float black = 0.0;
-    float tip = 0.0;
-    uint _48 = 334u * spp;
-    for (uint x = _48; x < (338u * spp); x++)
+    uint base = line * _128.full_width;
+    int spp = int(_128.samples_per_dot);
+    float porch = 0.0;
+    int _150 = 334 * spp;
+    for (int x = _150; x < (338 * spp); x++)
     {
-        black += _62.raster[base + x];
+        porch += _39.raster[base + uint(x)];
     }
-    black /= float(4u * spp);
-    uint _82 = 8u * spp;
-    for (uint x_1 = _82; x_1 < (16u * spp); x_1++)
+    porch /= float(4 * spp);
+    float s = 0.0;
+    for (int k = 0; k < 12; k++)
     {
-        tip += _62.raster[base + x_1];
+        s += _39.raster[base + uint(k)];
     }
-    tip /= float(8u * spp);
-    float threshold = tip + (0.5 * fast::min(black - tip, 0.335025370121002197265625));
-    bool vertical = tip < (black - 0.07999999821186065673828125);
-    for (uint _dot = 80u; _dot <= 300u; _dot += 20u)
+    float tip = s;
+    for (int x_1 = 12; x_1 < (50 * spp); x_1++)
     {
-        bool _146;
+        s += (_39.raster[base + uint(x_1)] - _39.raster[base + uint(x_1 - 12)]);
+        tip = fast::min(tip, s);
+    }
+    tip /= 12.0;
+    float threshold = tip + (0.5 * fast::min(porch - tip, 0.335025370121002197265625));
+    bool vertical = tip < (porch - 0.07999999821186065673828125);
+    for (int _dot = 80; _dot <= 300; _dot += 20)
+    {
+        bool _273;
         if (vertical)
         {
-            _146 = _62.raster[base + (_dot * spp)] < threshold;
+            _273 = _39.raster[base + uint(_dot * spp)] < threshold;
         }
         else
         {
-            _146 = vertical;
+            _273 = vertical;
         }
-        vertical = _146;
+        vertical = _273;
     }
     if (vertical)
     {
-        _157.measurement[line] = float4(0.0, black, -1.0, 0.0);
+        _284.measurement[line] = float4(0.0, porch, -1.0, 0.0);
         return;
     }
-    float offset = 0.0;
-    bool found = false;
-    if (tip < (black - 0.07999999821186065673828125))
+    if (tip >= (porch - 0.07999999821186065673828125))
     {
-        uint _177 = 18u * spp;
-        for (uint x_2 = _177; x_2 < (32u * spp); x_2++)
-        {
-            float a = _62.raster[(base + x_2) - 1u];
-            float b = _62.raster[base + x_2];
-            if ((a < threshold) && (b >= threshold))
-            {
-                offset = ((float(x_2) - 1.0) + ((threshold - a) / fast::max(b - a, 9.9999999747524270787835121154785e-07))) - ((25.0 * float(spp)) - 0.5);
-                found = true;
-                break;
-            }
-        }
-    }
-    if (!found)
-    {
-        _157.measurement[line] = float4(0.0, black, 0.0, 1000000.0);
+        _284.measurement[line] = float4(0.0, porch, 0.0, 1000000.0);
         return;
     }
+    uint param = base;
+    int param_1 = 8 * spp;
+    int param_2 = 46 * spp;
+    float param_3 = threshold;
+    float edge = crossing(param, param_1, param_2, param_3, _39);
+    if (edge < (-100000000.0))
+    {
+        _284.measurement[line] = float4(0.0, porch, 0.0, 1000000.0);
+        return;
+    }
+    int start = int(round(edge)) + (2 * spp);
+    float black = 0.0;
+    for (int x_2 = 0; x_2 < 156; x_2++)
+    {
+        black += _39.raster[base + uint(start + x_2)];
+    }
+    black /= 156.0;
+    uint param_4 = base;
+    int param_5 = max((8 * spp), (int(edge) - spp));
+    int param_6 = min((46 * spp), ((int(edge) + spp) + 1));
+    float param_7 = tip + (0.5 * (black - tip));
+    float again = crossing(param_4, param_5, param_6, param_7, _39);
+    if (again > (-100000000.0))
+    {
+        edge = again;
+    }
+    float offset = edge - (25.0 * float(spp));
     int shift = int(round(offset));
-    black = 0.0;
-    uint _253 = 46u * spp;
-    for (uint x_3 = _253; x_3 < (49u * spp); x_3++)
-    {
-        black += _62.raster[base + uint(int(x_3) + shift)];
-    }
-    black /= float(3u * spp);
-    uint start = uint(int(31u * spp) + shift);
-    uint n = ((11u * spp) / 12u) * 12u;
+    uint bstart = uint((31 * spp) + shift);
+    uint n = uint((11 * spp) / 12) * 12u;
     float c = 0.0;
-    float s = 0.0;
-    for (uint x_4 = 0u; x_4 < n; x_4++)
+    float sn = 0.0;
+    for (uint x_3 = 0u; x_3 < n; x_3++)
     {
-        float p = (float(int(start + x_4) - int(65u * spp)) * 6.283185482025146484375) / 12.0;
-        float v = _62.raster[(base + start) + x_4] - black;
+        float p = (float(int(bstart + x_3) - (65 * spp)) * 6.283185482025146484375) / 12.0;
+        float v = _39.raster[(base + bstart) + x_3] - black;
         c += (v * cos(p));
-        s += (v * sin(p));
+        sn += (v * sin(p));
     }
-    float amplitude = (2.0 * length(float2(c, s))) / float(n);
-    float _364;
-    if (_19.region == 1u)
+    float amplitude = (2.0 * length(float2(c, sn))) / float(n);
+    float _484;
+    if (_128.region == 1u)
     {
-        _364 = ((line & 1u) == 1u) ? 1.5 : 4.5;
+        _484 = ((line & 1u) == 1u) ? 1.5 : 4.5;
     }
     else
     {
-        _364 = 5.5;
+        _484 = 5.5;
     }
-    float burst_axis = _364;
-    _157.measurement[line] = float4(precise::atan2(-s, c) - ((burst_axis * 6.283185482025146484375) / 12.0), black, amplitude, offset);
+    float burst_axis = _484;
+    _284.measurement[line] = float4(precise::atan2(-sn, c) - ((burst_axis * 6.283185482025146484375) / 12.0), black, amplitude, offset);
 }

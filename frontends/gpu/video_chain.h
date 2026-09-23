@@ -245,6 +245,11 @@ typedef struct {
      * natural frequency, damping, and detector gain during the 21 lines
      * from vertical sync (TDA2579 V-blank fast mode). */
     float h_pll_hz, h_pll_damping, h_pll_vblank_gain;
+    /* Keyed black clamp time constant in lines: the back-porch level
+     * charges the clamp with 1 - exp(-1 / clamp_lines) per line. 0 takes
+     * the generic 64 lines (a jungle IC clamp, 100 nF charged at about
+     * 1 mA/V over a 2 us key). */
+    float clamp_lines;
     /* Fraction of residual carrier rejected in the Y FIR. 0.95 adds
      * 26 dB rejection at the carrier; 0 disables the horizontal trap.
      * Controls cross-luma, not cross-color in the separate chroma path.
