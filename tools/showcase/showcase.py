@@ -289,6 +289,8 @@ def cmd_install(ctx, args, runner: Runner) -> int:
 
 
 def cmd_all(ctx, args, runner: Runner) -> int:
+    if ctx.site:
+        jobs_mod.check_site(ctx)  # a mistyped --site fails now, not after hours of recording
     stages = [("record", cmd_record), ("encode", cmd_encode)]
     shots = {s.id for s, _ in selection(ctx, args)}
     presets = {p for _, p in selection(ctx, args)}

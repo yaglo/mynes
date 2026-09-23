@@ -910,6 +910,24 @@ def assets_budget(site: Path, copies: list[tuple[Path, str]]) -> tuple[int, list
     return sum(size for size, _, _ in ranked), ranked
 
 
+def manifest_path(site: Path) -> Path:
+    return site / manifest_mod.HERO_PREFIX / "manifest.json"
+
+
+def check_site(ctx: Context) -> dict | None:
+    """The site's manifest (None when it has none), after checking that the
+    site directory exists and the manifest reads."""
+    if not ctx.site:
+        raise PipelineError("install needs the site directory (mynes-web checkout)")
+    if not ctx.site.is_dir():
+        raise PipelineError(f"site directory {ctx.site} does not exist")
+    path = manifest_path(ctx.site)
+    try:
+        return manifest_mod.load(path)
+    except (OSError, ValueError) as e:
+        raise PipelineError(f"{path}: {e}") from e
+
+
 def describe_site_file(site: Path, rel: str, kind: str) -> dict:
     """What a version 1 manifest left out about a file on the site: size,
     bytes and codecs string for a video, size for an image."""
@@ -930,16 +948,14 @@ def describe_site_file(site: Path, rel: str, kind: str) -> dict:
 def install(ctx: Context, runner: Runner, pairs: list[tuple[Shot, str]]) -> dict | None:
     """Copy each complete clip into <site>/assets/hero/<shot>/<preset>/ and merge
     manifest.json, unless the site's assets/ would exceed the budget. The
-    manifest is left alone (with an error) when no selected clip is complete."""
-    if not ctx.site:
-        raise PipelineError("install needs the site directory (mynes-web checkout)")
+    manifest is read and merged before anything is copied, and left alone
+    (with an error) when no selected clip is complete."""
+    existing = check_site(ctx)
     site = ctx.site
-    if not runner.dry_run and not site.is_dir():
-        raise PipelineError(f"site directory {site} does not exist")
-    manifest_path = site / manifest_mod.HERO_PREFIX / "manifest.json"
+    path = manifest_path(site)
     clips = [c for c in (collect_clip(ctx, runner, s, p) for s, p in pairs) if c]
     if not clips:
-        raise PipelineError(f"nothing to install: no selected clip is complete; {manifest_path} is unchanged")
+        raise PipelineError(f"nothing to install: no selected clip is complete; {path} is unchanged")
     copies = [c for clip in clips for c in clip.copies]
     total, ranked = assets_budget(site, copies)
     budget = int(ctx.budget_mb * recipes.MB)
@@ -951,23 +967,25 @@ def install(ctx: Context, runner: Runner, pairs: list[tuple[Shot, str]]) -> dict
         raise PipelineError(f"refusing to install: {site}/assets would hold {total / recipes.MB:.1f} MB, more than "
                             f"--budget-mb {ctx.budget_mb:g}. Largest files:\n" + "\n".join(lines)
                             + "\nNarrow --shots/--presets, give fewer shots lens clips or raise --budget-mb.")
+    produced: dict[str, dict[str, dict]] = {}
+    for clip in clips:
+        produced.setdefault(clip.shot.id, {})[clip.preset] = clip.entry
+    try:
+        merged = manifest_mod.build(ctx.shot_list, produced, existing=existing, presets_dir=ctx.presets_dir,
+                                    region=ctx.shot_list.defaults.region,
+                                    describe=lambda rel, kind: describe_site_file(site, rel, kind))
+    except (TypeError, ValueError, KeyError, AttributeError) as e:
+        raise PipelineError(f"{path}: cannot merge into this manifest: {e!r}") from e
     for src, rel in copies:
         dst = site / rel
         if runner.dry_run or not runner.up_to_date([dst], [src]):
             runner.copy(src, dst)
     if runner.dry_run:
-        runner.say(f"dry-run: would merge {len(clips)} clip(s) into {manifest_path}")
+        runner.say(f"dry-run: would merge {len(clips)} clip(s) into {path}")
         return None
-    produced: dict[str, dict[str, dict]] = {}
-    for clip in clips:
-        produced.setdefault(clip.shot.id, {})[clip.preset] = clip.entry
-    existing = manifest_mod.load(manifest_path) if manifest_path.exists() else None
-    merged = manifest_mod.build(ctx.shot_list, produced, existing=existing, presets_dir=ctx.presets_dir,
-                                region=ctx.shot_list.defaults.region,
-                                describe=lambda rel, kind: describe_site_file(site, rel, kind))
     for problem in manifest_mod.validate(merged):
         runner.say(f"manifest warning: {problem}")
-    runner.write_text(manifest_path, manifest_mod.dump(merged))
-    runner.say(f"manifest: {manifest_path} ({len(merged.get('games', []))} games, "
+    runner.write_text(path, manifest_mod.dump(merged))
+    runner.say(f"manifest: {path} ({len(merged.get('games', []))} games, "
                f"{sum(len(v) for v in merged.get('clips', {}).values())} clips, {len(clips)} installed now)")
     return merged

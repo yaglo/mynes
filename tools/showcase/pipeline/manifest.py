@@ -192,12 +192,29 @@ def build(shot_list: ShotList, produced: dict[str, dict[str, dict]], *,
 
 
 def load(path: Path | str) -> dict | None:
+    """The manifest at ``path``, or None when there is none. ValueError, with
+    the reason, when it is not JSON or not shaped like a manifest."""
     path = Path(path)
     if not path.exists():
         return None
-    data = json.loads(path.read_text())
+    try:
+        data = json.loads(path.read_text())
+    except ValueError as e:
+        raise ValueError(f"not valid JSON: {e}") from e
     if not isinstance(data, dict):
-        raise ValueError(f"{path}: manifest must be a JSON object")
+        raise ValueError("manifest must be a JSON object")
+    for key in ("presets", "games"):
+        if key in data and not isinstance(data[key], list):
+            raise ValueError(f'"{key}" must be a list')
+    clips = data.get("clips", {})
+    if not isinstance(clips, dict):
+        raise ValueError('"clips" must be an object')
+    for game, by_preset in clips.items():
+        if not isinstance(by_preset, dict):
+            raise ValueError(f'clips["{game}"] must be an object of presets')
+        for preset, clip in by_preset.items():
+            if not isinstance(clip, dict):
+                raise ValueError(f'clips["{game}"]["{preset}"] must be an object')
     return data
 
 

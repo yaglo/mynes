@@ -621,6 +621,17 @@ class EncodePipeline(unittest.TestCase):
         self.assertTrue((hero / "512x384" / "crop-hdr@1x.avif").exists())
         self.assertEqual(runner2.ran, [])  # no commands, and only the crops were new
 
+    def test_install_reads_the_manifest_before_copying(self):
+        for i, text in enumerate(('{"version": 2, "clips": {', "[1, 2]", '{"clips": {"synth": {"p_sony": "oops"}}}')):
+            site = self.make_site(f"site-bad-{i}")
+            path = site / "assets" / "hero" / "manifest.json"
+            path.write_text(text)
+            with self.assertRaises(PipelineError) as cm:
+                jobs_mod.install(self.install_ctx(site), Runner(quiet=True), self.shot_list.select())
+            self.assertTrue(str(cm.exception).startswith(f"{path}: "), cm.exception)
+            self.assertFalse((site / "assets" / "hero" / "synth").exists())
+            self.assertEqual(path.read_text(), text)
+
     def test_install_with_nothing_built_leaves_the_manifest(self):
         site = self.make_site("site-empty")
         path = site / "assets" / "hero" / "manifest.json"

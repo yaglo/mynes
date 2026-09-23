@@ -195,9 +195,13 @@ class Build(unittest.TestCase):
         self.assertIsNone(manifest.load(p))
         p.write_text(json.dumps(V1))
         self.assertEqual(manifest.load(p), V1)
-        p.write_text("[]")
-        with self.assertRaises(ValueError):
-            manifest.load(p)
+        for text, why in (("[]", "must be a JSON object"), ('{"version": 2, "clips": {', "not valid JSON"),
+                          ('{"games": {}}', '"games" must be a list'), ('{"clips": []}', '"clips" must be an object'),
+                          ('{"clips": {"mario": {"sony": "oops"}}}', 'clips["mario"]["sony"] must be an object')):
+            p.write_text(text)
+            with self.assertRaises(ValueError) as cm:
+                manifest.load(p)
+            self.assertIn(why, str(cm.exception))
 
 
 if __name__ == "__main__":

@@ -165,6 +165,20 @@ class Cli(unittest.TestCase):
         self.assertNotIn("== features", out)  # no feature uses this selection
         self.assertEqual(out.count("dry-run copy"), 10)  # 6 stage files, 2 posters, 2 stills
 
+    def test_all_checks_the_site_before_recording(self):
+        missing = Path(self.tmp.name) / "no-such-site"
+        rc, out = self.run_cli("--dry-run", "--shots", "metroid", "all", "--site", str(missing))
+        self.assertEqual(rc, 1)
+        self.assertIn(f"site directory {missing} does not exist", out)
+        self.assertNotIn("== record", out)
+        broken = Path(self.tmp.name) / "broken-site"
+        (broken / "assets" / "hero").mkdir(parents=True)
+        (broken / "assets" / "hero" / "manifest.json").write_text('{"version": 2, "clips": {')
+        rc, out = self.run_cli("--dry-run", "--shots", "metroid", "all", "--site", str(broken))
+        self.assertEqual(rc, 1)
+        self.assertIn("manifest.json: not valid JSON", out)
+        self.assertNotIn("== record", out)
+
     def test_bad_shot_selection(self):
         rc, out = self.run_cli("--dry-run", "--shots", "nope", "encode")
         self.assertEqual(rc, 1)
