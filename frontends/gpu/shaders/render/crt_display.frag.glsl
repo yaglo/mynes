@@ -93,6 +93,8 @@ layout(set = 3, binding = 0) uniform DisplayParams {
     vec4 presentation; // x: host-refresh emission multiplier
     vec4 monitor; // x: 1 = FW900 physical variable-pitch grille; y: panel subpixels, 0 off, 1 RGB, 2 BGR; z: shoulder knee; w: mask peak coverage
     vec4 damper;  // x: aperture-grille damper wires; y: shadow height, face fraction; z, w: wire heights from the top
+    vec4 lab_gap;   // subpixel lab: xyz share of each colour moved half a triad along; w stripe fill (0 = 0.28)
+    vec4 lab_gain;  // subpixel lab: xyz gain per output channel
 };
 
 /* Mask coordinates are local to the CRT viewport. Each stripe is one
@@ -129,14 +131,15 @@ float stripe_window(float x, float period, float offset, float fill) {
 }
 // Amplitude of the band-limited grille's n-th harmonic. Interpolating two
 // Fejer orders keeps the coverage continuous and nonnegative across resize.
-float stripe_harmonic(int n, int order, float sampled_period) {
+float stripe_harmonic(int n, int order, float sampled_period, float fill) {
     float k=float(n);
     float transition=1.0-smoothstep(0.45,0.5,float(order)/sampled_period);
     float weight=mix(max(1.0-k/float(order),0.0),1.0-k/float(order+1),transition);
-    return 2.0*sinc_pi(k*0.28)*sinc_pi(k/sampled_period)*weight;
+    return 2.0*sinc_pi(k*fill)*sinc_pi(k/sampled_period)*weight;
 }
 vec3 aperture_mask(float x, float pitch) {
     float period=3.0*max(pitch,0.05);
+    float fill=lab_gap.w>0.0 ? lab_gap.w : 0.28;
     bool whole=abs(period-round(period))<0.001;
     if(whole && monitor.x!=1.0) {
         // Exact stripes: each colour gets the share of its stripes inside
@@ -161,9 +164,18 @@ vec3 aperture_mask(float x, float pitch) {
             vec3 delta=site-fract(period*offset+shift);
             offset+=(delta-round(delta))/period;
         }
-        return vec3(stripe_window(xs,period,offset.r,0.28),
-                    stripe_window(xs,period,offset.g,0.28),
-                    stripe_window(xs,period,offset.b,0.28));
+        vec3 near=vec3(stripe_window(xs,period,offset.r,fill),
+                       stripe_window(xs,period,offset.g,fill),
+                       stripe_window(xs,period,offset.b,fill));
+        if(lab_gap.x+lab_gap.y+lab_gap.z<=0.0) return near;
+        // Subpixel lab: part of a colour's light drawn half a triad along,
+        // on the same colour's subpixel of the other pixel of a two-pixel
+        // triad. 0.5 spreads it evenly.
+        float along=0.5*period;
+        vec3 far=vec3(stripe_window(xs-along,period,offset.r,fill),
+                      stripe_window(xs-along,period,offset.g,fill),
+                      stripe_window(xs-along,period,offset.b,fill));
+        return mix(near,far,clamp(lab_gap.xyz,vec3(0.0),vec3(0.5)));
     }
     float footprint=max(1.0,mask_scale.x);
     float sampled_period=period/footprint;
@@ -175,7 +187,7 @@ vec3 aperture_mask(float x, float pitch) {
     vec3 phase=6.28318530718*(x/period-vec3(0.21,0.50,0.79));
     vec3 coverage=vec3(1.0);
     for(int n=1;n<=order;n++)
-        coverage+=stripe_harmonic(n,order,sampled_period)*cos(float(n)*phase);
+        coverage+=stripe_harmonic(n,order,sampled_period,fill)*cos(float(n)*phase);
     return subpixel_layout==2 ? coverage.bgr : coverage;
 }
 vec3 phosphor_mask(vec2 pos, vec2 face_uv) {
@@ -409,6 +421,9 @@ void main() {
                       dot(phosphor_to_display[1].rgb,lit),
                       dot(phosphor_to_display[2].rgb,lit));
     }
+
+    // Subpixel lab: per-channel trim, on the lit light and the estimate alike.
+    color *= lab_gain.rgb; unmasked *= lab_gain.rgb;
 
     /* Apply glass tint (phosphor light attenuated through glass). */
     color *= glass_tint;

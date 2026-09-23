@@ -282,6 +282,13 @@ int test_display_fidelity(SDL_GPUDevice *gpu) {
     }
     for(int x=0;x<W;x++)
         CHECK(fabsf(center_row[x][0]-center_row[x][1])<0.002f && fabsf(center_row[x][2]-center_row[x][1])<0.002f);
+    // The subpixel lab's gap share moves light onto the other pixel's
+    // subpixel: at 0.5 both pixels carry the same, and the energy stays.
+    p.lab_gap[0]=p.lab_gap[1]=p.lab_gap[2]=.5f;
+    render(gpu,&d,input,target,&p,avg,&peak);
+    for(int x=0;x<W;x+=2) for(int c=0;c<3;c++) CHECK(fabsf(center_row[x][c]-center_row[x+1][c])<0.002f);
+    for(int c=0;c<3;c++) CHECK(fabsf(avg[c]-0.25f)<0.001f);
+    p.lab_gap[0]=p.lab_gap[1]=p.lab_gap[2]=0;
     // A four-pixel triad: each colour's stripe moves onto the nearest
     // subpixel of its colour (green is centred by the phase shift), so the
     // light lands at 1.17, 2.50 and 3.83 pixels on an RGB panel and at 1.83,

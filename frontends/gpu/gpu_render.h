@@ -45,6 +45,10 @@ typedef struct {
     int             effective_panel_subpixels; /* 0 while the desktop resamples the output */
     int             hdr_gain_mode;       /* 0 = Auto: fit headroom, 1 = preset's emission gain only */
     int             panel_primaries;     /* 0 = sRGB, 1 = Display P3 when the layer can take it */
+    int             lab_split;           /* subpixel lab: 0 off, 1 right half, 2 left half shows the lab grille */
+    float           lab_gap[3];          /* subpixel lab: share of each colour drawn half a triad along */
+    float           lab_gain[3];         /* subpixel lab: gain per output channel */
+    float           lab_fill;            /* subpixel lab: stripe fill */
     float           effective_hdr_gain;  /* emission gain in use; 1 in SDR */
     GPUOutputGeometry output_geometry;
     int             drawable_w, drawable_h;

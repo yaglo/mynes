@@ -980,6 +980,9 @@ int main(int argc, char **argv) {
     render_ctx.mask_alignment=mask_alignment_override>=0 ? mask_alignment_override : mynes_config.gpu_mask_alignment;
     render_ctx.hdr_gain_mode=mynes_config.gpu_hdr_gain_mode;
     render_ctx.panel_primaries=mynes_config.gpu_panel_primaries;
+    render_ctx.lab_split=mynes_config.gpu_lab_split;
+    for (int i=0;i<3;i++) { render_ctx.lab_gap[i]=mynes_config.gpu_lab_gap[i]/100.0f; render_ctx.lab_gain[i]=mynes_config.gpu_lab_gain[i]/100.0f; }
+    render_ctx.lab_fill=mynes_config.gpu_lab_fill/100.0f;
     /* Captures and recordings are viewed on other panels: they use the saved
      * subpixel order only when asked for on the command line. */
     render_ctx.panel_subpixels=panel_subpixels_override>=0 ? panel_subpixels_override

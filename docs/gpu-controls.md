@@ -552,12 +552,25 @@ It preserves scanline structure in residual emission; use ambient light for a
 room-lit glass pedestal. Raising black floor does not illuminate blanked raster.
 
 
+## Subpixel lab
+
+**M → Host display → Subpixel lab** draws one half of the picture again
+with a variant of the grille, at the same gain, so the two can be judged
+side by side on the panel itself. Split picks the half (Off, Right half,
+Left half). Gap share R, G and B move that share of a colour's light half
+a triad along, onto the same colour's subpixel in the other pixel of a
+two-pixel triad; 0.5 spreads it evenly, 0 is the plain grille. Gain R, G
+and B trim each output channel. Stripe fill is the phosphor stripe's share
+of the triad (0.28 is the shipped value). The values are saved to
+`config.json` as `gpu_lab_*` in hundredths. They apply only to the lab
+half; the shipped grille does not read them.
+
 ## Performance
 
 **M → Host display** holds the mask sampling choice, the panel's subpixel
 order (Off, RGB stripe, BGR stripe), Panel primaries (P3 gives the window's layer
 the panel's own primaries where it can take them; sRGB is the compositor's
-conversion), HDR gain (Auto fits the display's
+conversion), Subpixel lab (below), HDR gain (Auto fits the display's
 headroom, Preset uses the preset's own; see the
 [pipeline reference](gpu-pipeline-reference.md)) and two host-side
 performance settings. None is a television setting; all are saved to

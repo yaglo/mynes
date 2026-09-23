@@ -135,6 +135,8 @@ bool mynes_config_load(MynesConfig *cfg) {
      * only written as 0 when the user switched it off. */
     cfg->gpu_low_latency = 1;
     cfg->gpu_panel_primaries = 1;
+    for (int i = 0; i < 3; i++) cfg->gpu_lab_gain[i] = 100;
+    cfg->gpu_lab_fill = 28;
     /* Full size: a smaller internal CRT is upsampled, which moves the
      * scanlines off whole panel rows. */
     cfg->gpu_render_scale = 1;
@@ -186,6 +188,15 @@ bool mynes_config_load(MynesConfig *cfg) {
         } else if (strstr(s, "\"gpu_panel_primaries\"")) {
             const char *colon=strchr(s, ':');
             cfg->gpu_panel_primaries=colon && atoi(colon+1)==0 ? 0 : 1;
+        } else if (strstr(s, "\"gpu_lab_")) {
+            const char *colon=strchr(s, ':'); int v=colon ? atoi(colon+1) : 0;
+            static const char *names[]={"split","gap_r","gap_g","gap_b","gain_r","gain_g","gain_b","fill"};
+            int *slots[]={&cfg->gpu_lab_split,&cfg->gpu_lab_gap[0],&cfg->gpu_lab_gap[1],&cfg->gpu_lab_gap[2],
+                          &cfg->gpu_lab_gain[0],&cfg->gpu_lab_gain[1],&cfg->gpu_lab_gain[2],&cfg->gpu_lab_fill};
+            for (int i = 0; i < 8; i++) {
+                char key[32]; snprintf(key,sizeof(key),"\"gpu_lab_%s\"",names[i]);
+                if (strstr(s,key)) *slots[i]=v;
+            }
         } else if (strstr(s, "\"gpu_panel_subpixels\"")) {
             const char *colon=strchr(s, ':');
             int order=colon ? atoi(colon+1) : 0;
@@ -258,6 +269,10 @@ bool mynes_config_save(const MynesConfig *cfg) {
     fprintf(f, "    \"gpu_mask_alignment\": %d,\n",cfg->gpu_mask_alignment==1 ? 1 : 0);
     fprintf(f, "    \"gpu_hdr_gain_mode\": %d,\n",cfg->gpu_hdr_gain_mode==1 ? 1 : 0);
     fprintf(f, "    \"gpu_panel_primaries\": %d,\n",cfg->gpu_panel_primaries==0 ? 0 : 1);
+    fprintf(f, "    \"gpu_lab_split\": %d,\n    \"gpu_lab_gap_r\": %d,\n    \"gpu_lab_gap_g\": %d,\n    \"gpu_lab_gap_b\": %d,\n",
+        cfg->gpu_lab_split,cfg->gpu_lab_gap[0],cfg->gpu_lab_gap[1],cfg->gpu_lab_gap[2]);
+    fprintf(f, "    \"gpu_lab_gain_r\": %d,\n    \"gpu_lab_gain_g\": %d,\n    \"gpu_lab_gain_b\": %d,\n    \"gpu_lab_fill\": %d,\n",
+        cfg->gpu_lab_gain[0],cfg->gpu_lab_gain[1],cfg->gpu_lab_gain[2],cfg->gpu_lab_fill);
     fprintf(f, "    \"gpu_panel_subpixels\": %d,\n",cfg->gpu_panel_subpixels==1 || cfg->gpu_panel_subpixels==2 ? cfg->gpu_panel_subpixels : 0);
     fprintf(f, "    \"gpu_room_reflections\": %d,\n",cfg->gpu_room_reflections==1 ? 1 : 0);
     fprintf(f, "    \"gpu_render_scale\": \"%s\",\n",

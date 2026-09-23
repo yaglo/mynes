@@ -74,6 +74,10 @@ typedef struct {
     float hdr_gain;                 /* output multiplier (1.0=normal) */
     float shoulder_knee;            /* output shoulder start, fraction of headroom; 0 = 0.75 */
     int   output_p3;                /* target is linear Display P3, not linear sRGB */
+    float lab_gap[3];               /* subpixel lab: share of each colour drawn half a triad along */
+    float lab_gain[3];              /* subpixel lab: gain per output channel; 0 = 1 */
+    float lab_fill;                 /* subpixel lab: stripe fill of the triad; 0 = 0.28 */
+    int   lab_scissor_x, lab_scissor_y, lab_scissor_w, lab_scissor_h; /* draw only this rectangle; w = 0 for all */
     int   subpixel_layout;          /* 0=none, 1=RGB, 2=BGR */
     float overscan;                 /* bezel crop fraction per edge (0-0.08) */
     float keystone;                 /* trapezoidal distortion (-0.1 to +0.1) */

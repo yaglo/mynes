@@ -25,6 +25,10 @@ typedef struct {
     int  gpu_panel_subpixels; /* host setting: 0=off, 1=RGB stripe, 2=BGR stripe */
     int  gpu_hdr_gain_mode;   /* host setting: 0=Auto (fit headroom), 1=preset gain */
     int  gpu_panel_primaries; /* host setting: 0=sRGB, 1=Display P3 when the panel's layer can take it */
+    int  gpu_lab_split;       /* subpixel lab: 0 off, 1 right half, 2 left half */
+    int  gpu_lab_gap[3];      /* subpixel lab: gap share per colour, hundredths */
+    int  gpu_lab_gain[3];     /* subpixel lab: gain per channel, hundredths */
+    int  gpu_lab_fill;        /* subpixel lab: stripe fill, hundredths */
     int  gpu_render_scale;   /* host setting: 0=auto, 1=full (default), 2=3/4, 3=half */
     int  gpu_low_latency;    /* host setting: 1=one picture queued ahead of the display */
     char last_preset[MYNES_PRESET_MAX];                  /* slug or filename */

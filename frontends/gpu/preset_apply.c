@@ -500,6 +500,14 @@ static void gpu_cb_panel_primaries(void) {
     mynes_config_save(g_ctx->config);
 }
 
+static void gpu_cb_lab(void) {
+    GPURenderCtx *r=g_ctx->render_ctx; MynesConfig *c=g_ctx->config;
+    c->gpu_lab_split=r->lab_split;
+    for (int i=0;i<3;i++) { c->gpu_lab_gap[i]=(int)lroundf(r->lab_gap[i]*100); c->gpu_lab_gain[i]=(int)lroundf(r->lab_gain[i]*100); }
+    c->gpu_lab_fill=(int)lroundf(r->lab_fill*100);
+    mynes_config_save(c);
+}
+
 static void gpu_cb_panel_subpixels(void) {
     g_ctx->config->gpu_panel_subpixels=g_ctx->render_ctx->panel_subpixels;
     mynes_config_save(g_ctx->config);
@@ -978,8 +986,8 @@ static OSDMenuItem menu_rf[7],menu_vhs[15];
  * declared near the top of this file so the save action can reach them. */
 static OSDMenuItem menu_audio_top[3];
 static OSDMenuItem menu_picture[9], menu_tube[5];
-static OSDMenuItem menu_diagnostics[1],menu_display[PRESET_MENU_DISPLAY_MAX];
-static int  menu_display_count = 7;
+static OSDMenuItem menu_diagnostics[1],menu_display[PRESET_MENU_DISPLAY_MAX],menu_lab[8];
+static int  menu_display_count = 8;
 static OSDMenuItem menu_game[PRESET_MENU_GAME_MAX];
 static int  menu_game_count = 0;
 int         preset_menu_root_count = 9;
@@ -1480,6 +1488,15 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_display[4] = MI_FLOAT("Dark refresh",&ctx->render_ctx->dark_frame_level,.05f,0,1,NULL,"%.2f");
     menu_display[5] = MI_CYCLIC("HDR gain",&ctx->render_ctx->hdr_gain_mode,0,1,gpu_cb_hdr_gain_mode,"Auto|Preset");
     menu_display[6] = MI_CYCLIC("Panel primaries",&ctx->render_ctx->panel_primaries,0,1,gpu_cb_panel_primaries,"sRGB|P3");
+    menu_lab[0] = MI_CYCLIC("Split",&ctx->render_ctx->lab_split,0,2,gpu_cb_lab,"Off|Right half|Left half");
+    menu_lab[1] = MI_FLOAT("Gap share R",&ctx->render_ctx->lab_gap[0],.05f,0,.5f,gpu_cb_lab,"%.2f");
+    menu_lab[2] = MI_FLOAT("Gap share G",&ctx->render_ctx->lab_gap[1],.05f,0,.5f,gpu_cb_lab,"%.2f");
+    menu_lab[3] = MI_FLOAT("Gap share B",&ctx->render_ctx->lab_gap[2],.05f,0,.5f,gpu_cb_lab,"%.2f");
+    menu_lab[4] = MI_FLOAT("Gain R",&ctx->render_ctx->lab_gain[0],.05f,.5f,1.5f,gpu_cb_lab,"%.2f");
+    menu_lab[5] = MI_FLOAT("Gain G",&ctx->render_ctx->lab_gain[1],.05f,.5f,1.5f,gpu_cb_lab,"%.2f");
+    menu_lab[6] = MI_FLOAT("Gain B",&ctx->render_ctx->lab_gain[2],.05f,.5f,1.5f,gpu_cb_lab,"%.2f");
+    menu_lab[7] = MI_FLOAT("Stripe fill",&ctx->render_ctx->lab_fill,.02f,.1f,.5f,gpu_cb_lab,"%.2f");
+    menu_display[7] = MI_SUB("Subpixel lab",menu_lab,8);
     preset_menu_root[6] = MI_SUB("Host display",menu_display,menu_display_count);
     preset_menu_root[7] = MI_TOGGLE("Room reflections (G)", &ctx->render_ctx->room_reflections_enabled, gpu_cb_room_reflections);
     /* Reset stays last: preset_menu_root_append() inserts before it. */

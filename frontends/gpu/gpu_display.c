@@ -654,6 +654,8 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
             float pulse_gain, _pulse_pad[3];
             float monitor_model, panel_subpixels, shoulder_knee, mask_peak;
             float damper_wires, damper_width, damper_y0, damper_y1;
+            float lab_gap_r, lab_gap_g, lab_gap_b, lab_fill;
+            float lab_gain_r, lab_gain_g, lab_gain_b, _lab_pad;
         } crt_ubo = {0};
 
         crt_ubo.monitor_model = params->monitor_model;
@@ -664,6 +666,11 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
         crt_ubo.damper_width = params->damper_width;
         crt_ubo.damper_y0 = params->damper_y[0];
         crt_ubo.damper_y1 = params->damper_y[1];
+        crt_ubo.lab_gap_r = params->lab_gap[0]; crt_ubo.lab_gap_g = params->lab_gap[1]; crt_ubo.lab_gap_b = params->lab_gap[2];
+        crt_ubo.lab_fill = params->lab_fill;
+        crt_ubo.lab_gain_r = params->lab_gain[0] > 0 ? params->lab_gain[0] : 1;
+        crt_ubo.lab_gain_g = params->lab_gain[1] > 0 ? params->lab_gain[1] : 1;
+        crt_ubo.lab_gain_b = params->lab_gain[2] > 0 ? params->lab_gain[2] : 1;
         crt_ubo.pulse_gain = params->pulse_enabled ? params->pulse_gain : 1;
         float phosphor_matrix[3][3];
         crt_phosphor_matrix(params->phosphor_gamut,phosphor_matrix);
@@ -781,6 +788,11 @@ void gpu_display_render(GPUDisplay *d, SDL_GPUDevice *gpu,
             /* Set viewport for 4:3 aspect ratio (letterbox/pillarbox). */
             if (viewport) {
                 SDL_SetGPUViewport(pass, viewport);
+                if (params->lab_scissor_w > 0) {
+                    /* Subpixel lab: the same picture mapping, drawn only over one half. */
+                    SDL_Rect scissor={params->lab_scissor_x,params->lab_scissor_y,params->lab_scissor_w,params->lab_scissor_h};
+                    SDL_SetGPUScissor(pass,&scissor);
+                }
             }
 
             /* Beam, glass scattering, and the fixed phosphor face. */
@@ -917,10 +929,14 @@ static double sinc_pi(double x) {
 static float mask_coverage_peak(const GPUDisplayParams *p) {
     float pitch = fmaxf(p->mask_pitch_px, 0.05f);
     float sx = p->mask_scale_x > 0 ? p->mask_scale_x : 1, sy = p->mask_scale_y > 0 ? p->mask_scale_y : 1;
+    float fill = p->lab_fill > 0 ? p->lab_fill : 0.28f;
     if (p->mask_type == 1) {
         float period = 3.0f * pitch;
+        /* The lab's gap share moves light onto a pixel of its own, so the
+         * peak is whichever side keeps more. */
+        float kept = 1 - fminf(fminf(p->lab_gap[0], p->lab_gap[1]), p->lab_gap[2]);
         if (fabsf(period - roundf(period)) < 0.001f && p->monitor_model != 1)
-            return fminf(period * 0.28f, 1.0f) / 0.28f;
+            return fminf(period * fill, 1.0f) / fill * fmaxf(kept, 0.5f);
         float sampled = period / fmaxf(sx, 1);
         int order = (int)fminf(floorf(sampled * 0.5f), 16);
         if (order < 1) return 1;
@@ -931,7 +947,7 @@ static float mask_coverage_peak(const GPUDisplayParams *p) {
             double sum = 1;
             for (int n = 1; n <= order; n++) {
                 double w0 = fmax(1.0 - (double)n / order, 0), w1 = 1.0 - (double)n / (order + 1);
-                sum += 2 * sinc_pi(n * 0.28) * sinc_pi(n / sampled)
+                sum += 2 * sinc_pi(n * fill) * sinc_pi(n / sampled)
                      * (w0 + (w1 - w0) * transition) * cos(2 * M_PI * n * i / 256);
             }
             best = fmax(best, sum);
@@ -1003,7 +1019,9 @@ float gpu_display_mask_peak(const GPUDisplayParams *p) {
     if (!valid || p->mask_type != last.mask_type || p->monitor_model != last.monitor_model
         || p->mask_pitch_px != last.mask_pitch_px || p->mask_row_pitch != last.mask_row_pitch
         || p->mask_scale_x != last.mask_scale_x || p->mask_scale_y != last.mask_scale_y
-        || p->mask_origin_x != last.mask_origin_x || p->mask_origin_y != last.mask_origin_y) {
+        || p->mask_origin_x != last.mask_origin_x || p->mask_origin_y != last.mask_origin_y
+        || p->lab_fill != last.lab_fill || p->lab_gap[0] != last.lab_gap[0]
+        || p->lab_gap[1] != last.lab_gap[1] || p->lab_gap[2] != last.lab_gap[2]) {
         last = *p; valid = true;
         coverage = mask_coverage_peak(p);
     }

@@ -510,6 +510,18 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
                            ctx->display_tex, ctx->display_tex_w, ctx->display_tex_h,
                            swapchain_tex, (int)sw, (int)sh,
                            &disp_params, &viewport);
+        /* Subpixel lab: one half drawn again with the lab's grille, at the
+         * same gain, so the two can be judged side by side. */
+        if (ctx->lab_split && !ctx->offscreen_w) {
+            GPUDisplayParams lab = disp_params;
+            for (int i = 0; i < 3; i++) { lab.lab_gap[i] = ctx->lab_gap[i]; lab.lab_gain[i] = ctx->lab_gain[i]; }
+            lab.lab_fill = ctx->lab_fill;
+            lab.lab_scissor_x = (int)(ctx->lab_split == 1 ? vp_x + vp_w / 2 : vp_x);
+            lab.lab_scissor_y = (int)vp_y; lab.lab_scissor_w = (int)(vp_w / 2); lab.lab_scissor_h = (int)vp_h;
+            gpu_display_render(ctx->gpu_disp, ctx->gpu, cmd,
+                               ctx->display_tex, ctx->display_tex_w, ctx->display_tex_h,
+                               swapchain_tex, (int)sw, (int)sh, &lab, &viewport);
+        }
     } else if (ctx->display_tex) {
         /* Passthrough blit with 4:3 aspect ratio.
          * LOADOP_CLEAR fills the entire destination with black before the blit,
