@@ -3,6 +3,7 @@ frontend's recorder: which passes run, with what arguments and environment,
 what is checked afterwards, and when a pass is recorded again."""
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -14,6 +15,8 @@ from pipeline import shots
 from pipeline.runner import PipelineError, Runner, have_tool, probe_video, run_jobs
 
 HERE = Path(__file__).resolve().parent
+SCRIPT = HERE.parent / "showcase.py"
+ROOT = HERE.parents[2]
 HAVE_FFMPEG = have_tool("ffmpeg") and have_tool("ffprobe")
 LENS, STAGE, README = (192, 144), (128, 96), (160, 120)
 
@@ -165,6 +168,29 @@ class Record(unittest.TestCase):
         self.record()
         self.assertEqual(len(self.calls()), 6 + 3 + 6 + 6)
 
+    def test_relative_paths_name_files_under_the_current_directory(self):
+        """The recorder runs from the repository root, so showcase.py hands it
+        absolute paths: relative --roms, --states and --out, and a ./ --binary,
+        name files under the directory the command was run from."""
+        data = json.loads((self.root / "shots.json").read_text())
+        data["defaults"]["presets"] = ["sony_pvm_14l2"]  # a preset in presets/, which the CLI reads
+        del data["shots"][0]["replay"], data["shots"][0]["readme"]
+        (self.root / "cli-shots.json").write_text(json.dumps(data))
+        result = subprocess.run([sys.executable, str(SCRIPT), "--shots-file", "cli-shots.json", "--roms", "roms",
+                                 "--states", "states", "--out", "out-rel", "--binary", "./mynes_gpu", "record"],
+                                cwd=self.root, capture_output=True, text=True, timeout=300)
+        self.assertEqual(result.returncode, 0, result.stdout[-3000:] + result.stderr[-2000:])
+        calls = self.calls()
+        self.assertEqual(len(calls), 4)  # two sizes, SDR and HDR
+        here = self.root.resolve()
+        for call in calls:
+            argv = call["argv"]
+            self.assertEqual(Path(call["cwd"]).resolve(), ROOT.resolve())
+            self.assertEqual(Path(argv[argv.index("--load-state") + 1]), here / "states" / "beta.s1")
+            self.assertEqual(Path(argv[-1]), here / "roms" / "Synth Beta (U).nes")
+            out = Path(argv[argv.index("--record") + 1])
+            self.assertTrue(out.is_relative_to(here / "out-rel"), out)
+            self.assertTrue(out.exists(), out)
 
 
 if __name__ == "__main__":

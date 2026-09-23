@@ -50,7 +50,9 @@ the pick, and the recorder gets the same ffmpeg through `MYNES_FFMPEG`.
 ## Workflow
 
 Global options go before the subcommand; `install` and `all` take their own
-options after it.
+options after it. Relative paths (`--roms`, `--states`, `--out`, `--binary`,
+the site) are taken from the directory the command runs in, and the recorder
+is given them as absolute paths.
 
 1. Build the frontend with the HDR recorder and check the tools, ROMs and
    states:

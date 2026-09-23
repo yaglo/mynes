@@ -84,13 +84,21 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _absolute(path: Path | None) -> Path | None:
+    """The recorder runs from the repository root, so every path it is given
+    must be absolute: a relative --roms, --states or --out named files in
+    the wrong directory, and --binary ./x lost its ./ and became a PATH
+    lookup."""
+    return Path(os.path.abspath(path.expanduser())) if path is not None else None
+
+
 def make_context(args) -> jobs_mod.Context:
     shot_list = shots_mod.load(args.shots_file)
     return jobs_mod.Context(
-        shot_list=shot_list, out=args.out, build=args.build, binary=args.binary, roms=args.roms,
-        states_dir=args.states, config_dir=args.config_dir, flicker_scale=args.flicker_scale,
-        font=args.font, site=getattr(args, "site", None), fast=args.fast,
-        with_crops=getattr(args, "with_crops", False),
+        shot_list=shot_list, out=_absolute(args.out), build=_absolute(args.build), binary=_absolute(args.binary),
+        roms=_absolute(args.roms), states_dir=_absolute(args.states), config_dir=_absolute(args.config_dir),
+        flicker_scale=args.flicker_scale, font=args.font, site=_absolute(getattr(args, "site", None)),
+        fast=args.fast, with_crops=getattr(args, "with_crops", False),
         budget_mb=getattr(args, "budget_mb", jobs_mod.DEFAULT_BUDGET_MB))
 
 
