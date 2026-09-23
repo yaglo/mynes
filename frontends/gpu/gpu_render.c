@@ -778,15 +778,26 @@ bool gpu_render_measure_white(GPURenderCtx *ctx, const VideoChain *chain) {
                 if (v) {
                     int x0 = (int)pic.x, y0 = (int)pic.y, x1 = (int)(pic.x + pic.w), y1 = (int)(pic.y + pic.h);
                     int cx0 = x0 + (x1 - x0) / 4, cx1 = x1 - (x1 - x0) / 4, cy0 = y0 + (y1 - y0) / 4, cy1 = y1 - (y1 - y0) / 4;
-                    double peak = 0, sum = 0; long n = 0;
+                    /* The peak is the 99.8th percentile of the field, not its
+                     * maximum: the stripe centres on line centres are a few
+                     * per cent of the pixels, and a preset's noise or
+                     * dropouts must not set the gain. */
+                    enum { BINS = 8192 }; const float TOP = 16.0f;
+                    static uint32_t hist[BINS]; memset(hist, 0, sizeof(hist));
+                    double sum = 0; long n = 0, total = 0;
                     for (int y = y0; y < y1; y++) for (int x = x0; x < x1; x++) {
                         const uint16_t *px = v + ((size_t)y * w + x) * 4;
                         float r = gpu_half_to_float(px[0]), g = gpu_half_to_float(px[1]), b = gpu_half_to_float(px[2]);
                         float m = fmaxf(r, fmaxf(g, b));
-                        if (isfinite(m) && m > peak) peak = m;
+                        if (isfinite(m) && m >= 0) { int bin = (int)(m / TOP * (BINS - 1)); hist[bin < BINS ? bin : BINS - 1]++; total++; }
                         if (x >= cx0 && x < cx1 && y >= cy0 && y < cy1) { sum += 0.2126 * r + 0.7152 * g + 0.0722 * b; n++; }
                     }
                     SDL_UnmapGPUTransferBuffer(ctx->gpu, tb);
+                    double peak = 0; long above = 0;
+                    for (int bin = BINS - 1; bin >= 0; bin--) {
+                        above += hist[bin];
+                        if (above >= total / 500) { peak = (bin + 1) * (double)TOP / (BINS - 1); break; }
+                    }
                     if (peak > 0 && n > 0) {
                         ctx->white_peak_measured = (float)peak;
                         ctx->white_mean_measured = (float)(sum / n);
