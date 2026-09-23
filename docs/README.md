@@ -23,6 +23,8 @@ hardware research notes and the blog series moved to the project site:
 - [GPU frontend design notes](gpu-frontend-design.md)
 - [RGB consoles through the signal chain](architecture/rgb-consoles.md): Mega Drive and
   Super Famicom research and the `mynes_retro` prototype
+- [Fidelity to-do](architecture/fidelity-todo.md): open work from the model-limits review,
+  by rank and work package, with what only measurement can settle
 - [Interactive pipeline diagram](gpu-pipeline-interactive.html)
 
 ## Measurements
