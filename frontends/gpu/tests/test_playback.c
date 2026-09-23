@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 static int failures;
 #define CHECK(x) do { if (!(x)) { fprintf(stderr,"Playback FAIL %d: %s\n",__LINE__,#x); failures++; } } while (0)
@@ -41,6 +42,32 @@ static bool next(Playback *p, PlaybackFrame *frame) {
 static unsigned frames_1x_allows(Uint64 ns) {
     Uint64 period=(Uint64)(signal_region_frame_ms(0)*1000000.0); /* as playback.c */
     return (unsigned)(ns/period)+4;
+}
+
+/* Pictures read as they arrive. For each picture that follows the previous
+ * one read, gap holds the time from that one's ready_ns to this one's
+ * start_ns, which the worker spends waiting for its deadline. */
+typedef struct {
+    unsigned count, first, last, gaps;
+    Uint64 first_ns, last_ns, ready_ns, gap[4096];
+} Pictures;
+static void add_picture(Pictures *r, const PlaybackFrame *frame) {
+    if(!r->count++) { r->first=frame->number; r->first_ns=frame->start_ns; }
+    else if(frame->number==r->last+1 && r->gaps<4096) r->gap[r->gaps++]=frame->start_ns-r->ready_ns;
+    r->last=frame->number; r->last_ns=frame->start_ns; r->ready_ns=frame->ready_ns;
+}
+static void read_pictures(Playback *p, Pictures *r) {
+    PlaybackFrame frame;
+    while(playback_read(p,&frame)) add_picture(r,&frame);
+}
+static int compare_ns(const void *a, const void *b) {
+    Uint64 x=*(const Uint64 *)a, y=*(const Uint64 *)b;
+    return (x>y)-(x<y);
+}
+static Uint64 median_gap(Pictures *r) {
+    if(!r->gaps) return 0;
+    qsort(r->gap,r->gaps,sizeof(r->gap[0]),compare_ns);
+    return r->gap[r->gaps/2];
 }
 
 int main(void) {
@@ -220,46 +247,63 @@ int main(void) {
         CHECK(!playback_read(p,&frame));
         playback_pause(p); playback_destroy(p);
     }
-    /* Fast-forward starts more frames in a stretch of time than 1x pacing
-     * could, never queues audio while active, and hands the stream back to
-     * the resampler afterwards. Frame numbers and start times come from the
-     * worker. A busy host slows the worker at any speed, so fast-forward
-     * keeps running until it has outrun the 1x bound, for up to 5 s. */
+    /* Fast-forward divides the frame period by eight, never queues audio
+     * while active, and hands the stream back to the resampler afterwards.
+     * Every picture is read as it arrives. Between one picture's ready_ns
+     * and the next one's start_ns the worker waits for its deadline: most of
+     * a period at 1x, at most an eighth at 8x, which the wait rounds up to
+     * whole milliseconds, plus a millisecond to wake up. A busy host takes
+     * CPU from the 8x worker, which then waits less, so this holds at any
+     * load. The frame count must also outrun 1x pacing, which takes CPU: the
+     * run goes on until it does, for up to 5 s. If it never did, the test
+     * reports a skip when the host starved the worker: the process had less
+     * than 90% of a core, or even the 1x waits were no longer than 8x allows. */
+    const char *fast_skip=NULL;
     p=playback_create(nes,NULL,NULL,stream,0,0);
     CHECK(p!=NULL);
     if(p) {
         PlaybackControls controls={.analog=nes->apu.analog,.speed=1};
         audio_chain_init_preset(&controls.audio,0,0,0);
         playback_controls(p,&controls); playback_resume(p);
+        Uint64 period=(Uint64)(signal_region_frame_ms(0)*1000000.0),wait_limit=period/8+2000000;
+        Pictures normal={0},fast={0};
         PlaybackFrame frame;
-        CHECK(next(p,&frame));
-        unsigned normal_start=frame.number;
-        Uint64 normal_start_ns=frame.start_ns;
-        SDL_Delay(400);
-        CHECK(next(p,&frame));
-        unsigned normal_frames=frame.number-normal_start;
-        Uint64 normal_ns=frame.start_ns-normal_start_ns;
+        CHECK(next(p,&frame)); add_picture(&normal,&frame);
+        for(Uint64 end=SDL_GetTicks()+400;SDL_GetTicks()<end;SDL_Delay(1)) read_pictures(p,&normal);
+        unsigned normal_frames=normal.last-normal.first;
+        Uint64 normal_ns=normal.last_ns-normal.first_ns,normal_wait=median_gap(&normal);
         CHECK(normal_frames<=frames_1x_allows(normal_ns)); /* the bound holds at 1x */
         playback_pause(p);
         CHECK(SDL_GetAudioStreamQueued(stream)==0);
         controls.speed=8;
         playback_controls(p,&controls); playback_resume(p);
-        CHECK(next(p,&frame));
-        unsigned fast_start=frame.number,fast_frames=0;
-        Uint64 fast_start_ns=frame.start_ns,fast_ns=0,give_up=SDL_GetTicks()+5000;
+        CHECK(next(p,&frame)); add_picture(&fast,&frame);
+        Uint64 begin=SDL_GetTicks();
+        clock_t cpu=clock();
+        unsigned fast_frames=0;
+        Uint64 fast_ns=0;
         bool queued_while_fast=false;
-        for(int i=1;;i++) {
-            SDL_Delay(50);
+        for(;;) {
+            SDL_Delay(1);
+            read_pictures(p,&fast);
             if(SDL_GetAudioStreamQueued(stream)!=0) queued_while_fast=true;
-            if(i<8) continue; /* at least the 400 ms measured at 1x */
-            bool fresh=next(p,&frame);
-            CHECK(fresh);
-            fast_frames=frame.number-fast_start;
-            fast_ns=frame.start_ns-fast_start_ns;
-            if(!fresh || fast_frames>frames_1x_allows(fast_ns) || SDL_GetTicks()>=give_up) break;
+            fast_frames=fast.last-fast.first;
+            fast_ns=fast.last_ns-fast.first_ns;
+            Uint64 elapsed=SDL_GetTicks()-begin;
+            if(elapsed>=400 && fast_frames>frames_1x_allows(fast_ns)) break; /* at least 400 ms as at 1x */
+            if(elapsed>=5000) break;
         }
+        double core=(double)(clock()-cpu)/CLOCKS_PER_SEC/((SDL_GetTicks()-begin)/1000.0);
+        Uint64 fast_wait=median_gap(&fast);
+        CHECK(next(p,&frame)); /* still running */
         CHECK(!queued_while_fast);
-        CHECK(fast_frames>frames_1x_allows(fast_ns)); /* 8x requested; the host decides how close it gets */
+        CHECK(fast.gaps>=10 && fast_wait<=wait_limit);
+        bool outran=fast_frames>frames_1x_allows(fast_ns);
+        if(!outran && (normal.gaps<5 || normal_wait<=wait_limit))
+            fast_skip="the 1x worker waited no longer than 8x allows";
+        else if(!outran && core<0.9)
+            fast_skip="8x did not outrun 1x pacing with less than 90% of a core";
+        else CHECK(outran);
         controls.speed=1;
         playback_controls(p,&controls);
         Uint64 timeout=SDL_GetTicks()+2000;
@@ -267,8 +311,10 @@ int main(void) {
         CHECK(SDL_GetAudioStreamQueued(stream)>0); /* audio flows again after fast-forward */
         playback_pause(p);
         playback_destroy(p);
-        printf("Playback speed: %u frames in %.0f ms at 1x, %u in %.0f ms at 8x (1x allows %u)\n",
-               normal_frames,normal_ns/1e6,fast_frames,fast_ns/1e6,frames_1x_allows(fast_ns));
+        printf("Playback speed: %u frames in %.0f ms at 1x, %u in %.0f ms at 8x (1x allows %u); "
+               "median wait %.2f ms at 1x, %.2f ms at 8x; %.0f%% of a core at 8x\n",
+               normal_frames,normal_ns/1e6,fast_frames,fast_ns/1e6,frames_1x_allows(fast_ns),
+               normal_wait/1e6,fast_wait/1e6,core*100);
     }
     /* A main-thread visit runs between frames, holds the next frame back for
      * as long as it lasts and may change the console; playback then goes on. */
@@ -345,5 +391,10 @@ int main(void) {
     }
     SDL_DestroyAudioStream(stream); free(nes); free(prg); free(chr); SDL_Quit();
     printf("Playback ownership regressions: %d failures\n",failures);
-    return failures ? 1 : 0;
+    if(failures) return 1;
+    if(fast_skip) {
+        printf("Playback: fast-forward speed not checked, %s\n",fast_skip);
+        return 77; /* SKIP_RETURN_CODE */
+    }
+    return 0;
 }

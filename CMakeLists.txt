@@ -700,6 +700,9 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
             target_include_directories(test_playback PRIVATE frontends/gpu)
             target_link_libraries(test_playback PRIVATE nes_static ${MYNES_SDL3_TARGET} m)
             add_test(NAME gpu_playback_tests COMMAND test_playback)
+            # 77: every check passed, but the host starved the playback worker
+            # and fast-forward speed could not be checked.
+            set_tests_properties(gpu_playback_tests PROPERTIES SKIP_RETURN_CODE 77)
 
             # Clip recorder: frame arithmetic, ffmpeg command lines, the
             # rawvideo/audio muxing helper (runs ffmpeg and ffprobe when they
