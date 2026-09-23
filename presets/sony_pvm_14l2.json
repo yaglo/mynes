@@ -103,7 +103,7 @@
         "beam_current_load": 0.0,
         "mask_triads": 1070,
         "beam_fwhm_min": 0.38,
-        "beam_fwhm_max": 0.9,
+        "beam_fwhm_max": 0.6,
         "keystone": 0,
         "rotation": 0,
         "skew_x": 0,
