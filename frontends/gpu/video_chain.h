@@ -591,6 +591,11 @@ typedef struct {
     float console_coupling_C;   /* coupling cap (F) */
     float console_amp_bw;       /* amp bandwidth (Hz) */
     float console_phase_distortion_ns; /* nonlinear output impedance, 0 disables */
+    /* NES-001 output follower rise time constant (ns), R2 510 x C5 330 pF = 168
+     * from Schenk's schematic, simulated in tools/circuits/nes001_video_chain.cir.
+     * 0 disables. The emitter headroom is fixed at 2.0 swings (5 V supply,
+     * 2.0 V at blanking, 1.5 V blank-to-white at the PPU pin). */
+    float console_follower_tau_ns;
     float console_psu_hum;      /* PSU hum amplitude */
 } VideoChain;
 

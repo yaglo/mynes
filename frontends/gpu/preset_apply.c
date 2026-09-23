@@ -126,6 +126,7 @@ static void preset_apply_cpu_state_ex(PresetCtx *ctx, const PhysicalPreset *p,
     ctx->video_chain->console_coupling_C = p->console_coupling_C;
     ctx->video_chain->console_amp_bw = p->console_amp_bw;
     ctx->video_chain->console_phase_distortion_ns = p->console_phase_distortion_ns;
+    ctx->video_chain->console_follower_tau_ns = p->console_follower_tau_ns;
     ctx->video_chain->console_psu_hum = p->console_psu_hum;
     ctx->video_chain->comb_notch_depth = p->comb_notch_depth;
     /* An RGB console keeps its line length; its encoder IC drives the cable
@@ -133,7 +134,10 @@ static void preset_apply_cpu_state_ex(PresetCtx *ctx, const PhysicalPreset *p,
      * impedance does not apply. */
     if (ctx->source_dots_per_line > 0)
         ctx->video_chain->signal_fmt.dots_per_line = ctx->source_dots_per_line;
-    if (ctx->encoder_source) ctx->video_chain->console_phase_distortion_ns = 0;
+    if (ctx->encoder_source) {
+        ctx->video_chain->console_phase_distortion_ns = 0;
+        ctx->video_chain->console_follower_tau_ns = 0;
+    }
 
     /* --- SignalPrecompute: FIR taps from TV bandwidth --- */
     float actual_sample_rate = signal_region_sample_rate_hz(new_region);
@@ -775,6 +779,7 @@ static PhysicalPreset preset_capture_live(void) {
     p.console_coupling_C = g_ctx->video_chain->console_coupling_C;
     p.console_amp_bw     = g_ctx->video_chain->console_amp_bw;
     p.console_phase_distortion_ns = g_ctx->video_chain->console_phase_distortion_ns;
+    p.console_follower_tau_ns = g_ctx->video_chain->console_follower_tau_ns;
     p.console_psu_hum    = g_ctx->video_chain->console_psu_hum;
     p.brightness         = g_ctx->sig_state->brightness;
     p.contrast           = g_ctx->sig_state->contrast;
@@ -992,7 +997,7 @@ bool preset_manage(uint32_t op, int index, uint32_t revision,
  * menu_presets is declared above (sized by PRESET_MAX) for the
  * dynamically-scanned preset actions. */
 static OSDMenuItem menu_dac[4];           /* Stage 1: DAC / connection / phase */
-static OSDMenuItem menu_console[5];       /* Stage 2: console output */
+static OSDMenuItem menu_console[6];       /* Stage 2: console output */
 static OSDMenuItem menu_cable[9];         /* Stage 3: cable transmission */
 static OSDMenuItem menu_comb[9];          /* Stage 5: separation + display smoothing */
 static OSDMenuItem menu_chroma[8];        /* Stage 6-7: chroma demod */
@@ -1185,6 +1190,7 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_console[n++] = MI_FLOAT("PSU hum",     &vc->console_psu_hum,    0.01f, 0.0f, 0.30f, gpu_cb_update_rc_params, "%.3f");
     menu_console[n++] = MI_FLOAT("Video bandwidth", &vc->console_amp_bw, 0.25e6f, 1e6f, 12e6f, gpu_cb_update_rc_params, "%.0f");
     menu_console[n++] = MI_FLOAT("PPU phase RC (ns)", &vc->console_phase_distortion_ns, 1, 0, 60, gpu_cb_update_rc_params, "%.0f");
+    menu_console[n++] = MI_FLOAT("Output follower RC (ns)", &vc->console_follower_tau_ns, 4, 0, 400, gpu_cb_update_rc_params, "%.0f");
     const int menu_console_count=n;
 
     /* ================================================================

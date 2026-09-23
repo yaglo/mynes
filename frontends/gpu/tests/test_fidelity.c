@@ -1011,6 +1011,59 @@ static void source_phase(SDL_GPUDevice *gpu) {
     chain_destroy(&sc,gpu);
 }
 
+/* NES-001 output follower against the ngspice run of the traced schematic
+ * (tools/circuits/nes001_video_chain.cir, golden/nes001_video.h): the four
+ * palette rows' chroma gain, phase and cycle-mean shift relative to row 1,
+ * and the 10-90% rise of an eight-pixel white pulse. The GPU model is the
+ * R2-into-C5 charge towards +5 V with an instantaneous pull-down; the
+ * generic transistors, PPU source and ferrite in the deck account for the
+ * remaining few per cent and degrees. */
+#include "../../../tools/circuits/golden/nes001_video.h"
+static void console_follower(SDL_GPUDevice *gpu) {
+    enum { W=1200, ROWS=4, N=W*(ROWS+1) };
+    const float fs=42954540.0f, tau_ns=168.0f;
+    SignalChain sc; CHECK(chain_init(&sc,gpu,N,"shaders/compute"));
+    GpuRCFilterParams p={.a=0,.b=1,.total_count=N,.samples_per_line=W,.num_lines=ROWS+1,
+        .follower_k=expf(-1e9f/(tau_ns*fs)),.follower_headroom=2.0f};
+    chain_add_stage(&sc,"Output follower",CHAIN_KERNEL_RC_FILTER,&p,sizeof(p),1,1);
+    static const float terminated[ROWS][2]={{228,616},{312,840},{552,1100},{880,1100}};
+    static float input[N],out[N];
+    for(int row=0;row<ROWS;row++) for(int x=0;x<W;x++)
+        input[row*W+x]=((x%12<6 ? terminated[row][1] : terminated[row][0])-312)/788;
+    for(int x=0;x<W;x++) input[ROWS*W+x]=(x>=200 && x<200+8*8) ? 1.0f : 0.0f; /* eight-pixel white pulse */
+    CHECK(chain_upload_input(&sc,gpu,input,sizeof(input)));CHECK(chain_run(&sc,gpu));
+    CHECK(chain_download_output(&sc,gpu,out,sizeof(out)));
+    double gain[ROWS],phase[ROWS],luma[ROWS];
+    for(int row=0;row<ROWS;row++) {
+        double re_i=0,im_i=0,re_o=0,im_o=0,mean_i=0,mean_o=0; int n=0;
+        for(int x=120;x<W;x++) {
+            double c=cos(6.283185307179586*x/12),s=sin(6.283185307179586*x/12);
+            re_i+=input[row*W+x]*c; im_i-=input[row*W+x]*s; re_o+=out[row*W+x]*c; im_o-=out[row*W+x]*s;
+            mean_i+=input[row*W+x]; mean_o+=out[row*W+x]; n++;
+        }
+        gain[row]=hypot(re_o,im_o)/hypot(re_i,im_i);
+        phase[row]=(atan2(im_o,re_o)-atan2(im_i,re_i))*180/3.141592653589793;
+        luma[row]=(mean_o-mean_i)/n;
+    }
+    printf("Console follower vs ngspice (gain, phase deg, luma of white; model / golden):\n");
+    for(int row=0;row<ROWS;row++) {
+        double g=gain[row]/gain[1], ph=phase[row]-phase[1];
+        while(ph>180) ph-=360; while(ph<-180) ph+=360;
+        printf("  row %d: %.3f / %.3f, %+.1f / %+.1f, %+.3f / %+.3f\n",row,g,nes001_golden_row_gain_rel_row1[row],
+               ph,nes001_golden_row_phase_rel_row1_deg[row],luma[row],nes001_golden_row_luma_error[row]);
+        CHECK(fabs(g-nes001_golden_row_gain_rel_row1[row])<0.05);
+        CHECK(fabs(ph-nes001_golden_row_phase_rel_row1_deg[row])<3.0);
+        CHECK(fabs(luma[row]-nes001_golden_row_luma_error[row])<0.04);
+    }
+    int r10=-1,r90=-1;
+    for(int x=200;x<W;x++) { if(r10<0 && out[ROWS*W+x]>=0.1f) r10=x; if(r90<0 && out[ROWS*W+x]>=0.9f) r90=x; }
+    double rise_ns=(r90-r10)*1e9/fs;
+    printf("  eight-pixel white rise 10-90%%: %.0f ns (ngspice %.0f ns)\n",rise_ns,(double)NES001_GOLDEN_RISE_10_90_NS);
+    CHECK(fabs(rise_ns-NES001_GOLDEN_RISE_10_90_NS)<25);
+    CHECK(out[ROWS*W+200+8*8+2]<0.05f); /* the step down is followed at once */
+    chain_destroy(&sc,gpu);
+}
+
 static void comb_separation(SDL_GPUDevice *gpu) {
     enum { WIDTH=2728, COUNT=WIDTH*6 };
     SignalChain sc; CHECK(chain_init(&sc,gpu,COUNT,"shaders/compute"));
@@ -1151,6 +1204,7 @@ int main(void) {
     failures += test_crt_load(gpu);
     failures += test_osd(gpu);
     source_phase(gpu);
+    console_follower(gpu);
     comb_separation(gpu);
     {
         SignalPrecompute pal;VideoChain c;VideoGPUChain v;

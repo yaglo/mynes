@@ -418,6 +418,7 @@ static inline bool preset_json_save(const PhysicalPreset *p, const char *path)
     fprintf(f, "    \"console_coupling_C\": %.12g,\n",      p->console_coupling_C);
     fprintf(f, "    \"console_amp_bw\": %.1f,\n",           p->console_amp_bw);
     fprintf(f, "    \"console_phase_distortion_ns\": %.1f,\n", p->console_phase_distortion_ns);
+    fprintf(f, "    \"console_follower_tau_ns\": %.1f,\n", p->console_follower_tau_ns);
     fprintf(f, "    \"console_psu_hum\": %.6f,\n",          p->console_psu_hum);
 
     /* ---- RF modulator ---- */
@@ -544,6 +545,7 @@ static inline void preset_json__assign(PhysicalPreset *p, PresetJsonSection sect
         else MATCH_FLOAT(PJSON_SEC_TOP, "console_coupling_C", p->console_coupling_C)
         else MATCH_FLOAT(PJSON_SEC_TOP, "console_amp_bw",     p->console_amp_bw)
         else MATCH_FLOAT(PJSON_SEC_TOP, "console_phase_distortion_ns", p->console_phase_distortion_ns)
+        else MATCH_FLOAT(PJSON_SEC_TOP, "console_follower_tau_ns", p->console_follower_tau_ns)
         else MATCH_FLOAT(PJSON_SEC_TOP, "console_psu_hum",    p->console_psu_hum)
 
         /* Signal decode overrides. */

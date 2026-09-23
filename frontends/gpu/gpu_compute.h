@@ -232,7 +232,15 @@ typedef struct {
     uint32_t samples_per_line;  /* samples per scanline (2048 for NTSC) */
     uint32_t num_lines;         /* number of scanlines (240) */
     float nonlinear_tau_samples; /* NTSC output pole at reference white */
-    float pad;
+    /* NES-001 output follower (tools/circuits/nes001_video_chain.cir): the
+     * PNP pulls the emitter down at once, but when the PPU steps up only
+     * R2 (510) charges C5 (330 pF) towards +5 V. follower_k is exp(-1/tau)
+     * per sample (0 = off); follower_headroom is (Vcc - Ve_blank) in units
+     * of the blank-to-white swing, 2.0 for 5 V, a 2.0 V emitter at blanking
+     * and a 1.5 V swing. */
+    float follower_k;
+    float follower_headroom;
+    float pad[2];
 } GpuRCFilterParams;
 
 bool gpu_dispatch_rc_filter(

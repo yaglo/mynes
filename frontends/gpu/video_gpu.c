@@ -350,8 +350,13 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
         rc_params.samples_per_line = (uint32_t)vgc->raster_fmt.samples_per_line;
         rc_params.num_lines = (uint32_t)vgc->raster_fmt.lines;
         if(chain->signal_fmt.region==SIGNAL_REGION_NTSC &&
-           (chain->connection==VIDEO_CONN_COMPOSITE || chain->connection==VIDEO_CONN_RF))
+           (chain->connection==VIDEO_CONN_COMPOSITE || chain->connection==VIDEO_CONN_RF)) {
             rc_params.nonlinear_tau_samples=fmaxf(chain->console_phase_distortion_ns,0)*1e-9f*fsample;
+            if(chain->console_follower_tau_ns>0) {
+                rc_params.follower_k=expf(-1e9f/(chain->console_follower_tau_ns*fsample));
+                rc_params.follower_headroom=2.0f;
+            }
+        }
         vgc->stage_console_lp = chain_add_stage(&vgc->sig_chain,
             "Console Output LP", CHAIN_KERNEL_RC_FILTER,
             &rc_params, sizeof(rc_params), dispatch_x_1024, 1);
@@ -964,8 +969,13 @@ void video_gpu_update_rc_params(VideoGPUChain *vgc)
         rc_params.samples_per_line = (uint32_t)vgc->raster_fmt.samples_per_line;
         rc_params.num_lines = (uint32_t)vgc->raster_fmt.lines;
         if(chain->signal_fmt.region==SIGNAL_REGION_NTSC &&
-           (chain->connection==VIDEO_CONN_COMPOSITE || chain->connection==VIDEO_CONN_RF))
+           (chain->connection==VIDEO_CONN_COMPOSITE || chain->connection==VIDEO_CONN_RF)) {
             rc_params.nonlinear_tau_samples=fmaxf(chain->console_phase_distortion_ns,0)*1e-9f*fsample;
+            if(chain->console_follower_tau_ns>0) {
+                rc_params.follower_k=expf(-1e9f/(chain->console_follower_tau_ns*fsample));
+                rc_params.follower_headroom=2.0f;
+            }
+        }
         chain_update_params(&vgc->sig_chain, vgc->stage_console_lp,
                             &rc_params, sizeof(rc_params));
     }

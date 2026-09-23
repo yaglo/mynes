@@ -36,7 +36,9 @@ layout(set = 2, binding = 0) uniform Params {
     uint  samples_per_line; /* samples per scanline (2048 for NTSC) */
     uint  num_lines;     /* number of scanlines (240) */
     float nonlinear_tau_samples;
-    float pad;
+    float follower_k;        /* NES-001 output follower rise: exp(-1/tau) per sample, 0 = off */
+    float follower_headroom; /* (Vcc - emitter at blanking) in units of the blank-to-white swing */
+    float pad0, pad1;
 };
 
 void main() {
@@ -51,9 +53,20 @@ void main() {
     /* Warm-start: assume filter was settled at x[0]. */
     float y_prev = data[start];
     float source_prev=y_prev;
+    float emitter=y_prev;
 
     for (uint i = start; i < end; i++) {
         float x = data[i];
+        if(follower_k>0.0) {
+            // NES-001 motherboard follower (Schenk NES-001, Q1 2SA937, R2 510,
+            // C5 330 pF): a step down is followed at once; a step up is
+            // limited to the pull-up charging C5 towards +5 V, so brighter
+            // levels rise more slowly. Rows of the palette get different
+            // chroma gain and phase from this alone (tools/circuits).
+            if(x>emitter) emitter=min(x,follower_headroom+(emitter-follower_headroom)*follower_k);
+            else emitter=x;
+            x=emitter;
+        }
         if(nonlinear_tau_samples>0.0) {
             // Voltage-dependent output impedance, NESdev 2C02G estimate.
             // Convert blank-relative units back to absolute 0..1.1 V.

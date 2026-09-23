@@ -1,0 +1,66 @@
+* NES-001 baseband video path: PPU VOUT to the RCA "LINE LEVEL VIDEO OUT" jack.
+*
+* Motherboard (N. Schenk, NES-001 schematic rev 1.0, 2020-06-05,
+* https://github.com/schenkzoola/NES, commit 56e5018491fcc8e0cd591d16a97c8a7b1d723983):
+* PPU VOUT drives the base of PNP Q1 (2SA937), collector grounded, emitter
+* pulled to +5 V through R2 (510). The emitter feeds VIDEO_OUT through
+* ferrite FC2; C5 (330 pF) shunts VIDEO_OUT to ground.
+*
+* RF/AV module (Electronix Corp. trace, 1992, "NES 1", the AV section):
+* VIDEO in, 10 uF coupling, 330 series into a node with 5600 to +5 V and a
+* resistor to ground (drawn 330, which biases Q2 off; swept below), a 3.3 uH
+* choke to the base of NPN Q2 (2SC1740, collector +5 V) with a capacitor
+* across the choke, 560 emitter load, 68 series to the jack. The TV's 75 ohm
+* termination closes the path.
+*
+* Devices are generic approximations, not 2SA937/2SC1740 models: junction
+* capacitances, gain and transit time are assumed. The ferrite is a
+* constant R-L. PPU source resistance is assumed. Sweep the unknowns with
+* tools/circuits/sweep_nes001_video.py; the JSON it writes is what the GPU
+* console stage is compared against.
+*
+* Levels: the PPU pin is driven so that the jack swings the measured
+* 788 mV from blanking to white into 75 ohm (NESdev NTSC video, terminated
+* measurements); the follower and the 68/75 divider set the ratio.
+
+.param rb=3300 cpk=2p bead_l=100n bead_r=10 rppu=100
+.param vblank=1.4 vwhite=2.9
+.param t0=1u tpx=186.2n tcyc=279.4n
+
+Vcc vcc 0 5
+
+* PPU pin: PWL is supplied by the sweep script (black, one-pixel white,
+* eight-pixel white, and a chroma square wave at three luma levels).
+Vppu in 0 PWL_SOURCE
+Rppu in base {rppu}
+
+* Motherboard follower
+Q1 0 base e1 PNP_APPROX
+R2 vcc e1 510
+Rfc e1 b1 {bead_r}
+Lfc b1 vout {bead_l}
+C5 vout 0 330p
+
+* AV module
+Cc vout n1 10u
+R330 n1 nb 330
+R5600 vcc nb 5600
+Rb nb 0 {rb}
+L33 nb q2b 3.3u
+Cpk nb q2b {cpk}
+Q2 vcc q2b e2 NPN_APPROX
+R560 e2 0 560
+R68 e2 jack 68
+Rload jack 0 75
+
+.model PNP_APPROX PNP(IS=1e-14 BF=150 VAF=50 CJE=10p CJC=4p TF=1n)
+.model NPN_APPROX NPN(IS=1e-14 BF=150 VAF=80 CJE=10p CJC=4p TF=0.5n)
+
+.control
+set wr_singlescale
+set wr_vecnames
+tran 1n 60u
+wrdata tran.txt v(in) v(e1) v(vout) v(jack)
+quit
+.endc
+.end

@@ -60,6 +60,7 @@ typedef struct {
     float console_coupling_C;       /* coupling cap (farads) */
     float console_amp_bw;           /* amp bandwidth (Hz) */
     float console_phase_distortion_ns; /* nonlinear output impedance, 0 disables */
+    float console_follower_tau_ns;  /* NES-001 output follower rise (ns), 0 disables */
     float console_psu_hum;          /* PSU hum into video signal */
 
     /* ---- RF modulator (RF presets only) ---- */

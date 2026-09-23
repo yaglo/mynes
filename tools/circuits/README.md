@@ -93,3 +93,41 @@ The CXA1739S active transfer and output injection branch are absent. Neither
 the ideal LC resonance nor a peak in these partial curves is the television's
 aperture peak. Nothing in this sweep changes renderer coefficients. See the
 [source and uncertainty record](https://yaglo.github.io/mynes-web/research/pvm-14l2/).
+
+## NES-001 PPU-to-jack video path
+
+```sh
+python3 tools/circuits/sweep_nes001_video.py /tmp/nes001-video --golden tools/circuits/golden
+```
+
+`nes001_video_chain.cir` joins Schenk's motherboard follower (Q1 2SA937, R2
+510 Ω, FC2, C5 330 pF) to the AV section of Electronix Corp.'s 1992 trace of
+the RF/AV module (10 µF coupling, 330 Ω into a 5600 Ω bias node, a 3.3 µH
+choke with a capacitor across it, Q2 2SC1740 follower with 560 Ω, 68 Ω to the
+jack) into the TV's 75 Ω. The trace draws the bias node's lower resistor as
+330 Ω, which biases Q2 off, so the sweep runs it from 2.2 kΩ to open; the
+choke capacitor is run at 2 pF and 380 pF. Transistors are generic; the PPU
+source resistance, bead and pin swing (1.5 V for the measured 788 mV at the
+jack) are assumed.
+
+One transient per case carries black, a one-pixel and an eight-pixel white
+pulse, and forty cycles of the chroma square wave of palette rows $0x to $3x
+at the NESdev terminated levels. At the jack the eight-pixel step rises
+104–118 ns (10–90%) and falls 11–12 ns in every case: the PNP pulls the
+emitter down through the transistor but can only let it rise as R2 charges
+C5 towards +5 V, so brighter levels rise more slowly. From that alone the
+rows' chroma comes out at 1.07, 1.00, 0.90 and 1.05 of row 1's amplitude,
+rotated +5.8°, 0°, −4.0° and +3.9°, with the cycle mean pulled down by 3 to
+11 per cent of white. Rows 0 to 2 fall about 5° per row, the NESdev 2C02G
+estimate; row 3's small swing does not continue the trend in this deck.
+The bias resistor and choke capacitor change these by under 0.02 and 0.5°.
+
+The GPU console stage has this follower as `console_follower_tau_ns`
+(`Output follower RC` in the Console menu): R2·C5 = 168 ns, headroom 2.0
+swings, steps down at once. `gpu_fidelity_tests` runs it on the same rows
+and pulse and holds it to the golden file within 0.05 in gain, 3° and 0.04
+of white; it lands at 0.94 against 0.90 on row 2 and 93 ns against 108 ns
+on the rise, the difference being the deck's device capacitances and source
+resistance. Shipped presets leave it at 0 until it is compared with a
+console on the PVM; the earlier 30 ns differential-phase estimate stays as
+their default.
