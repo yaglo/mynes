@@ -38,9 +38,8 @@ Unsupported boards report their mapper number in the ROM browser.
 
 ## Download
 
-macOS builds for Apple Silicon are on the
-[releases page](https://github.com/yaglo/mynes/releases). On Linux, build from
-source as shown below. Windows is untested. No ROMs are included.
+No binaries are published yet. On macOS and Linux, build from source as shown
+below. Windows is untested. No ROMs are included.
 
 ## Build from source
 
