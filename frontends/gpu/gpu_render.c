@@ -809,6 +809,5 @@ bool gpu_render_measure_white(GPURenderCtx *ctx, const VideoChain *chain) {
     }
     if (tb) SDL_ReleaseGPUTransferBuffer(ctx->gpu, tb);
     if (target) SDL_ReleaseGPUTexture(ctx->gpu, target);
-    ctx->white_dirty = false;
     return measured;
 }

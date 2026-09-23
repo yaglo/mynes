@@ -157,32 +157,43 @@ static GPURenderCtx     render_ctx;
 
 /* Auto gain fits the preset's own white. Run a full-white field through
  * the chain until its loops settle, measure it through the display pass,
- * then clear the chain's temporal state so the white does not linger. */
+ * then clear the chain's temporal state so the white does not linger.
+ * It runs before a frame's own signal processing, never between that and
+ * the display pass, so the white field cannot reach the screen or a
+ * recording; and it is paced by frame count, not by the clock, so a
+ * recording does not depend on the machine's load. */
 static bool calib_gpu_dac;
-static void calibrate_white(unsigned frame) {
+static bool calibrate_white(unsigned frame) {
     static uint16_t white[256 * 240]; static bool ready;
     if (!ready) { for (int i = 0; i < 256 * 240; i++) white[i] = 0x30; ready = true; }
     for (int i = 0; i < 24; i++)
         video_gpu_process_full(&video_gpu_chain, gpu, white,
             sig_state.phase_base + signal_frame_phase(&sig_state, frame + i), sig_state.phase_line_adv, 0, NULL);
+    bool measured = false;
     int beam_w, beam_h;
     SDL_GPUTexture *beam = video_gpu_get_beam_texture(&video_gpu_chain);
     if (beam && video_gpu_get_beam_size(&video_gpu_chain, &beam_w, &beam_h)) {
         render_ctx.display_tex = beam; render_ctx.display_tex_w = beam_w; render_ctx.display_tex_h = beam_h;
         render_ctx.owns_display_tex = false;
-        if (gpu_render_measure_white(&render_ctx, &video_chain))
+        measured = gpu_render_measure_white(&render_ctx, &video_chain);
+        if (measured)
             LOGV("White: peak %.2f, average %.2f at gain 1; Auto gain %.2f\n", render_ctx.white_peak_measured,
                  render_ctx.white_mean_measured, 0.95f * gpu_render_headroom(&render_ctx) / render_ctx.white_peak_measured);
     }
     video_gpu_reset_temporal_state(&video_gpu_chain, gpu);
-    render_ctx.white_dirty = false;
+    return measured;
 }
 static void maybe_calibrate_white(unsigned frame) {
-    static Uint64 last;
-    Uint64 now = SDL_GetTicksNS();
+    static unsigned last_frame, failures; static bool ran;
     if (!render_ctx.white_dirty || !calib_gpu_dac || !render_ctx.hdr_enabled || render_ctx.hdr_gain_mode != 0) return;
-    if (last && now - last < 500000000ull) return;
-    calibrate_white(frame); last = now;
+    /* The measurement needs the output size, which the first frame sets. */
+    if (render_ctx.drawable_w <= 0 || render_ctx.drawable_h <= 0) return;
+    /* A window being resized changes size every frame; measure it at most
+     * every 30 frames. Offscreen the size is fixed and the wait is pointless. */
+    if (!render_ctx.offscreen_w && ran && frame - last_frame < 30) return;
+    if (calibrate_white(frame)) { render_ctx.white_dirty = false; failures = 0; }
+    else if (++failures >= 3) { render_ctx.white_dirty = false; LOGV("White: measurement failed; keeping the estimate\n"); }
+    last_frame = frame; ran = true;
 }
 static PresetCtx        preset_ctx;
 
@@ -1578,6 +1589,12 @@ int main(int argc, char **argv) {
             fprintf(render_ctx.presentation_trace,"submit_ns,source_frame,slot,slots,reported_hz,source_phase,mode\n");
     }
     render_ctx.offscreen_w=offscreen_w;render_ctx.offscreen_h=offscreen_h;
+    if (offscreen_w) {
+        /* The output size is fixed, so the Auto gain measurement can run
+         * before the first frame rather than after it. */
+        render_ctx.drawable_w=offscreen_w; render_ctx.drawable_h=offscreen_h;
+        render_ctx.safe_area=(SDL_Rect){0,0,offscreen_w,offscreen_h};
+    }
     render_ctx.offscreen_format=offscreen_format;
     render_ctx.offscreen_headroom=recorder_offscreen_headroom(record_headroom,record_hdr,
                                                               getenv("MYNES_OFFSCREEN_HEADROOM"));
@@ -2113,7 +2130,6 @@ int main(int argc, char **argv) {
                 && gpu_output_apply_colorspace(window, render_ctx.panel_primaries==1);
             static bool p3_logged;
             if (render_ctx.output_p3 && !p3_logged) { p3_logged=true; LOGV("Output: extended linear Display P3\n"); }
-            maybe_calibrate_white(frame_count);
             gpu_render_frame(&render_ctx, &video_chain);
             if (render_ctx.submit_ns)
                 render_ctx.presentation_slot = (render_ctx.presentation_slot + 1) % render_ctx.presentation_slots;
@@ -2298,6 +2314,7 @@ int main(int argc, char **argv) {
                 fflush(stdout);
             }
 
+            if (gpu_dac) maybe_calibrate_white(frame_count);
             video_gpu_set_dynamic_state(&video_gpu_chain,
                                         render_ctx.hv_sag_state,
                                         render_ctx.apl_slow_state,
@@ -2433,8 +2450,7 @@ int main(int argc, char **argv) {
         render_ctx.capture_sink_user = recorder;
         Uint64 t_render0 = SDL_GetPerformanceCounter();
         render_ctx.source_phase = signal_frame_phase(&sig_state, frame_count - 1);
-        maybe_calibrate_white(frame_count);
-            gpu_render_frame(&render_ctx, &video_chain);
+        gpu_render_frame(&render_ctx, &video_chain);
         Uint64 t_render1 = SDL_GetPerformanceCounter();
         if (record_frame) {
             if (recorder_frames_written(recorder) != recorded_before + 1) {
