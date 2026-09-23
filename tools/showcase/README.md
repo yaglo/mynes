@@ -376,16 +376,20 @@ python3 -m unittest discover -s tools/showcase/tests -t tools/showcase -v
 
 `test_recipes`, `test_codecs`, `test_shots`, `test_manifest`, `test_runner`,
 `test_images` and `test_cli` need no encoders; one PNG check in
-`test_images` uses ffmpeg when it is there. `test_encode` draws small SDR
-and HDR renders the way the recorder writes them (512x384, 256x192, 128x96
-and 320x240, 60 frames, with sidecars; the HDR frames are limited-range
-BT.2020 Y'CbCr computed in numpy and piped as `yuv444p16le`), runs every
-encode, feature and install job on them and checks the outputs: codecs
-strings, HDR10 metadata, one-pixel columns surviving, colours after the
-BT.601 to BT.709 change, an 800-nit highlight within 1% in the stage video
-and the still, a PQ-peak patch that must read 65535 in `still-hdr.png` and
-10000 nits in the AVIF's content light level, 1:1 crops and exact `@1x`
-averages, the manifest and the budget refusal. It takes under a minute and is skipped when
+`test_images` uses ffmpeg when it is there. `test_record` runs the record
+stage and the command line against `tests/fake_recorder.py`, which takes
+the recorder's arguments and writes ffmpeg test patterns with sidecars; it
+needs ffmpeg. `test_encode` draws small SDR and HDR renders the way the
+recorder writes them (512x384, 256x192, 128x96 and 320x240, 60 frames, with
+sidecars; the HDR frames are limited-range BT.2020 Y'CbCr computed in numpy
+and piped as `yuv444p16le`), runs every encode, feature and install job on
+them and checks the outputs: codecs strings, HDR10 metadata, one-pixel
+columns surviving, colours after the BT.601 to BT.709 change, an 800-nit
+highlight within 1% in the stage video and the still, a PQ-peak patch that
+must read 65535 in `still-hdr.png` and 10000 nits in the AVIF's content
+light level, 1:1 crops and exact `@1x` averages, the manifest (a version 1
+clip rewritten in version 2 form), the budget refusal and the cases where
+install stops before copying. It takes under a minute and is skipped when
 ffmpeg lacks one of the encoders or avifenc, numpy or Pillow is missing; the
 gain-map and `--fast` checks are skipped without swift on macOS 15 or
 `hevc_videotoolbox`.
