@@ -3,6 +3,7 @@
  */
 #include "gpu_render.h"
 #include "frame_capture.h"
+#include "gpu_half.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -395,24 +396,10 @@ bool gpu_render_release_pending(GPURenderCtx *ctx) {
     return !ctx->capture_failed;
 }
 
-void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
-    ctx->capture_accepted = false;
-    ctx->submit_ns=ctx->capture_ns=0;
-    if(!gpu_render_prepare(ctx)) return;
-    SDL_GPUCommandBuffer *cmd=ctx->present_cmd;
-    SDL_GPUTexture *swapchain_tex=ctx->present_texture;
-    Uint32 sw=ctx->present_w,sh=ctx->present_h;
-    ctx->present_cmd=NULL;ctx->present_texture=NULL;
-    GPUDisplayParams capture_params = {0};
-    bool can_capture = false;
-
-    /* Split view: upload raw PPU frame to raw_tex so we can blit it later. */
-    if (ctx->split_mode && ctx->raw_ppu_rgb) {
-        ensure_raw_tex(ctx);
-        if (ctx->raw_tex)
-            upload_raw_ppu_to_tex(ctx, cmd, ctx->raw_tex, ctx->raw_ppu_rgb);
-    }
-
+/* Picture placement and the display parameters for one frame of sw x sh.
+ * Returns false when there is nothing for the display pass to draw. */
+static bool build_display_params(GPURenderCtx *ctx, const VideoChain *chain, Uint32 sw, Uint32 sh,
+                                 GPUDisplayParams *out, SDL_FRect *picture_out) {
     /* Fit the tube face: 4:3 TV or 16:10 FW900 with internal 4:3 scaling,
      * pillarboxed or letterboxed. Fullscreen fits it below a notched panel's
      * camera housing. Integral viewport edges avoid fractional raster
@@ -426,6 +413,7 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
     bool size_changed=ctx->drawable_w!=(int)sw || ctx->drawable_h!=(int)sh ||
         memcmp(&ctx->safe_area,&safe,sizeof(safe))!=0;
     ctx->drawable_w=sw;ctx->drawable_h=sh;ctx->safe_area=safe;
+    if(size_changed) ctx->white_dirty=true;
     if(ctx->offscreen_w) {
         ctx->output_geometry=(GPUOutputGeometry){.scale_x=1,.scale_y=1,
             .native_w=(int)sw,.native_h=(int)sh,.native_known=true};
@@ -438,7 +426,8 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
         ctx->output_geometry.scale_x,ctx->output_geometry.scale_y,
         ctx->mask_alignment ? "physical CRT pitch" : "integer panel periods");
 
-    if (ctx->display_tex && ctx->gpu_display_enabled && (ctx->crt_shader_enabled || !ctx->owns_display_tex)) {
+    if (!(ctx->display_tex && ctx->gpu_display_enabled && (ctx->crt_shader_enabled || !ctx->owns_display_tex))) return false;
+    {
         /* Beam light, glass scattering and final host-display adaptation. */
         GPUDisplayParams disp_params = {0};
         gpu_display_params_from_tv(&disp_params, &chain->tv,
@@ -486,8 +475,11 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
          * headroom they are given, so they stay reproducible. */
         if (ctx->crt_shader_enabled && ctx->hdr_enabled && ctx->hdr_gain_mode == 0) {
             disp_params.shoulder_knee = 0.95f;
-            float fit = disp_params.shoulder_knee * disp_params.hdr_headroom
-                      / gpu_display_white_peak(&disp_params, chain->tv.beam_fwhm_max);
+            /* The measured white field's peak when there is one; the
+             * analytic scanline-times-mask estimate until then. */
+            float peak = ctx->white_measured ? ctx->white_peak_measured
+                       : gpu_display_white_peak(&disp_params, chain->tv.beam_fwhm_max);
+            float fit = disp_params.shoulder_knee * disp_params.hdr_headroom / peak;
             /* Auto boost is the user's choice to spend the shoulder on
              * brightness: above 1 the stripe centres pass the knee. */
             disp_params.hdr_gain = fminf(fit * fmaxf(ctx->hdr_boost, 1.0f), 4.0f);
@@ -506,6 +498,34 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
         if(ctx->offscreen_w) {
             disp_params.sdr_white_level=1;
         }
+        *out = disp_params;
+    }
+    *picture_out = picture;
+    return true;
+}
+
+void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
+    ctx->capture_accepted = false;
+    ctx->submit_ns=ctx->capture_ns=0;
+    if(!gpu_render_prepare(ctx)) return;
+    SDL_GPUCommandBuffer *cmd=ctx->present_cmd;
+    SDL_GPUTexture *swapchain_tex=ctx->present_texture;
+    Uint32 sw=ctx->present_w,sh=ctx->present_h;
+    ctx->present_cmd=NULL;ctx->present_texture=NULL;
+    GPUDisplayParams capture_params = {0};
+    bool can_capture = false;
+
+    /* Split view: upload raw PPU frame to raw_tex so we can blit it later. */
+    if (ctx->split_mode && ctx->raw_ppu_rgb) {
+        ensure_raw_tex(ctx);
+        if (ctx->raw_tex)
+            upload_raw_ppu_to_tex(ctx, cmd, ctx->raw_tex, ctx->raw_ppu_rgb);
+    }
+
+    SDL_FRect picture; GPUDisplayParams disp_params;
+    bool draw = build_display_params(ctx, chain, sw, sh, &disp_params, &picture);
+    float vp_x=picture.x, vp_y=picture.y, vp_w=picture.w, vp_h=picture.h;
+    if (draw) {
         capture_params = disp_params;
         can_capture = true;
         SDL_GPUViewport viewport = {0};
@@ -720,4 +740,64 @@ void gpu_render_compute_rgb_averages(const uint8_t *rgb888,
     *out_r = (float)sr * inv;
     *out_g = (float)sg * inv;
     *out_b = (float)sb * inv;
+}
+
+bool gpu_render_measure_white(GPURenderCtx *ctx, const VideoChain *chain) {
+    if (!ctx->display_tex || !ctx->hdr_enabled || ctx->drawable_w <= 0 || ctx->drawable_h <= 0) return false;
+    Uint32 w = (Uint32)ctx->drawable_w, h = (Uint32)ctx->drawable_h;
+    GPUDisplayParams p; SDL_FRect pic;
+    bool had = ctx->white_measured; ctx->white_measured = false;
+    bool ok = build_display_params(ctx, chain, w, h, &p, &pic);
+    ctx->white_measured = had;
+    if (!ok) return false;
+    /* Gain 1, no shoulder, no lab, linear output: the light as the preset makes it. */
+    p.hdr_gain = 1; p.hdr_headroom = 1e6f; p.shoulder_knee = 0.99f; p.output_p3 = 0;
+    p.sdr_white_level = 1; p.output_hdr = 1; p.lab_scissor_w = 0;
+    p.pulse_enabled = false; p.pulse_gain = 1; p.reuse_halation = false;
+    SDL_GPUTextureCreateInfo ci = {.type=SDL_GPU_TEXTURETYPE_2D,.format=SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT,
+        .usage=SDL_GPU_TEXTUREUSAGE_COLOR_TARGET,.width=w,.height=h,.layer_count_or_depth=1,.num_levels=1};
+    SDL_GPUTexture *target = SDL_CreateGPUTexture(ctx->gpu, &ci);
+    SDL_GPUTransferBufferCreateInfo bi = {.usage=SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD,.size=w*h*8};
+    SDL_GPUTransferBuffer *tb = SDL_CreateGPUTransferBuffer(ctx->gpu, &bi);
+    bool measured = false;
+    if (target && tb) {
+        SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(ctx->gpu);
+        if (cmd) {
+            SDL_GPUViewport viewport = {.x=pic.x,.y=pic.y,.w=pic.w,.h=pic.h,.min_depth=0,.max_depth=1};
+            gpu_display_render(ctx->gpu_disp, ctx->gpu, cmd, ctx->display_tex,
+                               ctx->display_tex_w, ctx->display_tex_h, target, (int)w, (int)h, &p, &viewport);
+            SDL_GPUCopyPass *copy = SDL_BeginGPUCopyPass(cmd);
+            if (copy) {
+                SDL_GPUTextureRegion region = {.texture=target,.w=w,.h=h,.d=1};
+                SDL_GPUTextureTransferInfo dst = {.transfer_buffer=tb,.pixels_per_row=w,.rows_per_layer=h};
+                SDL_DownloadFromGPUTexture(copy, &region, &dst); SDL_EndGPUCopyPass(copy);
+                SDL_GPUFence *fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
+                bool ready = fence && SDL_WaitForGPUFences(ctx->gpu, true, &fence, 1);
+                if (fence) SDL_ReleaseGPUFence(ctx->gpu, fence);
+                const uint16_t *v = ready ? SDL_MapGPUTransferBuffer(ctx->gpu, tb, false) : NULL;
+                if (v) {
+                    int x0 = (int)pic.x, y0 = (int)pic.y, x1 = (int)(pic.x + pic.w), y1 = (int)(pic.y + pic.h);
+                    int cx0 = x0 + (x1 - x0) / 4, cx1 = x1 - (x1 - x0) / 4, cy0 = y0 + (y1 - y0) / 4, cy1 = y1 - (y1 - y0) / 4;
+                    double peak = 0, sum = 0; long n = 0;
+                    for (int y = y0; y < y1; y++) for (int x = x0; x < x1; x++) {
+                        const uint16_t *px = v + ((size_t)y * w + x) * 4;
+                        float r = gpu_half_to_float(px[0]), g = gpu_half_to_float(px[1]), b = gpu_half_to_float(px[2]);
+                        float m = fmaxf(r, fmaxf(g, b));
+                        if (isfinite(m) && m > peak) peak = m;
+                        if (x >= cx0 && x < cx1 && y >= cy0 && y < cy1) { sum += 0.2126 * r + 0.7152 * g + 0.0722 * b; n++; }
+                    }
+                    SDL_UnmapGPUTransferBuffer(ctx->gpu, tb);
+                    if (peak > 0 && n > 0) {
+                        ctx->white_peak_measured = (float)peak;
+                        ctx->white_mean_measured = (float)(sum / n);
+                        ctx->white_measured = true; measured = true;
+                    }
+                }
+            } else SDL_CancelGPUCommandBuffer(cmd);
+        }
+    }
+    if (tb) SDL_ReleaseGPUTransferBuffer(ctx->gpu, tb);
+    if (target) SDL_ReleaseGPUTexture(ctx->gpu, target);
+    ctx->white_dirty = false;
+    return measured;
 }

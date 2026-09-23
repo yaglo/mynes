@@ -238,6 +238,7 @@ void preset_apply_gpu_push(PresetCtx *ctx) {
          * frame beam buffer + AGC/RC carry + chroma aux buffers so no
          * integrator leaks state from the outgoing preset. */
         video_gpu_reset_temporal_state(vgc, ctx->gpu);
+        ctx->render_ctx->white_dirty = true;
     }
 
     /* CPU-side transient state that lives outside the GPU chain but

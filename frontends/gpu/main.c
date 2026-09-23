@@ -154,6 +154,36 @@ static unsigned         input_record_base;
 
 /* Render and preset contexts. */
 static GPURenderCtx     render_ctx;
+
+/* Auto gain fits the preset's own white. Run a full-white field through
+ * the chain until its loops settle, measure it through the display pass,
+ * then clear the chain's temporal state so the white does not linger. */
+static bool calib_gpu_dac;
+static void calibrate_white(unsigned frame) {
+    static uint16_t white[256 * 240]; static bool ready;
+    if (!ready) { for (int i = 0; i < 256 * 240; i++) white[i] = 0x30; ready = true; }
+    for (int i = 0; i < 24; i++)
+        video_gpu_process_full(&video_gpu_chain, gpu, white,
+            sig_state.phase_base + signal_frame_phase(&sig_state, frame + i), sig_state.phase_line_adv, 0, NULL);
+    int beam_w, beam_h;
+    SDL_GPUTexture *beam = video_gpu_get_beam_texture(&video_gpu_chain);
+    if (beam && video_gpu_get_beam_size(&video_gpu_chain, &beam_w, &beam_h)) {
+        render_ctx.display_tex = beam; render_ctx.display_tex_w = beam_w; render_ctx.display_tex_h = beam_h;
+        render_ctx.owns_display_tex = false;
+        if (gpu_render_measure_white(&render_ctx, &video_chain))
+            LOGV("White: peak %.2f, average %.2f at gain 1; Auto gain %.2f\n", render_ctx.white_peak_measured,
+                 render_ctx.white_mean_measured, 0.95f * gpu_render_headroom(&render_ctx) / render_ctx.white_peak_measured);
+    }
+    video_gpu_reset_temporal_state(&video_gpu_chain, gpu);
+    render_ctx.white_dirty = false;
+}
+static void maybe_calibrate_white(unsigned frame) {
+    static Uint64 last;
+    Uint64 now = SDL_GetTicksNS();
+    if (!render_ctx.white_dirty || !calib_gpu_dac || !render_ctx.hdr_enabled || render_ctx.hdr_gain_mode != 0) return;
+    if (last && now - last < 500000000ull) return;
+    calibrate_white(frame); last = now;
+}
 static PresetCtx        preset_ctx;
 
 /* Internal CRT resolution. The beam and phosphor stages render at the tube
@@ -2083,6 +2113,7 @@ int main(int argc, char **argv) {
                 && gpu_output_apply_colorspace(window, render_ctx.panel_primaries==1);
             static bool p3_logged;
             if (render_ctx.output_p3 && !p3_logged) { p3_logged=true; LOGV("Output: extended linear Display P3\n"); }
+            maybe_calibrate_white(frame_count);
             gpu_render_frame(&render_ctx, &video_chain);
             if (render_ctx.submit_ns)
                 render_ctx.presentation_slot = (render_ctx.presentation_slot + 1) % render_ctx.presentation_slots;
@@ -2210,6 +2241,7 @@ int main(int argc, char **argv) {
                 (video_chain.connection == VIDEO_CONN_SVIDEO || (!debug_dump &&
                  tv->beam_edge_fade == 0 && tv->beam_edge_overshoot == 0 &&
                  (tv->burst_lock_drift == 0 || tv->burst_lock_drift_width == 0))));
+            calib_gpu_dac = gpu_dac;
             if (test_signal_mode == 0 && (!gpu_dac || debug_dump)) {
                 waveform_generate(waveform_buf, display_ppu.index_framebuffer,
                                   &sig_state, frame_count);
@@ -2401,7 +2433,8 @@ int main(int argc, char **argv) {
         render_ctx.capture_sink_user = recorder;
         Uint64 t_render0 = SDL_GetPerformanceCounter();
         render_ctx.source_phase = signal_frame_phase(&sig_state, frame_count - 1);
-        gpu_render_frame(&render_ctx, &video_chain);
+        maybe_calibrate_white(frame_count);
+            gpu_render_frame(&render_ctx, &video_chain);
         Uint64 t_render1 = SDL_GetPerformanceCounter();
         if (record_frame) {
             if (recorder_frames_written(recorder) != recorded_before + 1) {
@@ -2428,8 +2461,10 @@ int main(int argc, char **argv) {
 
         if (render_ctx.capture_path) {
             if (!render_ctx.capture_accepted) fprintf(stderr, "Final display capture failed: %s\n", SDL_GetError());
-            fprintf(stderr, "Capture frame %u, carrier phase %d\n", frame_count,
-                    signal_frame_phase(&sig_state, frame_count - 1));
+            fprintf(stderr, "Capture frame %u, carrier phase %d, HDR gain %.2f, %.0f triads, white peak %.2f\n", frame_count,
+                    signal_frame_phase(&sig_state, frame_count - 1),
+                    render_ctx.effective_hdr_gain, render_ctx.effective_mask_triads,
+                    render_ctx.white_measured ? render_ctx.white_peak_measured : 0.0f);
             if (screenshot_after > 0) {
                 ++screenshots_taken;
                 running = render_ctx.capture_accepted && screenshots_taken < screenshot_count;

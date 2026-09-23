@@ -104,6 +104,12 @@ typedef struct {
     bool            split_mode;          /* Shift+C: split view (left CRT, right raw palette) */
     SDL_GPUTexture *raw_tex;             /* 256x240 RGBA8 raw PPU frame, used in split mode */
     const uint8_t  *raw_ppu_rgb;         /* pointer to PPU RGB framebuffer for upload */
+    /* Measured white: the preset's own full-white field through its chain
+     * and this display pass, at gain 1. Auto gain fits the peak. */
+    bool            white_dirty;         /* preset, size or headroom changed since the last measurement */
+    bool            white_measured;
+    float           white_peak_measured; /* brightest pixel of the white field, any channel */
+    float           white_mean_measured; /* its average light over the picture's centre */
 } GPURenderCtx;
 
 /* Compute avg luminance of an RGB888 PPU framebuffer (256x240).
@@ -144,6 +150,12 @@ bool gpu_render_release_pending(GPURenderCtx *ctx);
 
 /* Render the display texture to the swapchain (CRT shader or passthrough blit). */
 void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain);
+
+/* Measure the display's white: render ctx->display_tex, which must hold
+ * the chain's full-white field, through the current display parameters at
+ * gain 1 with no shoulder into a scratch target, and keep its brightest
+ * pixel and centre average in the context. Synchronous. */
+bool gpu_render_measure_white(GPURenderCtx *ctx, const VideoChain *chain);
 
 /* Convert float RGB (3 floats/pixel, [0,1]) to RGBA8.
  * Returns pointer to a static buffer (reused each call). */
