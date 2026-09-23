@@ -457,7 +457,8 @@ static inline bool preset_json_save(const PhysicalPreset *p, const char *path)
         {"detail_limit_ire", v->detail_limit_ire}, {"apc_loop_hz", v->apc_loop_hz},
         {"yc_delay_ns", v->yc_delay_ns}, {"bow_scale", v->bow_scale},
         {"tbe_varying_ns", v->tbe_varying_ns}, {"tbe_slow_fraction", v->tbe_slow_fraction},
-        {"tbe_slow_tau_ms", v->tbe_slow_tau_ms}, {"line_jitter_ns", v->line_jitter_ns},
+        {"tbe_slow_tau_ms", v->tbe_slow_tau_ms}, {"tbe_slow_period_ms", v->tbe_slow_period_ms},
+        {"line_jitter_ns", v->line_jitter_ns},
         {"switch_lines_before_vsync", v->switch_lines_before_vsync},
         {"skew_ba_ns", v->skew_ba_ns}, {"skew_ab_ns", v->skew_ab_ns},
     };
@@ -779,6 +780,7 @@ static inline void preset_json__assign(PhysicalPreset *p, PresetJsonSection sect
         else MATCH_FLOAT(PJSON_SEC_VHS, "tbe_varying_ns",       p->vhs.tbe_varying_ns)
         else MATCH_FLOAT(PJSON_SEC_VHS, "tbe_slow_fraction",    p->vhs.tbe_slow_fraction)
         else MATCH_FLOAT(PJSON_SEC_VHS, "tbe_slow_tau_ms",      p->vhs.tbe_slow_tau_ms)
+        else MATCH_FLOAT(PJSON_SEC_VHS, "tbe_slow_period_ms",   p->vhs.tbe_slow_period_ms)
         else MATCH_FLOAT(PJSON_SEC_VHS, "line_jitter_ns",       p->vhs.line_jitter_ns)
         else MATCH_FLOAT(PJSON_SEC_VHS, "switch_lines_before_vsync", p->vhs.switch_lines_before_vsync)
         else MATCH_FLOAT(PJSON_SEC_VHS, "skew_ba_ns",           p->vhs.skew_ba_ns)
@@ -917,6 +919,10 @@ static inline bool preset_json_load(PhysicalPreset *p, const char *path)
     fclose(f); buf[read]=0;
     PhysicalPreset parsed={0};
     parsed.chroma_gain=1;
+    /* A partial vhs block keeps the SP consumer deck for the keys it leaves
+     * out; a block without "model" still takes the pre-2 fallback. */
+    vhs_params_defaults(&parsed.vhs);
+    parsed.vhs.model=0;
     parsed.tv.luma_notch_depth=.95f;
     parsed.tv.h_size=parsed.tv.v_size=1;
     parsed.tv.top_band_start=18;

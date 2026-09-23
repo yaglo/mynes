@@ -189,6 +189,7 @@ static void make_distinctive_preset(PhysicalPreset *p)
     p->vhs.tbe_varying_ns = 60;
     p->vhs.tbe_slow_fraction = 0.3f;
     p->vhs.tbe_slow_tau_ms = 500;
+    p->vhs.tbe_slow_period_ms = 900;
     p->vhs.line_jitter_ns = 7;
     p->vhs.switch_lines_before_vsync = 7;
     p->vhs.skew_ba_ns = 1500;
@@ -388,6 +389,7 @@ static int compare_presets(const PhysicalPreset *a, const PhysicalPreset *b,
     ASSERT_NEAR(b->vhs.tbe_varying_ns,a->vhs.tbe_varying_ns,FLOAT_TOL,"vhs.tbe_varying_ns");
     ASSERT_NEAR(b->vhs.tbe_slow_fraction,a->vhs.tbe_slow_fraction,FLOAT_TOL,"vhs.tbe_slow_fraction");
     ASSERT_NEAR(b->vhs.tbe_slow_tau_ms,a->vhs.tbe_slow_tau_ms,FLOAT_TOL,"vhs.tbe_slow_tau_ms");
+    ASSERT_NEAR(b->vhs.tbe_slow_period_ms,a->vhs.tbe_slow_period_ms,FLOAT_TOL,"vhs.tbe_slow_period_ms");
     ASSERT_NEAR(b->vhs.line_jitter_ns,a->vhs.line_jitter_ns,FLOAT_TOL,"vhs.line_jitter_ns");
     ASSERT_NEAR(b->vhs.switch_lines_before_vsync,a->vhs.switch_lines_before_vsync,FLOAT_TOL,"vhs.switch_lines_before_vsync");
     ASSERT_NEAR(b->vhs.skew_ba_ns,a->vhs.skew_ba_ns,FLOAT_TOL,"vhs.skew_ba_ns");
@@ -523,12 +525,20 @@ static int test_save_load_roundtrip(void)
      * apply replaces it with the deck defaults. Its old keys are ignored. */
     ASSERT_TRUE(write_text_file(path, "{\"vhs\":{\"enabled\":true,\"timebase_ns\":35,\"luma_noise_rms\":0.018}}"),
                 "write pre-2 VHS block");
-    ASSERT_TRUE(preset_json_load(&dst, path) && dst.vhs.enabled == 1 && dst.vhs.model == 0 &&
-                dst.vhs.rf_cnr_dbhz == 0, "pre-2 VHS block loads as model 0");
+    ASSERT_TRUE(preset_json_load(&dst, path) && dst.vhs.enabled == 1 && dst.vhs.model == 0,
+                "pre-2 VHS block loads as model 0");
+    /* A partial model-2 block keeps the deck defaults for the keys it
+     * leaves out, so it never reaches the kernels with zero clip levels
+     * or a zero carrier-to-noise density. */
+    VHSParams defaults = {0}; vhs_params_defaults(&defaults);
     ASSERT_TRUE(write_text_file(path, "{\"vhs\":{\"model\":2,\"doc\":false,\"skew_ba_ns\":1200}}"),
                 "write model 2 VHS block");
     ASSERT_TRUE(preset_json_load(&dst, path) && dst.vhs.model == 2 && dst.vhs.doc == 0 &&
                 dst.vhs.skew_ba_ns == 1200, "model 2 VHS keys");
+    ASSERT_TRUE(dst.vhs.white_clip_pct == defaults.white_clip_pct && dst.vhs.dark_clip_pct == defaults.dark_clip_pct &&
+                dst.vhs.rf_cnr_dbhz == defaults.rf_cnr_dbhz && dst.vhs.fm_white_hz == defaults.fm_white_hz &&
+                dst.vhs.skew_ab_ns == defaults.skew_ab_ns && dst.vhs.tbe_slow_period_ms == defaults.tbe_slow_period_ms &&
+                dst.vhs.enabled == 0, "partial model 2 block keeps the deck defaults");
 
     unlink(path);
     return 1;

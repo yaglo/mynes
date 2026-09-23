@@ -239,8 +239,15 @@ void main() {
         z[k] = amp[k] * vec2(cos(a), sin(a));
     }
     iir_complex16(F_RF_REC, z);
-    for (int k = 0; k < 16; k++)
-        z[k] += rf_noise_sigma * noise_gain[k] * gauss2(noise_key(13u, n0 + k));
+    /* Head and preamplifier noise is real, so its analytic form has only
+     * positive frequencies: the white draws pass the one-sided shaping
+     * filter before they join the carrier. */
+    {
+        vec2 noise[16];
+        for (int k = 0; k < 16; k++) noise[k] = rf_noise_sigma * noise_gain[k] * gauss2(noise_key(13u, n0 + k));
+        iir_complex16(F_NOISE, noise);
+        for (int k = 0; k < 16; k++) z[k] += noise[k];
+    }
     iir_complex16(F_RF_PB, z);
 
     /* ---- dropout detector: integrated envelope with hysteresis ---- */

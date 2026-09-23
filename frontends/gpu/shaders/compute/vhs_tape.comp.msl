@@ -855,7 +855,7 @@ void iir_complex4(thread const int& f, thread spvUnsafeArray<float2, 4>& x, thre
     x = o;
 }
 
-kernel void main0(constant Params& _229 [[buffer(0)]], device Coeffs& _665 [[buffer(2)]], device LineTable& _1697 [[buffer(3)]], device Defects& _1785 [[buffer(4)]], device Input& _1874 [[buffer(1)]], device Mask& _2753 [[buffer(7)]], device Luma& _2867 [[buffer(5)]], device Chroma& _3017 [[buffer(6)]], uint gl_SubgroupID [[simdgroup_index_in_threadgroup]], uint gl_SubgroupSize [[thread_execution_width]], uint gl_SubgroupInvocationID [[thread_index_in_simdgroup]], uint3 gl_WorkGroupID [[threadgroup_position_in_grid]])
+kernel void main0(constant Params& _229 [[buffer(0)]], device Coeffs& _665 [[buffer(2)]], device LineTable& _1697 [[buffer(3)]], device Defects& _1785 [[buffer(4)]], device Input& _1874 [[buffer(1)]], device Mask& _2774 [[buffer(7)]], device Luma& _2888 [[buffer(5)]], device Chroma& _3038 [[buffer(6)]], uint gl_SubgroupID [[simdgroup_index_in_threadgroup]], uint gl_SubgroupSize [[thread_execution_width]], uint gl_SubgroupInvocationID [[thread_index_in_simdgroup]], uint3 gl_WorkGroupID [[threadgroup_position_in_grid]])
 {
     threadgroup spvUnsafeArray<float2, 64> scan_share;
     threadgroup uint tile_defects;
@@ -1123,158 +1123,167 @@ kernel void main0(constant Params& _229 [[buffer(0)]], device Coeffs& _665 [[buf
     spvUnsafeArray<float2, 16> param_41 = z;
     iir_complex16(param_40, param_41, gl_SubgroupID, gl_SubgroupSize, gl_SubgroupInvocationID, scan_share, _665);
     z = param_41;
+    spvUnsafeArray<float2, 16> _noise;
     for (int k_9 = 0; k_9 < 16; k_9++)
     {
         uint param_42 = 13u;
         int param_43 = n0 + k_9;
         uint param_44 = noise_key(param_42, param_43, _229);
-        z[k_9] += (gauss2(param_44) * (_229.rf_noise_sigma * noise_gain[k_9]));
+        _noise[k_9] = gauss2(param_44) * (_229.rf_noise_sigma * noise_gain[k_9]);
     }
-    int param_45 = 5;
-    spvUnsafeArray<float2, 16> param_46 = z;
+    int param_45 = 11;
+    spvUnsafeArray<float2, 16> param_46 = _noise;
     iir_complex16(param_45, param_46, gl_SubgroupID, gl_SubgroupSize, gl_SubgroupInvocationID, scan_share, _665);
-    z = param_46;
-    spvUnsafeArray<float, 16> e;
+    _noise = param_46;
     for (int k_10 = 0; k_10 < 16; k_10++)
     {
-        e[k_10] = length(z[k_10]) * _229.env_norm;
+        z[k_10] += _noise[k_10];
     }
-    int param_47 = 6;
-    spvUnsafeArray<float, 16> param_48 = e;
-    iir_real16(param_47, param_48, gl_SubgroupID, gl_SubgroupSize, gl_SubgroupInvocationID, scan_share, _665);
-    e = param_48;
-    int last_1 = -1;
+    int param_47 = 5;
+    spvUnsafeArray<float2, 16> param_48 = z;
+    iir_complex16(param_47, param_48, gl_SubgroupID, gl_SubgroupSize, gl_SubgroupInvocationID, scan_share, _665);
+    z = param_48;
+    spvUnsafeArray<float, 16> e;
     for (int k_11 = 0; k_11 < 16; k_11++)
     {
-        if (e[k_11] < _229.doc_on)
-        {
-            last_1 = (2 * (q0 + k_11)) + 1;
-        }
-        else
-        {
-            if (e[k_11] > _229.doc_off)
-            {
-                last_1 = 2 * (q0 + k_11);
-            }
-        }
+        e[k_11] = length(z[k_11]) * _229.env_norm;
     }
-    int param_49 = last_1;
-    int _2685 = carry_max(param_49, gl_SubgroupID, gl_SubgroupSize, gl_SubgroupInvocationID, scan_share);
-    int state = _2685;
-    uint bits = 0u;
+    int param_49 = 6;
+    spvUnsafeArray<float, 16> param_50 = e;
+    iir_real16(param_49, param_50, gl_SubgroupID, gl_SubgroupSize, gl_SubgroupInvocationID, scan_share, _665);
+    e = param_50;
+    int last_1 = -1;
     for (int k_12 = 0; k_12 < 16; k_12++)
     {
         if (e[k_12] < _229.doc_on)
         {
-            state = (2 * (q0 + k_12)) + 1;
+            last_1 = (2 * (q0 + k_12)) + 1;
         }
         else
         {
             if (e[k_12] > _229.doc_off)
             {
-                state = 2 * (q0 + k_12);
+                last_1 = 2 * (q0 + k_12);
             }
         }
-        bool _2722 = state >= 0;
-        bool _2728;
-        if (_2722)
+    }
+    int param_51 = last_1;
+    int _2706 = carry_max(param_51, gl_SubgroupID, gl_SubgroupSize, gl_SubgroupInvocationID, scan_share);
+    int state = _2706;
+    uint bits = 0u;
+    for (int k_13 = 0; k_13 < 16; k_13++)
+    {
+        if (e[k_13] < _229.doc_on)
         {
-            _2728 = (state & 1) == 1;
+            state = (2 * (q0 + k_13)) + 1;
         }
         else
         {
-            _2728 = _2722;
+            if (e[k_13] > _229.doc_off)
+            {
+                state = 2 * (q0 + k_13);
+            }
         }
-        if (_2728)
+        bool _2743 = state >= 0;
+        bool _2749;
+        if (_2743)
         {
-            bits |= (1u << uint(k_12));
+            _2749 = (state & 1) == 1;
+        }
+        else
+        {
+            _2749 = _2743;
+        }
+        if (_2749)
+        {
+            bits |= (1u << uint(k_13));
         }
     }
     int word = int(T) - 32;
     if ((word >= 0) && (word < 171))
     {
-        _2753.dropout_mask[(line * 171) + word] = bits;
+        _2774.dropout_mask[(line * 171) + word] = bits;
     }
-    float4 param_50 = float4(z[15], 0.0, 0.0);
-    float4 _2768 = previous_thread(param_50, gl_SubgroupID, gl_SubgroupSize, gl_SubgroupInvocationID, scan_share);
-    float4 zp = _2768;
-    float2 _2780;
-    float2 _2785;
+    float4 param_52 = float4(z[15], 0.0, 0.0);
+    float4 _2789 = previous_thread(param_52, gl_SubgroupID, gl_SubgroupSize, gl_SubgroupInvocationID, scan_share);
+    float4 zp = _2789;
+    float2 _2801;
+    float2 _2806;
     spvUnsafeArray<float, 16> y;
-    for (int k_13 = 0; k_13 < 16; k_13++)
+    for (int k_14 = 0; k_14 < 16; k_14++)
     {
-        if (k_13 == 0)
+        if (k_14 == 0)
         {
             if (T == 0u)
             {
-                _2785 = z[0];
+                _2806 = z[0];
             }
             else
             {
-                _2785 = zp.xy;
+                _2806 = zp.xy;
             }
-            _2780 = _2785;
+            _2801 = _2806;
         }
         else
         {
-            _2780 = z[k_13 - 1];
+            _2801 = z[k_14 - 1];
         }
-        float2 prev_1 = _2780;
-        float2 param_51 = z[k_13];
-        float2 param_52 = float2(prev_1.x, -prev_1.y);
-        float2 w = cmul(param_51, param_52);
+        float2 prev_1 = _2801;
+        float2 param_53 = z[k_14];
+        float2 param_54 = float2(prev_1.x, -prev_1.y);
+        float2 w = cmul(param_53, param_54);
         float f_1 = (abs(precise::atan2(w.y, w.x)) * _229.sample_rate) / 6.283185482025146484375;
-        y[k_13] = (((f_1 - _229.f_sync) / _229.hz_per_pct) * 1.39999997615814208984375) - 40.0;
+        y[k_14] = (((f_1 - _229.f_sync) / _229.hz_per_pct) * 1.39999997615814208984375) - 40.0;
     }
-    int param_53 = 7;
-    spvUnsafeArray<float, 16> param_54 = y;
-    iir_real16(param_53, param_54, gl_SubgroupID, gl_SubgroupSize, gl_SubgroupInvocationID, scan_share, _665);
-    y = param_54;
-    for (int k_14 = 0; k_14 < 16; k_14++)
+    int param_55 = 7;
+    spvUnsafeArray<float, 16> param_56 = y;
+    iir_real16(param_55, param_56, gl_SubgroupID, gl_SubgroupSize, gl_SubgroupInvocationID, scan_share, _665);
+    y = param_56;
+    for (int k_15 = 0; k_15 < 16; k_15++)
     {
-        int xpos = (q0 + k_14) - 512;
+        int xpos = (q0 + k_15) - 512;
         if ((xpos >= 0) && (xpos < 2728))
         {
-            _2867.y12[(line * 2728) + xpos] = y[k_14];
+            _2888.y12[(line * 2728) + xpos] = y[k_15];
         }
     }
-    float param_56;
-    float param_57;
     float param_58;
+    float param_59;
+    float param_60;
     spvUnsafeArray<float2, 4> cc;
     for (int j_1 = 0; j_1 < 4; j_1++)
     {
         int q_1 = q0 + (4 * j_1);
-        int param_55 = q_1;
-        transport_at(param_55, param_56, param_57, param_58, a0, a1, a2, b0, b1, b2, a3, b3);
-        float tau_1 = param_56;
-        float rf_db_1 = param_57;
-        float noise_gain_1 = param_58;
-        float param_59 = (float(q_1) - tau_1) * 0.25;
-        float2 c_2 = cubic_c(param_59, c_rec);
-        float param_60 = float(n0 + (4 * j_1));
-        c_2 *= exp2((((-_229.spacing_db) * spacing_at(param_60, tile_defects, tile_defect, tile_valid)) * _229.colour_under_hz) * 0.16609640419483184814453125);
+        int param_57 = q_1;
+        transport_at(param_57, param_58, param_59, param_60, a0, a1, a2, b0, b1, b2, a3, b3);
+        float tau_1 = param_58;
+        float rf_db_1 = param_59;
+        float noise_gain_1 = param_60;
+        float param_61 = (float(q_1) - tau_1) * 0.25;
+        float2 c_2 = cubic_c(param_61, c_rec);
+        float param_62 = float(n0 + (4 * j_1));
+        c_2 *= exp2((((-_229.spacing_db) * spacing_at(param_62, tile_defects, tile_defect, tile_valid)) * _229.colour_under_hz) * 0.16609640419483184814453125);
         float xr = mod(float(q_1 - 512) - tau_1, 2728.0);
         float g_2 = ((xr >= 240.0) && (xr < 336.0)) ? 0.5 : 1.0;
         int n3 = ((((line * 2728) - 512) / 4) + (int(T) * 4)) + j_1;
-        uint param_61 = 17u;
-        int param_62 = n3;
-        uint param_63 = noise_key(param_61, param_62, _229);
-        cc[j_1] = c_2 + (gauss2(param_63) * (_229.chroma_noise_sigma * g_2));
+        uint param_63 = 17u;
+        int param_64 = n3;
+        uint param_65 = noise_key(param_63, param_64, _229);
+        cc[j_1] = c_2 + (gauss2(param_65) * (_229.chroma_noise_sigma * g_2));
     }
-    int param_64 = 8;
-    spvUnsafeArray<float2, 4> param_65 = cc;
-    iir_complex4(param_64, param_65, gl_SubgroupID, gl_SubgroupSize, gl_SubgroupInvocationID, scan_share, _665);
-    cc = param_65;
+    int param_66 = 8;
+    spvUnsafeArray<float2, 4> param_67 = cc;
+    iir_complex4(param_66, param_67, gl_SubgroupID, gl_SubgroupSize, gl_SubgroupInvocationID, scan_share, _665);
+    cc = param_67;
     float2 rot = float2(cos(c1.x), sin(c1.x));
     for (int j_2 = 0; j_2 < 4; j_2++)
     {
         int x3 = ((int(T) * 4) + j_2) - 128;
         if ((x3 >= 0) && (x3 < 682))
         {
-            float2 param_66 = cc[j_2];
-            float2 param_67 = rot;
-            _3017.c3[(line * 682) + x3] = cmul(param_66, param_67);
+            float2 param_68 = cc[j_2];
+            float2 param_69 = rot;
+            _3038.c3[(line * 682) + x3] = cmul(param_68, param_69);
         }
     }
 }

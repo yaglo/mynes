@@ -1,7 +1,11 @@
 /* Shared by vhs_tape and vhs_playback: parameters, hashing and the
  * two-level scans that run first-order IIR sections across a threadgroup.
- * Each thread owns K consecutive samples; the tile order is the subgroup
- * order, so the scans are exact for any power-of-two subgroup size.
+ * Each thread owns K consecutive samples in subgroup order: the thread
+ * gl_SubgroupID * gl_SubgroupSize + gl_SubgroupInvocationID owns tile
+ * position K times that index. The scans are exact when the 224 threads
+ * fill whole subgroups in that order, which Metal guarantees (7 SIMD
+ * groups of 32) and Vulkan drivers give a one-dimensional workgroup with
+ * full subgroups; a partial last subgroup would misplace its carries.
  * The including shader declares `coeff[]` (vec4) and the Params block
  * (GpuVHSParams) before this file; compile_shaders.sh reads the bindings
  * from the shader itself. */
@@ -15,7 +19,7 @@ const int SECTIONS = 16;       // first section vec4 after the filter headers
 const int CLICK = SECTIONS + 48;
 
 const int F_YREC = 0, F_PRE = 1, F_CREC = 2, F_MOD = 3, F_RF_REC = 4, F_RF_PB = 5,
-          F_ENV = 6, F_YPB = 7, F_CPB = 8, F_DE = 9, F_CANC = 10;
+          F_ENV = 6, F_YPB = 7, F_CPB = 8, F_DE = 9, F_CANC = 10, F_NOISE = 11;
 
 shared vec2 scan_share[64];
 
