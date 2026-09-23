@@ -89,9 +89,9 @@ developer keys, is in [docs/gpu-controls.md](docs/gpu-controls.md).
 ## How the picture is made
 
 ```text
-PPU colour codes → NES DAC waveform → cable / RF receiver → Y/C separation
-                 → colour decoder → RGB amplifiers → beam & phosphors
-                 → mask & glass → SDR / HDR display
+PPU color codes → NES DAC waveform → cable / RF receiver → Y/C separation
+                → color decoder → RGB amplifiers → beam & phosphors
+                → mask & glass → SDR / HDR display
 ```
 
 Each stage is a compute shader with a CPU reference kernel and a unit test.
@@ -104,7 +104,7 @@ and the size of the beam spot.
 
 On an Apple M5 (24 GiB, Metal, Release build, measured 2026-09-21), the full
 GPU chain takes a median 7.3 ms per frame for the Sony PVM-14L2 preset at
-2560×1920. The JVC D-Series, Toshiba 14AF43 and Stas's Favourite presets take
+2560×1920. The JVC D-Series, Toshiba 14AF and Stas's Favourite presets take
 9.4 to 11.0 ms. The render scale setting (1, 0.75, 0.5 or auto) draws the beam
 and phosphor stages at that fraction of the viewport, which keeps 60 fps on
 slower GPUs. The method and raw data are in the
