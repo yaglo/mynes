@@ -98,7 +98,7 @@
         "halation_tint_g": 1.0,
         "halation_tint_b": 1.0,
         "beam_current_load": 0.0,
-        "mask_triads": 1246,
+        "mask_triads": 1200,
         "beam_fwhm_min": 0.28,
         "beam_fwhm_max": 0.52,
         "keystone": 0,
