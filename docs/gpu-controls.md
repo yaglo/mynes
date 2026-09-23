@@ -570,7 +570,9 @@ with a variant of the grille, at the same gain, so the two can be judged
 side by side on the panel itself. Split picks the half (Off, Right half,
 Left half). Other half chooses what the rest of the picture shows: the
 shipped grille, the same picture with no grille (the exact A/B for the
-grille), or the mask and glass bypass. Gap share R, G and B move that share of a colour's light half
+grille), or the mask and glass bypass. Lab gain runs the lab half at the
+other half's gain, or at the gain its own grille allows, which is what a
+gentler grille would ship with. Gap share R, G and B move that share of a colour's light half
 a triad along, onto the same colour's subpixel in the other pixel of a
 two-pixel triad; 0.5 spreads it evenly, 0 is the plain grille. Gain R, G
 and B trim each output channel. Stripe fill is the phosphor stripe's share
@@ -583,7 +585,9 @@ half; the shipped grille does not read them.
 **M → Host display** holds the mask sampling choice, the panel's subpixel
 order (Off, RGB stripe, BGR stripe), Panel primaries (P3 gives the window's layer
 the panel's own primaries where it can take them; sRGB is the compositor's
-conversion), Subpixel lab (below), HDR gain (Auto fits the display's
+conversion), Subpixel lab (below), Auto boost (multiplies the Auto gain,
+1.00 to 2.00; above 1.00 white's stripe centres pass the shoulder's knee, so
+the picture is brighter and the lines and gaps flatter), HDR gain (Auto fits the display's
 headroom, Preset uses the preset's own; see the
 [pipeline reference](gpu-pipeline-reference.md)) and two host-side
 performance settings. None is a television setting; all are saved to

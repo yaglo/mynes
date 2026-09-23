@@ -1041,6 +1041,8 @@ int main(int argc, char **argv) {
     render_ctx.panel_primaries=mynes_config.gpu_panel_primaries;
     render_ctx.lab_split=mynes_config.gpu_lab_split;
     render_ctx.lab_reference=mynes_config.gpu_lab_reference;
+    render_ctx.lab_fit=mynes_config.gpu_lab_fit;
+    render_ctx.hdr_boost=mynes_config.gpu_hdr_boost/100.0f;
     for (int i=0;i<3;i++) { render_ctx.lab_gap[i]=mynes_config.gpu_lab_gap[i]/100.0f; render_ctx.lab_gain[i]=mynes_config.gpu_lab_gain[i]/100.0f; }
     render_ctx.lab_fill=mynes_config.gpu_lab_fill/100.0f;
     /* Captures and recordings are viewed on other panels: they use the saved

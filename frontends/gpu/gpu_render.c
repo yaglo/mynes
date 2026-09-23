@@ -481,7 +481,9 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
             disp_params.shoulder_knee = 0.95f;
             float fit = disp_params.shoulder_knee * disp_params.hdr_headroom
                       / gpu_display_white_peak(&disp_params, chain->tv.beam_fwhm_max);
-            disp_params.hdr_gain = fminf(fit, 4.0f);
+            /* Auto boost is the user's choice to spend the shoulder on
+             * brightness: above 1 the stripe centres pass the knee. */
+            disp_params.hdr_gain = fminf(fit * fmaxf(ctx->hdr_boost, 1.0f), 4.0f);
         }
         /* Mask/glass bypass is an A/B against the same picture: the gain is
          * fitted with the mask on so only the mask and the glass go away;
@@ -521,6 +523,10 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
             GPUDisplayParams lab = disp_params;
             for (int i = 0; i < 3; i++) { lab.lab_gap[i] = ctx->lab_gap[i]; lab.lab_gain[i] = ctx->lab_gain[i]; }
             lab.lab_fill = ctx->lab_fill;
+            /* The lab half may take the gain its own grille allows. */
+            if (ctx->lab_fit && ctx->hdr_enabled && ctx->hdr_gain_mode == 0)
+                lab.hdr_gain = fminf(lab.shoulder_knee * lab.hdr_headroom
+                    / gpu_display_white_peak(&lab, chain->tv.beam_fwhm_max) * fmaxf(ctx->hdr_boost, 1.0f), 4.0f);
             lab.lab_scissor_x = (int)(ctx->lab_split == 1 ? vp_x + vp_w / 2 : vp_x);
             lab.lab_scissor_y = (int)vp_y; lab.lab_scissor_w = (int)(vp_w / 2); lab.lab_scissor_h = (int)vp_h;
             gpu_display_render(ctx->gpu_disp, ctx->gpu, cmd,
