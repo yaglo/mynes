@@ -83,6 +83,13 @@ layout(set = 2, binding = 0) uniform Params {
     float top_band_start;
     float top_band_end;
     float top_edge_width;
+    /* Where the 256x240 picture sits on the tube's active raster: NES dots
+     * across the active line, dots from its left edge to the picture, lines
+     * in the active field, lines from its top to the picture. */
+    float active_dots;
+    float picture_left;
+    float active_lines;
+    float picture_top;
 };
 
 float hash01(uint x) {
@@ -133,8 +140,10 @@ void main() {
     float kv = barrel_v > 0.001 ? barrel_v : barrel;
     vec2 warped = barrel_distort(uv_wobble, barrel, kv);
 
-    uint load_line=uint(clamp(y_uv*240.0,0.0,239.0));
-    uint load_dot=uint(clamp(x_uv*256.0,0.0,255.0));
+    float load_x = x_uv * active_dots - picture_left;
+    float load_y = y_uv * active_lines - picture_top;
+    uint load_line=uint(clamp(load_y,0.0,239.0));
+    uint load_dot=uint(clamp(load_x,0.0,255.0));
     float picture_load=0.65*load_map[256u*240u+load_line]+0.35*load_map[load_line*256u+load_dot];
     // Inverse landing coordinates: positive sag contracts the picture;
     // negative models EHT-dominated expansion. Keep the historical preset sign.
@@ -176,7 +185,7 @@ void main() {
 
     float cx = raster.x * 2.0 - 1.0;
     float cy = raster.y * 2.0 - 1.0;
-    int sy_i = clamp(int(floor(raster.y * 240.0)), 0, 239);
+    int sy_i = clamp(int(floor(raster.y * active_lines - picture_top)), 0, 239);
     uint sy_nom = uint(sy_i);
     float line_uv = (float(sy_nom) + 0.5) / 240.0;
     uint line_seed = sy_nom * 1103515245u + frame_counter * 12345u + 0x9e3779b9u;
@@ -244,10 +253,12 @@ void main() {
      * now, converted from beam-space pixels to signal samples. */
     float generic_conv_px = convergence_static
                           + convergence_dynamic * clamp(sqrt(conv_edge), 0.0, 1.0);
-    float generic_conv_signal = generic_conv_px * float(signal_w) / fw;
+    float generic_conv_signal = generic_conv_px * float(signal_w) * active_dots / (256.0 * fw);
 
-    float base_x = (x_land_n * 0.5 + 0.5) * float(signal_w);
-    float base_y = (y_land_n * 0.5 + 0.5) * fh;
+    /* The tube face is the active raster; the picture is a window in it, so
+     * NES dots are 8:7 on a 4:3 face and the blanking either side is black. */
+    float base_x = ((x_land_n * 0.5 + 0.5) * active_dots - picture_left) / 256.0 * float(signal_w);
+    float base_y = ((y_land_n * 0.5 + 0.5) * active_lines - picture_top) / 240.0 * fh;
 
     float r_x = base_x - generic_conv_signal + conv_r_x * conv_edge;
     float g_x = base_x;

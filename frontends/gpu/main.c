@@ -874,6 +874,8 @@ int main(int argc, char **argv) {
             if(strcmp(mode,"pixels")==0) mask_alignment_override=0;
             else if(strcmp(mode,"physical")==0) mask_alignment_override=1;
             else { fprintf(stderr,"Mask alignment must be pixels or physical\n");return 1; }
+        } else if (strcmp(argv[i], "--raw") == 0) {
+            composite_enabled = false;  /* the PPU's palette RGB, no signal chain, no CRT (the C key) */
         } else if (strcmp(argv[i], "--display-bypass") == 0) {
             display_bypass_flag=true;
         } else if (strcmp(argv[i], "--panel-subpixels") == 0 && i+1<argc) {
@@ -991,6 +993,7 @@ int main(int argc, char **argv) {
                    "  --display-bypass      Show the beam without mask, glass or phosphor\n"
                    "                        colour (M > Diagnostics > Mask/glass bypass)\n"
                    "  --panel-subpixels O   off, rgb or bgr: draw each colour at this panel's\n"
+                   "  --raw                 Show the PPU's palette RGB: no signal chain, no CRT (as the C key)\n"
                    "                        subpixel (M > Host display; batch runs default off)\n"
                    "  --render-scale S      Internal CRT resolution: 1, 0.75, 0.5 or auto\n"
                    "                        (default 1; auto starts at 1 and steps down\n"
@@ -1524,7 +1527,7 @@ int main(int argc, char **argv) {
     render_ctx.display_tex_h = 0;
     render_ctx.gpu_disp = &gpu_disp;
     render_ctx.gpu_display_enabled = gpu_display_enabled;
-    render_ctx.crt_shader_enabled = true;
+    render_ctx.crt_shader_enabled = composite_enabled;
     render_ctx.display_bypass = display_bypass_flag;
     render_ctx.hdr_enabled = hdr_available;
 

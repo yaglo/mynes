@@ -198,7 +198,7 @@ static SDL_GPUTextureFormat final_format(const GPURenderCtx *ctx) {
 /* Opt-in capture of our final CRT render, independent of OS screen-recording
  * permissions. PPM is an SDR preview: EDR values above reference white clip.
  * A NULL path hands the image to the capture sink only. */
-static bool capture_display(GPURenderCtx *ctx, const GPUDisplayParams *params,
+static bool capture_display(GPURenderCtx *ctx, const GPUDisplayParams *params, bool raw,
                             int w, int h, const SDL_GPUViewport *viewport, const char *path) {
     // At most one owned image/writer: a slow disk cannot grow a queue.
     if (!frame_capture_finish(ctx->capture_job)) ctx->capture_failed=true;
@@ -221,7 +221,15 @@ static bool capture_display(GPURenderCtx *ctx, const GPUDisplayParams *params,
         if (!cmd) goto done;
         /* Files are sRGB; only the window's layer takes P3. */
         GPUDisplayParams file_params=*params; file_params.output_p3=0;
-        if (owns_target) {
+        if (owns_target && raw) {
+            /* The raw palette picture: the same nearest blit as the window. */
+            SDL_GPUBlitInfo blit = {0};
+            blit.source.texture = ctx->display_tex; blit.source.w = ctx->display_tex_w; blit.source.h = ctx->display_tex_h;
+            blit.destination.texture = target; blit.destination.x = (Uint32)viewport->x; blit.destination.y = (Uint32)viewport->y;
+            blit.destination.w = (Uint32)viewport->w; blit.destination.h = (Uint32)viewport->h;
+            blit.load_op = SDL_GPU_LOADOP_CLEAR; blit.clear_color.a = 1.0f; blit.filter = SDL_GPU_FILTER_NEAREST;
+            SDL_BlitGPUTexture(cmd, &blit);
+        } else if (owns_target) {
             gpu_display_render(ctx->gpu_disp,ctx->gpu,cmd,ctx->display_tex,
                 ctx->display_tex_w,ctx->display_tex_h,target,w,h,&file_params,viewport);
             /* The subpixel lab's half goes into the file as it is on screen. */
@@ -410,6 +418,9 @@ static bool build_display_params(GPURenderCtx *ctx, const VideoChain *chain, Uin
                                    : gpu_output_safe_area(ctx->window,(int)sw,(int)sh);
     SDL_FRect picture=gpu_output_fit_picture(safe,target_aspect);
     float vp_x=picture.x, vp_y=picture.y, vp_w=picture.w, vp_h=picture.h;
+    /* The raw palette path takes the early return below and blits into
+     * this rectangle, so it is handed back before any of them. */
+    *picture_out = picture;
     bool size_changed=ctx->drawable_w!=(int)sw || ctx->drawable_h!=(int)sh ||
         memcmp(&ctx->safe_area,&safe,sizeof(safe))!=0;
     ctx->drawable_w=sw;ctx->drawable_h=sh;ctx->safe_area=safe;
@@ -500,7 +511,6 @@ static bool build_display_params(GPURenderCtx *ctx, const VideoChain *chain, Uin
         }
         *out = disp_params;
     }
-    *picture_out = picture;
     return true;
 }
 
@@ -513,7 +523,7 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
     Uint32 sw=ctx->present_w,sh=ctx->present_h;
     ctx->present_cmd=NULL;ctx->present_texture=NULL;
     GPUDisplayParams capture_params = {0};
-    bool can_capture = false;
+    bool can_capture = false, raw_capture = false;
 
     /* Split view: upload raw PPU frame to raw_tex so we can blit it later. */
     if (ctx->split_mode && ctx->raw_ppu_rgb) {
@@ -583,6 +593,9 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
         blit.clear_color.a = 1.0f;
         blit.filter = SDL_GPU_FILTER_NEAREST;  /* pixel-perfect, no blur */
         SDL_BlitGPUTexture(cmd, &blit);
+        /* A capture or recording takes this picture too. */
+        capture_params.sdr_white_level = 1.0f;
+        can_capture = true; raw_capture = true;
     }
 
     /* Split view: overwrite right half of swapchain with raw PPU palette.
@@ -660,7 +673,7 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
     if(can_capture && (want_file || ctx->capture_sink)) {
         SDL_GPUViewport viewport = {.x=vp_x,.y=vp_y,.w=vp_w,.h=vp_h,.min_depth=0,.max_depth=1};
         Uint64 start=SDL_GetTicksNS();
-        ctx->capture_accepted = capture_display(ctx,&capture_params,sw,sh,&viewport,want_file ? capture_path : NULL);
+        ctx->capture_accepted = capture_display(ctx,&capture_params,raw_capture,sw,sh,&viewport,want_file ? capture_path : NULL);
         ctx->capture_ns=SDL_GetTicksNS()-start;
         if (!ctx->capture_accepted) ctx->capture_failed=true;
         if (want_file) captured = ctx->capture_accepted;

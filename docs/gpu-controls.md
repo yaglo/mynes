@@ -224,6 +224,7 @@ mynes_gpu --offscreen 1920x1440 --sdr --preset presets/sony_pvm_14l2.json \
 | Flag | Meaning |
 |---|---|
 | `--record OUT` | Output path; the container follows the extension, `.mov` or `.mp4`. Requires `--offscreen`. |
+| `--raw` | The PPU's palette RGB instead of the signal chain and the CRT, as the `C` key: a nearest blit into the 4:3 box, and what a capture or recording then takes. |
 | `--record-seconds N` | Clip length. Frames = round(N × rate) with the region's exact rate, 60.0988 (NTSC) or 50.007 (PAL), which is also the stream's frame rate. |
 | `--record-after F` | Emulated frames run before the first recorded one (default 2), so a loaded state's first pictures are left out. |
 | `--record-hdr` | Record BT.2020 PQ from a half-float target instead of 8-bit sRGB. Requires `--record`; not with `--sdr`. |
