@@ -1,0 +1,164 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct Params
+{
+    uint width;
+    uint lines;
+    uint samples_per_line;
+    uint spp_num;
+    uint spp_den;
+    uint top_line;
+    uint source_mode;
+    uint taps;
+    float phase_base;
+    float phase_line_adv;
+    float chroma_cut;
+    float setup;
+    float4 rgb_row_r;
+    float4 rgb_row_g;
+    float4 rgb_row_b;
+};
+
+struct PixelBuf
+{
+    uint pixels[1];
+};
+
+struct RampBuf
+{
+    float ramp[1];
+};
+
+struct WaveformBuf
+{
+    float waveform[1];
+};
+
+struct LumaBuf
+{
+    float source_y[1];
+};
+
+constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
+
+static inline __attribute__((always_inline))
+float3 gun_at(thread const uint& pic_line, thread int& px, constant Params& _27, device PixelBuf& _39, device RampBuf& _52)
+{
+    px = clamp(px, 0, int(_27.width) - 1);
+    uint code = _39.pixels[(pic_line * _27.width) + uint(px)];
+    return float3(_52.ramp[code & 63u], _52.ramp[(code >> 6u) & 63u], _52.ramp[(code >> 12u) & 63u]);
+}
+
+static inline __attribute__((always_inline))
+float3 yuv_of(thread const float3& gun)
+{
+    float y = dot(gun, float3(0.2989999949932098388671875, 0.58700001239776611328125, 0.114000000059604644775390625));
+    return float3(y, 0.4921109974384307861328125 * (gun.z - y), 0.87728297710418701171875 * (gun.x - y));
+}
+
+kernel void main0(constant Params& _27 [[buffer(0)]], device PixelBuf& _39 [[buffer(1)]], device RampBuf& _52 [[buffer(2)]], device WaveformBuf& _216 [[buffer(3)]], device LumaBuf& _247 [[buffer(4)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+{
+    uint i = gl_GlobalInvocationID.x;
+    uint line = i / _27.samples_per_line;
+    uint s = i % _27.samples_per_line;
+    if (line >= 240u)
+    {
+        return;
+    }
+    bool _131 = line >= _27.top_line;
+    bool _141;
+    if (_131)
+    {
+        _141 = line < (_27.top_line + _27.lines);
+    }
+    else
+    {
+        _141 = _131;
+    }
+    bool in_picture = _141;
+    uint _144;
+    if (in_picture)
+    {
+        _144 = line - _27.top_line;
+    }
+    else
+    {
+        _144 = 0u;
+    }
+    uint pic_line = _144;
+    if (_27.source_mode == 2u)
+    {
+        float3 _161;
+        if (in_picture)
+        {
+            uint param = pic_line;
+            int param_1 = int((s * _27.spp_den) / _27.spp_num);
+            float3 _177 = gun_at(param, param_1, _27, _39, _52);
+            _161 = _177;
+        }
+        else
+        {
+            _161 = float3(0.0);
+        }
+        float3 gun = _161;
+        float3 rgb = float3((_27.rgb_row_r.x * gun.x) + _27.rgb_row_r.w, (_27.rgb_row_g.x * gun.y) + _27.rgb_row_g.w, (_27.rgb_row_b.x * gun.z) + _27.rgb_row_b.w);
+        _216.waveform[i * 3u] = rgb.x;
+        _216.waveform[(i * 3u) + 1u] = rgb.y;
+        _216.waveform[(i * 3u) + 2u] = rgb.z;
+        return;
+    }
+    if (!in_picture)
+    {
+        _216.waveform[i] = _27.setup;
+        _247.source_y[i] = _27.setup;
+        return;
+    }
+    uint param_2 = pic_line;
+    int param_3 = int((s * _27.spp_den) / _27.spp_num);
+    float3 _265 = gun_at(param_2, param_3, _27, _39, _52);
+    float3 param_4 = _265;
+    float3 yuv = yuv_of(param_4);
+    float2 uv = yuv.yz;
+    if (_27.taps > 1u)
+    {
+        int half_n = int(_27.taps) / 2;
+        float2 acc = float2(0.0);
+        float norm = 0.0;
+        int _289 = -half_n;
+        float _304;
+        for (int k = _289; k <= half_n; k++)
+        {
+            float x = float(k);
+            if (k == 0)
+            {
+                _304 = 2.0 * _27.chroma_cut;
+            }
+            else
+            {
+                _304 = sin((6.283185482025146484375 * _27.chroma_cut) * x) / (3.1415927410125732421875 * x);
+            }
+            float sinc = _304;
+            float w = sinc * (0.540000021457672119140625 + (0.4600000083446502685546875 * cos((3.1415927410125732421875 * x) / float(half_n + 1))));
+            int ss = int(s) + k;
+            uint param_5 = pic_line;
+            int param_6 = (((ss < 0) ? 0 : ss) * int(_27.spp_den)) / int(_27.spp_num);
+            float3 _360 = gun_at(param_5, param_6, _27, _39, _52);
+            float3 param_7 = _360;
+            float3 n = yuv_of(param_7);
+            acc += (n.yz * w);
+            norm += w;
+        }
+        uv = acc / float2(norm);
+    }
+    float p = (_27.phase_base + (float(line) * _27.phase_line_adv)) + float(s);
+    float a = (6.283185482025146484375 * p) / 12.0;
+    float chroma = (uv.x * cos(a - 2.4085543155670166015625)) + (uv.y * cos(a - 0.83775806427001953125));
+    float y = _27.setup + ((1.0 - _27.setup) * yuv.x);
+    _216.waveform[i] = y + ((1.0 - _27.setup) * chroma);
+    _247.source_y[i] = y;
+}

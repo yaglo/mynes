@@ -30,9 +30,32 @@
 typedef struct {
     uint32_t count, full_width, active_width, samples_per_dot;
     float phase_base, line_phase;
-    uint32_t region, lines, separate_yc, pad[3];
+    uint32_t region, lines, separate_yc;
+    /* Sync tip and burst relative to blanking, in units of white. The 2C02
+     * draws a -264/788 sync and a square burst; an encoder IC puts sync at
+     * -40 IRE and a sine burst of 40 IRE peak to peak. */
+    float sync_level, burst_amp;
+    uint32_t burst_sine;
     float backdrop[12], gray_backdrop[12];
 } GpuRasterParams;
+
+/* One picture from a console whose video chip outputs RGB codes through a
+ * DAC into an encoder IC (Mega Drive, Super Famicom). See
+ * video_gpu_process_rgb. */
+typedef struct {
+    const uint32_t *pixels;   /* width × lines codes: bits 0-5 R, 6-11 G, 12-17 B */
+    int width, lines;         /* console pixels per line and picture lines */
+    int top_line;             /* raster picture line (0..239) of the first console line */
+    int spp_num, spp_den;     /* samples per pixel = spp_num / spp_den */
+    const float *ramp;        /* gun voltage per code, 0 black to 1 white */
+    int ramp_n;               /* entries in ramp, at most 64 */
+    int phase_base;           /* carrier phase at the first active sample, slots of 12 */
+    int phase_line_adv;       /* carrier phase advance per raster line, slots of 12 */
+    float chroma_bw_hz;       /* encoder chroma band (-3 dB, baseband); 0 = unfiltered */
+    float luma_bw_hz;         /* encoder luma band (-3 dB); 0 = unfiltered */
+    float luma_trap;          /* luma trap depth at the subcarrier, 0 to 1; 0 = none */
+    float setup;              /* black pedestal as a fraction of white */
+} VideoRGBSource;
 
 typedef struct {
     /* --- Generic signal chain runner (owns ping-pong + aux buffers) --- */
@@ -80,6 +103,17 @@ typedef struct {
     /* --- DAC-specific GPU buffers (not owned by signal chain) --- */
     SDL_GPUBuffer *buf_indices;
     Uint32 indices_size;
+
+    /* --- RGB console encoder source (video_gpu_process_rgb) --- */
+    GpuPipeline pipe_encoder;
+    SDL_GPUBuffer *buf_pixels, *buf_ramp;
+    SDL_GPUTransferBuffer *pixels_transfer;
+    Uint32 pixels_size;
+    float ramp_cache[64];
+    bool ramp_uploaded;
+    /* Raster sync and burst shape; the 2C02 values unless a source sets them. */
+    float raster_sync_level, raster_burst_amp;
+    bool raster_burst_sine;
     SDL_GPUBuffer *buf_signal_table;
     /* Alternate (odd-scanline) signal table for PAL. On PAL the
      * subcarrier V-component flips sign every line — each scanline reads
@@ -208,6 +242,16 @@ bool video_gpu_process_full(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
                              const uint16_t *idx_fb,
                              int phase_base, int phase_line_adv, int frame_field,
                              float *rgb_out);
+
+/* RGB console path: upload one picture of gun codes and run the ENTIRE
+ * chain with the encoder stage (encoder_rgb.comp) in place of the 2C02
+ * DAC. The raster then carries a standard -40 IRE sync and a 40 IRE sine
+ * burst, as an encoder IC produces from the console's CSYNC. The rest of
+ * the chain (console output pole, cable, receiver, CRT) is unchanged.
+ *
+ * Returns true if the GPU chain produced output. */
+bool video_gpu_process_rgb(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
+                           const VideoRGBSource *src, float *rgb_out);
 
 /* Update the color decode matrix. Call when connection type, hue, saturation,
  * or color temperature changes. The matrix maps Y,I,Q -> R,G,B as floats

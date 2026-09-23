@@ -17,6 +17,7 @@ extern int test_display_fidelity(SDL_GPUDevice *gpu);
 extern int test_crt_load(SDL_GPUDevice *gpu);
 extern int test_osd(SDL_GPUDevice *gpu);
 extern int test_vhs_fidelity(SDL_GPUDevice *gpu);
+extern int test_encoder(SDL_GPUDevice *gpu);
 static int failures;
 #define CHECK(x) do { if (!(x)) { fprintf(stderr, "FAIL %d: %s\n", __LINE__, #x); failures++; } } while (0)
 
@@ -491,7 +492,8 @@ static void receiver(SDL_GPUDevice *gpu) {
         float *input=calloc(count,sizeof(float)), *raster=calloc(count,sizeof(float));
         for(unsigned i=0;i<256*spp*2;i++) input[i]=0.4f;
         GpuRasterParams ep={.count=count,.full_width=width,.active_width=256*spp,.samples_per_dot=spp,
-            .phase_base=3,.line_phase=(float)signal_region_line_phase(region),.region=(uint32_t)region,.lines=lines};
+            .phase_base=3,.line_phase=(float)signal_region_line_phase(region),.region=(uint32_t)region,.lines=lines,
+            .sync_level=-264.0f/788.0f};
         int encode=chain_add_stage(&sc,"Raster test",CHAIN_KERNEL_RASTER,&ep,sizeof(ep),(count+255)/256,1);
         ChainStage *e=&sc.stages[encode]; e->io_typed=true;
         e->ro_count=2; e->ro[0]=CBR_BUF_SRC; e->ro[1]=CBR_AUX3;
@@ -1168,6 +1170,7 @@ int main(void) {
     rf(gpu);
     rf_sidebands(gpu);
     failures += test_vhs_fidelity(gpu);
+    failures += test_encoder(gpu);
     rf_temporal_continuity(gpu);
     dac_equivalence(gpu, SIGNAL_REGION_NTSC);
     dac_equivalence(gpu, SIGNAL_REGION_PAL);

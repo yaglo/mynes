@@ -52,6 +52,10 @@ typedef struct {
      * preset_set_region() so the full teardown + signal-table
      * refresh happens atomically. */
     int               osd_region_sel;
+    /* An RGB console source (mynes_retro): its own complete line length in
+     * dots, kept across preset loads, and no 2C02 output-impedance model. */
+    int               source_dots_per_line;
+    bool              encoder_source;
     /* Raised by preset_set_region whenever it triggered a full GPU
      * rebuild; main.c consumes it to destroy + re-create the debug
      * tap manager (which caches per-stage metadata tied to the old

@@ -128,6 +128,12 @@ static void preset_apply_cpu_state_ex(PresetCtx *ctx, const PhysicalPreset *p,
     ctx->video_chain->console_phase_distortion_ns = p->console_phase_distortion_ns;
     ctx->video_chain->console_psu_hum = p->console_psu_hum;
     ctx->video_chain->comb_notch_depth = p->comb_notch_depth;
+    /* An RGB console keeps its line length; its encoder IC drives the cable
+     * from a 75-ohm follower, so the 2C02 pin's brightness-dependent
+     * impedance does not apply. */
+    if (ctx->source_dots_per_line > 0)
+        ctx->video_chain->signal_fmt.dots_per_line = ctx->source_dots_per_line;
+    if (ctx->encoder_source) ctx->video_chain->console_phase_distortion_ns = 0;
 
     /* --- SignalPrecompute: FIR taps from TV bandwidth --- */
     float actual_sample_rate = signal_region_sample_rate_hz(new_region);

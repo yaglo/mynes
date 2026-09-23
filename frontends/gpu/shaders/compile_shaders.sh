@@ -59,6 +59,7 @@ get_resources() {
         delay)          echo "1 2 1" ;;
         modulator)      echo "1 1 2" ;;
         dac_2c02)       echo "1 3 2" ;;
+        encoder_rgb)    echo "1 2 2" ;;
         matrix_decode)  echo "1 4 1" ;;
         pal_chroma)     echo "1 2 2" ;;
         deflection)     echo "1 1 2" ;;

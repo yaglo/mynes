@@ -21,6 +21,8 @@ hardware research notes and the blog series moved to the project site:
 - [CPU DSL design](dsl-design.md) and [DSL reference](dsl-reference.md)
 - [GPU pipeline design](gpu-pipeline-design.md) and [pipeline reference](gpu-pipeline-reference.md)
 - [GPU frontend design notes](gpu-frontend-design.md)
+- [RGB consoles through the signal chain](architecture/rgb-consoles.md): Mega Drive and
+  Super Famicom research and the `mynes_retro` prototype
 - [Interactive pipeline diagram](gpu-pipeline-interactive.html)
 
 ## Measurements

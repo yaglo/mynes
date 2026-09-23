@@ -12,6 +12,8 @@ layout(set=2,binding=0) uniform Params {
     uint count, full_width, active_width, samples_per_dot;
     float phase_base, line_phase;
     uint region, lines, separate_yc;
+    float sync_level, burst_amp;
+    uint burst_sine;
     vec4 backdrop[3], gray_backdrop[3];
 };
 void main() {
@@ -21,14 +23,21 @@ void main() {
     uint dot=x/samples_per_dot;
     uint start=65u*samples_per_dot;
     float value=0.0;
-    // Levels relative to blanking and white; terminated 2C02 measurements.
-    float sync=-264.0/788.0;
+    // Levels relative to blanking and white: terminated 2C02 measurements by
+    // default (-264/788 sync, a 212/-164 square burst), or an encoder IC's
+    // -40 IRE sync and 40 IRE sine burst at the same 210-degree phase as the
+    // 2C02's hue-8 square wave (see encoder_rgb.comp.glsl).
+    float sync=sync_level;
     if(dot<25u) value=sync;
     if(dot>=29u && dot<44u) {
         float p=phase_base+float(line)*line_phase+(float(x)-float(start));
-        float hue=(region==1u) ? (((line&1u)==1u) ? 4.0 : 7.0) : 8.0;
-        bool high=mod(p+hue,12.0)<6.0;
-        value=high ? 212.0/788.0 : -164.0/788.0;
+        if(burst_sine!=0u) {
+            value=-burst_amp*cos(6.28318530718*(p-1.0)/12.0);
+        } else {
+            float hue=(region==1u) ? (((line&1u)==1u) ? 4.0 : 7.0) : 8.0;
+            bool high=mod(p+hue,12.0)<6.0;
+            value=high ? 212.0/788.0 : -164.0/788.0;
+        }
     }
     bool vertical_sync = region == 0u ? (line >= 245u && line < 248u)
                                      : (line >= 270u && line < 273u);

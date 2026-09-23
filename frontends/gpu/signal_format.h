@@ -146,6 +146,12 @@ typedef struct {
     int lines;                  /* 240 (both regions) */
     int blocks_per_line;        /* ceil(samples_per_line / WORKGROUP_SIZE) */
     int total_samples;          /* samples_per_line × lines */
+    /* Dots of samples_per_pixel in a complete raster line, blanking
+     * included: 341 for the 2C02 and S-PPU (1364 master clocks of 21.48 MHz),
+     * 342 for the Mega Drive VDP (3420 master clocks of 53.69 MHz, an exact
+     * 228 subcarrier cycles). An RGB-console frontend sets it before the GPU
+     * chain is built; the NES frontends leave the default. */
+    int dots_per_line;
 } SignalFormat;
 
 /* Initialize a SignalFormat for a given region. */
@@ -162,6 +168,13 @@ static inline void signal_format_init(SignalFormat *fmt, int region) {
     fmt->blocks_per_line = (fmt->samples_per_line + SIGNAL_WORKGROUP_SIZE - 1)
                             / SIGNAL_WORKGROUP_SIZE;
     fmt->total_samples = fmt->samples_per_line * fmt->lines;
+    fmt->dots_per_line = 341;
+}
+
+/* Complete line length in samples; 341 dots unless the frontend set another. */
+static inline int signal_format_full_line(const SignalFormat *fmt) {
+    int dots = fmt->dots_per_line > 0 ? fmt->dots_per_line : 341;
+    return dots * fmt->samples_per_pixel;
 }
 
 static inline int signal_region_normalize(int region) {
