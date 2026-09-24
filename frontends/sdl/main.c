@@ -2111,6 +2111,24 @@ void handle_input(void) {
                         int re = nes_rom_load(&new_rom, browser.chosen_path);
                         if (re == ROM_OK) {
                             mynes_saves_flush(&saves, nes.mapper.prg_ram, false);
+                            /* A new cartridge is a power cycle: nes_reset
+                             * keeps RAM and the old cartridge's bus state.
+                             * nes_init also resets the audio sink, rate and
+                             * the user's filter and analog settings, so
+                             * carry those over; apply_rom_region restores
+                             * the palette. */
+                            {
+                                APUFilterConfig filter = nes.apu.filter_config;
+                                APUAnalog analog = nes.apu.analog;
+                                int sample_rate = nes.apu.sample_rate;
+                                nes_init(&nes);
+                                nes.apu.filter_config = filter;
+                                nes.apu.analog = analog;
+                                nes.apu.sample_rate = sample_rate;
+                                apu_build_dac_tables(&nes.apu);
+                                apu_set_audio_callback(&nes.apu,
+                                    apu_sample_callback, NULL);
+                            }
                             nes_load_mapper(&nes, new_rom.mapper,
                                 new_rom.prg_rom, new_rom.prg_size,
                                 new_rom.chr_rom, new_rom.chr_size,

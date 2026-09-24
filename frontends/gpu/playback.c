@@ -444,26 +444,16 @@ void playback_load_cartridge(Playback *p, const ROM *rom, int region) {
 void playback_reset_console(Playback *p) {
     playback_pause(p);
     NES *nes=p->nes;
-    /* Frontend reset: restart the CPU reset sequence even from KIL, retaining
-     * cartridge/work RAM. Keep the shared master-clock timeline intact. */
-    nes->cpu.uPC=0;
-    nes->cpu.reset_pending=true;
-    nes->cpu.rdy=true;
-    nes->cpu.irq_pending=nes->cpu.nmi_pending=false;
-    nes->cpu.irq_sampled=nes->cpu.nmi_sampled=0;
-    nes->cpu.irq_armed=nes->cpu.nmi_armed=0;
-    memset(&nes->dma,0,sizeof(nes->dma));
-    nes->oam_dma_pending=false;
-    nes->prev_nmi=nes->nmi_edge_detected=false;
-    nes->irq_inhibit_cycles=0;
+    /* Frontend reset: nes_reset restarts the CPU reset sequence even from
+     * KIL, retaining cartridge/work RAM and the shared master-clock timeline.
+     * The frontend also drops the strobe and resets the mapper. */
     nes->controller_strobe=0;
     if(nes->mapper_loaded) {
         mapper_reset(&nes->mapper);
         nes->mapper.irq_pending=false;
         nes->ppu.mirroring=mapper_get_mirroring(&nes->mapper);
     }
-    ppu_reset(&nes->ppu);
-    apu_reset(&nes->apu);
+    nes_reset(nes);
     reset_audio(p);
 }
 bool playback_read(Playback *p, PlaybackFrame *frame) {

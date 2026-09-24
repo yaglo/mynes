@@ -678,8 +678,8 @@ static inline void nes_reset(NES *nes) {
     /* Reset APU */
     apu_reset(&nes->apu);
 
-    /* Clear RAM (optional, real NES has random values) */
-    memset(nes->ram, 0, sizeof(nes->ram));
+    /* RAM is left alone, as the reset button leaves it: blargg's reset
+     * ROMs keep their pass count there. Power-on RAM comes from nes_init. */
 }
 
 /* Set CPU/PPU clock alignment (0, 1, or 2). Real hardware has a fixed but

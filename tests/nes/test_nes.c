@@ -544,12 +544,13 @@ int test_reset_from_kil(void) {
     run_cycles(50);
     bool pass = nes.ram[0x10] == 1 && nes.cpu.PC == 0x8003;
 
-    /* Reset must escape the jam and drop any DMA the CPU was stuck behind. */
+    /* Reset must escape the jam and drop any DMA the CPU was stuck behind.
+     * RAM survives it, so the program's second pass counts on to 2. */
     nes.oam_dma_pending = true;
     nes_reset(&nes);
     run_cycles(50);
     pass &= !nes.cpu.reset_pending && !nes.oam_dma_pending && !nes.dma.oam_active;
-    pass &= nes.ram[0x10] == 1 && nes.cpu.PC == 0x8003;
+    pass &= nes.ram[0x10] == 2 && nes.cpu.PC == 0x8003;
 
     printf("TEST reset_from_kil: %s (PC=%04X ram[10]=%02X)\n",
            pass ? "PASS" : "FAIL", nes.cpu.PC, nes.ram[0x10]);
