@@ -3031,6 +3031,7 @@ int main(int argc, char *argv[]) {
                         break;
                     }
 #endif
+                    frame_counter++;
                     /* Apply scheduled RAM pokes after the frame runs.
                      * We poke AFTER so our values win against the
                      * game's frame-start initialization. */
