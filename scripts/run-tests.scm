@@ -10,7 +10,7 @@
 ;;;   csi -s scripts/run-tests.scm unit         Run C unit tests (cpu, ppu, nes)
 ;;;   csi -s scripts/run-tests.scm quick        Run unit + accuracy (CI fast path)
 
-(import (chicken process-context) (srfi 1))
+(import (chicken process-context))
 (load "scripts/test-lib.scm")
 
 ;;; =========================================================================
@@ -64,7 +64,15 @@
        "13-rts" "14-rti" "15-brk" "16-special")))
   (print-summary))
 
-;;; Helper
+;;; Helpers. Stock CHICKEN 5 has no SRFI 1 without the srfi-1 egg, so the
+;;; one list procedure needed is defined here.
+(define (filter keep? lst)
+  (let loop ((lst lst) (acc '()))
+    (cond
+     ((null? lst) (reverse acc))
+     ((keep? (car lst)) (loop (cdr lst) (cons (car lst) acc)))
+     (else (loop (cdr lst) acc)))))
+
 (define (string-contains str sub)
   (let ((slen (string-length str))
         (sublen (string-length sub)))

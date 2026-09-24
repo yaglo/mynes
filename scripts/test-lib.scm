@@ -72,8 +72,15 @@
   (set! *timeout-count* 0)
   (set! *skip-count* 0))
 
+;;; Left-justify s in a field of width characters (format has no width).
+(define (pad-right s width)
+  (let ((len (string-length s)))
+    (if (>= len width)
+        s
+        (string-append s (make-string (- width len) #\space)))))
+
 (define (test-rom name rom-path #!key (frames 18000))
-  (display (sprintf "  ~40a " name))
+  (display (string-append "  " (pad-right name 40) " "))
   (flush-output)
   (let ((result (run-blargg-test rom-path frames: frames)))
     (case result
