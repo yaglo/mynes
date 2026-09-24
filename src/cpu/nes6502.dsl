@@ -951,8 +951,7 @@
 ;; ---------------------------------------------------------------------------
 
 (state anc-imm
-  (cycle (fetch dl pc))
-  (cycle (and a dl) (set-c-from-n))
+  (cycle (fetch dl pc) (and a dl) (set-c-from-n))
  )
 
 ;; ---------------------------------------------------------------------------
@@ -960,8 +959,7 @@
 ;; ---------------------------------------------------------------------------
 
 (state alr-imm
-  (cycle (fetch dl pc))
-  (cycle (and a dl) (lsr a))
+  (cycle (fetch dl pc) (and a dl) (lsr a))
  )
 
 ;; ---------------------------------------------------------------------------
@@ -969,8 +967,7 @@
 ;; ---------------------------------------------------------------------------
 
 (state arr-imm
-  (cycle (fetch dl pc))
-  (cycle (arr a dl))
+  (cycle (fetch dl pc) (arr a dl))
  )
 
 ;; ---------------------------------------------------------------------------
@@ -978,8 +975,7 @@
 ;; ---------------------------------------------------------------------------
 
 (state xaa-imm
-  (cycle (fetch dl pc))
-  (cycle (mov a x) (and a dl))
+  (cycle (fetch dl pc) (mov a x) (and a dl))
  )
 
 ;; ---------------------------------------------------------------------------
@@ -987,8 +983,7 @@
 ;; ---------------------------------------------------------------------------
 
 (state axs-imm
-  (cycle (fetch dl pc))
-  (cycle (axs x dl))
+  (cycle (fetch dl pc) (axs x dl))
  )
 
 ;; ---------------------------------------------------------------------------
@@ -1011,21 +1006,18 @@
 ;; 2-byte NOPs (skip one byte)
 (state nop-2
   (cycle (fetch dl pc))
-  (cycle (dummy pc))
  )
 
 ;; 3-byte NOPs (skip two bytes)
 (state nop-3
   (cycle (fetch dl pc))
   (cycle (fetch dl pc))
-  (cycle (dummy pc))
  )
 
 ;; 2-byte NOP with zero page read
 (state nop-zp
   (cycle (fetch adl pc) (set-adh-zero))
   (cycle (read dl ad))
-  (cycle (dummy pc))
  )
 
 ;; 2-byte NOP with zero page,X read
@@ -1033,27 +1025,29 @@
   (cycle (fetch adl pc) (set-adh-zero))
   (cycle (dummy ad) (add8-latch-carry adl adl x))
   (cycle (read dl ad))
-  (cycle (dummy pc))
  )
 
 ;; 3-byte NOP with absolute read
 (state nop-abs
-  (fetch-adl) (fetch-adh) (read-to-dl) (dummy-read-pc))
+  (fetch-adl) (fetch-adh) (read-to-dl))
 
-;; 3-byte NOP with absolute,X read (with page cross)
+;; 3-byte NOP with absolute,X read. Like read-abx: a page cross reads the
+;; uncorrected address first, then the corrected one.
 (state nop-abx
-  (fetch-adl) (fetch-adh-add-x) (read-to-dl)
-  (when page-cross (fixup-page-read))
-  (dummy-read-pc))
+  (fetch-adl) (fetch-adh-add-x)
+  (cycle (read dl ad))
+  (when page-cross
+    (cycle (adc8-from-pagecross adh adh) (read dl ad))))
 
 ;; ---------------------------------------------------------------------------
 ;; LAS/LAR - Load A, X, SP from (memory & SP)
 ;; ---------------------------------------------------------------------------
 
 (state las-aby
-  (fetch-adl) (fetch-adh-add-y) (read-to-dl)
-  (when page-cross (fixup-page-read))
-  (cycle (las-op)))
+  (fetch-adl) (fetch-adh-add-y)
+  (cycle (read dl ad) (las-op))
+  (when page-cross
+    (cycle (adc8-from-pagecross adh adh) (read dl ad) (las-op))))
 
 ;; ---------------------------------------------------------------------------
 ;; TAS/SHS - Transfer A & X to SP, store A & X & (high+1)

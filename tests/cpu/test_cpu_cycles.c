@@ -262,6 +262,25 @@ static const CycleTest tests[] = {
     /* BRK */
     {"BRK", 0x00, 7, MODE_NONE},
 
+    /* JMP */
+    {"JMP abs", 0x4C, 3, MODE_NONE},
+    {"JMP ind", 0x6C, 5, MODE_NONE},
+
+    /* Unofficial: same timing as the official ops sharing the mode */
+    {"NOP #", 0x80, 2, MODE_NONE},
+    {"NOP zp", 0x04, 3, MODE_NONE},
+    {"NOP zp,X", 0x14, 4, MODE_NONE},
+    {"NOP abs", 0x0C, 4, MODE_NONE},
+    {"NOP abs,X", 0x1C, 4, MODE_NONE},
+    {"NOP abs,X pg", 0x1C, 5, MODE_PAGE_CROSS},
+    {"ANC #", 0x0B, 2, MODE_NONE},
+    {"ALR #", 0x4B, 2, MODE_NONE},
+    {"ARR #", 0x6B, 2, MODE_NONE},
+    {"XAA #", 0x8B, 2, MODE_NONE},
+    {"AXS #", 0xCB, 2, MODE_NONE},
+    {"LAS abs,Y", 0xBB, 4, MODE_NONE},
+    {"LAS abs,Y pg", 0xBB, 5, MODE_PAGE_CROSS},
+
     {NULL, 0, 0, 0}
 };
 

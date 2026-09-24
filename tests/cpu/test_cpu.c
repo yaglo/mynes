@@ -472,6 +472,62 @@ int test_jmp_ind_flags(void) {
     }
 }
 
+static uint16_t read_log[16];
+static int read_count;
+
+static uint8_t logged_read(CPU *cpu, uint16_t addr) {
+    (void)cpu;
+    if (read_count < 16) read_log[read_count++] = addr;
+    return memory[addr];
+}
+
+/* Run one instruction from $0200 and return how many bus reads it made. */
+static int trace_reads(CPU *cpu, const uint8_t *prog, size_t len) {
+    memcpy(&memory[0x200], prog, len);
+    cpu->PC = 0x200;
+    cpu->uPC = 0;
+    read_count = 0;
+    do cpu_step(cpu); while (cpu->uPC != 0);
+    return read_count;
+}
+
+int test_indexed_page_cross_reads(void) {
+    CPU cpu;
+    cpu_init(&cpu);
+    cpu.mem_read = logged_read;
+    cpu.mem_write = mem_write;
+    memset(memory, 0, sizeof(memory));
+    int ok = 1;
+
+    /* LAS $10F0,Y with Y=$20 reads $1010 (uncorrected) then $1110, and
+     * loads A/X/SP from the corrected read only. */
+    memory[0x1010] = 0x00;
+    memory[0x1110] = 0xF3;
+    cpu.Y = 0x20;
+    cpu.SP = 0x7F;
+    const uint8_t las[] = { 0xBB, 0xF0, 0x10 };
+    int n = trace_reads(&cpu, las, sizeof(las));
+    if (n != 5 || read_log[3] != 0x1010 || read_log[4] != 0x1110 ||
+        cpu.A != 0x73 || cpu.X != 0x73 || cpu.SP != 0x73) {
+        printf("TEST page_cross_reads: FAIL LAS (reads=%d %04X %04X A=%02X SP=%02X)\n",
+               n, read_log[3], read_log[4], cpu.A, cpu.SP);
+        ok = 0;
+    }
+
+    /* NOP $10F0,X with X=$20: the same two reads. */
+    cpu.X = 0x20;
+    const uint8_t nop[] = { 0x1C, 0xF0, 0x10 };
+    n = trace_reads(&cpu, nop, sizeof(nop));
+    if (n != 5 || read_log[3] != 0x1010 || read_log[4] != 0x1110) {
+        printf("TEST page_cross_reads: FAIL NOP (reads=%d %04X %04X)\n",
+               n, read_log[3], read_log[4]);
+        ok = 0;
+    }
+
+    if (ok) printf("TEST page_cross_reads: PASS\n");
+    return ok;
+}
+
 int main(int argc, char **argv) {
     int trace = (argc > 1 && strcmp(argv[1], "-trace") == 0);
     (void)trace;
@@ -496,6 +552,7 @@ int main(int argc, char **argv) {
     total++; passed += test_irq_masked();
     total++; passed += test_reset();
     total++; passed += test_jmp_ind_flags();
+    total++; passed += test_indexed_page_cross_reads();
 
     printf("\n=== Results: %d/%d tests passed ===\n", passed, total);
 
