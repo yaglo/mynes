@@ -299,6 +299,11 @@ int main(int argc, char *argv[]) {
                     rom.chr_rom, rom.chr_size,
                     rom.mirroring);
     nes_rom_apply_trainer(&rom, &nes.mapper);
+    /* Auto-detect PAL from ROM header, as run_rom does */
+    if (rom.tv_system == NES_TV_PAL) {
+        nes_set_region(&nes, NES_REGION_PAL);
+        if (opts.verbose) printf("Region: PAL (auto-detected)\n");
+    }
     nes_reset(&nes);
 
     /* Set up hooks */
