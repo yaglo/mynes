@@ -11,7 +11,6 @@
 #   shaders/           (compute + render shaders)
 #   presets/           (physical-preset JSON files)
 #   palettes/          (optional RGB palettes)
-#   docs/              (README snippets + reference)
 #   LICENSE
 #   README.md
 #
