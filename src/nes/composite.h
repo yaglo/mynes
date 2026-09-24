@@ -998,24 +998,27 @@ static void comp_bloom_row(float *row, int w, float amount, float pixels_per_nes
 
     /* Box blur pass 1: bright -> blurred */
     float inv_diam = 1.0f / (float)(2 * radius + 1);
+    /* Prime with the window ending just before x = 0, both edges
+     * replicated (as in comp_apply_bloom2d): zero padding on the left
+     * but edge replication on the right made the glow lopsided. */
     float running = 0.0f;
-    for (int x = 0; x < radius && x < w; x++) running += bright[x];
+    for (int i = -radius - 1; i < radius; i++)
+        running += bright[i < 0 ? 0 : (i >= w ? w - 1 : i)];
     for (int x = 0; x < w; x++) {
-        int ra = x + radius; if (ra >= w) ra = w - 1;
-        int la = x - radius - 1;
-        running += bright[ra];
-        if (la >= 0) running -= bright[la];
+        int ra = x + radius;     if (ra >= w) ra = w - 1;
+        int la = x - radius - 1; if (la < 0)  la = 0;
+        running += bright[ra] - bright[la];
         blurred[x] = running * inv_diam;
     }
 
     /* Box blur pass 2: blurred -> bright (second pass smooths the box shape) */
     running = 0.0f;
-    for (int x = 0; x < radius && x < w; x++) running += blurred[x];
+    for (int i = -radius - 1; i < radius; i++)
+        running += blurred[i < 0 ? 0 : (i >= w ? w - 1 : i)];
     for (int x = 0; x < w; x++) {
-        int ra = x + radius; if (ra >= w) ra = w - 1;
-        int la = x - radius - 1;
-        running += blurred[ra];
-        if (la >= 0) running -= blurred[la];
+        int ra = x + radius;     if (ra >= w) ra = w - 1;
+        int la = x - radius - 1; if (la < 0)  la = 0;
+        running += blurred[ra] - blurred[la];
         bright[x] = running * inv_diam;
     }
 
