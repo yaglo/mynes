@@ -1691,6 +1691,7 @@ typedef struct {
 static PaletteEntry palettes[MAX_PALETTES];
 static int palette_count = 0;
 static int current_palette = 0;  /* 0 = built-in */
+static bool palette_from_cli = false;  /* --palette: never replaced by a region default */
 
 static void palette_add_builtin(void) {
     strcpy(palettes[0].name, "2C02 NTSC (built-in)");
@@ -1910,11 +1911,11 @@ static void palette_init(const char *exe_path) {
     }
     free(real_exe);
 
-    /* Don't auto-select a default here — the region detection code in
-     * main() picks the right palette after the ROM region is known
-     * (2C07 for PAL, Digital Prime for NTSC). Leave current_palette at
-     * its default (0 = 2C02 built-in) so the region-pick logic can
-     * tell we haven't chosen anything yet. */
+    /* Don't auto-select a default here — apply_rom_region picks the
+     * right palette once the ROM region is known (2C07 for PAL, Digital
+     * Prime for NTSC). Leave current_palette at its default (0 = 2C02
+     * built-in) so the region-pick logic can tell we haven't chosen
+     * anything yet. */
 
     printf("Loaded %d palette(s)\n", palette_count);
     for (int i = 0; i < palette_count; i++) {
@@ -2487,9 +2488,33 @@ static int apply_rom_region(void) {
     nes_set_region(&nes, region);
     if (region == NES_REGION_PAL)
         printf("Region: PAL (312 scanlines, 1.66MHz CPU)\n");
-    /* ppu_set_region selects the built-in palette; keep the one in use. */
-    if (current_palette >= 0 && current_palette < palette_count)
+    /* Follow the region with the palette while it is still one of the
+     * region defaults, so a ROM opened from the browser gets the palette
+     * the same ROM gets from the command line; a palette given with
+     * --palette stays. ppu_set_region selected the built-in table, so the
+     * PPU is re-pointed either way.
+     *
+     * PAL ROMs: "2C07 PAL (built-in)" — palettes[1], the canonical
+     *           hardcoded PAL RGB values. The composite signal table
+     *           is synthesized to decode to exactly these values
+     *           (see comp_precompute_signal_table_pal), so wave-on
+     *           and wave-off show matching hues, with composite
+     *           effects layered on top.
+     * NTSC ROMs: Digital Prime (FBX) if loaded, else 2C02 built-in. */
+    if (!palette_from_cli) {
+        int pal_default = palette_find_by_name("2C07 PAL (built-in)");
+        int ntsc_default = palette_find_by_name("Digital Prime");
+        if (ntsc_default < 0) ntsc_default = 0;
+        if (current_palette == 0 || current_palette == pal_default
+            || current_palette == ntsc_default) {
+            int picked = region == NES_REGION_PAL ? pal_default : ntsc_default;
+            if (picked >= 0) current_palette = picked;
+        }
+    }
+    if (current_palette >= 0 && current_palette < palette_count) {
         nes.ppu.color_palette = palettes[current_palette].colors;
+        printf("Palette: %s\n", palettes[current_palette].name);
+    }
 
     /* Wire the same region into the composite pipeline so PAL ROMs get
      * 2C07 voltages, YUV decoding, and per-line V-flip. Safe to call
@@ -2802,6 +2827,7 @@ int main(int argc, char *argv[]) {
             strncpy(pe->name, name, sizeof(pe->name) - 1);
             memcpy(pe->colors, custom_colors, sizeof(pe->colors));
             current_palette = palette_count;
+            palette_from_cli = true;
             palette_count++;
             printf("Using custom palette: %s\n", palette_path);
         } else {
@@ -2965,7 +2991,7 @@ int main(int argc, char *argv[]) {
     nes.apu.sample_rate = apu_base_rate;
 
     /* Region — auto-detected from the ROM header, or forced by --pal. */
-    int region = apply_rom_region();
+    apply_rom_region();
 
 #ifdef MYNES_CRT_CAPTURE
     const char *crt_capture_path = getenv("MYNES_CRT_CAPTURE");
@@ -2975,32 +3001,6 @@ int main(int argc, char *argv[]) {
     }
 #endif
 
-
-    /* Apply the region-appropriate default palette to the PPU, unless
-     * the user passed --palette on the command line (in which case
-     * current_palette was already set during argument parsing and we
-     * respect that choice).
-     *
-     * PAL ROMs: "2C07 PAL (built-in)" — palettes[1], the canonical
-     *           hardcoded PAL RGB values. The composite signal table
-     *           is synthesized to decode to exactly these values
-     *           (see comp_precompute_signal_table_pal), so wave-on
-     *           and wave-off show matching hues, with composite
-     *           effects layered on top.
-     * NTSC ROMs: Digital Prime (FBX) if loaded, else 2C02 built-in. */
-    if (current_palette == 0) {
-        int picked = -1;
-        if (region == NES_REGION_PAL) {
-            picked = palette_find_by_name("2C07 PAL (built-in)");
-        } else {
-            picked = palette_find_by_name("Digital Prime");
-        }
-        if (picked >= 0) current_palette = picked;
-    }
-    if (current_palette >= 0 && current_palette < palette_count) {
-        nes.ppu.color_palette = palettes[current_palette].colors;
-        printf("Palette: %s\n", palettes[current_palette].name);
-    }
 
     if (rom_loaded) nes_reset(&nes);
 
