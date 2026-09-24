@@ -125,6 +125,22 @@ static bool json_take_string(const char **cursor, char *out, int out_sz) {
     return true;
 }
 
+/* Take the recent_roms entries on one line, starting inside the array.
+ * Only a `]` outside a string closes it: ROM names like "Metroid (U) [!]"
+ * carry brackets. Returns whether the array is still open. */
+static bool take_recent_items(const char *p, MynesConfig *cfg) {
+    for (;;) {
+        while (*p == ' ' || *p == '\t' || *p == '\r' || *p == ',') p++;
+        if (*p == ']') return false;
+        char tmp[MYNES_PATH_MAX];
+        if (*p != '"' || !json_take_string(&p, tmp, sizeof(tmp))) return true;
+        if (cfg->recent_count < MYNES_RECENT_MAX) {
+            memcpy(cfg->recent_roms[cfg->recent_count], tmp, strlen(tmp) + 1);
+            cfg->recent_count++;
+        }
+    }
+}
+
 /* gpu_render_scale values, in MynesConfig order. */
 static const char *const render_scale_names[] = { "auto", "1", "0.75", "0.5" };
 
@@ -169,20 +185,10 @@ bool mynes_config_load(MynesConfig *cfg) {
         char *s = line;
         while (*s == ' ' || *s == '\t' || *s == ',') s++;
 
-        if (strstr(s, "\"recent_roms\"") && strchr(s, '[')) {
-            in_recent = true;
-        } else if (in_recent && strchr(s, ']')) {
-            in_recent = false;
-        } else if (in_recent) {
-            const char *cur = s;
-            char tmp[MYNES_PATH_MAX];
-            if (json_take_string(&cur, tmp, sizeof(tmp))
-                && cfg->recent_count < MYNES_RECENT_MAX) {
-                strncpy(cfg->recent_roms[cfg->recent_count], tmp,
-                        MYNES_PATH_MAX - 1);
-                cfg->recent_roms[cfg->recent_count][MYNES_PATH_MAX - 1] = '\0';
-                cfg->recent_count++;
-            }
+        if (in_recent) {
+            in_recent = take_recent_items(s, cfg);
+        } else if (strstr(s, "\"recent_roms\"") && strchr(s, '[')) {
+            in_recent = take_recent_items(strchr(s, '[') + 1, cfg);
         } else if (strstr(s, "\"gpu_hdr_gain_mode\"")) {
             const char *colon=strchr(s, ':');
             cfg->gpu_hdr_gain_mode=colon && atoi(colon+1)==1 ? 1 : 0;

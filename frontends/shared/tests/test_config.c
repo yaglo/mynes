@@ -78,6 +78,35 @@ int main(void) {
     CHECK(mynes_config_save(&cfg));
     CHECK(config_contains("\"gpu_render_scale\": \"1\""));
 
+    /* Brackets inside a ROM name do not close the recent list. */
+    write_config("{\n    \"recent_roms\": [\n        \"/roms/Metroid (U) [!].nes\",\n"
+                 "        \"/roms/a]b.nes\",\n        \"/roms/c.nes\"\n    ],\n"
+                 "    \"gpu_render_scale\": 2,\n    \"last_preset\": \"y.json\"\n}\n");
+    CHECK(mynes_config_load(&cfg));
+    CHECK(cfg.recent_count == 3);
+    CHECK(strcmp(cfg.recent_roms[0], "/roms/Metroid (U) [!].nes") == 0);
+    CHECK(strcmp(cfg.recent_roms[1], "/roms/a]b.nes") == 0);
+    CHECK(strcmp(cfg.recent_roms[2], "/roms/c.nes") == 0);
+    CHECK(cfg.gpu_render_scale == 2);
+    CHECK(strcmp(cfg.last_preset, "y.json") == 0);
+    CHECK(mynes_config_save(&cfg));
+    MynesConfig again;
+    CHECK(mynes_config_load(&again));
+    CHECK(again.recent_count == 3);
+    CHECK(strcmp(again.recent_roms[0], "/roms/Metroid (U) [!].nes") == 0);
+    CHECK(strcmp(again.recent_roms[2], "/roms/c.nes") == 0);
+    /* An array on one line, and an empty one, close where they end. */
+    write_config("{\n    \"recent_roms\": [\"/roms/[x].nes\", \"/roms/y.nes\"],\n"
+                 "    \"last_preset\": \"z.json\"\n}\n");
+    CHECK(mynes_config_load(&cfg));
+    CHECK(cfg.recent_count == 2);
+    CHECK(strcmp(cfg.recent_roms[0], "/roms/[x].nes") == 0);
+    CHECK(strcmp(cfg.last_preset, "z.json") == 0);
+    write_config("{\n    \"recent_roms\": [],\n    \"last_preset\": \"w.json\"\n}\n");
+    CHECK(mynes_config_load(&cfg));
+    CHECK(cfg.recent_count == 0);
+    CHECK(strcmp(cfg.last_preset, "w.json") == 0);
+
     /* Tidy up. */
     char path[MYNES_PATH_MAX];
     mynes_config_path(path, sizeof(path));
