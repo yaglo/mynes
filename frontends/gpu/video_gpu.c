@@ -2293,13 +2293,13 @@ bool video_gpu_process_full(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
         uint32_t phase_field_adv, frame_field, use_alt_table, source_mode;
         float rgb_rows[3][4];
         uint32_t backdrop_entry, window_dots, window_lines, window_width;
-        int32_t start_dot, picture_dot, picture_row; uint32_t pad;
+        int32_t start_dot, picture_dot, picture_row; uint32_t region;
     } params = {(uint32_t)fmt->samples_per_pixel, (uint32_t)fmt->samples_per_line,
         (uint32_t)((phase_base % 12 + 12) % 12),
         (uint32_t)((phase_line_adv % 12 + 12) % 12), 0, 0,
         fmt->region == SIGNAL_REGION_PAL ? 1u : 0u, vgc->source_separated ? 1u : 0u, {{0}},
         vgc->backdrop_entry & 0x1ffu, (uint32_t)w->dots, (uint32_t)w->lines, (uint32_t)w->width,
-        w->start_dot, w->picture_dot, w->picture_row, 0};
+        w->start_dot, w->picture_dot, w->picture_row, (uint32_t)fmt->region};
     bool source_rgb=!video_connection_uses_signal_decode(vgc->chain->connection);
     if(source_rgb) {
         params.source_mode=2;

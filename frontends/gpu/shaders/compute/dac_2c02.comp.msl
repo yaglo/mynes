@@ -69,6 +69,7 @@ struct Params
     int start_dot;
     int picture_dot;
     int picture_row;
+    uint region;
 };
 
 struct WaveformBuf
@@ -144,7 +145,7 @@ void rgb_ppu(device IndexBuf& _25, thread uint3& gl_GlobalInvocationID, constant
     }
     else
     {
-        if (((((_70.use_alt_table == 0u) && (line >= 0)) && (line < 242)) && (raster_dot >= 50)) && (raster_dot < 332))
+        if (((((_70.region == 0u) && (line >= 0)) && (line < 242)) && (raster_dot >= 50)) && (raster_dot < 332))
         {
             entry = _70.backdrop_entry;
         }
@@ -182,7 +183,7 @@ void rgb_ppu(device IndexBuf& _25, thread uint3& gl_GlobalInvocationID, constant
     }
 }
 
-kernel void main0(device IndexBuf& _25 [[buffer(1)]], constant Params& _70 [[buffer(0)]], device WaveformBuf& _328 [[buffer(4)]], device SignalTableAlt& _453 [[buffer(3)]], device SignalTable& _464 [[buffer(2)]], device LumaBuf& _496 [[buffer(5)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]], uint3 gl_LocalInvocationID [[thread_position_in_threadgroup]], uint3 gl_WorkGroupID [[threadgroup_position_in_grid]])
+kernel void main0(device IndexBuf& _25 [[buffer(1)]], constant Params& _70 [[buffer(0)]], device WaveformBuf& _328 [[buffer(4)]], device SignalTableAlt& _454 [[buffer(3)]], device SignalTable& _465 [[buffer(2)]], device LumaBuf& _497 [[buffer(5)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]], uint3 gl_LocalInvocationID [[thread_position_in_threadgroup]], uint3 gl_WorkGroupID [[threadgroup_position_in_grid]])
 {
     if (_70.source_mode == 2u)
     {
@@ -202,49 +203,49 @@ kernel void main0(device IndexBuf& _25 [[buffer(1)]], constant Params& _70 [[buf
     uint pixel_phase = (line_phase + (px * _70.samples_per_pixel)) % 12u;
     uint table_base = (entry * 24u) + pixel_phase;
     uint wave_base = (sy * _70.samples_per_line) + (px * _70.samples_per_pixel);
-    bool _425 = _70.use_alt_table != 0u;
-    bool _431;
-    if (_425)
+    bool _426 = _70.use_alt_table != 0u;
+    bool _432;
+    if (_426)
     {
-        _431 = (sy & 1u) == 1u;
+        _432 = (sy & 1u) == 1u;
     }
     else
     {
-        _431 = _425;
+        _432 = _426;
     }
-    bool alt = _431;
+    bool alt = _432;
     float dc = 0.0;
     if (_70.source_mode == 1u)
     {
-        float _447;
+        float _448;
         for (uint p = 0u; p < 12u; p++)
         {
             if (alt)
             {
-                _447 = _453.signal_table_alt[(entry * 24u) + p];
+                _448 = _454.signal_table_alt[(entry * 24u) + p];
             }
             else
             {
-                _447 = _464.signal_table[(entry * 24u) + p];
+                _448 = _465.signal_table[(entry * 24u) + p];
             }
-            dc += (_447 / 12.0);
+            dc += (_448 / 12.0);
         }
     }
-    float _506;
+    float _507;
     for (uint s = 0u; s < _70.samples_per_pixel; s++)
     {
         if (_70.source_mode == 1u)
         {
-            _496.source_y[wave_base + s] = dc;
+            _497.source_y[wave_base + s] = dc;
         }
         if (alt)
         {
-            _506 = _453.signal_table_alt[table_base + s];
+            _507 = _454.signal_table_alt[table_base + s];
         }
         else
         {
-            _506 = _464.signal_table[table_base + s];
+            _507 = _465.signal_table[table_base + s];
         }
-        _328.waveform[wave_base + s] = _506;
+        _328.waveform[wave_base + s] = _507;
     }
 }

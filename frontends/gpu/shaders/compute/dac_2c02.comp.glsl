@@ -12,7 +12,9 @@
  *         + precomputed signal table (512 entries × 24 floats)
  *
  * Output: 2048×240 (NTSC) or 2560×240 (PAL) float waveform buffer
- *         (8 or 10 samples per NES pixel × 256 pixels per scanline)
+ *         (8 or 10 samples per NES pixel × 256 pixels per scanline), which
+ *         the raster stage places on the full line; an RGB PPU writes the
+ *         decode window's RGB instead (below)
  *
  * Each thread handles one NES pixel: reads palette+emphasis, looks up
  * the signal table, and writes `samples_per_pixel` float samples to
@@ -66,9 +68,11 @@ layout(set = 2, binding = 0) uniform Params {
     uint  use_alt_table;       /* 1 = PAL (alternate odd lines), 0 = NTSC */
     uint source_mode;          /* 0=composite, 1=Y/C, 2=ideal component/RGB modification */
     vec4 rgb_row_r, rgb_row_g, rgb_row_b; /* matrix rows and bias for RGB input */
-    /* RGB PPU: the backdrop's 9-bit entry and the decode window. */
+    /* RGB PPU: the backdrop's 9-bit entry, the decode window and the
+     * region (0 NTSC, 1 PAL). */
     uint backdrop_entry, window_dots, window_lines, window_width;
     int start_dot, picture_dot, picture_row;
+    uint region;
 };
 
 uint pixel_entry(uint sy, uint px) {
@@ -97,7 +101,7 @@ void rgb_ppu() {
     bool lit = true;
     uint entry = 0u;
     if (line >= 0 && line < 240 && px >= 0 && px < 256) entry = pixel_entry(uint(line), uint(px));
-    else if (use_alt_table == 0u && line >= 0 && line < 242 && raster_dot >= 50 && raster_dot < 332) entry = backdrop_entry;
+    else if (region == 0u && line >= 0 && line < 242 && raster_dot >= 50 && raster_dot < 332) entry = backdrop_entry;
     else lit = false;
     vec3 gun = vec3(0.0);
     if (lit) {
