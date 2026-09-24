@@ -1,6 +1,7 @@
 /*
  * saves.c — battery RAM and save-state files (see saves.h).
  */
+#define _POSIX_C_SOURCE 200809L  /* fileno and fsync under strict C11 */
 #include "saves.h"
 
 #include <errno.h>
