@@ -66,6 +66,7 @@ typedef enum {
     CHAIN_KERNEL_OSD,            /* TV RGB menu, after receiver */
     CHAIN_KERNEL_VHS_TAPE,       /* VHS record, transport, FM tape and demodulator */
     CHAIN_KERNEL_VHS_PLAYBACK,   /* VHS dropout compensator, luma playback, 1H comb */
+    CHAIN_KERNEL_AGC_LOOP,       /* agc_loop.comp — the keyed top-sync AGC's capacitor, one gain per line */
     CHAIN_KERNEL_COUNT
 } ChainKernelType;
 

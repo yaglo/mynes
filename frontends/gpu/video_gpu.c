@@ -89,6 +89,30 @@ static bool rebind_rf_if(struct SignalChainFwd *chain,struct ChainStageFwd *stag
     return true;
 }
 
+/* The keyed top-sync AGC's constants from the preset: agc_attack_ms is the
+ * loop's small-signal time constant and agc_release_ms the time it takes
+ * to discharge 52 dB (TDA8362 objective specification: 2 ms and 25 ms
+ * with C = 2.2 uF). The charge slews at the same 52 dB per attack time
+ * for large steps. */
+static GpuAGCParams agc_params_from(const VideoGPUChain *v) {
+    const VideoChain *chain = v->chain;
+    float line_ms = 1000.0f * (float)v->raster_fmt.samples_per_line / signal_format_sample_rate_hz(&v->signal_fmt);
+    float attack_ms = chain->rf.agc_attack_ms > 0 ? chain->rf.agc_attack_ms : 2.0f;
+    float release_ms = chain->rf.agc_release_ms > 0 ? chain->rf.agc_release_ms : 25.0f;
+    GpuAGCParams p = {0};
+    p.total_count = (uint32_t)v->raster_fmt.total_samples;
+    p.samples_per_line = (uint32_t)v->raster_fmt.samples_per_line;
+    p.num_lines = (uint32_t)v->raster_fmt.lines;
+    p.target_level = 264.0f / 788.0f;
+    p.attack_coeff = 1.0f - expf(-line_ms / attack_ms);
+    p.release_coeff = 52.0f * line_ms / release_ms;
+    p.attack_slew_db = 52.0f * line_ms / attack_ms;
+    p.noise_peak = 1.0f;
+    p.min_gain = 0.5f;
+    p.max_gain = 2.0f;
+    return p;
+}
+
 static GpuReceiverPLLParams receiver_pll_params(const VideoGPUChain *v) {
     GpuReceiverPLLParams p = {0};
     p.count = (uint32_t)v->raster_fmt.lines;
@@ -240,6 +264,7 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     vgc->stage_osd = -1;
     vgc->stage_rf_if   = -1;
     vgc->stage_agc         = -1;
+    vgc->stage_agc_loop    = -1;
     vgc->stage_ghosting    = -1;
     vgc->stage_luma_fir    = -1;
     vgc->stage_luma_peaking = -1;
@@ -432,7 +457,8 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
         signal_design_rf_if(taps,fsample,chain->rf.mod_bandwidth>0 ? chain->rf.mod_bandwidth : 4e6f,
                             chain->rf.if_asymmetry,chain->rf.tuning_offset_hz);
         int ti=chain_upload_taps(&vgc->sig_chain,gpu,taps,2*SIGNAL_RF_IF_TAPS);
-        GpuRFIFParams ip={(uint32_t)total_samples,(uint32_t)fmt->samples_per_line,SIGNAL_RF_IF_TAPS,0};
+        GpuRFIFParams ip={(uint32_t)total_samples,(uint32_t)fmt->samples_per_line,SIGNAL_RF_IF_TAPS,
+                          chain->rf.detector==2 ? 0u : 1u};
         vgc->stage_rf_if=chain_add_stage(&vgc->sig_chain,"RF IF / envelope",CHAIN_KERNEL_RF_IF,
                                         &ip,sizeof(ip),dispatch_x_256,1);
         if(vgc->stage_rf<0 || vgc->stage_rf_if<0 || ti<0) goto fail;
@@ -448,32 +474,26 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
         chain_set_stage_enabled(&vgc->sig_chain,vgc->stage_rf_if,video_chain_stage_active(chain,4));
     }
 
-    /* Stage 4c: Automatic Gain Control.
-     * Normalizes signal amplitude per-scanline with asymmetric
-     * attack/release dynamics. Only useful for RF/composite paths. */
+    /* Stage 4c: the set's keyed top-sync AGC on RF. The loop stage walks the
+     * frame's lines with one capacitor state carried across frames and
+     * writes a gain per line; the apply stage scales the lines. */
     {
-        GpuAGCParams agc_params;
-        agc_params.total_count     = (uint32_t)total_samples;
-        agc_params.samples_per_line = (uint32_t)fmt->samples_per_line;
-        agc_params.num_lines       = (uint32_t)vgc->raster_fmt.lines;
-        agc_params.target_level    = 264.0f / 788.0f;
-        agc_params.attack_coeff    = 0.10f;
-        agc_params.release_coeff   = 0.02f;
-        agc_params.min_gain        = 0.5f;
-        agc_params.max_gain        = 2.0f;
-
-        /* Derive from preset if available. */
-        if (chain->rf.agc_attack_ms > 0.0f) {
-            agc_params.attack_coeff  = 1.0f - expf(-signal_region_frame_ms(chain->signal_fmt.region) / chain->rf.agc_attack_ms);
-            agc_params.release_coeff = 1.0f - expf(-signal_region_frame_ms(chain->signal_fmt.region) / fmaxf(chain->rf.agc_release_ms, 0.01f));
-        }
-
-        vgc->stage_agc = chain_add_stage(&vgc->sig_chain,
-            "AGC", CHAIN_KERNEL_AGC,
+        GpuAGCParams agc_params = agc_params_from(vgc);
+        vgc->buf_agc_gains = gpu_buffer_create(gpu, (Uint32)(vgc->raster_fmt.lines + 1) * 4 * sizeof(float), GPU_BUF_READWRITE);
+        if (!vgc->buf_agc_gains) goto fail;
+        float *zeros = calloc((size_t)(vgc->raster_fmt.lines + 1) * 4, sizeof(float));
+        bool cleared = zeros && gpu_buffer_upload(gpu, vgc->buf_agc_gains, zeros, (Uint32)(vgc->raster_fmt.lines + 1) * 4 * sizeof(float));
+        free(zeros);
+        if (!cleared) goto fail;
+        vgc->stage_agc_loop = chain_add_stage(&vgc->sig_chain, "AGC loop", CHAIN_KERNEL_AGC_LOOP,
+            &agc_params, sizeof(agc_params), 1, 1);
+        vgc->stage_agc = chain_add_stage(&vgc->sig_chain, "AGC", CHAIN_KERNEL_AGC,
             &agc_params, sizeof(agc_params), dispatch_x_256, 1);
-        if (vgc->stage_agc >= 0)
-            chain_set_stage_enabled(&vgc->sig_chain, vgc->stage_agc,
-                chain->connection==VIDEO_CONN_RF);
+        if (vgc->stage_agc_loop < 0 || vgc->stage_agc < 0) goto fail;
+        vgc->sig_chain.stages[vgc->stage_agc_loop].external[0] = vgc->buf_agc_gains;
+        vgc->sig_chain.stages[vgc->stage_agc].external[0] = vgc->buf_agc_gains;
+        chain_set_stage_enabled(&vgc->sig_chain, vgc->stage_agc_loop, chain->connection==VIDEO_CONN_RF);
+        chain_set_stage_enabled(&vgc->sig_chain, vgc->stage_agc, chain->connection==VIDEO_CONN_RF);
     }
 
     /* Stage 5: Ghosting (cable impedance reflection).
@@ -517,9 +537,12 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     if (vgc->stage_receiver < 0) goto fail;
     ChainStage *receiver = &vgc->sig_chain.stages[vgc->stage_receiver];
     receiver->io_typed=true;
-    receiver->ro_count=1; receiver->ro[0]=CBR_BUF_SRC;
+    /* The separator reads the previous frame's loop state to key its
+     * gates from the flywheel when a line's edge is lost in snow. */
+    receiver->ro_count=2; receiver->ro[0]=CBR_BUF_SRC; receiver->ro[1]=CBR_EXT1;
     receiver->rw_count=1; receiver->rw[0]=CBR_EXT0;
     receiver->external[0]=vgc->buf_receiver_measurements;
+    receiver->external[1]=vgc->buf_receiver;
     GpuReceiverPLLParams pll_params = receiver_pll_params(vgc);
     vgc->stage_receiver_pll = chain_add_stage(&vgc->sig_chain, "Receiver PLL / clamp",
         CHAIN_KERNEL_RECEIVER_PLL, &pll_params, sizeof(pll_params), 1, 1);
@@ -1229,27 +1252,20 @@ void video_gpu_reinit_stages(VideoGPUChain *vgc, const VideoChain *chain)
     if (vgc->stage_rf_if >= 0) {
         chain_set_stage_enabled(&vgc->sig_chain, vgc->stage_rf_if,
             video_chain_stage_active(chain, 4));
+        GpuRFIFParams ip={(uint32_t)total_samples,(uint32_t)vgc->raster_fmt.samples_per_line,SIGNAL_RF_IF_TAPS,
+                          chain->rf.detector==2 ? 0u : 1u};
+        chain_update_params(&vgc->sig_chain, vgc->stage_rf_if, &ip, sizeof(ip));
     }
 
-    /* AGC: update attack/release from RF params. */
-    if (vgc->stage_agc >= 0) {
+    /* AGC: the loop's constants from the preset's attack and release times. */
+    if (vgc->stage_agc >= 0 && vgc->stage_agc_loop >= 0) {
         bool agc_on = chain->connection==VIDEO_CONN_RF;
+        chain_set_stage_enabled(&vgc->sig_chain, vgc->stage_agc_loop, agc_on);
         chain_set_stage_enabled(&vgc->sig_chain, vgc->stage_agc, agc_on);
         if (agc_on) {
-        GpuAGCParams agc_params;
-        agc_params.total_count     = (uint32_t)total_samples;
-        agc_params.samples_per_line = (uint32_t)vgc->raster_fmt.samples_per_line;
-        agc_params.num_lines       = (uint32_t)vgc->raster_fmt.lines;
-        agc_params.target_level    = 264.0f / 788.0f;
-        agc_params.min_gain        = 0.5f;
-        agc_params.max_gain        = 2.0f;
-        if (chain->rf.agc_attack_ms > 0.0f) {
-            agc_params.attack_coeff  = 1.0f - expf(-signal_region_frame_ms(chain->signal_fmt.region) / chain->rf.agc_attack_ms);
-            agc_params.release_coeff = 1.0f - expf(-signal_region_frame_ms(chain->signal_fmt.region) / fmaxf(chain->rf.agc_release_ms, 0.01f));
-        } else {
-            agc_params.attack_coeff  = 0.10f;
-            agc_params.release_coeff = 0.02f;
-        }
+        GpuAGCParams agc_params = agc_params_from(vgc);
+        chain_update_params(&vgc->sig_chain, vgc->stage_agc_loop,
+                            &agc_params, sizeof(agc_params));
         chain_update_params(&vgc->sig_chain, vgc->stage_agc,
                             &agc_params, sizeof(agc_params));
         }
@@ -2141,6 +2157,7 @@ void video_gpu_destroy(VideoGPUChain *vgc, SDL_GPUDevice *gpu)
     if (vgc->buf_crt_load) SDL_ReleaseGPUBuffer(gpu, vgc->buf_crt_load);
     if (vgc->buf_gun_current) SDL_ReleaseGPUBuffer(gpu, vgc->buf_gun_current);
     if (vgc->buf_receiver_measurements) SDL_ReleaseGPUBuffer(gpu, vgc->buf_receiver_measurements);
+    if (vgc->buf_agc_gains) SDL_ReleaseGPUBuffer(gpu, vgc->buf_agc_gains);
     if (vgc->buf_receiver) { SDL_ReleaseGPUBuffer(gpu, vgc->buf_receiver); vgc->buf_receiver = NULL; }
     if (vgc->indices_transfer) { SDL_ReleaseGPUTransferBuffer(gpu, vgc->indices_transfer); vgc->indices_transfer = NULL; }
     if (vgc->buf_indices)      { SDL_ReleaseGPUBuffer(gpu, vgc->buf_indices);      vgc->buf_indices = NULL; }

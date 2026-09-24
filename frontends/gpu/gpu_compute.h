@@ -291,7 +291,9 @@ typedef struct {
     uint32_t frame_seed, full_line_samples;
     float sample_rate, hum_phase, hum_hz;
 } GpuRFParams;
-typedef struct { uint32_t count, samples_per_line, tap_count, reserved; } GpuRFIFParams;
+/* detector: 0 envelope (a diode on the IF, pre-1978 sets), 1 synchronous
+ * (a PLL VIF such as the M52342SP; the in-phase component). */
+typedef struct { uint32_t count, samples_per_line, tap_count, detector; } GpuRFIFParams;
 /* VHS deck, shared by vhs_tape (V1) and vhs_playback (V2). Units are IRE
  * referenced to the input sync, Hz and 12 fsc samples; see vhs_deck.c. */
 typedef struct {
@@ -336,6 +338,13 @@ typedef struct {
     float    release_coeff;     /* gain increase speed (0.02=slow) */
     float    min_gain;          /* minimum gain floor (0.5) */
     float    max_gain;          /* maximum gain ceiling (2.0) */
+    /* The keyed top-sync loop (agc_loop.comp): attack_coeff is the charge
+     * per line as a fraction of the tip's excess, release_coeff the
+     * discharge in dB per line, attack_slew_db the charge limit per line
+     * and noise_peak the sigmas the peak detector rides above the tip. */
+    float    attack_slew_db;
+    float    noise_peak;
+    float    pad0, pad1;
 } GpuAGCParams;
 
 /* Modulator / demodulator parameters. modulator.comp.glsl reads the first

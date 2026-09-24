@@ -48,11 +48,12 @@ get_resources() {
     case "$1" in
         audio_stream)   echo "1 1 1" ;;
         raster_encode)  echo "1 2 2" ;;
-        receiver_lock)  echo "1 1 1" ;;
+        receiver_lock)  echo "1 2 1" ;;
         receiver_pll)   echo "1 1 1" ;;
         receiver_demod) echo "1 2 2" ;;
         yc_route)       echo "1 2 2" ;;
         agc)            echo "1 0 2" ;;
+        agc_loop)       echo "1 1 1" ;;
         pointwise)      echo "1 0 2" ;;
         rc_filter)      echo "1 0 2" ;;
         fir)            echo "1 2 1" ;;

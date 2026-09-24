@@ -1064,7 +1064,7 @@ static OSDMenuItem menu_phosphor[48];     /* Stage 12: phosphor screen */
 static OSDMenuItem menu_glass[48];        /* Stage 13: CRT glass + service geometry */
 static OSDMenuItem menu_env[48];           /* Stage 14: environment */
 static OSDMenuItem menu_audio_chain[16];
-static OSDMenuItem menu_rf[10],menu_vhs[32];
+static OSDMenuItem menu_rf[12],menu_vhs[32];
 
 /* Mid-level submenus. menu_video[] + preset_menu_root[] are forward-
  * declared near the top of this file so the save action can reach them. */
@@ -1513,8 +1513,9 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_rf[n++]=MI_FLOAT("IF video edge Hz", &vc->rf.mod_bandwidth, 100000,1000000,6000000,gpu_cb_redesign_firs,"%.0f");
     menu_rf[n++]=MI_FLOAT("IF asymmetry", &vc->rf.if_asymmetry, .05f,0,1,gpu_cb_redesign_firs,"%.2f");
     menu_rf[n++]=MI_FLOAT("IF detuning Hz", &vc->rf.tuning_offset_hz, 10000,-1000000,1000000,gpu_cb_redesign_firs,"%.0f");
-    menu_rf[n++]=MI_FLOAT("AGC attack ms", &vc->rf.agc_attack_ms, .1f,.01f,1000,gpu_cb_reinit_stages,"%.2f");
-    menu_rf[n++]=MI_FLOAT("AGC release ms", &vc->rf.agc_release_ms, 1,1,1000,gpu_cb_reinit_stages,"%.1f");
+    menu_rf[n++]=MI_FLOAT("AGC attack tau ms", &vc->rf.agc_attack_ms, .1f,.01f,1000,gpu_cb_reinit_stages,"%.2f");
+    menu_rf[n++]=MI_FLOAT("AGC 52 dB release ms", &vc->rf.agc_release_ms, 1,1,1000,gpu_cb_reinit_stages,"%.1f");
+    menu_rf[n++]=MI_CYCLIC("Video detector", &vc->rf.detector, 0,2,gpu_cb_reinit_stages,"Auto|Synchronous|Envelope");
     menu_rf[n++]=MI_FLOAT("Sound AM rejection dB", &vc->rf.sound_am_rejection_db, 1,20,80,gpu_cb_audio_setup,"%.0f");
     menu_rf[n++]=MI_FLOAT("Modulator ICPM deg", &vc->rf.icpm_deg, .5f,0,30,gpu_cb_audio_setup,"%.1f");
     n=0;

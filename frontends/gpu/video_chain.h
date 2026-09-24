@@ -159,6 +159,11 @@ typedef struct {
      * buzz; see AudioRFSoundStage. */
     float sound_am_rejection_db;
     float icpm_deg;
+    /* Video detector: 0 = auto (synchronous), 1 = synchronous (a PLL VIF,
+     * every one-chip IF since the late 1970s), 2 = envelope (a diode on
+     * the IF, pre-1978 sets), which carries the Nyquist slope's quadrature
+     * into the picture. */
+    int   detector;
 } RFModulatorParams;
 
 /* NTSC SP VHS deck (vhs_deck.c, vhs_tape/vhs_playback shaders): FM luma

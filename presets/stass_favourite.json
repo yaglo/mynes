@@ -123,12 +123,13 @@
         "carrier_level_dbm": -25,
         "mod_bandwidth": 4100000,
         "noise_floor_dbm": -65,
-        "agc_attack_ms": 100,
-        "agc_release_ms": 1000,
+        "agc_attack_ms": 2.0,
+        "agc_release_ms": 25.0,
         "if_asymmetry": 1.0,
         "tuning_offset_hz": 0.0,
         "sound_am_rejection_db": 42.0,
-        "icpm_deg": 5.0
+        "icpm_deg": 5.0,
+        "detector": 0
     },
     "brightness": 0.02,
     "contrast": 0.95,

@@ -13,6 +13,15 @@ struct Params
     float release_coeff;
     float min_gain;
     float max_gain;
+    float attack_slew_db;
+    float noise_peak;
+    float pad0;
+    float pad1;
+};
+
+struct Gains
+{
+    float4 gains[1];
 };
 
 struct DataBuf
@@ -20,83 +29,25 @@ struct DataBuf
     float data[1];
 };
 
-struct CarryBuf
-{
-    float2 carry[1];
-};
-
 constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
 
-kernel void main0(constant Params& _20 [[buffer(0)]], device DataBuf& _90 [[buffer(1)]], device CarryBuf& _169 [[buffer(2)]], uint3 gl_WorkGroupID [[threadgroup_position_in_grid]], uint3 gl_LocalInvocationID [[thread_position_in_threadgroup]])
+kernel void main0(constant Params& _20 [[buffer(0)]], device Gains& _52 [[buffer(2)]], device DataBuf& _80 [[buffer(1)]], uint3 gl_WorkGroupID [[threadgroup_position_in_grid]], uint3 gl_LocalInvocationID [[thread_position_in_threadgroup]])
 {
-    threadgroup float line_gain;
     uint line = gl_WorkGroupID.x;
     if (line >= _20.num_lines)
     {
         return;
     }
     uint start = line * _20.samples_per_line;
-    uint end = start + _20.samples_per_line;
-    if (end > _20.total_count)
+    uint end = min((start + _20.samples_per_line), _20.total_count);
+    float gain = ((device float*)&_52.gains[line])[0u];
+    if (gain <= 0.0)
     {
-        end = _20.total_count;
+        gain = 1.0;
     }
-    if (start >= _20.total_count)
+    uint _68 = start + gl_LocalInvocationID.x;
+    for (uint i = _68; i < end; i += 256u)
     {
-        return;
-    }
-    if (gl_LocalInvocationID.x == 0u)
-    {
-        uint spp = _20.samples_per_line / 341u;
-        float tip = 0.0;
-        float porch = 0.0;
-        uint _76 = 8u * spp;
-        for (uint x = _76; x < (20u * spp); x++)
-        {
-            tip += _90.data[start + x];
-        }
-        uint _104 = 46u * spp;
-        for (uint x_1 = _104; x_1 < (49u * spp); x_1++)
-        {
-            porch += _90.data[start + x_1];
-        }
-        tip /= float(12u * spp);
-        porch /= float(3u * spp);
-        float peak = fast::max(porch - tip, 0.0);
-        float _145;
-        if (peak < 0.0199999995529651641845703125)
-        {
-            _145 = 1.0;
-        }
-        else
-        {
-            _145 = _20.target_level / peak;
-        }
-        float desired_gain = _145;
-        desired_gain = fast::clamp(desired_gain, _20.min_gain, _20.max_gain);
-        float prev_gain = ((device float*)&_169.carry[line])[0u];
-        if (prev_gain <= 0.0)
-        {
-            prev_gain = desired_gain;
-        }
-        float _182;
-        if (desired_gain < prev_gain)
-        {
-            _182 = _20.attack_coeff;
-        }
-        else
-        {
-            _182 = _20.release_coeff;
-        }
-        float coeff = _182;
-        float smoothed_gain = prev_gain + (coeff * (desired_gain - prev_gain));
-        line_gain = smoothed_gain;
-        _169.carry[line] = float2(smoothed_gain, peak);
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    uint _216 = start + gl_LocalInvocationID.x;
-    for (uint i = _216; i < end; i += 256u)
-    {
-        _90.data[i] *= line_gain;
+        _80.data[i] *= gain;
     }
 }
