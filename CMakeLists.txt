@@ -281,6 +281,11 @@ if(NES_BUILD_TESTS)
     target_link_libraries(test_mapper5 PRIVATE nes_static)
     add_test(NAME mapper5_tests COMMAND test_mapper5)
 
+    # CNROM, including CHR RAM when the header has no CHR ROM
+    add_executable(test_mapper3 tests/nes/test_mapper3.c)
+    target_link_libraries(test_mapper3 PRIVATE nes_static)
+    add_test(NAME mapper3_tests COMMAND test_mapper3)
+
     # MMC2 latch semantics
     add_executable(test_mapper9 tests/nes/test_mapper9.c)
     target_link_libraries(test_mapper9 PRIVATE nes_static)
