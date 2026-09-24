@@ -98,6 +98,22 @@ int main(void) {
         for (int i=0;i<100;i++) apu_step(&b);
         CHECK(b.noise.lfsr!=lfsr && apu_noise_output(&b.noise)==0);
     }
+    /* The sweep divider counts and reloads while the sweep is disabled, so
+     * an enable lands on wherever it got to: here it has just reached 0
+     * and the first half frame after the enable updates the period. */
+    {
+        APU d; apu_init(&d); apu_reset(&d);
+        apu_write(&d,0x4002,0x00); apu_write(&d,0x4003,0x01);   /* $100 */
+        apu_write(&d,0x4001,0xF0);           /* enabled, period 7, shift 0 */
+        apu_clock_sweep(&d.pulse[0],true);   /* reload to 7 */
+        CHECK(d.pulse[0].sweep_divider==7);
+        apu_write(&d,0x4001,0x70);           /* disabled, period 7 */
+        for (int i=0;i<8;i++) apu_clock_sweep(&d.pulse[0],true);
+        CHECK(d.pulse[0].sweep_divider==0 && d.pulse[0].timer_reload==0x100);
+        apu_write(&d,0x4001,0xF1);           /* enabled, period 7, shift 1 */
+        apu_clock_sweep(&d.pulse[0],true);
+        CHECK(d.pulse[0].timer_reload==0x180 && d.pulse[0].sweep_divider==7);
+    }
     /* Power-on acts as $4017 = $00; a reset rewrites the last value and
      * keeps bit 0 of the DMC counter. */
     {

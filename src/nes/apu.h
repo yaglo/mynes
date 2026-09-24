@@ -443,25 +443,23 @@ static inline void apu_clock_length(bool halt, int *length_counter) {
  * Sweep Unit
  * ============================================================================ */
 
+/* The divider is clocked every half frame and honours the reload flag
+ * whether or not the sweep is enabled; the enable bit only gates the
+ * period update (nesdev "APU Sweep"). */
 static inline void apu_clock_sweep(APU_Pulse *p, bool negate_correction) {
-    if (!p->sweep_enable)
-        return;
-
-    if (p->sweep_divider == 0) {
-        if (p->sweep_shift > 0 && !p->sweep_mute) {
-            int change = p->timer_reload >> p->sweep_shift;
-            if (p->sweep_negate) {
-                change = -(change + (negate_correction ? 1 : 0));
-            }
-            int target = p->timer_reload + change;
-            if (target >= 0 && target <= 0x7FF && p->timer_reload >= 8) {
-                p->timer_reload = target;
-                apu_update_pulse_period(p);
-            }
+    if (p->sweep_divider == 0 && p->sweep_enable &&
+        p->sweep_shift > 0 && !p->sweep_mute) {
+        int change = p->timer_reload >> p->sweep_shift;
+        if (p->sweep_negate) {
+            change = -(change + (negate_correction ? 1 : 0));
         }
-        p->sweep_divider = p->sweep_period;
-        p->sweep_reload = false;
-    } else if (p->sweep_reload) {
+        int target = p->timer_reload + change;
+        if (target >= 0 && target <= 0x7FF && p->timer_reload >= 8) {
+            p->timer_reload = target;
+            apu_update_pulse_period(p);
+        }
+    }
+    if (p->sweep_divider == 0 || p->sweep_reload) {
         p->sweep_divider = p->sweep_period;
         p->sweep_reload = false;
     } else {
