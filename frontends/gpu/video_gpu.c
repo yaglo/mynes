@@ -2283,10 +2283,12 @@ bool video_gpu_process_full(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
 
 bool video_gpu_process_rgb(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
                            const VideoRGBSource *src, float *rgb_out) {
-    if (!vgc || !src || !src->pixels || !src->ramp || !vgc->pipe_encoder.pipeline) return false;
+    const bool linear = src && src->code_bits == 10;
+    if (!vgc || !src || !src->pixels || (!linear && !src->ramp) || !vgc->pipe_encoder.pipeline) return false;
     if (src->width <= 0 || src->width > 1024 || src->lines <= 0 || src->lines > 240 ||
         src->top_line < 0 || src->top_line + src->lines > 240 ||
-        src->spp_num <= 0 || src->spp_den <= 0 || src->ramp_n <= 0 || src->ramp_n > 64)
+        src->spp_num <= 0 || src->spp_den <= 0 ||
+        (src->code_bits != 0 && src->code_bits != 10) || (!linear && (src->ramp_n <= 0 || src->ramp_n > 64)))
         return false;
     const SignalFormat *fmt = &vgc->signal_fmt;
     vgc->source_separated = vgc->chain->connection == VIDEO_CONN_SVIDEO;
@@ -2307,7 +2309,7 @@ bool video_gpu_process_rgb(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
 
     /* The DAC ramp changes with the console, not the frame. */
     float ramp[64] = {0};
-    memcpy(ramp, src->ramp, (size_t)src->ramp_n * sizeof(float));
+    if (!linear) memcpy(ramp, src->ramp, (size_t)src->ramp_n * sizeof(float));
     if (!vgc->ramp_uploaded || memcmp(ramp, vgc->ramp_cache, sizeof(ramp)) != 0) {
         if (!gpu_buffer_upload(gpu, vgc->buf_ramp, ramp, sizeof(ramp))) return false;
         memcpy(vgc->ramp_cache, ramp, sizeof(ramp));
@@ -2350,14 +2352,15 @@ bool video_gpu_process_rgb(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
         uint32_t width, lines, samples_per_line, spp_num;
         uint32_t spp_den, top_line, source_mode, taps;
         float phase_base, phase_line_adv, chroma_cut, setup;
-        float luma_cut, trap_cut, trap_depth, pad0;
+        float luma_cut, trap_cut, trap_depth;
+        uint32_t code_bits;
         float rgb_rows[3][4];
     } params = {
         (uint32_t)src->width, (uint32_t)src->lines, (uint32_t)fmt->samples_per_line, (uint32_t)src->spp_num,
         (uint32_t)src->spp_den, (uint32_t)src->top_line,
         source_rgb ? 2u : (vgc->source_separated ? 1u : 0u), taps,
         (float)((src->phase_base % 12 + 12) % 12), (float)((src->phase_line_adv % 12 + 12) % 12),
-        cut, src->setup, luma_cut, trap_cut, trap_depth, 0.0f, {{0}}};
+        cut, src->setup, luma_cut, trap_cut, trap_depth, linear ? 10u : 0u, {{0}}};
     if (source_rgb) {
         for (int c = 0; c < 3; c++) {
             memcpy(params.rgb_rows[c], vgc->color_matrix[c], 3 * sizeof(float));
