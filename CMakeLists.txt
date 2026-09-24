@@ -277,6 +277,11 @@ if(NES_BUILD_TESTS)
     target_link_libraries(test_mapper1 PRIVATE nes_static)
     add_test(NAME mapper1_tests COMMAND test_mapper1)
 
+    # MMC3 PRG banking up to 2 MB
+    add_executable(test_mapper4 tests/nes/test_mapper4.c)
+    target_link_libraries(test_mapper4 PRIVATE nes_static)
+    add_test(NAME mapper4_tests COMMAND test_mapper4)
+
     add_executable(test_mapper5 tests/nes/test_mapper5.c)
     target_link_libraries(test_mapper5 PRIVATE nes_static)
     add_test(NAME mapper5_tests COMMAND test_mapper5)
