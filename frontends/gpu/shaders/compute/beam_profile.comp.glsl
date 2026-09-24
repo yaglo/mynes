@@ -3,7 +3,9 @@
  * =========================================
  *
  * Consumes:
- *   - signal-resolution RGB (already matrix-decoded and horizontally blurred)
+ *   - decode-window RGB (already matrix-decoded and horizontally blurred;
+ *     decode_window.h: width samples by lines rows, the console picture at
+ *     picture_x, picture_row)
  *   - display-resolution deflection maps (landing X/Y + dwell + sigma scale)
  *
  * Produces:
@@ -39,7 +41,7 @@ layout(set = 1, binding = 0) writeonly buffer RGBAOut {
 };
 
 layout(set = 2, binding = 0) uniform Params {
-    uint  signal_w;
+    uint  width;
     uint  out_w;
     uint  out_h;
     uint  rows_per_scanline;
@@ -49,13 +51,15 @@ layout(set = 2, binding = 0) uniform Params {
     float hum_bar_amplitude;
     float bloom_gamma;
     float gamma, gamma_r, gamma_g, gamma_b;
-    uint monitor_model, source_h;
+    uint monitor_model, lines;
+    int  picture_x, picture_row;
+    uint picture_w, picture_h;
 };
 
 float sample_rgb_channel_linear(float sx, int sy, uint channel) {
-    if (sy < 0 || sy >= 240) return 0.0;
+    if (sy < 0 || sy >= int(lines)) return 0.0;
 
-    int signal_w_i = max(int(signal_w), 1);
+    int signal_w_i = max(int(width), 1);
     float sx_max = float(signal_w_i - 1);
 
     /* Outside the landed raster we want the beam to taper to black,
@@ -68,7 +72,7 @@ float sample_rgb_channel_linear(float sx, int sy, uint channel) {
     int x1 = min(x0 + 1, signal_w_i - 1);
     float tx = sx_clamped - float(x0);
 
-    uint base = uint(sy) * signal_w;
+    uint base = uint(sy) * width;
     float a = rgb_in[(base + uint(x0)) * 3u + channel];
     float b = rgb_in[(base + uint(x1)) * 3u + channel];
     return mix(a, b, tx);

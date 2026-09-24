@@ -253,6 +253,7 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     vgc->raster_fmt.lines = chain->signal_fmt.region == SIGNAL_REGION_PAL ? 312 : 262;
     vgc->raster_fmt.total_samples = vgc->raster_fmt.samples_per_line * vgc->raster_fmt.lines;
     vgc->signal_line_phase = signal_region_line_phase(chain->signal_fmt.region);
+    decode_window_picture(&vgc->window, chain->signal_fmt.region, chain->signal_fmt.samples_per_pixel);
 
     /* Initialize stage indices to -1 (not registered). */
     vgc->stage_console_hp  = -1;
@@ -309,7 +310,7 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     int total_samples = fmt->total_samples;
 
     vgc->signal_size = (Uint32)(total_samples * sizeof(float));
-    vgc->rgb_size = (Uint32)(vgc->signal_fmt.total_samples * 3 * sizeof(float));
+    vgc->rgb_size = (Uint32)(decode_window_samples(&vgc->window) * 3 * sizeof(float));
 
     /* ---- Initialize the generic signal chain ---- */
     if (!chain_init(&vgc->sig_chain, gpu, total_samples, shader_dir)) {
@@ -784,8 +785,10 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     }
 
     {
-        uint32_t p[]={(uint32_t)vgc->signal_fmt.total_samples,
-                      (uint32_t)vgc->signal_fmt.samples_per_line};
+        /* The overlay covers the console picture's place in the window. */
+        const DecodeWindow *w=&vgc->window;
+        uint32_t p[]={(uint32_t)decode_window_samples(w),(uint32_t)w->width,
+                      (uint32_t)w->picture_x,(uint32_t)w->picture_row,(uint32_t)w->picture_w,0,0,0};
         vgc->stage_osd=chain_add_stage(&vgc->sig_chain,"TV RGB OSD",CHAIN_KERNEL_OSD,
                                        p,sizeof(p),(p[0]+255)/256,1);
         if(vgc->stage_osd<0) goto fail;
@@ -919,11 +922,14 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     /* Wire the typed post-decode stages now that the backing buffers
      * exist. The deflection stage stays disabled until beam params
      * allocate its display-resolution landing buffers. */
-    vgc->buf_crt_load = gpu_buffer_create(gpu, (256*240+241)*sizeof(float), GPU_BUF_READWRITE);
+    /* The load map: rail load per window dot, the mean current per row and
+     * the supply's state. */
+    size_t load_floats = (size_t)vgc->window.dots * vgc->window.lines + vgc->window.lines + 1;
+    vgc->buf_crt_load = gpu_buffer_create(gpu, (Uint32)(load_floats*sizeof(float)), GPU_BUF_READWRITE);
     if (!vgc->buf_crt_load) goto fail;
-    float *load_zero = calloc(256*240+241, sizeof(float));
+    float *load_zero = calloc(load_floats, sizeof(float));
     if (!load_zero) goto fail;
-    bool load_ok = gpu_buffer_upload(gpu, vgc->buf_crt_load, load_zero, (256*240+241)*sizeof(float));
+    bool load_ok = gpu_buffer_upload(gpu, vgc->buf_crt_load, load_zero, (Uint32)(load_floats*sizeof(float)));
     free(load_zero);
     if (!load_ok) goto fail;
     post_pipeline_install_load_typed(vgc);
@@ -1457,12 +1463,15 @@ bool dispatch_gun_current_public(VideoGPUChain *v, SDL_GPUCommandBuffer *cmd) {
     const TVDisplayParams *tv=&v->chain->tv;
     float gamma=tv->gamma>0 ? tv->gamma : 2.4f;
     float pickup=(1.0f-v->chain->cable.shield_effectiveness)*v->chain->cable.length_meters*0.005f;
-    struct { uint32_t count; float r,g,b; uint32_t width,seed; float noise,spp,black_floor,apl_bias; }
-        p={v->rgb_size/(3*sizeof(float)), gamma+tv->phosphor_gamma_offset_r,
+    const DecodeWindow *w=&v->window;
+    /* Noise is seeded by picture sample and line, so the border extends the
+     * picture's pattern rather than moving it. */
+    struct { uint32_t count; float r,g,b; uint32_t width,seed; float noise,spp,black_floor,apl_bias; int32_t picture_x,picture_row; }
+        p={(uint32_t)decode_window_samples(w), gamma+tv->phosphor_gamma_offset_r,
            gamma+tv->phosphor_gamma_offset_g,gamma+tv->phosphor_gamma_offset_b,
-           (uint32_t)v->signal_fmt.samples_per_line,v->beam_frame_counter,
-           tv->noise_level+pickup,(float)v->signal_fmt.samples_per_line/256.0f,tv->black_floor,
-           tv->apl_black_lift*(v->apl_smoothed-0.5f)*0.15f};
+           (uint32_t)w->width,v->beam_frame_counter,
+           tv->noise_level+pickup,(float)w->spp,tv->black_floor,
+           tv->apl_black_lift*(v->apl_smoothed-0.5f)*0.15f,w->picture_x,w->picture_row};
     GpuDispatchDesc d={.pipeline=&v->sig_chain.pipelines[CHAIN_KERNEL_GUN_CURRENT],
         .readonly_buffers={v->buf_rgb},.num_readonly_buffers=1,
         .readwrite_buffers={v->buf_gun_current},.num_readwrite_buffers=1,
@@ -1608,8 +1617,7 @@ bool video_gpu_process(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
 
     /* ---- 8. Download RGB to CPU if requested ---- */
     if (rgb_out && vgc->buf_rgb) {
-        Uint32 rgb_bytes = (Uint32)(total_samples * 3 * sizeof(float));
-        if (!gpu_buffer_download(gpu, vgc->buf_rgb, rgb_out, rgb_bytes)) {
+        if (!gpu_buffer_download(gpu, vgc->buf_rgb, rgb_out, vgc->rgb_size)) {
             fprintf(stderr, "video_gpu_process: RGB download failed\n");
             return false;
         }
@@ -1828,8 +1836,8 @@ static bool dispatch_video_amp(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd)
     if (!vgc->vamp_enabled || !vgc->buf_rgb || !vgc->buf_rgb2) return false;
     if (!vgc->sig_chain.pipeline_loaded[CHAIN_KERNEL_VIDEO_AMP]) return false;
 
-    const SignalFormat *fmt = &vgc->signal_fmt;
-    int total_pixels = fmt->samples_per_line * fmt->lines;
+    const DecodeWindow *w = &vgc->window;
+    int total_pixels = (int)decode_window_samples(w);
 
     /* Uniform params matching video_amp.comp.glsl layout. */
     /* std140 layout: float array elements are padded to 16 bytes each.
@@ -1848,7 +1856,7 @@ static bool dispatch_video_amp(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd)
 
     memset(&amp_params, 0, sizeof(amp_params));
     amp_params.total_pixels    = (uint32_t)total_pixels;
-    amp_params.samples_per_line = (uint32_t)fmt->samples_per_line;
+    amp_params.samples_per_line = (uint32_t)w->width;
     amp_params.tap_count       = (uint32_t)vgc->vamp_tap_count;
     memcpy(amp_params.taps, vgc->vamp_taps, sizeof(amp_params.taps));
     const TVDisplayParams *tv = vgc->chain ? &vgc->chain->tv : NULL;
@@ -1894,8 +1902,8 @@ static bool dispatch_h_blur_rgb(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd)
         float growth;
         float weights[36], wide_weights[36], over_weights[36]; /* std140 vec4[9], symmetric halves */
     } params = {0};
-    params.signal_w = (uint32_t)vgc->signal_fmt.samples_per_line;
-    params.num_lines = (uint32_t)vgc->signal_fmt.lines;
+    params.signal_w = (uint32_t)vgc->window.width;
+    params.num_lines = (uint32_t)vgc->window.lines;
     float sigma=fmaxf(vgc->beam_h_blur_sigma,0.5f);
     params.growth=vgc->chain ? fmaxf(vgc->chain->tv.beam_spot_growth,0) : 0;
     float wide=sigma*(1+params.growth);
@@ -1942,7 +1950,7 @@ static bool dispatch_beam_profile(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd)
     if (!vgc->sig_chain.pipeline_loaded[CHAIN_KERNEL_BEAM]) return false;
 
     struct {
-        uint32_t signal_w;
+        uint32_t width;             /* decode window samples per row */
         uint32_t out_w;
         uint32_t out_h;
         uint32_t rows_per_scanline;
@@ -1952,17 +1960,24 @@ static bool dispatch_beam_profile(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd)
         float    hum_bar_amplitude;
         float    bloom_gamma;
         float gamma, gamma_r, gamma_g, gamma_b;
-        uint32_t monitor_model, source_h;
+        uint32_t monitor_model, lines;
+        int32_t picture_x, picture_row;
+        uint32_t picture_w, picture_h;
     } beam_params;
 
     const TVDisplayParams *tv = vgc->chain ? &vgc->chain->tv : NULL;
+    const DecodeWindow *w = &vgc->window;
     beam_params.monitor_model = tv && tv->monitor_model==1;
-    beam_params.source_h = (uint32_t)vgc->signal_fmt.lines;
+    beam_params.lines = (uint32_t)w->lines;
+    beam_params.picture_x = w->picture_x;
+    beam_params.picture_row = w->picture_row;
+    beam_params.picture_w = (uint32_t)w->picture_w;
+    beam_params.picture_h = (uint32_t)w->picture_h;
     beam_params.gamma = tv && tv->gamma > 0 ? tv->gamma : 2.2f;
     beam_params.gamma_r = tv ? tv->phosphor_gamma_offset_r : 0;
     beam_params.gamma_g = tv ? tv->phosphor_gamma_offset_g : 0;
     beam_params.gamma_b = tv ? tv->phosphor_gamma_offset_b : 0;
-    beam_params.signal_w          = (uint32_t)vgc->signal_fmt.samples_per_line;
+    beam_params.width             = (uint32_t)w->width;
     beam_params.out_w             = (uint32_t)vgc->beam_out_w;
     beam_params.out_h             = (uint32_t)vgc->beam_out_h;
     beam_params.rows_per_scanline = (uint32_t)vgc->beam_rows_per_scanline;
@@ -2054,7 +2069,7 @@ void video_gpu_reset_temporal_state(VideoGPUChain *vgc, SDL_GPUDevice *gpu)
     }
 
     if (vgc->buf_crt_load) {
-        size_t bytes = (256 * 240 + 241) * sizeof(float);
+        size_t bytes = ((size_t)vgc->window.dots * vgc->window.lines + vgc->window.lines + 1) * sizeof(float);
         void *zeros = calloc(1, bytes);
         if (zeros) {
             gpu_buffer_upload(gpu, vgc->buf_crt_load, zeros, (Uint32)bytes);

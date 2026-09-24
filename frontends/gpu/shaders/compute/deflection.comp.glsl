@@ -23,7 +23,7 @@
 layout(local_size_x = 16, local_size_y = 16) in;
 layout(set=0,binding=0) readonly buffer CRTLoad { float load_map[]; };
 
-/* Output A: landed signal X for R/G/B + dwell factor.
+/* Output A: landed X for R/G/B, in decode-window samples, + dwell factor.
  *   out_x[pixel*4 + 0] = r_x
  *   out_x[pixel*4 + 1] = g_x
  *   out_x[pixel*4 + 2] = b_x
@@ -42,7 +42,7 @@ layout(set = 1, binding = 1) writeonly buffer DeflectionY {
 };
 
 layout(set = 2, binding = 0) uniform Params {
-    uint  signal_w;
+    float spp;                /* samples per dot */
     uint  out_w;
     uint  out_h;
     uint  rows_per_scanline;
@@ -90,6 +90,12 @@ layout(set = 2, binding = 0) uniform Params {
     float picture_left;
     float active_lines;
     float picture_top;
+    /* The picture's place in the decode window (decode_window.h), in
+     * samples and rows, and the size of the load map (its dots and rows). */
+    float picture_x;
+    float picture_row;
+    uint  map_w;
+    uint  map_h;
 };
 
 float hash01(uint x) {
@@ -140,11 +146,11 @@ void main() {
     float kv = barrel_v > 0.001 ? barrel_v : barrel;
     vec2 warped = barrel_distort(uv_wobble, barrel, kv);
 
-    float load_x = x_uv * active_dots - picture_left;
-    float load_y = y_uv * active_lines - picture_top;
-    uint load_line=uint(clamp(load_y,0.0,239.0));
-    uint load_dot=uint(clamp(load_x,0.0,255.0));
-    float picture_load=0.65*load_map[256u*240u+load_line]+0.35*load_map[load_line*256u+load_dot];
+    float load_x = x_uv * active_dots - picture_left + picture_x / spp;
+    float load_y = y_uv * active_lines - picture_top + picture_row;
+    uint load_line=uint(clamp(load_y,0.0,float(map_h-1u)));
+    uint load_dot=uint(clamp(load_x,0.0,float(map_w-1u)));
+    float picture_load=0.65*load_map[map_w*map_h+load_line]+0.35*load_map[load_line*map_w+load_dot];
     // Inverse landing coordinates: positive sag contracts the picture;
     // negative models EHT-dominated expansion. Keep the historical preset sign.
     if (abs(hv_sag) > 0.0001) {
@@ -253,11 +259,11 @@ void main() {
      * now, converted from beam-space pixels to signal samples. */
     float generic_conv_px = convergence_static
                           + convergence_dynamic * clamp(sqrt(conv_edge), 0.0, 1.0);
-    float generic_conv_signal = generic_conv_px * float(signal_w) * active_dots / (256.0 * fw);
+    float generic_conv_signal = generic_conv_px * spp * active_dots / fw;
 
-    /* The tube face is the active raster; the picture is a window in it, so
-     * NES dots are 8:7 on a 4:3 face and the blanking either side is black. */
-    float base_x = ((x_land_n * 0.5 + 0.5) * active_dots - picture_left) / 256.0 * float(signal_w);
+    /* The tube face is the active raster and the picture a window in it, so
+     * NES dots are 8:7 on a 4:3 face. X lands in decode-window samples. */
+    float base_x = ((x_land_n * 0.5 + 0.5) * active_dots - picture_left) * spp + picture_x;
     float base_y = ((y_land_n * 0.5 + 0.5) * active_lines - picture_top) / 240.0 * fh;
 
     float r_x = base_x - generic_conv_signal + conv_r_x * conv_edge;

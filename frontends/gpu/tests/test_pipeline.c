@@ -309,7 +309,9 @@ int main(int argc, char *argv[]) {
     printf("\n[7] Running GPU pipeline...\n");
 
     /* Allocate output buffer. */
-    float *rgb_out = (float *)calloc((size_t)total_samples * 3, sizeof(float));
+    /* The decoded RGB covers the decode window (decode_window.h). */
+    int rgb_samples = (int)decode_window_samples(&vgc.window);
+    float *rgb_out = (float *)calloc(vgc.rgb_size / sizeof(float), sizeof(float));
     if (!rgb_out) { fprintf(stderr, "malloc failed\n"); return 1; }
 
     /* Process the full pipeline. */
@@ -376,16 +378,16 @@ int main(int argc, char *argv[]) {
 
     /* RGB output stats. */
     {
-        int rgb_count = total_samples * 3;
+        int rgb_count = rgb_samples * 3;
         BufStats rgb_stats = compute_stats(rgb_out, rgb_count);
         print_stats("RGB output", &rgb_stats);
 
         /* Per-channel stats. */
-        float *r_buf = (float *)calloc((size_t)total_samples, sizeof(float));
-        float *g_buf = (float *)calloc((size_t)total_samples, sizeof(float));
-        float *b_buf = (float *)calloc((size_t)total_samples, sizeof(float));
+        float *r_buf = (float *)calloc((size_t)rgb_samples, sizeof(float));
+        float *g_buf = (float *)calloc((size_t)rgb_samples, sizeof(float));
+        float *b_buf = (float *)calloc((size_t)rgb_samples, sizeof(float));
         if (r_buf && g_buf && b_buf) {
-            for (int i = 0; i < total_samples; i++) {
+            for (int i = 0; i < rgb_samples; i++) {
                 r_buf[i] = rgb_out[i * 3 + 0];
                 g_buf[i] = rgb_out[i * 3 + 1];
                 b_buf[i] = rgb_out[i * 3 + 2];
@@ -435,7 +437,7 @@ int main(int argc, char *argv[]) {
     write_ppm_grey("/tmp/pipeline_luma.ppm", luma_buf, spl, lines);
     write_ppm_signed("/tmp/pipeline_chroma_i.ppm", chroma_i_buf, spl, lines, 4.0f);
     write_ppm_signed("/tmp/pipeline_chroma_q.ppm", chroma_q_buf, spl, lines, 4.0f);
-    write_ppm_rgb("/tmp/pipeline_rgb.ppm", rgb_out, spl, lines);
+    write_ppm_rgb("/tmp/pipeline_rgb.ppm", rgb_out, vgc.window.width, vgc.window.lines);
 
     /* ---- 11. Chain timing report ---- */
     printf("\n[11] Chain timing:\n");

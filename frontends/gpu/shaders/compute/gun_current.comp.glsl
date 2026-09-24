@@ -10,6 +10,7 @@ layout(set=2,binding=0) uniform Params {
     float noise_level, samples_per_pixel;
     float black_floor;
     float apl_bias;
+    int picture_x, picture_row;   /* the console picture's place in the decode window */
 };
 float noise(uint seed) {
     seed ^= seed >> 16u; seed *= 0x7feb352du;
@@ -24,9 +25,11 @@ void main() {
     // Smooth at the video bandwidth, then let gun transfer and both spot
     // axes shape it. RF snow itself is generated earlier in the RF stage.
     if(noise_level > 0.0) {
-        float sample_x=float(i % samples_per_line)/max(samples_per_pixel*0.5,1.0);
-        uint seed=(i/samples_per_line)*7919u + frame_seed*6271u;
-        uint x=uint(floor(sample_x));
+        // Seeded by picture sample and line, so the border continues the
+        // picture's pattern.
+        float sample_x=float(int(i % samples_per_line)-picture_x)/max(samples_per_pixel*0.5,1.0);
+        uint seed=uint(int(i/samples_per_line)-picture_row)*7919u + frame_seed*6271u;
+        uint x=uint(int(floor(sample_x)));
         float n=mix(noise(seed+x*1999u),noise(seed+(x+1u)*1999u),smoothstep(0.0,1.0,fract(sample_x)));
         v=max(v+vec3(noise_level*n),0.0);
     }

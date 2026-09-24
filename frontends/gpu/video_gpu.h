@@ -7,6 +7,7 @@
 #define VIDEO_GPU_H
 
 #include "video_chain.h"
+#include "decode_window.h"
 #include "gpu_compute.h"
 #include "signal_chain.h"
 #include "vhs_gpu.h"
@@ -64,6 +65,9 @@ typedef struct {
     /* --- Generic signal chain runner (owns ping-pong + aux buffers) --- */
     SignalChain sig_chain;
     SignalFormat raster_fmt; /* full lines upstream; signal_fmt remains active-picture format */
+    /* The rectangle of the raster decoded into RGB: buf_rgb, buf_rgb2 and
+     * buf_gun_current are window.width x window.lines interleaved RGB. */
+    DecodeWindow window;
     int stage_raster, stage_receiver, stage_receiver_pll;
     int stage_y_console, stage_y_cable, stage_y_ghost, stage_yc_route;
     bool source_separated;
@@ -167,7 +171,7 @@ typedef struct {
 
     /* --- Buffer sizes (bytes) --- */
     Uint32 signal_size;             /* samples_per_line * 240 * sizeof(float) */
-    Uint32 rgb_size;                /* samples_per_line * 240 * 3 * sizeof(float) */
+    Uint32 rgb_size;                /* window.width * window.lines * 3 * sizeof(float) */
 
     /* --- Signal format (copied from chain) --- */
     SignalFormat signal_fmt;
@@ -240,7 +244,8 @@ bool video_gpu_upload_signal_table(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
  *
  * idx_fb: 256×240 uint16 palette+emphasis indices (from ppu.index_framebuffer)
  * phase_base, phase_line_adv, frame_field: dot crawl phase params
- * rgb_out: if non-NULL, downloads RGB result to CPU (for fallback display)
+ * rgb_out: if non-NULL, downloads the decode window's RGB (rgb_size bytes,
+ *          laid out as vgc->window says) to the CPU
  *
  * Returns true if the GPU chain produced output. */
 bool video_gpu_process_full(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
@@ -253,6 +258,7 @@ bool video_gpu_process_full(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
  * DAC. The raster then carries a standard -40 IRE sync and a 40 IRE sine
  * burst, as an encoder IC produces from the console's CSYNC. The rest of
  * the chain (console output pole, cable, receiver, CRT) is unchanged.
+ * rgb_out, if non-NULL, receives rgb_size bytes as video_gpu_process_full.
  *
  * Returns true if the GPU chain produced output. */
 bool video_gpu_process_rgb(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
@@ -327,7 +333,7 @@ void video_gpu_set_dynamic_state(VideoGPUChain *vgc,
  * waveform: CPU-generated composite waveform (float32, spl * 240)
  *           where spl = signal_fmt.samples_per_line
  * rgb_out:  if non-NULL, the RGB result is downloaded here (blocking).
- *           Must hold spl * 240 * 3 floats.
+ *           Must hold rgb_size bytes, laid out as vgc->window says.
  *           If NULL, the result stays on GPU (for display pipeline use).
  *
  * Returns true on success. */

@@ -86,9 +86,13 @@ int test_osd(SDL_GPUDevice *gpu) {
         CHECK(gpu_buffer_upload(gpu,v.buf_rgb,input,v.rgb_size));
         CHECK(chain_run(&v.sig_chain,gpu));
         CHECK(gpu_buffer_download(gpu,v.buf_rgb,output,v.rgb_size));
-        for(int i=0;i<sp.samples_per_line*240;i++) {
-            int x=(i%sp.samples_per_line)*256/sp.samples_per_line,y=i/sp.samples_per_line;
-            uint32_t rgba=ui[y*256+x]; float a=(rgba>>24)/255.0f;
+        /* The overlay lands on the console picture's place in the decode
+         * window and leaves the border around it alone. */
+        const DecodeWindow *w=&v.window;
+        for(size_t i=0;i<decode_window_samples(w);i++) {
+            int px=(int)(i%w->width)-w->picture_x, py=(int)(i/w->width)-w->picture_row;
+            bool inside=px>=0 && px<w->picture_w && py>=0 && py<240;
+            uint32_t rgba=inside ? ui[py*256+px*256/w->picture_w] : 0; float a=(rgba>>24)/255.0f;
             for(int ch=0;ch<3;ch++) {
                 float color=((rgba>>(ch*8))&255)/255.0f;
                 CHECK(fabsf(output[i*3+ch]-(.25f*(1-a)+color*a))<1e-6f);

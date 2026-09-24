@@ -38,8 +38,10 @@ typedef struct {
     float bias_r, bias_g, bias_b;
     float color_killer_threshold;
     int32_t chroma_delay;
-    uint32_t samples_per_line;
-    uint32_t active_width, active_offset;
+    uint32_t samples_per_line;           /* raster line */
+    uint32_t width, start_sample;        /* decode window stride; its first raster sample */
+    int32_t first_line;                  /* raster line of window row 0, may be negative */
+    uint32_t frame_lines;
 } MatrixDecodeParams;
 
 static bool matrix_decode_rebind(struct SignalChainFwd *chain_fwd,
@@ -70,10 +72,13 @@ static bool matrix_decode_rebind(struct SignalChainFwd *chain_fwd,
         s->external[2] = NULL;
     }
 
+    const DecodeWindow *w = &vgc->window;
     MatrixDecodeParams p;
-    p.count  = (uint32_t)vgc->signal_fmt.total_samples;
-    p.active_width = (uint32_t)vgc->signal_fmt.samples_per_line;
-    p.active_offset = (uint32_t)(65 * vgc->signal_fmt.samples_per_pixel);
+    p.count  = (uint32_t)decode_window_samples(w);
+    p.width = (uint32_t)w->width;
+    p.start_sample = (uint32_t)(w->start_dot * w->spp);
+    p.first_line = w->first_line;
+    p.frame_lines = (uint32_t)w->frame_lines;
     p.m00 = vgc->color_matrix[0][0];
     p.m01 = vgc->color_matrix[0][1];
     p.m02 = vgc->color_matrix[0][2];
@@ -113,31 +118,14 @@ static bool matrix_decode_rebind(struct SignalChainFwd *chain_fwd,
  * convergence out of beam_profile.comp so the beam stage only deposits
  * light using a precomputed raster field.
  * ------------------------------------------------------------------- */
-/* The receiver scans the tube face over the standard active line and active
- * field (ITU-R BT.470: NTSC line 63.556 us with 10.9 us of blanking and a
- * 1.5 us front porch, 21 blanked lines per field; PAL line 64 us with 12 us
- * of blanking, a 1.5 us front porch and 25 blanked lines), locked to the
- * console's sync. The console's picture starts 65 dots after its sync
- * (video_gpu.c, active offset) with the vertical sync pulses at lines 245
- * or 270 of its 262 or 312-line frame (raster_encode.comp.glsl), so the
- * picture's place on the face follows from the dot period alone: NES dots
- * are 8:7 and a set with no overscan shows blanking either side. */
+/* The picture's place on the receiver's active raster (decode_window.h). */
 void post_pipeline_raster_window(int region, int samples_per_pixel, float *active_dots, float *picture_left,
                                  float *active_lines, float *picture_top) {
-    bool pal = region == SIGNAL_REGION_PAL;
-    double dot_us = 1e6 * samples_per_pixel / signal_region_sample_rate_hz(region);
-    double line_us = pal ? 64.0 : 1e6 / 15734.264, blanking_us = pal ? 12.0 : 10.9, front_porch_us = 1.5;
-    double blanked_lines = pal ? 25.0 : 21.0, frame_lines = pal ? 312.0 : 262.0, vsync_line = pal ? 270.0 : 245.0;
-    double sync_to_active_lines = pal ? 22.5 : 18.0;   /* broad pulses start 2.5 or 3 lines into the blanking */
-    const double picture_start_dot = 65.0;
-    *active_dots = (float)((line_us - blanking_us) / dot_us);
-    *picture_left = (float)(picture_start_dot - (blanking_us - front_porch_us) / dot_us);
-    *active_lines = (float)(frame_lines - blanked_lines);
-    *picture_top = (float)((frame_lines - vsync_line) - sync_to_active_lines);
+    decode_window_geometry(region, samples_per_pixel, 65, active_dots, picture_left, active_lines, picture_top);
 }
 
 typedef struct {
-    uint32_t signal_w;
+    float spp;
     uint32_t out_w;
     uint32_t out_h;
     uint32_t rows_per_scanline;
@@ -182,6 +170,10 @@ typedef struct {
     float picture_left;
     float active_lines;
     float picture_top;
+    float picture_x;
+    float picture_row;
+    uint32_t map_w;
+    uint32_t map_h;
 } DeflectionParams;
 
 static bool deflection_rebind(struct SignalChainFwd *chain_fwd,
@@ -200,7 +192,7 @@ static bool deflection_rebind(struct SignalChainFwd *chain_fwd,
 
     DeflectionParams p;
     memset(&p, 0, sizeof(p));
-    p.signal_w            = (uint32_t)vgc->signal_fmt.samples_per_line;
+    p.spp                 = (float)vgc->window.spp;
     p.out_w               = (uint32_t)vgc->beam_out_w;
     p.out_h               = (uint32_t)vgc->beam_out_h;
     p.rows_per_scanline   = (uint32_t)vgc->beam_rows_per_scanline;
@@ -240,8 +232,14 @@ static bool deflection_rebind(struct SignalChainFwd *chain_fwd,
     p.top_edge_skew       = tv ? tv->top_edge_skew : 0.0f;
     p.top_band_start      = tv ? tv->top_band_start : 18.0f;
     p.top_band_end        = tv ? tv->top_band_end : 34.0f;
-    post_pipeline_raster_window(vgc->signal_fmt.region, vgc->signal_fmt.samples_per_pixel,
-                                &p.active_dots, &p.picture_left, &p.active_lines, &p.picture_top);
+    p.active_dots         = vgc->window.active_dots;
+    p.picture_left        = vgc->window.picture_left;
+    p.active_lines        = vgc->window.active_lines;
+    p.picture_top         = vgc->window.picture_top;
+    p.picture_x           = (float)vgc->window.picture_x;
+    p.picture_row         = (float)vgc->window.picture_row;
+    p.map_w               = (uint32_t)vgc->window.dots;
+    p.map_h               = (uint32_t)vgc->window.lines;
     p.top_edge_width      = tv ? tv->top_edge_width : 0.08f;
 
     // Regulated geometry is independent of image content and scan time.
@@ -358,17 +356,22 @@ static bool crt_load_rebind(struct SignalChainFwd *chain, struct ChainStageFwd *
     VideoGPUChain *v = user;
     ChainStage *s = (ChainStage *)stage;
     const TVDisplayParams *tv = &v->chain->tv;
-    struct { uint32_t width, spp; float gamma, strength, dot_seconds; uint32_t mode; float elapsed; uint32_t region; float black_droop, recovery_us, pad[2]; } p = {
-        v->signal_fmt.samples_per_line, v->signal_fmt.samples_per_pixel,
+    const DecodeWindow *w = &v->window;
+    struct {
+        uint32_t width, spp; float gamma, strength, dot_seconds; uint32_t mode; float elapsed; uint32_t frame_lines;
+        float black_droop, recovery_us; uint32_t dots, lines, dots_per_line, pad[3];
+    } p = {
+        (uint32_t)w->width, (uint32_t)w->spp,
         tv->gamma > 0 ? tv->gamma : 2.4f, tv->beam_current_load,
         v->signal_fmt.samples_per_pixel / signal_region_sample_rate_hz(v->signal_fmt.region),
-        s == &v->sig_chain.stages[v->stage_crt_supply], fmaxf(1,v->elapsed_frames), v->signal_fmt.region,
-        tv->video_black_droop, tv->video_recovery_us > 0 ? tv->video_recovery_us : 18, {0,0}
+        s == &v->sig_chain.stages[v->stage_crt_supply], fmaxf(1,v->elapsed_frames), (uint32_t)w->frame_lines,
+        tv->video_black_droop, tv->video_recovery_us > 0 ? tv->video_recovery_us : 18,
+        (uint32_t)w->dots, (uint32_t)w->lines, (uint32_t)w->dots_per_line, {0,0,0}
     };
     s->rw_count=2; s->rw[0]=CBR_EXT0; s->rw[1]=CBR_EXT1;
     s->external[0]=v->buf_rgb; s->external[1]=v->buf_crt_load;
     memcpy(s->params,&p,sizeof(p)); s->params_size=sizeof(p);
-    s->dispatch_x=gpu_workgroup_count(p.mode ? 1 : 240, v->sig_chain.pipelines[CHAIN_KERNEL_CRT_LOAD].threadcount_x);
+    s->dispatch_x=gpu_workgroup_count(p.mode ? 1 : p.lines, v->sig_chain.pipelines[CHAIN_KERNEL_CRT_LOAD].threadcount_x);
     return true;
 }
 void post_pipeline_install_load_typed(VideoGPUChain *v) {

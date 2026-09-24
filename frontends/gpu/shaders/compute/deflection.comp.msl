@@ -7,7 +7,7 @@ using namespace metal;
 
 struct Params
 {
-    uint signal_w;
+    float spp;
     uint out_w;
     uint out_h;
     uint rows_per_scanline;
@@ -52,6 +52,10 @@ struct Params
     float picture_left;
     float active_lines;
     float picture_top;
+    float picture_x;
+    float picture_row;
+    uint map_w;
+    uint map_h;
 };
 
 struct CRTLoad
@@ -100,7 +104,7 @@ float hashSigned(thread const uint& x)
     return (_55 * 2.0) - 1.0;
 }
 
-kernel void main0(constant Params& _108 [[buffer(0)]], device CRTLoad& _270 [[buffer(1)]], device DeflectionX& _1202 [[buffer(2)]], device DeflectionY& _1226 [[buffer(3)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+kernel void main0(constant Params& _108 [[buffer(0)]], device CRTLoad& _290 [[buffer(1)]], device DeflectionX& _1224 [[buffer(2)]], device DeflectionY& _1248 [[buffer(3)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
     uint ox = gl_GlobalInvocationID.x;
     uint oy = gl_GlobalInvocationID.y;
@@ -156,11 +160,11 @@ kernel void main0(constant Params& _108 [[buffer(0)]], device CRTLoad& _270 [[bu
     float param_1 = _108.barrel;
     float param_2 = kv;
     float2 warped = barrel_distort(param, param_1, param_2);
-    float load_x = (x_uv * _108.active_dots) - _108.picture_left;
-    float load_y = (y_uv * _108.active_lines) - _108.picture_top;
-    uint load_line = uint(fast::clamp(load_y, 0.0, 239.0));
-    uint load_dot = uint(fast::clamp(load_x, 0.0, 255.0));
-    float picture_load = (0.64999997615814208984375 * _270.load_map[61440u + load_line]) + (0.3499999940395355224609375 * _270.load_map[(load_line * 256u) + load_dot]);
+    float load_x = ((x_uv * _108.active_dots) - _108.picture_left) + (_108.picture_x / _108.spp);
+    float load_y = ((y_uv * _108.active_lines) - _108.picture_top) + _108.picture_row;
+    uint load_line = uint(fast::clamp(load_y, 0.0, float(_108.map_h - 1u)));
+    uint load_dot = uint(fast::clamp(load_x, 0.0, float(_108.map_w - 1u)));
+    float picture_load = (0.64999997615814208984375 * _290.load_map[(_108.map_w * _108.map_h) + load_line]) + (0.3499999940395355224609375 * _290.load_map[(load_line * _108.map_w) + load_dot]);
     if (abs(_108.hv_sag) > 9.9999997473787516355514526367188e-05)
     {
         float size_load = 1.0 + ((_108.hv_sag * picture_load) * 0.1599999964237213134765625);
@@ -173,17 +177,17 @@ kernel void main0(constant Params& _108 [[buffer(0)]], device CRTLoad& _270 [[bu
         float sr = sin(_108.rotation);
         warped = float2((c.x * cr) - (c.y * sr), (c.x * sr) + (c.y * cr)) + float2(0.5);
     }
-    bool _354 = abs(_108.skew_x) > 9.9999997473787516355514526367188e-05;
-    bool _363;
-    if (!_354)
+    bool _378 = abs(_108.skew_x) > 9.9999997473787516355514526367188e-05;
+    bool _387;
+    if (!_378)
     {
-        _363 = abs(_108.skew_y) > 9.9999997473787516355514526367188e-05;
+        _387 = abs(_108.skew_y) > 9.9999997473787516355514526367188e-05;
     }
     else
     {
-        _363 = _354;
+        _387 = _378;
     }
-    if (_363)
+    if (_387)
     {
         float2 c_1 = warped - float2(0.5);
         warped = float2(c_1.x + (_108.skew_x * c_1.y), c_1.y + (_108.skew_y * c_1.x)) + float2(0.5);
@@ -261,16 +265,16 @@ kernel void main0(constant Params& _108 [[buffer(0)]], device CRTLoad& _270 [[bu
     float band_soft = 2.5;
     float band_window = smoothstep(band_lo - band_soft, band_lo + band_soft, float(sy_nom)) * (1.0 - smoothstep(band_hi - band_soft, band_hi + band_soft, float(sy_nom)));
     float edge_width = fast::max(_108.top_edge_width, 0.00999999977648258209228515625);
-    float _874;
+    float _898;
     if (_108.top_edge_skew != 0.0)
     {
-        _874 = exp((-fast::max(raster.x, 0.0)) / edge_width);
+        _898 = exp((-fast::max(raster.x, 0.0)) / edge_width);
     }
     else
     {
-        _874 = 0.0;
+        _898 = 0.0;
     }
-    float top_edge_env = _874;
+    float top_edge_env = _898;
     float top_band_px = _108.top_band_shift * band_window;
     float top_edge_px = (_108.top_edge_skew * band_window) * top_edge_env;
     float x_land_n = (((((cx + s_correction) + ew_residual) + left_edge_nl) + right_edge_nl) + line_bow_x) + ((((h_shift_px + top_band_px) + top_edge_px) * 2.0) / fw);
@@ -278,8 +282,8 @@ kernel void main0(constant Params& _108 [[buffer(0)]], device CRTLoad& _270 [[bu
     float edge_factor = fast::clamp((cx * cx) + (cy * cy), 0.0, 2.0);
     float conv_edge = fast::clamp(edge_factor * 0.5, 0.0, 1.0);
     float generic_conv_px = _108.convergence_static + (_108.convergence_dynamic * fast::clamp(sqrt(conv_edge), 0.0, 1.0));
-    float generic_conv_signal = ((generic_conv_px * float(_108.signal_w)) * _108.active_dots) / (256.0 * fw);
-    float base_x = (((((x_land_n * 0.5) + 0.5) * _108.active_dots) - _108.picture_left) / 256.0) * float(_108.signal_w);
+    float generic_conv_signal = ((generic_conv_px * _108.spp) * _108.active_dots) / fw;
+    float base_x = (((((x_land_n * 0.5) + 0.5) * _108.active_dots) - _108.picture_left) * _108.spp) + _108.picture_x;
     float base_y = (((((y_land_n * 0.5) + 0.5) * _108.active_lines) - _108.picture_top) / 240.0) * fh;
     float r_x = (base_x - generic_conv_signal) + (_108.conv_r_x * conv_edge);
     float g_x = base_x;
@@ -315,12 +319,12 @@ kernel void main0(constant Params& _108 [[buffer(0)]], device CRTLoad& _270 [[bu
     dwell *= (1.0 - ((0.100000001490116119384765625 * edge_drive) * left_settle));
     dwell *= (1.0 + ((0.0599999986588954925537109375 * edge_drive) * right_retrace));
     uint idx = ((oy * _108.out_w) + ox) * 4u;
-    _1202.out_x[idx + 0u] = r_x;
-    _1202.out_x[idx + 1u] = g_x;
-    _1202.out_x[idx + 2u] = b_x;
-    _1202.out_x[idx + 3u] = fast::clamp(dwell, 0.0, 1.10000002384185791015625);
-    _1226.out_y[idx + 0u] = r_y;
-    _1226.out_y[idx + 1u] = g_y;
-    _1226.out_y[idx + 2u] = b_y;
-    _1226.out_y[idx + 3u] = fast::clamp(focus_scale, 1.0, 3.5);
+    _1224.out_x[idx + 0u] = r_x;
+    _1224.out_x[idx + 1u] = g_x;
+    _1224.out_x[idx + 2u] = b_x;
+    _1224.out_x[idx + 3u] = fast::clamp(dwell, 0.0, 1.10000002384185791015625);
+    _1248.out_y[idx + 0u] = r_y;
+    _1248.out_y[idx + 1u] = g_y;
+    _1248.out_y[idx + 2u] = b_y;
+    _1248.out_y[idx + 3u] = fast::clamp(focus_scale, 1.0, 3.5);
 }
