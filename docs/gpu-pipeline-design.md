@@ -103,7 +103,7 @@ Followed by gamma correction: 2.2 for calibrated PVMs, 2.4 for standard consumer
 
 ### Stage 11: Electron Beam
 
-The most complex stage. Converts signal-resolution RGB (2048x240) into display-resolution RGBA. This is where scanline structure, bloom, convergence error, and noise happen -- all in a single compute dispatch.
+The most complex stage. Converts the decode window's RGB into display-resolution RGBA: the receiver's active raster at signal resolution (NTSC 2336x242, PAL 2860x288), with the console's 2048x240 or 2560x240 picture inside it (`decode_window.h`). This is where scanline structure, bloom, convergence error, and noise happen -- all in a single compute dispatch.
 
 **Brightness-dependent Gaussian beam profile.** The electron beam is not a uniform line. It has a Gaussian cross-section whose width depends on beam current (brightness). Dark pixels produce a narrow beam (visible gaps between scanlines), bright pixels produce a wide beam that fills the inter-scanline gap and blooms into adjacent lines. The sigma interpolates between `sigma_narrow` (dark, 0.20 typical) and `sigma_wide` (bright, 0.70 typical) based on `pow(luma, bloom_gamma)`.
 
@@ -174,7 +174,7 @@ typedef struct {
 } ChainStage;
 ```
 
-The `SignalChain` holds an array of up to 32 stages, a pair of ping-pong GPU buffers, auxiliary buffers for multi-output stages, carry buffers for sequential filters, and FIR tap coefficient buffers. `chain_run()` iterates the array, dispatches each enabled stage, and ping-pongs the buffers automatically. The same runner handles both video (491,520 float samples, 2048x240) and audio (~29,829 float samples per frame).
+The `SignalChain` holds an array of up to 32 stages, a pair of ping-pong GPU buffers, auxiliary buffers for multi-output stages, carry buffers for sequential filters, and FIR tap coefficient buffers. `chain_run()` iterates the array, dispatches each enabled stage, and ping-pongs the buffers automatically. The same runner handles both video (the full raster, 714,736 float samples for NTSC's 2728x262) and audio (~29,829 float samples per frame).
 
 Adding a stage is appending a struct. No C code changes. Hot-switching connection type is toggling stage enabled flags. The runner does not know or care what the stages do -- it dispatches kernel types and manages buffer routing.
 

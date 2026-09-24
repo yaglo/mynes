@@ -62,7 +62,8 @@ levels, as for `mynes_gpu --record`.
   video is shown at 240 lines per field. The VHS deck model is built for
   that line length.
 - The picture fills the 256 dots by 240 lines a console picture uses, 47.7 of
-  the 52.7 us active line, so the tube shows the same narrow side borders.
+  the 52.7 us active line, so the tube shows the same narrow side borders,
+  black at the encoder's pedestal (`--setup`).
 - NTSC presets only; PAL presets are refused.
 - The input's primaries are taken as the encoder's; an HD source's BT.709
   primaries and SMPTE-C differ by less than the presets' phosphor gamuts.

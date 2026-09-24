@@ -197,7 +197,8 @@ the Auto white fit and in SDR.
   width changes, the backdrop colour outside the picture, the Mega Drive's
   border and the Super Famicom's overscan line placement are approximate:
   the picture sits at raster line 11 (Mega Drive) or 1 (Super Famicom) on a
-  black border. Interlaced Super Famicom output is taken as its first field.
+  black border at the encoder's pedestal, which the decoder shows across the
+  receiver's whole active raster. Interlaced Super Famicom output is taken as its first field.
 - PAL is not wired (PAL Mega Drive lines are 285 cycles, PAL S-PPU 284.17;
   both need their own raster timing).
 - The encoder's own defects are not modelled: chroma/luma delay mismatch,

@@ -1,3 +1,16 @@
+# GPU performance — 24 September 2026, decoded border
+
+Apple M5, 24 GiB, Metal, Release build, validation off, the method below (twelve warmups, 60 fenced frames per size, panel mask mode). The comparison is the parent commit's build against the build that decodes the receiver's whole active raster (the border around the picture): 15.0% more samples through the matrix, RGB amplifiers, rail load, gun current and horizontal spot spread on NTSC, 34.1% on PAL. Other sessions kept the load average at 6 to 9 during the runs, so each binary ran twice, alternating, and the table gives the faster median of the two.
+
+| Preset | 640×480 | 1280×960 | 1920×1440 | 2560×1920 |
+|---|---:|---:|---:|---:|
+| Sony PVM-14L2 | 2.611 → 2.743 ms | 3.901 → 3.831 ms | 5.351 → 5.543 ms | 7.602 → 7.923 ms |
+| JVC D-Series | 3.824 → 4.125 ms | 5.127 → 5.441 ms | 7.311 → 7.644 ms | 10.537 → 10.559 ms |
+| Toshiba 14AF43 | 3.942 → 4.167 ms | 5.275 → 5.467 ms | 7.581 → 7.645 ms | 10.478 → 10.668 ms |
+| Stas's Favourite | 3.889 → 4.179 ms | 5.337 → 5.583 ms | 7.755 → 7.974 ms | 11.010 → 11.249 ms |
+
+Four alternated `--benchmark` runs of the PVM on a Super Mario Bros. state give the steadier figure: 2.502 → 2.584 ms at 640×480 and 7.502 → 7.613 ms at 2560×1920, 0.07 to 0.11 ms a frame. The presets with a loaded video rail (JVC, Toshiba, Stas's Favourite) pay more at small sizes, about 0.2 to 0.3 ms, since the rail's per-line walk is serial and 14% longer. The stages at display resolution are unchanged.
+
 # GPU performance — 23 September 2026
 
 Apple M5, 24 GiB, Metal, Release build, validation off, the same method as the 21 September run below: twelve warmups and 60 individually fenced frames at each resolution, panel mask mode, offscreen scale 1:1, no other MyNES frontend running. One ffmpeg encode held one CPU core during the run (load average 6.4 before, 5.9 after); the GPU was otherwise idle. [Raw chain measurements and load metadata](gpu-benchmark-results.json).
