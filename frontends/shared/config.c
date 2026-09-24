@@ -5,6 +5,7 @@
  * are recognised by simple substring match, unknown lines are skipped.
  * No external deps.
  */
+#define _XOPEN_SOURCE 700  /* realpath under strict C11 */
 #include "config.h"
 #include "saves.h"
 
@@ -330,6 +331,11 @@ bool mynes_config_save(const MynesConfig *cfg) {
 void mynes_config_add_recent(MynesConfig *cfg, const char *path) {
     if (!cfg || !path || !*path) return;
 
+    /* A relative path from the command line only means something in the
+     * directory it was typed in, and the list is opened from anywhere. */
+    char *absolute = realpath(path, NULL);
+    if (absolute && strlen(absolute) < MYNES_PATH_MAX) path = absolute;
+
     /* If already present, remove the existing entry first (move-to-front). */
     int found = -1;
     for (int i = 0; i < cfg->recent_count; i++) {
@@ -352,6 +358,7 @@ void mynes_config_add_recent(MynesConfig *cfg, const char *path) {
     strncpy(cfg->recent_roms[0], path, MYNES_PATH_MAX - 1);
     cfg->recent_roms[0][MYNES_PATH_MAX - 1] = '\0';
     if (cfg->recent_count < MYNES_RECENT_MAX) cfg->recent_count++;
+    free(absolute);
 }
 
 void mynes_config_set_last_preset(MynesConfig *cfg, const char *slug) {

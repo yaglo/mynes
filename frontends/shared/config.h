@@ -62,8 +62,9 @@ bool mynes_config_load(MynesConfig *cfg);
  * Returns true on success. */
 bool mynes_config_save(const MynesConfig *cfg);
 
-/* Add `path` to recent_roms[]. If already present it's moved to the front;
- * otherwise it's prepended and the list is capped at MYNES_RECENT_MAX. */
+/* Add `path` to recent_roms[], made absolute when the file exists. If already
+ * present it's moved to the front; otherwise it's prepended and the list is
+ * capped at MYNES_RECENT_MAX. */
 void mynes_config_add_recent(MynesConfig *cfg, const char *path);
 
 /* Set last_preset (truncates if too long). */

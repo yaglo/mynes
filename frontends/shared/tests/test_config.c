@@ -108,6 +108,27 @@ int main(void) {
     CHECK(cfg.recent_count == 0);
     CHECK(strcmp(cfg.last_preset, "w.json") == 0);
 
+    /* A relative path is stored absolute; a missing file as given. */
+    char cwd[MYNES_PATH_MAX], rom[MYNES_PATH_MAX + 16];
+    CHECK(getcwd(cwd, sizeof(cwd)) != NULL);
+    CHECK(chdir(dir) == 0);
+    FILE *rf = fopen("game.nes", "wb");
+    CHECK(rf != NULL);
+    if (rf) fclose(rf);
+    MynesConfig recents;
+    memset(&recents, 0, sizeof(recents));
+    mynes_config_add_recent(&recents, "game.nes");
+    mynes_config_add_recent(&recents, "missing.nes");
+    mynes_config_add_recent(&recents, "./game.nes");
+    char *real_dir = realpath(dir, NULL);
+    snprintf(rom, sizeof(rom), "%s/game.nes", real_dir ? real_dir : dir);
+    free(real_dir);
+    CHECK(recents.recent_count == 2);
+    CHECK(strcmp(recents.recent_roms[0], rom) == 0);
+    CHECK(strcmp(recents.recent_roms[1], "missing.nes") == 0);
+    remove("game.nes");
+    CHECK(chdir(cwd) == 0);
+
     /* A save that cannot be written reports it and leaves the old file. */
     char blocked[MYNES_PATH_MAX + 8];
     mynes_config_path(blocked, sizeof(blocked));
