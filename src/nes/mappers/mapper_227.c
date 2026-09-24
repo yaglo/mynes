@@ -36,7 +36,6 @@ static void mapper227_select(Mapper *m, uint16_t addr) {
 }
 
 static void mapper227_init(Mapper *m) {
-    m->has_chr_ram = true;
     mapper227_select(m, 0);
 }
 
@@ -55,12 +54,14 @@ static void mapper227_cpu_write(Mapper *m, uint16_t addr, uint8_t val) {
         mapper227_select(m, addr);
 }
 
+/* The boards carry CHR RAM, but a header that declares CHR ROM gets it. */
 static uint8_t mapper227_ppu_read(Mapper *m, uint16_t addr) {
-    return (addr < 0x2000) ? m->chr_ram[addr] : 0;
+    if (addr >= 0x2000) return 0;
+    return m->has_chr_ram ? m->chr_ram[addr] : m->chr_rom[addr % m->chr_rom_size];
 }
 
 static void mapper227_ppu_write(Mapper *m, uint16_t addr, uint8_t val) {
-    if (addr < 0x2000)
+    if (addr < 0x2000 && m->has_chr_ram)
         m->chr_ram[addr] = val;
 }
 
