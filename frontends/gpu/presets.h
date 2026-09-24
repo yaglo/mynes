@@ -46,7 +46,7 @@ typedef struct {
 typedef struct {
     /* ---- Identity ---- */
     char name[128];                 /* short name for UI display */
-    char description[512];          /* one-line description of the setup */
+    char description[1024];         /* description of the setup; the longest shipped one is 630 bytes */
 
     /* ---- Signal path topology ---- */
     VideoConnectionType connection;
