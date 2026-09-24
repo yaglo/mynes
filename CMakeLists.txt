@@ -378,7 +378,8 @@ if(NES_BUILD_FRONTENDS)
         add_test(NAME saves_tests COMMAND test_saves)
 
         # config.json defaults and the stored render scale
-        add_executable(test_config frontends/shared/tests/test_config.c frontends/shared/config.c)
+        add_executable(test_config frontends/shared/tests/test_config.c
+            frontends/shared/config.c frontends/shared/saves.c)
         target_include_directories(test_config PRIVATE frontends/shared)
         target_link_libraries(test_config PRIVATE nes_static)
         add_test(NAME config_tests COMMAND test_config)

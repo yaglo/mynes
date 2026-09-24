@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 static int failures;
@@ -106,6 +107,16 @@ int main(void) {
     CHECK(mynes_config_load(&cfg));
     CHECK(cfg.recent_count == 0);
     CHECK(strcmp(cfg.last_preset, "w.json") == 0);
+
+    /* A save that cannot be written reports it and leaves the old file. */
+    char blocked[MYNES_PATH_MAX + 8];
+    mynes_config_path(blocked, sizeof(blocked));
+    strcat(blocked, ".tmp");
+    CHECK(mkdir(blocked, 0755) == 0);
+    mynes_config_set_last_preset(&cfg, "v.json");
+    CHECK(!mynes_config_save(&cfg));
+    CHECK(config_contains("\"w.json\"") && !config_contains("\"v.json\""));
+    rmdir(blocked);
 
     /* Tidy up. */
     char path[MYNES_PATH_MAX];

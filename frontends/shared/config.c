@@ -6,7 +6,9 @@
  * No external deps.
  */
 #include "config.h"
+#include "saves.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -75,22 +77,49 @@ bool mynes_mkdir_p(const char *path) {
  * JSON I/O — line-oriented, dependency-free
  * ------------------------------------------------------------------------- */
 
-static void json_escape(FILE *f, const char *s) {
-    fputc('"', f);
+/* Growable text; `failed` sticks after the first allocation failure. */
+typedef struct {
+    char  *data;
+    size_t len, cap;
+    bool   failed;
+} TextBuf;
+
+static void text_printf(TextBuf *t, const char *fmt, ...) {
+    if (t->failed) return;
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(NULL, 0, fmt, ap);
+    va_end(ap);
+    if (n < 0) { t->failed = true; return; }
+    if (t->len + (size_t)n + 1 > t->cap) {
+        size_t cap = (t->len + (size_t)n + 1) * 2;
+        char *grown = (char *)realloc(t->data, cap);
+        if (!grown) { t->failed = true; return; }
+        t->data = grown;
+        t->cap = cap;
+    }
+    va_start(ap, fmt);
+    vsnprintf(t->data + t->len, t->cap - t->len, fmt, ap);
+    va_end(ap);
+    t->len += (size_t)n;
+}
+
+static void json_escape(TextBuf *t, const char *s) {
+    text_printf(t, "\"");
     for (const char *p = s; *p; p++) {
         unsigned char c = (unsigned char)*p;
         switch (c) {
-        case '\\': fputs("\\\\", f); break;
-        case '"':  fputs("\\\"", f); break;
-        case '\n': fputs("\\n", f);  break;
-        case '\r': fputs("\\r", f);  break;
-        case '\t': fputs("\\t", f);  break;
+        case '\\': text_printf(t, "\\\\"); break;
+        case '"':  text_printf(t, "\\\""); break;
+        case '\n': text_printf(t, "\\n");  break;
+        case '\r': text_printf(t, "\\r");  break;
+        case '\t': text_printf(t, "\\t");  break;
         default:
-            if (c < 0x20) fprintf(f, "\\u%04x", c);
-            else          fputc((int)c, f);
+            if (c < 0x20) text_printf(t, "\\u%04x", c);
+            else          text_printf(t, "%c", c);
         }
     }
-    fputc('"', f);
+    text_printf(t, "\"");
 }
 
 /* Pull the next quoted JSON string off `*cursor`. Writes the unescaped
@@ -262,41 +291,40 @@ bool mynes_config_save(const MynesConfig *cfg) {
         return false;
     }
 
-    FILE *f = fopen(path, "wb");
-    if (!f) {
-        fprintf(stderr, "mynes_config_save: cannot open %s: %s\n",
-                path, strerror(errno));
-        return false;
-    }
-
-    fprintf(f, "{\n");
-    fprintf(f, "    \"recent_roms\": [\n");
+    /* Built in memory and written through a renamed temporary file, so a
+     * failed or interrupted save never leaves a truncated config behind. */
+    TextBuf t = {0};
+    text_printf(&t, "{\n");
+    text_printf(&t, "    \"recent_roms\": [\n");
     for (int i = 0; i < cfg->recent_count; i++) {
-        fprintf(f, "        ");
-        json_escape(f, cfg->recent_roms[i]);
-        fputs(i + 1 < cfg->recent_count ? ",\n" : "\n", f);
+        text_printf(&t, "        ");
+        json_escape(&t, cfg->recent_roms[i]);
+        text_printf(&t, "%s", i + 1 < cfg->recent_count ? ",\n" : "\n");
     }
-    fprintf(f, "    ],\n");
-    fprintf(f, "    \"gpu_mask_alignment\": %d,\n",cfg->gpu_mask_alignment==1 ? 1 : 0);
-    fprintf(f, "    \"gpu_hdr_gain_mode\": %d,\n",cfg->gpu_hdr_gain_mode==1 ? 1 : 0);
-    fprintf(f, "    \"gpu_panel_primaries\": %d,\n",cfg->gpu_panel_primaries==0 ? 0 : 1);
-    fprintf(f, "    \"gpu_hdr_boost\": %d,\n",cfg->gpu_hdr_boost);
-    fprintf(f, "    \"gpu_lab_split\": %d,\n    \"gpu_lab_gap_r\": %d,\n    \"gpu_lab_gap_g\": %d,\n    \"gpu_lab_gap_b\": %d,\n",
+    text_printf(&t, "    ],\n");
+    text_printf(&t, "    \"gpu_mask_alignment\": %d,\n",cfg->gpu_mask_alignment==1 ? 1 : 0);
+    text_printf(&t, "    \"gpu_hdr_gain_mode\": %d,\n",cfg->gpu_hdr_gain_mode==1 ? 1 : 0);
+    text_printf(&t, "    \"gpu_panel_primaries\": %d,\n",cfg->gpu_panel_primaries==0 ? 0 : 1);
+    text_printf(&t, "    \"gpu_hdr_boost\": %d,\n",cfg->gpu_hdr_boost);
+    text_printf(&t, "    \"gpu_lab_split\": %d,\n    \"gpu_lab_gap_r\": %d,\n    \"gpu_lab_gap_g\": %d,\n    \"gpu_lab_gap_b\": %d,\n",
         cfg->gpu_lab_split,cfg->gpu_lab_gap[0],cfg->gpu_lab_gap[1],cfg->gpu_lab_gap[2]);
-    fprintf(f, "    \"gpu_lab_gain_r\": %d,\n    \"gpu_lab_gain_g\": %d,\n    \"gpu_lab_gain_b\": %d,\n    \"gpu_lab_fill\": %d,\n",
+    text_printf(&t, "    \"gpu_lab_gain_r\": %d,\n    \"gpu_lab_gain_g\": %d,\n    \"gpu_lab_gain_b\": %d,\n    \"gpu_lab_fill\": %d,\n",
         cfg->gpu_lab_gain[0],cfg->gpu_lab_gain[1],cfg->gpu_lab_gain[2],cfg->gpu_lab_fill);
-    fprintf(f, "    \"gpu_lab_reference\": %d,\n    \"gpu_lab_fit\": %d,\n",cfg->gpu_lab_reference,cfg->gpu_lab_fit);
-    fprintf(f, "    \"gpu_panel_subpixels\": %d,\n",cfg->gpu_panel_subpixels==1 || cfg->gpu_panel_subpixels==2 ? cfg->gpu_panel_subpixels : 0);
-    fprintf(f, "    \"gpu_room_reflections\": %d,\n",cfg->gpu_room_reflections==1 ? 1 : 0);
-    fprintf(f, "    \"gpu_render_scale\": \"%s\",\n",
+    text_printf(&t, "    \"gpu_lab_reference\": %d,\n    \"gpu_lab_fit\": %d,\n",cfg->gpu_lab_reference,cfg->gpu_lab_fit);
+    text_printf(&t, "    \"gpu_panel_subpixels\": %d,\n",cfg->gpu_panel_subpixels==1 || cfg->gpu_panel_subpixels==2 ? cfg->gpu_panel_subpixels : 0);
+    text_printf(&t, "    \"gpu_room_reflections\": %d,\n",cfg->gpu_room_reflections==1 ? 1 : 0);
+    text_printf(&t, "    \"gpu_render_scale\": \"%s\",\n",
             render_scale_names[cfg->gpu_render_scale>=0 && cfg->gpu_render_scale<=3 ? cfg->gpu_render_scale : 1]);
-    fprintf(f, "    \"gpu_low_latency\": %d,\n",cfg->gpu_low_latency==0 ? 0 : 1);
-    fprintf(f, "    \"last_preset\": ");
-    json_escape(f, cfg->last_preset);
-    fprintf(f, "\n}\n");
+    text_printf(&t, "    \"gpu_low_latency\": %d,\n",cfg->gpu_low_latency==0 ? 0 : 1);
+    text_printf(&t, "    \"last_preset\": ");
+    json_escape(&t, cfg->last_preset);
+    text_printf(&t, "\n}\n");
 
-    fclose(f);
-    return true;
+    bool ok = !t.failed;
+    if (!ok) fprintf(stderr, "mynes_config_save: out of memory\n");
+    ok = ok && mynes_write_file_atomic(path, t.data, t.len);
+    free(t.data);
+    return ok;
 }
 
 void mynes_config_add_recent(MynesConfig *cfg, const char *path) {
