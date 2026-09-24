@@ -149,35 +149,40 @@ static inline void decode_window_trace_crop(const DecodeWindow *w, int *x0, int 
  * active field (overscanned edges included: the EHT, the black-level
  * tracker and the mask's heating see the beam current wherever it lands).
  * The picture's lines count by how much of each the field covers. Around
- * the picture the 2C02 draws its border, border_rgb, on lines 0 to 241 from
- * dot 49 to 331 wherever the active line reaches; the 2C07 blanks it, so a
- * PAL caller passes black. The rest is blanking. rgb888 is the 256x240
- * picture; out receives the R, G and B means and the BT.601 luma of them,
- * 0 to 1, over the whole active raster. */
+ * the picture the 2C02 draws its border on lines 0 to 241 from dot 49 to
+ * 331 wherever the active line reaches: border_rgb[line][0] left of the
+ * picture, [line][1] right of it and across lines 240 and 241. The 2C07
+ * blanks it, so a PAL caller passes black. The rest is blanking. rgb888 is
+ * the 256x240 picture; out receives the R, G and B means and the BT.601
+ * luma of them, 0 to 1, over the whole active raster. */
 static inline void decode_window_raster_mean(const DecodeWindow *w, const unsigned char *rgb888,
-                                             const unsigned char border_rgb[3], float out[4]) {
+                                             const unsigned char border_rgb[242][2][3], float out[4]) {
     double line0 = -(double)w->picture_top, line1 = line0 + w->active_lines;   /* the field, in picture lines */
     double dot0 = (double)w->picture_dot - w->picture_left, dot1 = dot0 + w->active_dots;
     double border0 = dot0 > 49 ? dot0 : 49, border1 = dot1 < 332 ? dot1 : 332;
-    double side = (w->picture_dot - border0) + (border1 - (w->picture_dot + SIGNAL_NES_WIDTH));
-    double sum[3] = {0, 0, 0}, border_area = 0;
+    double left = w->picture_dot - border0, right = border1 - (w->picture_dot + SIGNAL_NES_WIDTH);
+    if (left < 0) left = 0;
+    if (right < 0) right = 0;
+    double sum[3] = {0, 0, 0};
     for (int line = 0; line < 242; line++) {
         double top = line > line0 ? line : line0, bottom = line + 1 < line1 ? line + 1 : line1;
         double cover = bottom - top;
         if (cover <= 0) continue;
+        double wl = left, wr = right;
         if (line < SIGNAL_NES_HEIGHT) {
             const unsigned char *row = rgb888 + (size_t)line * SIGNAL_NES_WIDTH * 3;
             unsigned long line_sum[3] = {0, 0, 0};
             for (int x = 0; x < SIGNAL_NES_WIDTH; x++)
                 for (int ch = 0; ch < 3; ch++) line_sum[ch] += row[x * 3 + ch];
             for (int ch = 0; ch < 3; ch++) sum[ch] += cover * (double)line_sum[ch];
-            border_area += cover * (side > 0 ? side : 0);
         } else {
-            border_area += cover * (border1 > border0 ? border1 - border0 : 0);
+            wr = border1 > w->picture_dot ? border1 - w->picture_dot : 0;   /* from dot 65 across */
         }
+        for (int ch = 0; ch < 3; ch++)
+            sum[ch] += cover * (wl * border_rgb[line][0][ch] + wr * border_rgb[line][1][ch]);
     }
     double area = (double)w->active_dots * w->active_lines * 255.0;
-    for (int ch = 0; ch < 3; ch++) out[ch] = (float)((sum[ch] + border_area * border_rgb[ch]) / area);
+    for (int ch = 0; ch < 3; ch++) out[ch] = (float)(sum[ch] / area);
     out[3] = 0.299f * out[0] + 0.587f * out[1] + 0.114f * out[2];
 }
 

@@ -546,8 +546,10 @@ static void split_geometry(SDL_GPUDevice *gpu) {
  * two backdrop lines below from the line's start to dot 332. */
 static void raster_mean(void) {
     static unsigned char black[256 * 240 * 3], white[256 * 240 * 3];
+    static unsigned char none[242][2][3], full[242][2][3], upper_left[242][2][3];
     memset(white, 255, sizeof(white));
-    const unsigned char none[3] = {0, 0, 0}, full[3] = {255, 255, 255};
+    memset(full, 255, sizeof(full));
+    for (int line = 0; line < 120; line++) memset(upper_left[line][0], 255, 3);
     DecodeWindow n, p;
     decode_window_raster(&n, SIGNAL_REGION_NTSC, 8, 341, SIGNAL_PICTURE_DOT);
     decode_window_raster(&p, SIGNAL_REGION_PAL, 10, 341, SIGNAL_PICTURE_DOT);
@@ -555,15 +557,74 @@ static void raster_mean(void) {
     double side = n.picture_left + (332 - 321);
     double border = (239 * side + 2 * (332 - (SIGNAL_PICTURE_DOT - n.picture_left))) / area;
     float m[4];
-    decode_window_raster_mean(&n, white, none, m);
+    decode_window_raster_mean(&n, white, (const unsigned char (*)[2][3])none, m);
     CHECK(fabs(m[0] - 239 * 256 / area) < 1e-5 && fabs(m[3] - m[0]) < 1e-5);
     printf("Raster load, NTSC: a white picture is %.4f of the raster,", m[0]);
-    decode_window_raster_mean(&n, black, full, m);
+    decode_window_raster_mean(&n, black, (const unsigned char (*)[2][3])full, m);
     CHECK(fabs(m[1] - border) < 1e-5);
-    printf(" a white border %.4f;", m[1]);
-    decode_window_raster_mean(&p, white, none, m);
+    printf(" a white border %.4f,", m[1]);
+    /* The border of each line: white only left of lines 0 to 119, of which
+     * 1 to 119 are in the field. */
+    decode_window_raster_mean(&n, black, (const unsigned char (*)[2][3])upper_left, m);
+    CHECK(fabs(m[1] - 119 * n.picture_left / area) < 1e-5);
+    printf(" its upper left %.4f;", m[1]);
+    decode_window_raster_mean(&p, white, (const unsigned char (*)[2][3])none, m);
     CHECK(fabs(m[2] - 240 * 256 / ((double)p.active_dots * p.active_lines)) < 1e-5);
     printf(" PAL picture %.4f\n", m[2]);
+}
+
+/* The border follows the backdrop line by line: with $22 given for lines 0
+ * to 119 and $16 for 120 to 241 (a game that changes $3F00 mid-frame), each
+ * side of each line decodes to the colour a picture of that entry decodes
+ * to, composite and RGB PPU alike, and the two lines below the picture take
+ * the later entry. */
+static void border_per_line(SDL_GPUDevice *gpu) {
+    static uint16_t border[242][2];
+    for (int line = 0; line < 242; line++) border[line][0] = border[line][1] = line < 120 ? 0x22 : 0x16;
+    for (int rgb = 0; rgb < 2; rgb++) {
+        SignalPrecompute sp; VideoChain c; VideoGPUChain v;
+        CHECK(chain(gpu, &v, &c, &sp, SIGNAL_REGION_NTSC, rgb ? VIDEO_CONN_RGB : VIDEO_CONN_COMPOSITE, VIDEO_COMB_NONE));
+        if (rgb) {
+            float matrix[3][3] = {{1, 0, 0}, {1, 0, 0}, {1, 0, 0}}, bias[3] = {0};
+            video_gpu_set_color_matrix(&v, matrix, bias);
+        }
+        static uint16_t codes[256 * 240];
+        float *rgb_out = malloc(v.rgb_size), *ref[2] = {malloc(v.rgb_size), malloc(v.rgb_size)};
+        const unsigned entries[2] = {0x22, 0x16};
+        double colour[2][3];
+        for (int k = 0; k < 2; k++) {
+            set_backdrop(&v, &sp, entries[k]);
+            for (int i = 0; i < 256 * 240; i++) codes[i] = (uint16_t)entries[k];
+            CHECK(frames(gpu, &v, &sp, codes, 8 * k, 8, ref[k]));
+            double probe[3];
+            for (int ch = 0; ch < 3; ch++) colour[k][ch] = 0;
+            for (int line = 60; line <= 180; line++) {
+                mean_rgb(&v, ref[k], line + v.window.picture_row, v.window.picture_x + 400, v.window.picture_x + 1600, probe);
+                for (int ch = 0; ch < 3; ch++) colour[k][ch] += probe[ch] / 121;
+            }
+        }
+        set_backdrop(&v, &sp, 0x0f);
+        video_gpu_set_border_lines(&v, (const uint16_t (*)[2])border);
+        for (int i = 0; i < 256 * 240; i++) codes[i] = 0x0f;
+        CHECK(frames(gpu, &v, &sp, codes, 16, 8, rgb_out));
+        const int sides[2][2] = {{55, 61}, {324, 330}};
+        double worst = 0, probe[3];
+        for (int line = 20; line < 242; line++) {
+            if (line >= 110 && line < 130) continue;   /* the change's reach through the loops and filters */
+            int k = line < 120 ? 0 : 1;
+            for (int s = 0; s < 2; s++) {
+                if (line >= 240 && s == 0) continue;
+                int x0 = line >= 240 ? dot_sample(&v, 100) : dot_sample(&v, sides[s][0]);
+                int x1 = line >= 240 ? dot_sample(&v, 220) : dot_sample(&v, sides[s][1]);
+                mean_rgb(&v, rgb_out, line + v.window.picture_row, x0, x1, probe);
+                for (int ch = 0; ch < 3; ch++) worst = fmax(worst, fabs(probe[ch] - colour[k][ch]));
+            }
+        }
+        printf("Border per line, %s: $22 above line 120 and $16 below within %.4f\n", rgb ? "RGB PPU" : "composite", worst);
+        CHECK(worst < .02);
+        CHECK(fabs(colour[0][2] - colour[1][2]) > .1);   /* the two colours differ */
+        free(rgb_out); free(ref[0]); free(ref[1]); video_gpu_destroy(&v, gpu);
+    }
 }
 
 /* An isolated line carries the light of a line of a uniform field whatever
@@ -708,5 +769,6 @@ int test_border(SDL_GPUDevice *gpu) {
     scaler_sees_first_line(gpu);
     field_top_hue(gpu);
     split_geometry(gpu);
+    border_per_line(gpu);
     return failures;
 }

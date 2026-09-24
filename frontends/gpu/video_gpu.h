@@ -38,6 +38,9 @@ typedef struct {
     float sync_level, burst_amp;
     uint32_t burst_sine;
     float backdrop[12], gray_backdrop[12];
+    /* 1: the DAC wrote each line's border waveforms after the picture's
+     * samples (dac_2c02.comp.glsl); 0: every line takes backdrop. */
+    uint32_t border_table, pad[3];
 } GpuRasterParams;
 
 /* One picture from a console whose video chip outputs RGB codes through a
@@ -83,6 +86,14 @@ typedef struct {
      * the raster's border is blanking and an RGB PPU's is entry $0F. */
     float backdrop[12], gray_backdrop[12];
     unsigned backdrop_entry;
+    /* The border per raster line, [line][0] left of the picture and
+     * [line][1] right of it (playback.h), set by video_gpu_set_border_lines.
+     * The GPU DAC reads the entries after the picture's codes and draws each
+     * line's border; without them the raster takes backdrop and
+     * gray_backdrop, and an RGB PPU backdrop_entry, on every line. */
+    uint16_t border_lines[242][2];
+    bool border_lines_set;
+    bool raster_border_table;
     unsigned elapsed_frames;
 
 
@@ -271,6 +282,13 @@ bool video_gpu_process_full(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
  *
  * Returns true if the GPU chain produced output. */
 bool video_gpu_process_rgb(VideoGPUChain *vgc, SDL_GPUDevice *gpu, const VideoRGBSource *src);
+
+/* The 2C02's border for the next frames, one 9-bit entry (palette index
+ * and emphasis) per raster line on each side of the picture: lines[r][0]
+ * for dots 49 to 64 and lines[r][1] from dot 321, across the line on lines
+ * 240 and 241. NULL gives every line backdrop_entry. Only the GPU DAC path
+ * (video_gpu_process_full) follows it. */
+void video_gpu_set_border_lines(VideoGPUChain *vgc, const uint16_t (*lines)[2]);
 
 /* The part of the decode window the tube scans, as decode_window.glsl's
  * trace: x0, x1 in window samples and rows [row0, row1). A TV blanks its

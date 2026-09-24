@@ -50,7 +50,7 @@ for a hardware measurement listed at the end.
 
 ## Work packages
 
-**WP0, enabler (first, serial).** `[ ]` Split `video_gpu.c` into `stages/{console,rf,receiver,yc,decode,amp,beam,temporal,vhs}.c`; `TVDisplayParams` into `params_<area>.h`; `preset_apply.c`, `gpu_osd.c`, `signal_precompute.h`, `crt_color.h`, `crt_display.frag.glsl` and `gpu_display.c` per area; a per-line timing buffer, a per-line supply table, a separate RGB-input matrix, a configurable active width (done: the decode window takes the raster's dots per line and the picture's start), a cartridge-audio hook, a per-line border buffer, a measured-displacement LUT input; per-stage GPU timing from Metal command buffers. Test: PFM captures of all presets bit-identical before and after.
+**WP0, enabler (first, serial).** `[ ]` Split `video_gpu.c` into `stages/{console,rf,receiver,yc,decode,amp,beam,temporal,vhs}.c`; `TVDisplayParams` into `params_<area>.h`; `preset_apply.c`, `gpu_osd.c`, `signal_precompute.h`, `crt_color.h`, `crt_display.frag.glsl` and `gpu_display.c` per area; a per-line timing buffer, a per-line supply table, a separate RGB-input matrix, a configurable active width (done: the decode window takes the raster's dots per line and the picture's start), a cartridge-audio hook, a per-line border buffer (done: `PlaybackFrame.border`, drawn by the DAC and the raster stage), a measured-displacement LUT input; per-stage GPU timing from Metal command buffers. Test: PFM captures of all presets bit-identical before and after.
 
 **WP-A, console source, raster, cable.**
 - [~] RGB-PPU palettes (2C03 done; 2C04, 2C05 open).
@@ -82,7 +82,7 @@ for a hardware measurement listed at the end.
 
 **WP-I, audio.** `[ ]` Console filter from the schematic (item 3); RF sound de-emphasis, FM noise and buzz (item 5); blip-style resampler and exact TND (item 14); Q4 follower nonlinearity and soft limiter; PVM and Toshiba speaker networks (item 28); HCU04 supply gain; Famicom cartridge routing; CPU audio chain by default with an adaptive queue and underruns in the OSD. References `nes001_audio`, `hvc001_audio`, `pvm14l2_audio_out`, `toshiba_14af43_audio`, `etrom_mixer`. Test `test_audio_circuit.c`.
 
-**WP-J, emulator core.** `[ ]` MMC5 ExRAM mode 1 and split; MMC5 audio; Sunsoft 5B audio (item 10); per-dot border export; `composite.h` on the terminated tables (item 33).
+**WP-J, emulator core.** `[ ]` MMC5 ExRAM mode 1 and split; MMC5 audio; Sunsoft 5B audio (item 10); per-dot border export (per line done, sampled at each line's end in `playback.c`); `composite.h` on the terminated tables (item 33).
 
 **WP-K, calibration data, FW900, evidence.** `[ ]` FW900 primaries, tone, tracking, halation, geometry and an OSSC RGB variant (item 26); `_evidence` provenance and schema version (item 32); PVM §2-17 black-level test.
 

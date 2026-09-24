@@ -172,15 +172,18 @@ static bool calibrate_white(unsigned frame) {
     memcpy(backdrop, video_gpu_chain.backdrop, sizeof(backdrop));
     memcpy(gray_backdrop, video_gpu_chain.gray_backdrop, sizeof(gray_backdrop));
     unsigned backdrop_entry = video_gpu_chain.backdrop_entry;
+    bool border_lines_set = video_gpu_chain.border_lines_set;
     memcpy(video_gpu_chain.backdrop, sig_state.table[0x0f], 12 * sizeof(float));
     memcpy(video_gpu_chain.gray_backdrop, sig_state.table[0x0f & 0x1f0], 12 * sizeof(float));
     video_gpu_chain.backdrop_entry = 0x0f;
+    video_gpu_chain.border_lines_set = false;
     for (int i = 0; i < 24; i++)
         video_gpu_process_full(&video_gpu_chain, gpu, white,
             sig_state.phase_base + signal_frame_phase(&sig_state, frame + i), sig_state.phase_line_adv, 0, NULL);
     memcpy(video_gpu_chain.backdrop, backdrop, sizeof(backdrop));
     memcpy(video_gpu_chain.gray_backdrop, gray_backdrop, sizeof(gray_backdrop));
     video_gpu_chain.backdrop_entry = backdrop_entry;
+    video_gpu_chain.border_lines_set = border_lines_set;
     bool measured = false;
     int beam_w, beam_h;
     SDL_GPUTexture *beam = video_gpu_get_beam_texture(&video_gpu_chain);
@@ -2213,14 +2216,17 @@ int main(int argc, char **argv) {
             }
         }
 
-        /* The core exposes the backdrop at frame handoff. Raster-side palette
-         * writes are not observed here; this snapshot is used only outside the picture.
-         * A paused or covered game keeps showing its retained picture, border
-         * included; a static frame and the empty screen have a black one. */
+        /* The border as the 2C02 drew it on each raster line (playback.c,
+         * run_frame), and the backdrop at frame handoff for what takes one
+         * colour. A paused or covered game keeps showing its retained
+         * picture, border included; a static frame and the empty screen
+         * have a black one. */
         unsigned backdrop = rom_loaded && !static_frame_buf ? picture.backdrop : 0x0f;
+        const uint16_t (*border_lines)[2] = rom_loaded && !static_frame_buf ? (const uint16_t (*)[2])picture.border : NULL;
         memcpy(video_gpu_chain.backdrop, sig_state.table[backdrop], 12 * sizeof(float));
         memcpy(video_gpu_chain.gray_backdrop, sig_state.table[backdrop & 0x1f0], 12 * sizeof(float));
         video_gpu_chain.backdrop_entry = backdrop;
+        video_gpu_set_border_lines(&video_gpu_chain, border_lines);
 
         /* --- Overlays (before signal processing) --- */
         preset_composite_overlays(&preset_ctx);
@@ -2270,10 +2276,15 @@ int main(int argc, char **argv) {
             DecodeWindow raster;
             decode_window_raster(&raster, sig_state.region, sig_state.samples_per_pixel, 341, SIGNAL_PICTURE_DOT);
             const uint8_t (*pal)[3] = display_ppu.color_palette ? display_ppu.color_palette : ppu_palette_2c02;
-            uint8_t border[3] = {0, 0, 0};
-            if (sig_state.region != SIGNAL_REGION_PAL) memcpy(border, pal[backdrop & 0x3f], 3);
+            static uint8_t border_rgb[242][2][3];
+            for (int line = 0; line < 242; line++)
+                for (int side = 0; side < 2; side++) {
+                    unsigned entry = border_lines ? border_lines[line][side] : backdrop;
+                    if (sig_state.region == SIGNAL_REGION_PAL) memset(border_rgb[line][side], 0, 3);
+                    else memcpy(border_rgb[line][side], pal[entry & 0x3f], 3);
+                }
             float means[4];
-            decode_window_raster_mean(&raster, display_ppu.framebuffer, border, means);
+            decode_window_raster_mean(&raster, display_ppu.framebuffer, (const uint8_t (*)[2][3])border_rgb, means);
             render_ctx.frame_brightness = means[3];
             memcpy(render_ctx.frame_rgb, means, sizeof(render_ctx.frame_rgb));
             render_ctx.frame_rgb_valid = true;

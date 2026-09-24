@@ -43,6 +43,11 @@
  * manages cmd lifecycle and submits once at the end. */
 static bool dispatch_video_amp(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd);
 
+void video_gpu_set_border_lines(VideoGPUChain *vgc, const uint16_t (*lines)[2]) {
+    vgc->border_lines_set = lines != NULL;
+    if (lines) memcpy(vgc->border_lines, lines, sizeof(vgc->border_lines));
+}
+
 void video_gpu_scanned_trace(const VideoGPUChain *v, float trace[4]) {
     const DecodeWindow *w = &v->window;
     if (v->chain && v->chain->tv.monitor_model == 1) {
@@ -1535,7 +1540,8 @@ static void update_demod_params(VideoGPUChain *vgc) {
         .line_phase = (float)vgc->signal_line_phase,
         .region = (uint32_t)vgc->signal_fmt.region,
         .lines = (uint32_t)vgc->raster_fmt.lines,
-        .separate_yc = vgc->source_separated ? 1u : 0u
+        .separate_yc = vgc->source_separated ? 1u : 0u,
+        .border_table = vgc->raster_border_table ? 1u : 0u
     };
     memcpy(raster.backdrop, vgc->backdrop, sizeof(raster.backdrop));
     memcpy(raster.gray_backdrop, vgc->gray_backdrop, sizeof(raster.gray_backdrop));
@@ -1601,6 +1607,7 @@ bool video_gpu_process(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
                        const float *waveform, float *rgb_out)
 {
     vgc->source_separated=false; // Externally supplied waveform is composite.
+    vgc->raster_border_table = false;   /* the waveform holds the picture only */
     update_receiver_frame_step(vgc, vgc->signal_phase_base);   /* the caller sets the waveform's phase */
     update_signal_time(vgc);
     const SignalFormat *fmt = &vgc->signal_fmt;
@@ -2294,7 +2301,9 @@ bool video_gpu_process_full(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     const SignalFormat *fmt = &vgc->signal_fmt;
     if (fmt->region == SIGNAL_REGION_PAL && !vgc->buf_signal_table_alt) return false;
     vgc->source_separated=vgc->chain->connection==VIDEO_CONN_SVIDEO;
-    const Uint32 bytes = 256 * 240 * sizeof(uint16_t);
+    /* The picture's codes, then each raster line's border entries. */
+    const Uint32 picture_bytes = 256 * 240 * sizeof(uint16_t);
+    const Uint32 bytes = picture_bytes + (Uint32)sizeof(vgc->border_lines);
     if (!vgc->buf_indices) {
         vgc->indices_size = bytes;
         vgc->buf_indices = gpu_buffer_create(gpu, bytes, GPU_BUF_READONLY);
@@ -2306,7 +2315,12 @@ bool video_gpu_process_full(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     if (!vgc->buf_indices || !vgc->indices_transfer) return false;
     void *mapped = SDL_MapGPUTransferBuffer(gpu, vgc->indices_transfer, true);
     if (!mapped) return false;
-    memcpy(mapped, idx_fb, bytes);
+    memcpy(mapped, idx_fb, picture_bytes);
+    uint16_t (*border)[2] = (uint16_t (*)[2])((uint8_t *)mapped + picture_bytes);
+    for (int line = 0; line < 242; line++)
+        for (int side = 0; side < 2; side++)
+            border[line][side] = vgc->border_lines_set ? (uint16_t)(vgc->border_lines[line][side] & 0x1ffu)
+                                                       : (uint16_t)(vgc->backdrop_entry & 0x1ffu);
     SDL_UnmapGPUTransferBuffer(gpu, vgc->indices_transfer);
     SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(gpu);
     if (!cmd) return false;
@@ -2353,6 +2367,7 @@ bool video_gpu_process_full(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     SDL_EndGPUComputePass(pass);
     vgc->signal_phase_base = phase_base;
     vgc->signal_line_phase = phase_line_adv;
+    vgc->raster_border_table = !source_rgb && vgc->border_lines_set;
     update_receiver_frame_step(vgc, phase_base);
     update_signal_time(vgc);
     vgc->demod_line_phase = phase_line_adv * 2.0f * (float)M_PI / 12.0f;
@@ -2485,6 +2500,7 @@ bool video_gpu_process_rgb(VideoGPUChain *vgc, SDL_GPUDevice *gpu, const VideoRG
     vgc->raster_burst_amp = 0.2f;
     vgc->raster_burst_sine = true;
     for (int k = 0; k < 12; k++) vgc->backdrop[k] = vgc->gray_backdrop[k] = src->setup;
+    vgc->raster_border_table = false;
     vgc->signal_phase_base = src->phase_base;
     vgc->signal_line_phase = src->phase_line_adv;
     update_receiver_frame_step(vgc, src->phase_base);

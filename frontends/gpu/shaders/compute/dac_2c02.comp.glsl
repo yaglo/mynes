@@ -13,7 +13,8 @@
  *
  * Output: 2048×240 (NTSC) or 2560×240 (PAL) float waveform buffer
  *         (8 or 10 samples per NES pixel × 256 pixels per scanline), which
- *         the raster stage places on the full line; an RGB PPU writes the
+ *         the raster stage places on the full line, followed by each raster
+ *         line's border waveforms (border_table); an RGB PPU writes the
  *         decode window's RGB instead (below)
  *
  * Each thread handles one NES pixel: reads palette+emphasis, looks up
@@ -68,18 +69,21 @@ layout(set = 2, binding = 0) uniform Params {
     uint  use_alt_table;       /* 1 = PAL (alternate odd lines), 0 = NTSC */
     uint source_mode;          /* 0=composite, 1=Y/C, 2=ideal component/RGB modification */
     vec4 rgb_row_r, rgb_row_g, rgb_row_b; /* matrix rows and bias for RGB input */
-    /* RGB PPU: the backdrop's 9-bit entry, the decode window and the
-     * region (0 NTSC, 1 PAL). */
+    /* RGB PPU: the backdrop's 9-bit entry (the border's now come after the
+     * picture's codes), the decode window and the region (0 NTSC, 1 PAL). */
     uint backdrop_entry, window_dots, window_lines, window_width;
     int start_dot, picture_dot, picture_row;
     uint region;
 };
 
-uint pixel_entry(uint sy, uint px) {
-    uint flat_idx = sy * 256u + px;
+uint code_at(uint flat_idx) {
     uint packed = index_data[flat_idx / 2u];
     return ((flat_idx & 1u) == 0u ? (packed & 0xFFFFu) : (packed >> 16u)) & 0x1FFu;
 }
+uint pixel_entry(uint sy, uint px) { return code_at(sy * 256u + px); }
+/* After the picture's codes, each raster line's border: side 0 left of the
+ * picture (dots 49 to 64), side 1 right of it (and across lines 240, 241). */
+uint border_entry(uint line, uint side) { return code_at(256u * 240u + line * 2u + side); }
 
 // An RGB PPU: the 2C03's palette, three bits per gun (NESdev, PPU palettes),
 // as gun voltages in sevenths. An emphasis bit drives its gun to full. The
@@ -101,7 +105,8 @@ void rgb_ppu() {
     bool lit = true;
     uint entry = 0u;
     if (line >= 0 && line < 240 && px >= 0 && px < 256) entry = pixel_entry(uint(line), uint(px));
-    else if (region == 0u && line >= 0 && line < 242 && raster_dot >= 50 && raster_dot < 332) entry = backdrop_entry;
+    else if (region == 0u && line >= 0 && line < 242 && raster_dot >= 50 && raster_dot < 332)
+        entry = border_entry(uint(line), raster_dot < picture_dot ? 0u : 1u);
     else lit = false;
     vec3 gun = vec3(0.0);
     if (lit) {
@@ -120,6 +125,17 @@ void rgb_ppu() {
     }
 }
 
+/* Each raster line's border waveforms for the raster stage, after the
+ * picture's samples: 36 floats per line, the left border's 12 carrier
+ * phases, its hue-0 pulse at dot 49 (the entry in greyscale) and the right
+ * border's, from the entries the frontend gave (border_entry). */
+void border_table(uint line, uint k) {
+    uint side = k < 24u ? 0u : 1u;
+    uint entry = border_entry(line, side);
+    if (k >= 12u && k < 24u) entry &= 0x1F0u;
+    waveform[240u * samples_per_line + line * 36u + k] = signal_table[entry * 24u + k % 12u];
+}
+
 void main() {
     if (source_mode == 2u) { rgb_ppu(); return; }
 
@@ -130,6 +146,8 @@ void main() {
     uint sy = gl_WorkGroupID.y;
 
     if (px >= 256 || sy >= 240) return;
+    if (px < 36u) border_table(sy, px);
+    else if (px < 72u && sy < 2u) border_table(240u + sy, px - 36u);
 
     /* 9-bit entry: bits 0..5 = palette, bits 6..8 = emphasis. */
     uint entry = pixel_entry(sy, px);
