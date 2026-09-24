@@ -935,19 +935,22 @@ if(NES_CRT_USB AND NES_BUILD_TESTS)
 endif()
 
 # alltests runs ctest over every test above, so it has to build every
-# executable those tests run: the test_* binaries, accuracy_coin, and the
-# tools and shaders the script-driven GPU tests call. Collected here rather
+# executable those tests run: the test_* binaries, accuracy_coin, the
+# frontends and tools the script-driven tests call, and the shaders. Collected here rather
 # than listed by hand, so a new test cannot be left out and run stale or
 # "Not Run".
 if(NES_BUILD_TESTS)
     get_property(MYNES_ALL_TARGETS DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
     set(MYNES_TEST_TARGETS)
+    # Every executable, not only test_*: script-driven tests run the
+    # frontends and tools themselves (mynes_gpu, mynes_video, ...).
     foreach(target IN LISTS MYNES_ALL_TARGETS)
-        if(target MATCHES "^test_" OR target STREQUAL "accuracy_coin")
+        get_target_property(target_type ${target} TYPE)
+        if(target_type STREQUAL "EXECUTABLE")
             list(APPEND MYNES_TEST_TARGETS ${target})
         endif()
     endforeach()
-    foreach(target IN ITEMS mynes_video gpu_shaders)
+    foreach(target IN ITEMS gpu_shaders)
         if(TARGET ${target})
             list(APPEND MYNES_TEST_TARGETS ${target})
         endif()
