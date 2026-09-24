@@ -76,9 +76,21 @@ static void state_clamp_indices(NES *nes) {
     if (ppu->sprite_count > 8) ppu->sprite_count = 8;
     if (ppu->sprites_on_line > 8) ppu->sprites_on_line = 8;
 
-    for (int i = 0; i < 2; i++)
-        nes->apu.pulse[i].sequence_step &= 7;
-    nes->apu.triangle.sequence_step &= 31;
+    /* The mixer indexes its DAC tables with the channel outputs, so the
+     * envelope levels and the DMC counter stay within their widths too.
+     * The shift keeps the sweep's target a defined shift. */
+    APU *apu = &nes->apu;
+    for (int i = 0; i < 2; i++) {
+        apu->pulse[i].sequence_step &= 7;
+        apu->pulse[i].envelope_decay &= 15;
+        apu->pulse[i].envelope_divider &= 15;
+        apu->pulse[i].sweep_shift &= 7;
+        apu->pulse[i].sweep_period &= 7;
+    }
+    apu->triangle.sequence_step &= 31;
+    apu->noise.envelope_decay &= 15;
+    apu->noise.envelope_divider &= 15;
+    apu->dmc.output_level &= 0x7F;
 
     Mapper *m = &nes->mapper;
     /* MMC3 keeps its mode bits beside the register number and masks on

@@ -208,6 +208,27 @@ int main(void) {
     CHECK(nes_state_load(&nes, again, size, error, sizeof(error)));
     CHECK(nes.ppu.secondary_addr == 0x1f && nes.ppu.sprites_on_line == 8);
 
+    /* The channel outputs index the mixer's DAC tables: a negative
+     * envelope or an 8-bit DMC level would reach outside them. */
+    memcpy(again, state, size);
+    int bogus_level = -100;
+    memcpy(again + sizeof(header) + offsetof(NES, apu.pulse[0].envelope_decay), &bogus_level, sizeof(int));
+    memcpy(again + sizeof(header) + offsetof(NES, apu.pulse[1].envelope_decay), &bogus_level, sizeof(int));
+    memcpy(again + sizeof(header) + offsetof(NES, apu.noise.envelope_decay), &bogus_level, sizeof(int));
+    memcpy(again + sizeof(header) + offsetof(NES, apu.pulse[0].envelope_divider), &bogus_level, sizeof(int));
+    memcpy(again + sizeof(header) + offsetof(NES, apu.dmc.output_level), &bogus_index, 1);
+    memcpy(again + sizeof(header) + offsetof(NES, apu.pulse[0].sweep_shift), &bogus_index, 1);
+    memcpy(&header, again, sizeof(header));
+    header.image_crc = nes_crc32(0, again + sizeof(header), sizeof(NES));
+    memcpy(again, &header, sizeof(header));
+    CHECK(nes_state_load(&nes, again, size, error, sizeof(error)));
+    CHECK(nes.apu.pulse[0].envelope_decay == (bogus_level & 15));
+    CHECK(nes.apu.pulse[1].envelope_decay == (bogus_level & 15));
+    CHECK(nes.apu.noise.envelope_decay == (bogus_level & 15));
+    CHECK(nes.apu.pulse[0].envelope_divider == (bogus_level & 15));
+    CHECK(nes.apu.dmc.output_level == 0x7f && nes.apu.pulse[0].sweep_shift == 7);
+    frames(&nes, 1);
+
     /* A valid state still loads after the refusals. */
     CHECK(nes_state_load(&nes, state, size, error, sizeof(error)));
     restored = snapshot(&nes);

@@ -913,7 +913,9 @@ static inline double apu_mix_sample_raw(APU *apu) {
 
     /* These should be in range by construction but clamp defensively
      * against DMC DAC overflow or channel-disable transitions. */
+    if (pulse_idx < 0)   pulse_idx = 0;
     if (pulse_idx > 30)  pulse_idx = 30;
+    if (tnd_idx   < 0)   tnd_idx   = 0;
     if (tnd_idx   > 202) tnd_idx   = 202;
 
     return (double)apu->pulse_dac[pulse_idx] + (double)apu->tnd_dac[tnd_idx];
