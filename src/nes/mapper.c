@@ -123,16 +123,18 @@ void mapper_ppu_bus_read(Mapper *m, uint16_t addr) {
     if (ops->ppu_bus_read) ops->ppu_bus_read(m, addr);
 }
 
-uint8_t mapper_cpu_peek(Mapper *m, uint16_t addr) {
+/* A mapper without a peek has reads that only look things up, so its plain
+ * read stands in; the cast drops a const that read never writes through. */
+uint8_t mapper_cpu_peek(const Mapper *m, uint16_t addr) {
     const MapperOps *ops = mapper_ops_for(m->number);
     if (ops->cpu_peek) return ops->cpu_peek(m, addr);
-    return mapper_cpu_read(m, addr);
+    return mapper_cpu_read((Mapper *)m, addr);
 }
 
-uint8_t mapper_ppu_peek(Mapper *m, uint16_t addr) {
+uint8_t mapper_ppu_peek(const Mapper *m, uint16_t addr) {
     const MapperOps *ops = mapper_ops_for(m->number);
     if (ops->ppu_peek) return ops->ppu_peek(m, addr);
-    return mapper_ppu_read(m, addr);
+    return mapper_ppu_read((Mapper *)m, addr);
 }
 
 void mapper_cpu_clock(Mapper *m) {

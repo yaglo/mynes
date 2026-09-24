@@ -90,38 +90,29 @@ static void mapper10_cpu_write(Mapper *m, uint16_t addr, uint8_t val) {
     }
 }
 
-static uint8_t mapper10_ppu_read(Mapper *m, uint16_t addr) {
-    if (addr < 0x2000) {
-        uint32_t chr_addr = (addr < 0x1000)
-            ? (addr & 0x0FFF) + (m->mmc4_chr0 * 0x1000)
-            : (addr & 0x0FFF) + (m->mmc4_chr1 * 0x1000);
-        uint8_t val = m->has_chr_ram
-            ? m->chr_ram[chr_addr % sizeof(m->chr_ram)]
-            : m->chr_rom[chr_addr % m->chr_rom_size];
-        mapper10_check_latch(m, addr);
-        return val;
-    }
-    return 0;
+static uint32_t mapper10_chr_addr(const Mapper *m, uint16_t addr) {
+    uint32_t bank = (addr < 0x1000) ? m->mmc4_chr0 : m->mmc4_chr1;
+    return (addr & 0x0FFF) + (bank * 0x1000);
 }
 
-/* The latch trigger fetches only switch banks when the PPU makes them. */
-static uint8_t mapper10_ppu_peek(Mapper *m, uint16_t addr) {
-    uint8_t latch0 = m->mmc4_latch0, latch1 = m->mmc4_latch1;
-    uint8_t chr0 = m->mmc4_chr0, chr1 = m->mmc4_chr1;
-    uint8_t val = mapper10_ppu_read(m, addr);
-    m->mmc4_latch0 = latch0;
-    m->mmc4_latch1 = latch1;
-    m->mmc4_chr0 = chr0;
-    m->mmc4_chr1 = chr1;
+/* The latch trigger fetches only switch banks when the PPU makes them, so
+ * a debugger's peek is the lookup alone. */
+static uint8_t mapper10_ppu_peek(const Mapper *m, uint16_t addr) {
+    if (addr >= 0x2000) return 0;
+    uint32_t chr_addr = mapper10_chr_addr(m, addr);
+    return m->has_chr_ram ? m->chr_ram[chr_addr % sizeof(m->chr_ram)]
+                          : m->chr_rom[chr_addr % m->chr_rom_size];
+}
+
+static uint8_t mapper10_ppu_read(Mapper *m, uint16_t addr) {
+    uint8_t val = mapper10_ppu_peek(m, addr);
+    mapper10_check_latch(m, addr);
     return val;
 }
 
 static void mapper10_ppu_write(Mapper *m, uint16_t addr, uint8_t val) {
     if (addr < 0x2000 && m->has_chr_ram) {
-        uint32_t chr_addr = (addr < 0x1000)
-            ? (addr & 0x0FFF) + (m->mmc4_chr0 * 0x1000)
-            : (addr & 0x0FFF) + (m->mmc4_chr1 * 0x1000);
-        m->chr_ram[chr_addr % sizeof(m->chr_ram)] = val;
+        m->chr_ram[mapper10_chr_addr(m, addr) % sizeof(m->chr_ram)] = val;
         mapper10_check_latch(m, addr);
     }
 }

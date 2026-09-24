@@ -47,7 +47,7 @@ static MMC5 *mmc5(Mapper *m) {
  * Registers $5114-$5116: bit 7 = 1 means PRG ROM, 0 means PRG RAM.
  * Register $5117: always PRG ROM (bit 7 ignored for ROM/RAM selection).
  */
-static uint8_t mmc5_get_prg_reg(MMC5 *s, uint16_t addr) {
+static uint8_t mmc5_get_prg_reg(const MMC5 *s, uint16_t addr) {
     int slot_8k = (addr - 0x8000) >> 13; /* 0-3 */
 
     switch (s->prg_mode) {
@@ -69,7 +69,7 @@ static uint8_t mmc5_get_prg_reg(MMC5 *s, uint16_t addr) {
 static bool mmc5_prg_is_ram(const MMC5 *s, uint16_t addr) {
     if (addr >= 0xE000 || s->prg_mode == 0) return false;
     if (s->prg_mode == 1 && addr >= 0xC000) return false;
-    return !(mmc5_get_prg_reg((MMC5 *)s, addr) & 0x80);
+    return !(mmc5_get_prg_reg(s, addr) & 0x80);
 }
 
 /*
@@ -83,8 +83,8 @@ static bool mmc5_prg_is_ram(const MMC5 *s, uint16_t addr) {
  * Mode 2: $5115 & 0x7E → 16KB at $8000, $5116 & 0x7F → 8KB at $C000, $5117 & 0x7F → 8KB at $E000
  * Mode 3: $5114-$5117 & 0x7F → 8KB each
  */
-static uint8_t mmc5_read_prg(Mapper *m, uint16_t addr) {
-    MMC5 *s = mmc5(m);
+static uint8_t mmc5_read_prg(const Mapper *m, uint16_t addr) {
+    const MMC5 *s = &m->ext.mmc5;
     uint32_t total_8k = m->prg_rom_size / 0x2000;
     if (total_8k == 0) total_8k = 1;
 
@@ -129,11 +129,15 @@ static uint8_t mmc5_read_prg(Mapper *m, uint16_t addr) {
 /* CHR banking                                                                */
 /* ========================================================================== */
 
+static bool mmc5_sprites_8x16(const Mapper *m) {
+    return m->nes && (m->nes->ppu.ctrl & CTRL_SPRITE_SIZE);
+}
+
 /* In 8x8 mode all fetches use set A. In 8x16 mode rendering uses
  * A for sprites and B for backgrounds; CPU $2007 accesses outside
  * rendering use the most recently written set. */
-static uint8_t mmc5_read_chr(Mapper *m, uint16_t addr) {
-    MMC5 *s = mmc5(m);
+static uint8_t mmc5_read_chr(const Mapper *m, uint16_t addr) {
+    const MMC5 *s = &m->ext.mmc5;
     uint32_t total_1k = m->chr_rom_size / 0x400;
     if (total_1k == 0) return 0;
 
@@ -141,14 +145,12 @@ static uint8_t mmc5_read_chr(Mapper *m, uint16_t addr) {
     int slot = (addr >> 10) & 7;
 
     bool use_b = false;
-    if (m->nes && (m->nes->ppu.ctrl & CTRL_SPRITE_SIZE)) {
-        PPU *ppu = &m->nes->ppu;
+    if (mmc5_sprites_8x16(m)) {
+        const PPU *ppu = &m->nes->ppu;
         bool rendering = (ppu->mask & (MASK_BG_ENABLE | MASK_SPRITE_ENABLE)) &&
             (ppu->scanline < 240 || ppu->scanline == ppu->prerender_line);
         use_b = rendering ? !(ppu->dot >= 257 && ppu->dot <= 320)
                           : s->chr_hi_written;
-    } else {
-        s->chr_hi_written = false;
     }
 
     switch (s->chr_mode) {
@@ -192,8 +194,8 @@ static uint8_t mmc5_read_chr(Mapper *m, uint16_t addr) {
 /* CPU read                                                                   */
 /* ========================================================================== */
 
-static uint8_t mapper5_cpu_peek(Mapper *m, uint16_t addr) {
-    MMC5 *s = mmc5(m);
+static uint8_t mapper5_cpu_peek(const Mapper *m, uint16_t addr) {
+    const MMC5 *s = &m->ext.mmc5;
 
     if (addr >= 0x8000)
         return mmc5_prg_is_ram(s, addr) ? m->prg_ram[addr & 0x1FFF]
@@ -329,9 +331,9 @@ static void mapper5_cpu_write(Mapper *m, uint16_t addr, uint8_t val) {
 /* PPU memory: MMC5 independently routes each 1KB nametable quadrant.        */
 /* ========================================================================== */
 
-static uint8_t mapper5_ppu_read(Mapper *m, uint16_t addr) {
+static uint8_t mapper5_ppu_peek(const Mapper *m, uint16_t addr) {
     if (addr < 0x2000) return mmc5_read_chr(m, addr);
-    MMC5 *s = mmc5(m);
+    const MMC5 *s = &m->ext.mmc5;
     unsigned offset = addr & 0x3ff;
     unsigned source = (s->nt_mapping >> (((addr >> 10) & 3) * 2)) & 3;
     if (source < 2)
@@ -341,12 +343,12 @@ static uint8_t mapper5_ppu_read(Mapper *m, uint16_t addr) {
     return offset < 0x3c0 ? s->fill_tile : s->fill_attr * 0x55;
 }
 
-/* Outside 8x16 mode a CHR read forgets which register set was written last. */
-static uint8_t mapper5_ppu_peek(Mapper *m, uint16_t addr) {
-    MMC5 *s = mmc5(m);
-    bool chr_hi_written = s->chr_hi_written;
-    uint8_t val = mapper5_ppu_read(m, addr);
-    s->chr_hi_written = chr_hi_written;
+/* Outside 8x16 mode a CHR read forgets which register set was written
+ * last; a debugger's peek leaves that alone. */
+static uint8_t mapper5_ppu_read(Mapper *m, uint16_t addr) {
+    uint8_t val = mapper5_ppu_peek(m, addr);
+    if (addr < 0x2000 && !mmc5_sprites_8x16(m))
+        mmc5(m)->chr_hi_written = false;
     return val;
 }
 

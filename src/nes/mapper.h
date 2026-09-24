@@ -156,8 +156,8 @@ void mapper_cpu_clock(Mapper *m);
 
 /* Side-effect-free reads for debuggers and tracers: the value a read would
  * return, without acknowledging IRQs or flipping CHR latches. */
-uint8_t mapper_cpu_peek(Mapper *m, uint16_t addr);
-uint8_t mapper_ppu_peek(Mapper *m, uint16_t addr);
+uint8_t mapper_cpu_peek(const Mapper *m, uint16_t addr);
+uint8_t mapper_ppu_peek(const Mapper *m, uint16_t addr);
 
 /* Scanline notification (called by PPU at end of each visible scanline) */
 void mapper_notify_scanline(Mapper *m);

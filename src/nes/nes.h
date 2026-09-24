@@ -444,7 +444,7 @@ static inline void nes_cpu_step_traced(NES *nes) {
         if (tpc < 0x2000)
             actual_op = nes->ram[tpc & 0x7FF];
         else if (tpc >= 0x8000 && nes->mapper_loaded)
-            actual_op = mapper_cpu_read(&nes->mapper, tpc);
+            actual_op = mapper_cpu_peek(&nes->mapper, tpc);
         else if (tpc >= 0x8000 && nes->prg_rom)
             actual_op = nes->prg_rom[(tpc - 0x8000) % nes->prg_rom_size];
         else

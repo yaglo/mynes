@@ -46,6 +46,17 @@ int main(void) {
     mapper_cpu_write(m,0x5120,9);
     CHECK(mapper_ppu_read(m,0)==9);
 
+    /* Outside 8x16 mode a CHR read forgets the last-written set; a
+     * debugger's peek does not. */
+    nes.ppu.ctrl=0;
+    mapper_cpu_write(m,0x5128,21);
+    CHECK(m->ext.mmc5.chr_hi_written);
+    CHECK(mapper_ppu_peek(m,0)==9);
+    CHECK(m->ext.mmc5.chr_hi_written);
+    CHECK(mapper_ppu_read(m,0)==9);
+    CHECK(!m->ext.mmc5.chr_hi_written);
+    nes.ppu.ctrl=CTRL_SPRITE_SIZE;
+
     /* Mixed mapping used by CV3 ($E4): both CIRAM pages, ExRAM and fill.
      * Exercise the public PPU path, including $3000 mirrors and attributes. */
     mapper_cpu_write(m,0x5105,0xe4);

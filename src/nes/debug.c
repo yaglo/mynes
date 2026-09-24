@@ -103,7 +103,7 @@ uint8_t debug_read_cpu(const NES *nes, uint16_t addr) {
         /* PRG ROM. A plain read is not safe here: MMC5 ends its frame on
          * a read of the NMI vector. */
         if (nes->mapper_loaded)
-            return mapper_cpu_peek((Mapper *)&nes->mapper, addr);
+            return mapper_cpu_peek(&nes->mapper, addr);
         if (nes->prg_rom)
             return nes->prg_rom[(addr - 0x8000) % nes->prg_rom_size];
         return 0;
@@ -121,7 +121,7 @@ uint8_t debug_read_ppu_vram(const NES *nes, uint16_t addr) {
         /* Pattern tables, and nametables the cartridge maps (MMC5):
          * peek so MMC2/MMC4 latches and MMC5 register state stay put. */
         if (nes->mapper_loaded)
-            return mapper_ppu_peek((Mapper *)&nes->mapper, addr);
+            return mapper_ppu_peek(&nes->mapper, addr);
         if (addr < 0x2000)
             return (nes->chr_rom && nes->chr_rom_size > 0)
                 ? nes->chr_rom[addr % nes->chr_rom_size] : ppu->vram[addr];

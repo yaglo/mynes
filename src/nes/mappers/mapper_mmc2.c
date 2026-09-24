@@ -107,27 +107,18 @@ static uint32_t mapper9_chr_addr(const Mapper *m, uint16_t addr) {
     return (addr & 0x0FFF) + (bank * 0x1000);
 }
 
-static uint8_t mapper9_ppu_read(Mapper *m, uint16_t addr) {
-    if (addr < 0x2000) {
-        uint32_t chr_addr = mapper9_chr_addr(m, addr);
-        uint8_t val = m->has_chr_ram
-            ? m->chr_ram[chr_addr % sizeof(m->chr_ram)]
-            : m->chr_rom[chr_addr % m->chr_rom_size];
-        mapper9_check_latch(m, addr);
-        return val;
-    }
-    return 0;
+/* The latch trigger fetches only switch banks when the PPU makes them, so
+ * a debugger's peek is the lookup alone. */
+static uint8_t mapper9_ppu_peek(const Mapper *m, uint16_t addr) {
+    if (addr >= 0x2000) return 0;
+    uint32_t chr_addr = mapper9_chr_addr(m, addr);
+    return m->has_chr_ram ? m->chr_ram[chr_addr % sizeof(m->chr_ram)]
+                          : m->chr_rom[chr_addr % m->chr_rom_size];
 }
 
-/* The latch trigger fetches only switch banks when the PPU makes them. */
-static uint8_t mapper9_ppu_peek(Mapper *m, uint16_t addr) {
-    uint8_t latch0 = m->mmc4_latch0, latch1 = m->mmc4_latch1;
-    uint8_t chr0 = m->mmc4_chr0, chr1 = m->mmc4_chr1;
-    uint8_t val = mapper9_ppu_read(m, addr);
-    m->mmc4_latch0 = latch0;
-    m->mmc4_latch1 = latch1;
-    m->mmc4_chr0 = chr0;
-    m->mmc4_chr1 = chr1;
+static uint8_t mapper9_ppu_read(Mapper *m, uint16_t addr) {
+    uint8_t val = mapper9_ppu_peek(m, addr);
+    if (addr < 0x2000) mapper9_check_latch(m, addr);
     return val;
 }
 
