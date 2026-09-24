@@ -56,10 +56,12 @@ void mynes_save_basename(const char *rom_path, uint32_t rom_crc, char *out, int 
     snprintf(out, out_sz, "%.*s-%08x", (int)len, base, (unsigned)rom_crc);
 }
 
-void mynes_saves_open(MynesSaves *s, const char *rom_path, uint32_t rom_crc, bool has_battery) {
+void mynes_saves_open(MynesSaves *s, const char *rom_path, uint32_t rom_crc, bool has_battery,
+                      size_t ram_size) {
     memset(s, 0, sizeof(*s));
     s->battery = has_battery;
     s->rom_crc = rom_crc;
+    s->ram_size = ram_size < MYNES_PRG_RAM_MAX ? ram_size : MYNES_PRG_RAM_MAX;
     mynes_save_basename(rom_path, rom_crc, s->name, sizeof(s->name));
     mynes_saves_dir(s->sav_path, sizeof(s->sav_path));
     if (!*s->sav_path || !append(s->sav_path, sizeof(s->sav_path), "/")
@@ -72,29 +74,30 @@ bool mynes_saves_restore(MynesSaves *s, uint8_t *prg_ram) {
     if (!s->battery) return false;
     /* Whatever is in RAM now is the baseline a later flush compares against,
      * so a cartridge that never touches its RAM never creates a file. */
-    memcpy(s->on_disk, prg_ram, MYNES_PRG_RAM_SIZE);
+    memcpy(s->on_disk, prg_ram, s->ram_size);
     FILE *f = fopen(s->sav_path, "rb");
     if (!f) return false;
-    /* A short file (from another emulator, or a truncated write that was
+    /* A short file (from another emulator, an 8 KB save of an MMC5 game
+     * from before its other pages were kept, or a truncated write that was
      * never renamed) still restores what it has; the rest stays as it was. */
-    size_t n = fread(s->on_disk, 1, MYNES_PRG_RAM_SIZE, f);
+    size_t n = fread(s->on_disk, 1, s->ram_size, f);
     fclose(f);
     (void)n;
-    memcpy(prg_ram, s->on_disk, MYNES_PRG_RAM_SIZE);
+    memcpy(prg_ram, s->on_disk, s->ram_size);
     return true;
 }
 
 bool mynes_saves_flush(MynesSaves *s, const uint8_t *prg_ram, bool force) {
     if (!s->battery) return true;
-    if (!force && memcmp(prg_ram, s->on_disk, MYNES_PRG_RAM_SIZE) == 0) return true;
+    if (!force && memcmp(prg_ram, s->on_disk, s->ram_size) == 0) return true;
     char dir[MYNES_PATH_MAX];
     mynes_saves_dir(dir, sizeof(dir));
     if (!mynes_mkdir_p(dir)) {
         fprintf(stderr, "Battery save: cannot create %s: %s\n", dir, strerror(errno));
         return false;
     }
-    if (!mynes_write_file_atomic(s->sav_path, prg_ram, MYNES_PRG_RAM_SIZE)) return false;
-    memcpy(s->on_disk, prg_ram, MYNES_PRG_RAM_SIZE);
+    if (!mynes_write_file_atomic(s->sav_path, prg_ram, s->ram_size)) return false;
+    memcpy(s->on_disk, prg_ram, s->ram_size);
     return true;
 }
 

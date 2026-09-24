@@ -62,7 +62,7 @@ static MynesSaves  saves;
 static Uint32      battery_next_check;
 static void saves_attach(const char *rom_path) {
     uint32_t crc = nes_state_rom_crc(rom.prg_rom, rom.prg_size, rom.chr_rom, rom.chr_size);
-    mynes_saves_open(&saves, rom_path, crc, rom.has_battery);
+    mynes_saves_open(&saves, rom_path, crc, rom.has_battery, nes.mapper.prg_ram_size);
     if (saves.battery && mynes_saves_restore(&saves, nes.mapper.prg_ram))
         printf("Battery RAM restored from %s\n", saves.sav_path);
 }
