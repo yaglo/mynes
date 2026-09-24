@@ -346,9 +346,11 @@ if(NES_BUILD_TESTS)
     add_custom_target(cputest COMMAND test_cpu DEPENDS test_cpu)
     add_custom_target(pputest COMMAND test_ppu DEPENDS test_ppu)
     add_custom_target(nestest COMMAND test_nes DEPENDS test_nes)
+    # Runs every registered test, so it depends on every test binary; the
+    # dependencies are added at the end of this file, once the frontend and
+    # GPU tests further down have been defined too.
     add_custom_target(alltests
-        COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-        DEPENDS test_cpu test_cpu_cycles test_ppu test_nes test_rom accuracy_coin)
+        COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure)
 endif()
 
 # =============================================================================
@@ -884,4 +886,25 @@ if(NES_CRT_USB AND NES_BUILD_TESTS)
     add_executable(test_crt_protocol tests/test_crt_protocol.c frontends/sdl/crt/crt_protocol.c)
     target_include_directories(test_crt_protocol PRIVATE frontends/sdl/crt)
     add_test(NAME crt_protocol COMMAND test_crt_protocol)
+endif()
+
+# alltests runs ctest over every test above, so it has to build every
+# executable those tests run: the test_* binaries, accuracy_coin, and the
+# tools and shaders the script-driven GPU tests call. Collected here rather
+# than listed by hand, so a new test cannot be left out and run stale or
+# "Not Run".
+if(NES_BUILD_TESTS)
+    get_property(MYNES_ALL_TARGETS DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+    set(MYNES_TEST_TARGETS)
+    foreach(target IN LISTS MYNES_ALL_TARGETS)
+        if(target MATCHES "^test_" OR target STREQUAL "accuracy_coin")
+            list(APPEND MYNES_TEST_TARGETS ${target})
+        endif()
+    endforeach()
+    foreach(target IN ITEMS mynes_video gpu_shaders)
+        if(TARGET ${target})
+            list(APPEND MYNES_TEST_TARGETS ${target})
+        endif()
+    endforeach()
+    add_dependencies(alltests ${MYNES_TEST_TARGETS})
 endif()
