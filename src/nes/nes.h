@@ -530,7 +530,7 @@ static inline void nes_step(NES *nes) {
                                nes->apu.dmc_irq_pending ||
                                (nes->mapper_loaded && nes->mapper.irq_pending);
 
-        if (nes->mapper_loaded && nes->mapper.number == 5)
+        if (nes->mapper_loaded && (nes->mapper.number == 5 || nes->mapper.number == 69))
             mapper_cpu_clock(&nes->mapper);
 
         bool dma_cycle = nes_dma_step(nes);

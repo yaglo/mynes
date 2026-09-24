@@ -187,25 +187,14 @@ static void mapper69_ppu_write(Mapper *m, uint16_t addr, uint8_t val) {
 }
 
 /* ========================================================================== */
-/* Scanline — FME-7 IRQ is cycle-based, not scanline-based.                   */
-/* We approximate by decrementing ~114 times per scanline (NTSC CPU cycles    */
-/* per scanline). This is called once per visible scanline by the system.     */
+/* IRQ counter: decremented on every CPU cycle while counting is enabled.     */
 /* ========================================================================== */
 
-static void mapper69_scanline(Mapper *m) {
+static void mapper69_cpu_clock(Mapper *m) {
     FME7 *s = fme7(m);
     if (!s->irq_counting) return;
-
-    /* ~114 CPU cycles per scanline (NTSC: 341/3 ≈ 113.67) */
-    for (int i = 0; i < 114; i++) {
-        if (s->irq_counter == 0) {
-            if (s->irq_enabled)
-                m->irq_pending = true;
-            s->irq_counter = 0xFFFF;
-        } else {
-            s->irq_counter--;
-        }
-    }
+    if (s->irq_counter-- == 0 && s->irq_enabled)
+        m->irq_pending = true;
 }
 
 /* ========================================================================== */
@@ -229,5 +218,5 @@ const MapperOps mapper69_ops = {
     .cpu_write = mapper69_cpu_write,
     .ppu_read  = mapper69_ppu_read,
     .ppu_write = mapper69_ppu_write,
-    .scanline  = mapper69_scanline,
+    .cpu_clock = mapper69_cpu_clock,
 };

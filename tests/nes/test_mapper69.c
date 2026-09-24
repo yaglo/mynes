@@ -45,6 +45,24 @@ int main(void) {
     CHECK(m.ext.fme7.irq_counter == 0x1234);
     CHECK(!m.ext.fme7.irq_counting && !m.irq_pending);
 
+    /* The IRQ counter decrements once per CPU cycle and fires on the
+     * wrap from $0000 to $FFFF. */
+    reg(&m, 14, 2);
+    reg(&m, 15, 0);
+    reg(&m, 13, 0x81);
+    mapper_cpu_clock(&m);
+    mapper_cpu_clock(&m);
+    CHECK(m.ext.fme7.irq_counter == 0 && !m.irq_pending);
+    mapper_cpu_clock(&m);
+    CHECK(m.ext.fme7.irq_counter == 0xFFFF && m.irq_pending);
+    reg(&m, 13, 0x01);   /* acknowledge, keep counting without IRQ */
+    CHECK(!m.irq_pending);
+    mapper_cpu_clock(&m);
+    CHECK(m.ext.fme7.irq_counter == 0xFFFE && !m.irq_pending);
+    reg(&m, 13, 0x00);   /* counting stopped */
+    mapper_cpu_clock(&m);
+    CHECK(m.ext.fme7.irq_counter == 0xFFFE);
+
     printf("Mapper 69 tests: %s\n", failures ? "FAIL" : "PASS");
     return failures ? 1 : 0;
 }
