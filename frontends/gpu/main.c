@@ -171,13 +171,16 @@ static bool calibrate_white(unsigned frame) {
     float backdrop[12], gray_backdrop[12];
     memcpy(backdrop, video_gpu_chain.backdrop, sizeof(backdrop));
     memcpy(gray_backdrop, video_gpu_chain.gray_backdrop, sizeof(gray_backdrop));
+    unsigned backdrop_entry = video_gpu_chain.backdrop_entry;
     memcpy(video_gpu_chain.backdrop, sig_state.table[0x0f], 12 * sizeof(float));
     memcpy(video_gpu_chain.gray_backdrop, sig_state.table[0x0f & 0x1f0], 12 * sizeof(float));
+    video_gpu_chain.backdrop_entry = 0x0f;
     for (int i = 0; i < 24; i++)
         video_gpu_process_full(&video_gpu_chain, gpu, white,
             sig_state.phase_base + signal_frame_phase(&sig_state, frame + i), sig_state.phase_line_adv, 0, NULL);
     memcpy(video_gpu_chain.backdrop, backdrop, sizeof(backdrop));
     memcpy(video_gpu_chain.gray_backdrop, gray_backdrop, sizeof(gray_backdrop));
+    video_gpu_chain.backdrop_entry = backdrop_entry;
     bool measured = false;
     int beam_w, beam_h;
     SDL_GPUTexture *beam = video_gpu_get_beam_texture(&video_gpu_chain);
@@ -2216,6 +2219,7 @@ int main(int argc, char **argv) {
         unsigned backdrop = rom_loaded && !static_frame_buf ? picture.backdrop : 0x0f;
         memcpy(video_gpu_chain.backdrop, sig_state.table[backdrop], 12 * sizeof(float));
         memcpy(video_gpu_chain.gray_backdrop, sig_state.table[backdrop & 0x1f0], 12 * sizeof(float));
+        video_gpu_chain.backdrop_entry = backdrop;
 
         /* --- Overlays (before signal processing) --- */
         preset_composite_overlays(&preset_ctx);

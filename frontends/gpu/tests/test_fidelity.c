@@ -18,6 +18,7 @@ extern int test_crt_load(SDL_GPUDevice *gpu);
 extern int test_osd(SDL_GPUDevice *gpu);
 extern int test_vhs_fidelity(SDL_GPUDevice *gpu);
 extern int test_encoder(SDL_GPUDevice *gpu);
+extern int test_border(SDL_GPUDevice *gpu);
 static int failures;
 #define CHECK(x) do { if (!(x)) { fprintf(stderr, "FAIL %d: %s\n", __LINE__, #x); failures++; } } while (0)
 
@@ -1432,6 +1433,7 @@ int main(void) {
     failures += test_display_fidelity(gpu);
     failures += test_crt_load(gpu);
     failures += test_osd(gpu);
+    failures += test_border(gpu);
     source_phase(gpu);
     console_follower(gpu);
     comb_separation(gpu);

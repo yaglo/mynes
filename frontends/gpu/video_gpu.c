@@ -253,7 +253,10 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     vgc->raster_fmt.lines = chain->signal_fmt.region == SIGNAL_REGION_PAL ? 312 : 262;
     vgc->raster_fmt.total_samples = vgc->raster_fmt.samples_per_line * vgc->raster_fmt.lines;
     vgc->signal_line_phase = signal_region_line_phase(chain->signal_fmt.region);
-    decode_window_picture(&vgc->window, chain->signal_fmt.region, chain->signal_fmt.samples_per_pixel);
+    /* Decode everything the receiver scans, the console's border included. */
+    decode_window_raster(&vgc->window, chain->signal_fmt.region, chain->signal_fmt.samples_per_pixel,
+                         chain->signal_fmt.dots_per_line, 65);
+    vgc->backdrop_entry = 0x0f;
 
     /* Initialize stage indices to -1 (not registered). */
     vgc->stage_console_hp  = -1;
@@ -2274,14 +2277,22 @@ bool video_gpu_process_full(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     SDL_GPUBufferRegion target = {.buffer=vgc->buf_indices, .offset=0, .size=bytes};
     SDL_UploadToGPUBuffer(copy, &source, &target, false);
     SDL_EndGPUCopyPass(copy);
+    /* An RGB PPU writes the decode window directly: the picture, the
+     * backdrop around it on the lines and dots the 2C02 draws it, and black
+     * elsewhere. */
+    const DecodeWindow *w = &vgc->window;
     struct {
         uint32_t samples_per_pixel, samples_per_line, phase_base, phase_line_adv;
         uint32_t phase_field_adv, frame_field, use_alt_table, source_mode;
         float rgb_rows[3][4];
+        uint32_t backdrop_entry, window_dots, window_lines, window_width;
+        int32_t start_dot, picture_dot, picture_row; uint32_t pad;
     } params = {(uint32_t)fmt->samples_per_pixel, (uint32_t)fmt->samples_per_line,
         (uint32_t)((phase_base % 12 + 12) % 12),
         (uint32_t)((phase_line_adv % 12 + 12) % 12), 0, 0,
-        fmt->region == SIGNAL_REGION_PAL ? 1u : 0u, vgc->source_separated ? 1u : 0u, {{0}}};
+        fmt->region == SIGNAL_REGION_PAL ? 1u : 0u, vgc->source_separated ? 1u : 0u, {{0}},
+        vgc->backdrop_entry & 0x1ffu, (uint32_t)w->dots, (uint32_t)w->lines, (uint32_t)w->width,
+        w->start_dot, w->picture_dot, w->picture_row, 0};
     bool source_rgb=!video_connection_uses_signal_decode(vgc->chain->connection);
     if(source_rgb) {
         params.source_mode=2;
@@ -2298,7 +2309,8 @@ bool video_gpu_process_full(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     SDL_BindGPUComputePipeline(pass, vgc->pipe_dac.pipeline);
     SDL_BindGPUComputeStorageBuffers(pass, 0, inputs, 3);
     SDL_PushGPUComputeUniformData(cmd, 0, &params, sizeof(params));
-    SDL_DispatchGPUCompute(pass, 1, 240, 1);
+    if (source_rgb) SDL_DispatchGPUCompute(pass, (uint32_t)(w->dots + 255) / 256, (uint32_t)w->lines, 1);
+    else SDL_DispatchGPUCompute(pass, 1, 240, 1);
     SDL_EndGPUComputePass(pass);
     vgc->signal_phase_base = phase_base;
     vgc->signal_line_phase = phase_line_adv;
@@ -2391,6 +2403,8 @@ bool video_gpu_process_rgb(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
         taps = (uint32_t)n;
     }
     bool source_rgb = !video_connection_uses_signal_decode(vgc->chain->connection);
+    /* RGB goes straight to the decode window, the picture in black. */
+    const DecodeWindow *w = &vgc->window;
     struct {
         uint32_t width, lines, samples_per_line, spp_num;
         uint32_t spp_den, top_line, source_mode, taps;
@@ -2398,12 +2412,15 @@ bool video_gpu_process_rgb(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
         float luma_cut, trap_cut, trap_depth;
         uint32_t code_bits;
         float rgb_rows[3][4];
+        uint32_t window_width, window_lines;
+        int32_t picture_x, picture_row;
     } params = {
         (uint32_t)src->width, (uint32_t)src->lines, (uint32_t)fmt->samples_per_line, (uint32_t)src->spp_num,
         (uint32_t)src->spp_den, (uint32_t)src->top_line,
         source_rgb ? 2u : (vgc->source_separated ? 1u : 0u), taps,
         (float)((src->phase_base % 12 + 12) % 12), (float)((src->phase_line_adv % 12 + 12) % 12),
-        cut, src->setup, luma_cut, trap_cut, trap_depth, linear ? 10u : 0u, {{0}}};
+        cut, src->setup, luma_cut, trap_cut, trap_depth, linear ? 10u : 0u, {{0}},
+        (uint32_t)w->width, (uint32_t)w->lines, w->picture_x, w->picture_row};
     if (source_rgb) {
         for (int c = 0; c < 3; c++) {
             memcpy(params.rgb_rows[c], vgc->color_matrix[c], 3 * sizeof(float));
@@ -2418,7 +2435,7 @@ bool video_gpu_process_rgb(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     SDL_BindGPUComputePipeline(pass, vgc->pipe_encoder.pipeline);
     SDL_BindGPUComputeStorageBuffers(pass, 0, inputs, 2);
     SDL_PushGPUComputeUniformData(cmd, 0, &params, sizeof(params));
-    uint32_t total = (uint32_t)fmt->samples_per_line * 240u;
+    uint32_t total = source_rgb ? (uint32_t)decode_window_samples(w) : (uint32_t)fmt->samples_per_line * 240u;
     SDL_DispatchGPUCompute(pass, (total + 255u) / 256u, 1, 1);
     SDL_EndGPUComputePass(pass);
 

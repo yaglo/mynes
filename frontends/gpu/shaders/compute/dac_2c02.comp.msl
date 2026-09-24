@@ -62,6 +62,13 @@ struct Params
     float4 rgb_row_r;
     float4 rgb_row_g;
     float4 rgb_row_b;
+    uint backdrop_entry;
+    uint window_dots;
+    uint window_lines;
+    uint window_width;
+    int start_dot;
+    int picture_dot;
+    int picture_row;
 };
 
 struct WaveformBuf
@@ -86,34 +93,72 @@ struct LumaBuf
 
 constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
 
-constant spvUnsafeArray<uint, 64> _131 = spvUnsafeArray<uint, 64>({ 819u, 20u, 6u, 806u, 1027u, 1283u, 1296u, 1056u, 800u, 288u, 49u, 64u, 34u, 0u, 0u, 0u, 1365u, 54u, 39u, 1031u, 1287u, 1796u, 1792u, 1584u, 1072u, 320u, 64u, 83u, 68u, 0u, 0u, 0u, 1911u, 855u, 1095u, 1591u, 1799u, 1847u, 1856u, 1872u, 1632u, 864u, 112u, 630u, 119u, 0u, 0u, 0u, 1911u, 1383u, 1623u, 1879u, 1863u, 1877u, 1892u, 1906u, 1907u, 1394u, 1139u, 630u, 1127u, 0u, 0u, 0u });
+constant spvUnsafeArray<uint, 64> _221 = spvUnsafeArray<uint, 64>({ 819u, 20u, 6u, 806u, 1027u, 1283u, 1296u, 1056u, 800u, 288u, 49u, 64u, 34u, 0u, 0u, 0u, 1365u, 54u, 39u, 1031u, 1287u, 1796u, 1792u, 1584u, 1072u, 320u, 64u, 83u, 68u, 0u, 0u, 0u, 1911u, 855u, 1095u, 1591u, 1799u, 1847u, 1856u, 1872u, 1632u, 864u, 112u, 630u, 119u, 0u, 0u, 0u, 1911u, 1383u, 1623u, 1879u, 1863u, 1877u, 1892u, 1906u, 1907u, 1394u, 1139u, 630u, 1127u, 0u, 0u, 0u });
 
-kernel void main0(device IndexBuf& _41 [[buffer(1)]], constant Params& _73 [[buffer(0)]], device WaveformBuf& _241 [[buffer(4)]], device SignalTableAlt& _338 [[buffer(3)]], device SignalTable& _349 [[buffer(2)]], device LumaBuf& _381 [[buffer(5)]], uint3 gl_LocalInvocationID [[thread_position_in_threadgroup]], uint3 gl_WorkGroupID [[threadgroup_position_in_grid]])
+static inline __attribute__((always_inline))
+uint pixel_entry(thread const uint& sy, thread const uint& px, device IndexBuf& _25)
 {
-    uint px = gl_LocalInvocationID.x;
-    uint sy = gl_WorkGroupID.y;
-    if ((px >= 256u) || (sy >= 240u))
-    {
-        return;
-    }
     uint flat_idx = (sy * 256u) + px;
-    uint _packed = _41.index_data[flat_idx / 2u];
-    uint _54;
+    uint _packed = _25.index_data[flat_idx / 2u];
+    uint _40;
     if ((flat_idx & 1u) == 0u)
     {
-        _54 = _packed & 65535u;
+        _40 = _packed & 65535u;
     }
     else
     {
-        _54 = _packed >> 16u;
+        _40 = _packed >> 16u;
     }
-    uint pixel_val = _54;
-    uint entry = pixel_val & 511u;
-    if (_73.source_mode == 2u)
+    return _40 & 511u;
+}
+
+static inline __attribute__((always_inline))
+void rgb_ppu(device IndexBuf& _25, thread uint3& gl_GlobalInvocationID, constant Params& _70, device WaveformBuf& _328)
+{
+    uint _dot = gl_GlobalInvocationID.x;
+    uint row = gl_GlobalInvocationID.y;
+    bool _74 = _dot >= _70.window_dots;
+    bool _83;
+    if (!_74)
     {
-        uint code = _131[entry & 63u];
+        _83 = row >= _70.window_lines;
+    }
+    else
+    {
+        _83 = _74;
+    }
+    if (_83)
+    {
+        return;
+    }
+    int line = int(row) - _70.picture_row;
+    int raster_dot = _70.start_dot + int(_dot);
+    int px = raster_dot - _70.picture_dot;
+    bool lit = true;
+    uint entry = 0u;
+    if ((((line >= 0) && (line < 240)) && (px >= 0)) && (px < 256))
+    {
+        uint param = uint(line);
+        uint param_1 = uint(px);
+        entry = pixel_entry(param, param_1, _25);
+    }
+    else
+    {
+        if (((((_70.use_alt_table == 0u) && (line >= 0)) && (line < 242)) && (raster_dot >= 50)) && (raster_dot < 332))
+        {
+            entry = _70.backdrop_entry;
+        }
+        else
+        {
+            lit = false;
+        }
+    }
+    float3 gun = float3(0.0);
+    if (lit)
+    {
+        uint code = _221[entry & 63u];
         uint emphasis = (entry >> 6u) & 7u;
-        float3 gun = float3(float((code >> 8u) & 15u), float((code >> 4u) & 15u), float(code & 15u)) / float3(7.0);
+        gun = float3(float((code >> 8u) & 15u), float((code >> 4u) & 15u), float(code & 15u)) / float3(7.0);
         if ((emphasis & 1u) != 0u)
         {
             gun.x = 1.0;
@@ -126,63 +171,80 @@ kernel void main0(device IndexBuf& _41 [[buffer(1)]], constant Params& _73 [[buf
         {
             gun.z = 1.0;
         }
-        float3 rgb = float3((_73.rgb_row_r.x * gun.x) + _73.rgb_row_r.w, (_73.rgb_row_g.x * gun.y) + _73.rgb_row_g.w, (_73.rgb_row_b.x * gun.z) + _73.rgb_row_b.w);
-        uint base = ((sy * _73.samples_per_line) + (px * _73.samples_per_pixel)) * 3u;
-        for (uint s = 0u; s < _73.samples_per_pixel; s++)
-        {
-            _241.waveform[base + (s * 3u)] = rgb.x;
-            _241.waveform[(base + (s * 3u)) + 1u] = rgb.y;
-            _241.waveform[(base + (s * 3u)) + 2u] = rgb.z;
-        }
+    }
+    float3 rgb = float3((_70.rgb_row_r.x * gun.x) + _70.rgb_row_r.w, (_70.rgb_row_g.x * gun.y) + _70.rgb_row_g.w, (_70.rgb_row_b.x * gun.z) + _70.rgb_row_b.w);
+    uint base = ((row * _70.window_width) + (_dot * _70.samples_per_pixel)) * 3u;
+    for (uint s = 0u; s < _70.samples_per_pixel; s++)
+    {
+        _328.waveform[base + (s * 3u)] = rgb.x;
+        _328.waveform[(base + (s * 3u)) + 1u] = rgb.y;
+        _328.waveform[(base + (s * 3u)) + 2u] = rgb.z;
+    }
+}
+
+kernel void main0(device IndexBuf& _25 [[buffer(1)]], constant Params& _70 [[buffer(0)]], device WaveformBuf& _328 [[buffer(4)]], device SignalTableAlt& _453 [[buffer(3)]], device SignalTable& _464 [[buffer(2)]], device LumaBuf& _496 [[buffer(5)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]], uint3 gl_LocalInvocationID [[thread_position_in_threadgroup]], uint3 gl_WorkGroupID [[threadgroup_position_in_grid]])
+{
+    if (_70.source_mode == 2u)
+    {
+        rgb_ppu(_25, gl_GlobalInvocationID, _70, _328);
         return;
     }
-    uint line_phase = (_73.phase_base + (sy * _73.phase_line_adv)) % 12u;
-    uint pixel_phase = (line_phase + (px * _73.samples_per_pixel)) % 12u;
-    uint table_base = (entry * 24u) + pixel_phase;
-    uint wave_base = (sy * _73.samples_per_line) + (px * _73.samples_per_pixel);
-    bool _309 = _73.use_alt_table != 0u;
-    bool _315;
-    if (_309)
+    uint px = gl_LocalInvocationID.x;
+    uint sy = gl_WorkGroupID.y;
+    if ((px >= 256u) || (sy >= 240u))
     {
-        _315 = (sy & 1u) == 1u;
+        return;
+    }
+    uint param = sy;
+    uint param_1 = px;
+    uint entry = pixel_entry(param, param_1, _25);
+    uint line_phase = (_70.phase_base + (sy * _70.phase_line_adv)) % 12u;
+    uint pixel_phase = (line_phase + (px * _70.samples_per_pixel)) % 12u;
+    uint table_base = (entry * 24u) + pixel_phase;
+    uint wave_base = (sy * _70.samples_per_line) + (px * _70.samples_per_pixel);
+    bool _425 = _70.use_alt_table != 0u;
+    bool _431;
+    if (_425)
+    {
+        _431 = (sy & 1u) == 1u;
     }
     else
     {
-        _315 = _309;
+        _431 = _425;
     }
-    bool alt = _315;
+    bool alt = _431;
     float dc = 0.0;
-    if (_73.source_mode == 1u)
+    if (_70.source_mode == 1u)
     {
-        float _332;
+        float _447;
         for (uint p = 0u; p < 12u; p++)
         {
             if (alt)
             {
-                _332 = _338.signal_table_alt[(entry * 24u) + p];
+                _447 = _453.signal_table_alt[(entry * 24u) + p];
             }
             else
             {
-                _332 = _349.signal_table[(entry * 24u) + p];
+                _447 = _464.signal_table[(entry * 24u) + p];
             }
-            dc += (_332 / 12.0);
+            dc += (_447 / 12.0);
         }
     }
-    float _391;
-    for (uint s_1 = 0u; s_1 < _73.samples_per_pixel; s_1++)
+    float _506;
+    for (uint s = 0u; s < _70.samples_per_pixel; s++)
     {
-        if (_73.source_mode == 1u)
+        if (_70.source_mode == 1u)
         {
-            _381.source_y[wave_base + s_1] = dc;
+            _496.source_y[wave_base + s] = dc;
         }
         if (alt)
         {
-            _391 = _338.signal_table_alt[table_base + s_1];
+            _506 = _453.signal_table_alt[table_base + s];
         }
         else
         {
-            _391 = _349.signal_table[table_base + s_1];
+            _506 = _464.signal_table[table_base + s];
         }
-        _241.waveform[wave_base + s_1] = _391;
+        _328.waveform[wave_base + s] = _506;
     }
 }

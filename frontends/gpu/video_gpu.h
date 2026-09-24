@@ -73,7 +73,11 @@ typedef struct {
     bool source_separated;
     int signal_phase_base, signal_line_phase;
     SDL_GPUBuffer *buf_receiver, *buf_receiver_measurements;
+    /* The border the PPU draws around the picture: the backdrop's waveform
+     * and its hue-0 grey for the raster, and its 9-bit palette entry for an
+     * RGB PPU. One snapshot per frame; $0F until the frontend sets one. */
     float backdrop[12], gray_backdrop[12];
+    unsigned backdrop_entry;
     unsigned elapsed_frames;
 
 

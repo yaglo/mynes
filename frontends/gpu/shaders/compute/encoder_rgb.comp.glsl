@@ -37,7 +37,9 @@
  *         green, 20-29 blue) from a picture or video, the ramp unused
  * Output: samples_per_line × 240 composite floats (blank 0, white 1)
  *         + the same in luma only (Y/C sources), or interleaved RGB gun
- *         voltages when source_mode == 2 (an RGB SCART connection).
+ *         voltages over the decode window (decode_window.h) when
+ *         source_mode == 2 (an RGB SCART connection): the picture at
+ *         picture_x, picture_row + top_line, black around it.
  *
  * Dispatch: one thread per output sample, 256 per workgroup.
  */
@@ -70,6 +72,8 @@ layout(set = 2, binding = 0) uniform Params {
     float trap_depth;        /* luma trap depth at the subcarrier, 0 = no trap */
     uint  code_bits;         /* 0: codes index the ramp; 10: linear 10-bit guns */
     vec4  rgb_row_r, rgb_row_g, rgb_row_b; /* monitor gains and bias for RGB input */
+    uint  window_width, window_lines;      /* RGB: the decode window */
+    int   picture_x, picture_row;          /* and the picture's place in it */
 };
 
 float sinc_w(float cut, float x) {
@@ -93,15 +97,11 @@ vec3 yuv_of(vec3 gun) {
 
 void main() {
     uint i = gl_GlobalInvocationID.x;
-    uint line = i / samples_per_line;
-    uint s = i % samples_per_line;
-    if (line >= 240u) return;
-
-    bool in_picture = line >= top_line && line < top_line + lines;
-    uint pic_line = in_picture ? line - top_line : 0u;
-
     if (source_mode == 2u) {
-        vec3 gun = in_picture ? gun_at(pic_line, int(s * spp_den / spp_num)) : vec3(0.0);
+        if (i >= window_width * window_lines) return;
+        int row = int(i / window_width) - picture_row, column = int(i % window_width) - picture_x;
+        bool lit = row >= int(top_line) && row < int(top_line + lines) && column >= 0 && column < int(samples_per_line);
+        vec3 gun = lit ? gun_at(uint(row) - top_line, int(uint(column) * spp_den / spp_num)) : vec3(0.0);
         vec3 rgb = vec3(rgb_row_r.x * gun.r + rgb_row_r.w,
                         rgb_row_g.x * gun.g + rgb_row_g.w,
                         rgb_row_b.x * gun.b + rgb_row_b.w);
@@ -110,6 +110,13 @@ void main() {
         waveform[i * 3u + 2u] = rgb.b;
         return;
     }
+
+    uint line = i / samples_per_line;
+    uint s = i % samples_per_line;
+    if (line >= 240u) return;
+
+    bool in_picture = line >= top_line && line < top_line + lines;
+    uint pic_line = in_picture ? line - top_line : 0u;
 
     if (!in_picture) {
         waveform[i] = setup;
