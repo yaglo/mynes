@@ -69,6 +69,11 @@ int main(void) {
     a.pulse[1].reg[0]=0xBF; a.pulse[1].sequence_step=1;
     CHECK(apu_pulse_output(&a.pulse[1])==0);
     apu_write(&a,0x4005,0x87); CHECK(apu_pulse_output(&a.pulse[1])==15);
+    /* Filter and analog settings are user configuration and survive reset. */
+    a.filter_config.lp_alpha=0.5; a.analog.saturation=0.25f; a.analog.output_gain=2.0f;
+    apu_reset(&a);
+    CHECK(a.filter_config.lp_alpha==0.5 && a.analog.saturation==0.25f &&
+          a.analog.output_gain==2.0f);
     printf("APU region/triangle tests: %s\n",failures?"FAIL":"PASS");
     return failures?1:0;
 }

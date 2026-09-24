@@ -1406,6 +1406,9 @@ static inline void apu_reset(APU *apu) {
     int saved_rate = apu->sample_rate;
     int saved_clock = apu->cpu_clock;
     bool saved_pal = apu->pal;
+    /* Filter and analog character are user settings, not console state. */
+    APUFilterConfig saved_filter = apu->filter_config;
+    APUAnalog saved_analog = apu->analog;
 
     memset(apu, 0, sizeof(APU));
     apu->sample_rate = saved_rate ? saved_rate : APU_SAMPLE_RATE;
@@ -1418,20 +1421,11 @@ static inline void apu_reset(APU *apu) {
     apu->dmc.timer = apu->pal ? apu_dmc_rate_table_pal[0] : apu_dmc_rate_table[0];
     apu->dmc.timer_reload = apu->dmc.timer;
 
-    /* Re-design resampling FIR, DAC tables, filter config, and
-     * analog character layer (memset wiped them all). */
+    /* Re-design the resampling FIR and DAC tables (memset wiped them). */
     apu_design_kaiser_sinc(apu->resample_taps, APU_RESAMPLE_TAPS,
                             0.0120, 8.5);
-    apu->filter_config.hp1_alpha = 0.996863;
-    apu->filter_config.hp2_alpha = 0.937419;
-    apu->filter_config.lp_alpha  = 0.815687;
-    apu->analog.filter            = apu->filter_config;
-    apu->analog.dac_nonlinearity  = 0.0f;
-    apu->analog.saturation        = 0.0f;
-    apu->analog.noise_floor       = 0.0f;
-    apu->analog.hum_60hz          = 0.0f;
-    apu->analog.dmc_bus_crosstalk = 0.0f;
-    apu->analog.output_gain       = 1.0f;
+    apu->filter_config = saved_filter;
+    apu->analog = saved_analog;
     apu->noise_rng                = 0x12345678u;
     apu->hum_phase                = 0.0;
     apu->dirty                    = true;
