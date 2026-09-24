@@ -31,12 +31,22 @@ void crt_header(uint8_t *out, uint32_t sequence, const uint8_t *payload) {
     crt_put32(out+20,crt_crc32(payload,CRT_PAYLOAD));
     crt_put32(out+24,crt_crc32(out,24));
 }
-void crt_audio_header(uint8_t *out, uint32_t sequence, uint32_t rate_hz, const uint8_t *payload, uint32_t frames) {
+uint32_t crt_audio_bytes(uint8_t format, uint32_t frames) {
+    return frames*(format==CRT_FORMAT_MONO?2u:4u);
+}
+static void packet_header(uint8_t *out, uint8_t kind, uint8_t format, uint32_t sequence, uint32_t word16,
+                          const uint8_t *payload, uint32_t length) {
     memset(out,0,32); memcpy(out,"CRT1",4);
-    out[4]=1; out[5]=2; out[6]=1; out[7]=1;
-    crt_put32(out+8,sequence); crt_put32(out+12,4u*frames); crt_put32(out+16,rate_hz);
-    crt_put32(out+20,crt_crc32(payload,4u*frames));
+    out[4]=1; out[5]=kind; out[6]=format; out[7]=1;
+    crt_put32(out+8,sequence); crt_put32(out+12,length); crt_put32(out+16,word16);
+    crt_put32(out+20,crt_crc32(payload,length));
     crt_put32(out+24,crt_crc32(out,24));
+}
+void crt_audio_header(uint8_t *out, uint32_t sequence, uint32_t rate_hz, uint8_t format, const uint8_t *payload, uint32_t frames) {
+    packet_header(out,CRT_KIND_AUDIO,format,sequence,rate_hz,payload,crt_audio_bytes(format,frames));
+}
+void crt_av_header(uint8_t *out, uint32_t sequence, uint8_t format, const uint8_t *payload, uint32_t frames) {
+    packet_header(out,CRT_KIND_AV,format,sequence,0x00f00100u,payload,crt_audio_bytes(format,frames)+CRT_PAYLOAD);
 }
 crt_status crt_status_decode(uint32_t w) {
     crt_status s;
@@ -64,4 +74,8 @@ int crt_ack_check(const uint8_t *ack, size_t length, uint32_t sequence, uint32_t
 }
 int crt_ack_valid(const uint8_t *ack, size_t length, uint32_t sequence, uint32_t payload_crc) {
     return crt_ack_check(ack,length,sequence,payload_crc,sequence+1,CRT_PAYLOAD,NULL);
+}
+uint32_t crt_usb_safe_frames(uint8_t kind, uint8_t format, uint32_t frames) {
+    while(frames && (32u+crt_audio_bytes(format,frames)+(kind==CRT_KIND_AV?CRT_PAYLOAD:0u))%512u==0) frames--;
+    return frames;
 }
