@@ -7,19 +7,25 @@
 
 static void mapper1_update_prg(Mapper *m) {
     uint8_t bank = m->mmc1_prg_bank & 0x0F;
+    /* SUROM/SXROM (512 KB) wire CHR bank bit 4 to PRG A18, selecting the
+     * 256 KB half that both windows, the fixed banks included, live in.
+     * In 4 KB CHR mode the hardware takes it from whichever CHR register
+     * PPU A12 selects; games keep both equal, so $A000 stands for both. */
+    uint8_t outer = (m->prg_banks > 16) ? (m->chr_bank0 & 0x10) : 0;
 
     switch (m->prg_mode) {
     case 0: case 1:  /* 32KB mode */
-        m->prg_bank0 = bank & 0x0E;
+        m->prg_bank0 = outer | (bank & 0x0E);
         m->prg_bank1 = m->prg_bank0 | 1;
         break;
     case 2:  /* Fix first bank at $8000 */
-        m->prg_bank0 = 0;
-        m->prg_bank1 = bank;
+        m->prg_bank0 = outer;
+        m->prg_bank1 = outer | bank;
         break;
     case 3:  /* Fix last bank at $C000 */
-        m->prg_bank0 = bank;
-        m->prg_bank1 = (m->prg_banks > 0) ? (m->prg_banks - 1) : 0;
+        m->prg_bank0 = outer | bank;
+        m->prg_bank1 = (m->prg_banks > 16) ? (outer | 0x0F)
+                     : (m->prg_banks > 0) ? (m->prg_banks - 1) : 0;
         break;
     }
 }
@@ -78,6 +84,7 @@ static void mapper1_shift_write(Mapper *m, uint16_t addr, uint8_t val) {
             break;
         case 1:  /* CHR bank 0 ($A000-$BFFF) */
             m->chr_bank0 = reg_val;
+            mapper1_update_prg(m);
             break;
         case 2:  /* CHR bank 1 ($C000-$DFFF) */
             m->chr_bank1 = reg_val;
