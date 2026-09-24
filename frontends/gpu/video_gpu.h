@@ -268,6 +268,14 @@ bool video_gpu_process_full(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
  * Returns true if the GPU chain produced output. */
 bool video_gpu_process_rgb(VideoGPUChain *vgc, SDL_GPUDevice *gpu, const VideoRGBSource *src);
 
+/* The part of the decode window the tube scans, as decode_window.glsl's
+ * trace: x0, x1 in window samples and rows [row0, row1). A TV blanks its
+ * retrace, so this is the window's trace; a PC monitor behind a scaler
+ * (tv.monitor_model 1) takes the whole window, since the scaler digitises
+ * the console's output over its own capture window (fw900_profile.glsl)
+ * and no receiver blanks the lines around the active field. */
+void video_gpu_scanned_trace(const VideoGPUChain *v, float trace[4]);
+
 /* Download the last frame's decoded RGB: rgb_size bytes, the decode
  * window's rows (vgc->window, decode_window.h), interleaved R, G, B floats.
  * This is NOT the console picture alone: row r is raster line

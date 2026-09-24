@@ -413,6 +413,32 @@ static void encoder_rgb_window(SDL_GPUDevice *gpu) {
     free(amp); free(out); video_gpu_destroy(&v, gpu);
 }
 
+/* A PC monitor behind a scaler is fed the console's output as the scaler
+ * digitises it, not a TV's blanked raster: the picture's first line, which
+ * a TV blanks with the vertical interval, reaches the scaler's input like
+ * any other, and a TV still blanks it. */
+static void scaler_sees_first_line(SDL_GPUDevice *gpu) {
+    for (int monitor = 0; monitor < 2; monitor++) {
+        SignalPrecompute sp; VideoChain c; VideoGPUChain v;
+        CHECK(chain(gpu, &v, &c, &sp, SIGNAL_REGION_NTSC, VIDEO_CONN_COMPOSITE, VIDEO_COMB_NONE));
+        c.tv.monitor_model = monitor;
+        set_backdrop(&v, &sp, 0x0f);
+        static uint16_t codes[256 * 240];
+        for (int i = 0; i < 256 * 240; i++) codes[i] = 0x30;
+        float *rgb = malloc(v.rgb_size);
+        CHECK(frames(gpu, &v, &sp, codes, 0, 4, rgb));
+        double first[3], middle[3];
+        const DecodeWindow *w = &v.window;
+        mean_rgb(&v, rgb, w->picture_row, w->picture_x + 64, w->picture_x + w->picture_w - 64, first);
+        mean_rgb(&v, rgb, w->picture_row + 120, w->picture_x + 64, w->picture_x + w->picture_w - 64, middle);
+        printf("Picture line 0 %s: green %.4f against %.4f at line 120\n",
+               monitor ? "into the FW900's scaler" : "on a TV", first[1], middle[1]);
+        if (monitor) CHECK(middle[1] > .5 && fabs(first[1] - middle[1]) < .01);
+        else CHECK(middle[1] > .5 && first[1] == 0);
+        free(rgb); video_gpu_destroy(&v, gpu);
+    }
+}
+
 /* An isolated line carries the light of a line of a uniform field whatever
  * the output row's pitch in raster lines: each row integrates the spot over
  * the lines it covers on the face, 287 active PAL lines, or an NTSC field
@@ -551,5 +577,6 @@ int test_border(SDL_GPUDevice *gpu) {
     rgb_ppu_border(gpu);
     encoder_rgb_window(gpu);
     line_energy(gpu);
+    scaler_sees_first_line(gpu);
     return failures;
 }

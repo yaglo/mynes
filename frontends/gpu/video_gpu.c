@@ -42,6 +42,16 @@
  * its own compute pass (pass boundary = barrier) and returns. The caller
  * manages cmd lifecycle and submits once at the end. */
 static bool dispatch_video_amp(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd);
+
+void video_gpu_scanned_trace(const VideoGPUChain *v, float trace[4]) {
+    const DecodeWindow *w = &v->window;
+    if (v->chain && v->chain->tv.monitor_model == 1) {
+        trace[0] = -1e9f; trace[1] = 1e9f; trace[2] = 0; trace[3] = (float)w->lines;
+        return;
+    }
+    trace[0] = w->trace_x0; trace[1] = w->trace_x1;
+    trace[2] = (float)w->trace_row0; trace[3] = (float)w->trace_row1;
+}
 static bool dispatch_h_blur_rgb(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd);
 static bool dispatch_beam_profile(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd);
 static bool dispatch_aux_fir_cmd(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd,
@@ -1482,8 +1492,8 @@ bool dispatch_gun_current_public(VideoGPUChain *v, SDL_GPUCommandBuffer *cmd) {
            gamma+tv->phosphor_gamma_offset_g,gamma+tv->phosphor_gamma_offset_b,
            (uint32_t)w->width,v->beam_frame_counter,
            tv->noise_level+pickup,(float)w->spp,tv->black_floor,
-           tv->apl_black_lift*(v->apl_smoothed-0.5f)*0.15f,w->picture_x,w->picture_row,
-           {w->trace_x0,w->trace_x1,(float)w->trace_row0,(float)w->trace_row1}};
+           tv->apl_black_lift*(v->apl_smoothed-0.5f)*0.15f,w->picture_x,w->picture_row,{0}};
+    video_gpu_scanned_trace(v,p.trace);
     GpuDispatchDesc d={.pipeline=&v->sig_chain.pipelines[CHAIN_KERNEL_GUN_CURRENT],
         .readonly_buffers={v->buf_rgb},.num_readonly_buffers=1,
         .readwrite_buffers={v->buf_gun_current},.num_readwrite_buffers=1,
@@ -1876,10 +1886,7 @@ static bool dispatch_video_amp(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd)
     amp_params.velocity_mod    = tv ? tv->velocity_mod   : 0.0f;
     amp_params.asym_rise_fall  = tv ? tv->asym_rise_fall : 0.0f;
     amp_params.vertical_smear  = tv ? tv->vertical_smear : 0.0f;
-    amp_params.trace[0] = w->trace_x0;
-    amp_params.trace[1] = w->trace_x1;
-    amp_params.trace[2] = (float)w->trace_row0;
-    amp_params.trace[3] = (float)w->trace_row1;
+    video_gpu_scanned_trace(vgc, amp_params.trace);
 
     SDL_GPUStorageBufferReadWriteBinding rw[1] = {0};
     rw[0].buffer = vgc->buf_rgb2;  /* output */

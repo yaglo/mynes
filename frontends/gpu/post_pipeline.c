@@ -367,9 +367,9 @@ static bool crt_load_rebind(struct SignalChainFwd *chain, struct ChainStageFwd *
         v->signal_fmt.samples_per_pixel / signal_region_sample_rate_hz(v->signal_fmt.region),
         s == &v->sig_chain.stages[v->stage_crt_supply], fmaxf(1,v->elapsed_frames), (uint32_t)w->frame_lines,
         tv->video_black_droop, tv->video_recovery_us > 0 ? tv->video_recovery_us : 18,
-        (uint32_t)w->dots, (uint32_t)w->lines, (uint32_t)w->dots_per_line, {0,0,0},
-        {w->trace_x0, w->trace_x1, (float)w->trace_row0, (float)w->trace_row1}
+        (uint32_t)w->dots, (uint32_t)w->lines, (uint32_t)w->dots_per_line, {0,0,0}, {0}
     };
+    video_gpu_scanned_trace(v, p.trace);
     s->rw_count=2; s->rw[0]=CBR_EXT0; s->rw[1]=CBR_EXT1;
     s->external[0]=v->buf_rgb; s->external[1]=v->buf_crt_load;
     memcpy(s->params,&p,sizeof(p)); s->params_size=sizeof(p);
