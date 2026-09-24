@@ -55,9 +55,11 @@ X265_MASTER_DISPLAY = "G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(
 SVT_MASTER_DISPLAY = "G(0.265,0.690)B(0.150,0.060)R(0.680,0.320)WP(0.3127,0.3290)L(1000,0.0001)"
 
 MB = 1024 * 1024
-LIMITS = {"readme_webp": 10 * MB, "flicker_webp": 5 * MB}
+# The flicker crop is always lossless: lossy WebP is 4:2:0, which halves the
+# colour resolution the crop exists to show (mask stripes, dot crawl). Over
+# its limit the encode fails instead of falling back to a lossy file.
+LIMITS = {"readme_webp": 10 * MB, "flicker_webp": 24 * MB}
 README_QUALITIES = (90, 85, 80, 75, 70, 65, 60, 50, 40, 30)
-FLICKER_QUALITIES = ("lossless", 95, 90, 85, 80)
 POSTER_QUALITY = 85
 AVIF_QUALITY = 90
 AVIF_SPEED = 6
@@ -559,19 +561,14 @@ def readme_webp_args(src: Path | str, out: Path | str, source_frames: int, quali
 
 
 def flicker_webp_args(src: Path | str, out: Path | str, rect: Rect, first_frame: int, *,
-                      quality: int | str = "lossless", frames: int = FLICKER_FRAMES, fps: int = FLICKER_FPS,
+                      frames: int = FLICKER_FRAMES, fps: int = FLICKER_FPS,
                       matrix: str = SDR_DEFAULT_MATRIX, range_: str = "tv") -> list[str]:
-    """Eight consecutive frames of the crop at 1:1 render pixels, 8 fps loop."""
+    """Eight consecutive frames of the crop at 1:1 render pixels, 8 fps loop, lossless."""
     graph = (f"trim=start_frame={first_frame}:end_frame={first_frame + frames},"
              f"setpts=N/({fps}*TB),{rect.crop_filter()},{to_rgb(matrix, range_, 'bgra')}")
-    cmd = [*FFMPEG_BASE, "-i", str(src), "-an", "-vf", graph,
-           "-frames:v", str(frames), *PASSTHROUGH, *WEBP_TIME_BASE, "-c:v", "libwebp_anim"]
-    if quality == "lossless":
-        cmd += ["-lossless", "1"]
-    else:
-        cmd += ["-lossless", "0", "-quality", str(quality)]
-    cmd += ["-compression_level", "6", "-loop", "0", str(out)]
-    return cmd
+    return [*FFMPEG_BASE, "-i", str(src), "-an", "-vf", graph,
+            "-frames:v", str(frames), *PASSTHROUGH, *WEBP_TIME_BASE, "-c:v", "libwebp_anim",
+            "-lossless", "1", "-compression_level", "6", "-loop", "0", str(out)]
 
 
 # ---------------------------------------------------------------------------

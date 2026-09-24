@@ -298,7 +298,7 @@ class Stills(unittest.TestCase):
         self.assertIn("trim=start_frame=10:end_frame=18,setpts=N/(8*TB),crop=1500:1125:930:1260", s)
         self.assertIn("-enc_time_base 1:1000 -c:v libwebp_anim -lossless 1", s)  # whole-ms durations
         self.assertIn("-frames:v 8", s)
-        self.assertIn("-lossless 0 -quality 90", shlex.join(recipes.flicker_webp_args("s", "f", r, 10, quality=90)))
+        self.assertNotIn("-quality", s)  # never lossy: 4:2:0 would halve the crop's colour resolution
 
 
 class Features(unittest.TestCase):

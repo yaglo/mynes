@@ -180,7 +180,7 @@ In `out/<shot>/<preset>/<WxH>/`:
 | `crop-sdr.png`, `crop-sdr@1x.png` | crop | 1:1 detail crop of `still-sdr.png`, and its 2x2 average |
 | `crop-hdr.png`, `crop-hdr@1x.png` | crop | The same from the 16-bit HDR frame |
 | `crop-hdr.avif`, `crop-hdr@1x.avif` | crop | AVIF of each, as `still-hdr.avif` |
-| `flicker.webp` | crop | README presets: eight consecutive frames from `flicker_frame` at 1:1, 125 ms each (8 fps), lossless unless over 5 MB, then the best of quality 95 to 80 (every candidate is encoded at once, libwebp using one core each) |
+| `flicker.webp` | crop | README presets: eight consecutive frames from `flicker_frame` at 1:1, 125 ms each (8 fps), always lossless: lossy WebP is 4:2:0 and would halve the colour resolution the crop shows. Over 24 MB the encode fails; choose a smaller `flicker_crop` |
 | `flicker.png` | crop | Frame `flicker_frame` of the crop, lossless |
 | `flicker-hdr.png`, `flicker-hdr.jpg` | crop | The HDR crop, and a JPEG with the SDR crop as base image and a gain map toward the HDR one |
 | `readme.webp` | 1600x1200 | README presets: every second frame of the first `readme_seconds` at 30 fps (33 and 34 ms frames), the highest quality from 90 to 30 that is under 10 MB, all candidates encoded at once |

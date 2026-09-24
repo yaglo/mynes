@@ -762,7 +762,8 @@ def encode_readme(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dict
 
 def encode_flicker(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dict | None:
     """Eight consecutive frames of the flicker crop at 1:1 full-size pixels,
-    lossless when under the limit; the first frame as PNG and gain-map JPEG."""
+    lossless; a file over the limit is an error, not a lossy fallback. The
+    first frame as PNG and gain-map JPEG."""
     size = ctx.defaults.lens_size
     sdr = render_facts(ctx, runner, shot, preset, size, False)
     hdr = render_facts(ctx, runner, shot, preset, size, True)
@@ -770,26 +771,19 @@ def encode_flicker(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dic
     webp, png, hdr_png, jpg = d / "flicker.webp", d / "flicker.png", d / "flicker-hdr.png", d / "flicker-hdr.jpg"
     if _skip_if_fresh(runner, [webp, png, hdr_png], _inputs(sdr, hdr)):
         return None
-    candidates = {q: webp.with_name(f"flicker.q{q}.webp") for q in recipes.FLICKER_QUALITIES}
-    with _discard_on_failure(runner, [webp, png, hdr_png, jpg, d / "flicker-hdr.yuv", *candidates.values()]):
+    with _discard_on_failure(runner, [webp, png, hdr_png, jpg, d / "flicker-hdr.yuv"]):
         rect = recipes.flicker_geometry(shot.flicker_crop, size, ctx.flicker_scale, raster=ctx.raster(preset))
         first = shot.flicker_first_frame
         if first + recipes.FLICKER_FRAMES > sdr.frames:
             raise PipelineError(f"flicker frames {first}..{first + recipes.FLICKER_FRAMES - 1} exceed the render")
         limit = recipes.LIMITS["flicker_webp"]
-
-        def build(quality) -> tuple[Path, int]:
-            out = candidates[quality]
-            runner.run(recipes.flicker_webp_args(sdr.path, out, rect, first, quality=quality, matrix=sdr.matrix,
-                                                 range_=sdr.range),
-                       timeout=ENCODE_TIMEOUT, what=f"flicker webp {quality}")
-            return out, (0 if runner.dry_run else out.stat().st_size)
-
-        quality, webp_size, others = recipes.fit_parallel(limit, recipes.FLICKER_QUALITIES, build)
-        if not runner.dry_run:
-            candidates[quality].replace(webp)
-            for other in others:
-                Path(other).unlink(missing_ok=True)
+        runner.run(recipes.flicker_webp_args(sdr.path, webp, rect, first, matrix=sdr.matrix, range_=sdr.range),
+                   timeout=ENCODE_TIMEOUT, what="flicker webp (lossless)")
+        webp_size = 0 if runner.dry_run else webp.stat().st_size
+        if webp_size > limit:
+            raise PipelineError(f"{webp}: the lossless flicker crop is {webp_size / recipes.MB:.1f} MB, over the "
+                                f"{limit / recipes.MB:.0f} MB limit; choose a smaller flicker_crop for shot "
+                                f"{shot.id!r} rather than a lossy file, which would halve its colour resolution")
         runner.run(recipes.sdr_png_args(sdr.path, png, first, matrix=sdr.matrix, range_=sdr.range, rect=rect),
                    what="flicker png")
         _hdr_frame(runner, hdr, first, d / "flicker-hdr.yuv",
@@ -803,14 +797,14 @@ def encode_flicker(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dic
         stored = verify_animation(webp, frames=recipes.FLICKER_FRAMES, size=(rect.w, rect.h), limit=limit,
                                   fps=recipes.FLICKER_FPS)
         verify_image(png, frames=1, size=(rect.w, rect.h))
-    note = {"flicker_webp": {"quality": quality, "bytes": webp_size, "frames": recipes.FLICKER_FRAMES,
+    note = {"flicker_webp": {"quality": "lossless", "bytes": webp_size, "frames": recipes.FLICKER_FRAMES,
                              "stored_frames": stored,
                              "fps": recipes.FLICKER_FPS, "first_frame": first,
                              "crop_px": [rect.x, rect.y, rect.w, rect.h], "crop_nes_px": list(shot.flicker_crop),
                              "embed_width": rect.w // 2},
             "flicker_gainmap": {"file": gain, "bytes": jpg.stat().st_size} if gain else None}
     _update_report(runner, ctx.clip_dir(shot, preset) / "readme.json", note)
-    runner.say(f"flicker crop: {quality} ({webp_size} bytes), {rect}")
+    runner.say(f"flicker crop: lossless ({webp_size} bytes), {rect}")
     return note
 
 
