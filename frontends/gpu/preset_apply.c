@@ -162,6 +162,8 @@ static void preset_apply_cpu_state_ex(PresetCtx *ctx, const PhysicalPreset *p,
     /* Presets saved before the keyed clamp had a time constant carry no
      * value; show the generic one rather than a zero. */
     if (tv->clamp_lines <= 0) tv->clamp_lines = VIDEO_CLAMP_LINES_DEFAULT;
+    if (tv->clamp_key_delay_us <= 0) tv->clamp_key_delay_us = VIDEO_CLAMP_KEY_DELAY_US_DEFAULT;
+    if (tv->clamp_key_width_us <= 0) tv->clamp_key_width_us = VIDEO_CLAMP_KEY_WIDTH_US_DEFAULT;
     /* A vhs block without "model": 2 described the earlier filtered-noise
      * stage; its keys mean nothing to the FM deck. Enabled ones fall back
      * to the SP consumer deck (and the TV loop it was measured with). */
@@ -1054,7 +1056,7 @@ bool preset_manage(uint32_t op, int index, uint32_t revision,
 static OSDMenuItem menu_dac[4];           /* Stage 1: DAC / connection / phase */
 static OSDMenuItem menu_console[6];       /* Stage 2: console output */
 static OSDMenuItem menu_cable[9];         /* Stage 3: cable transmission */
-static OSDMenuItem menu_comb[9];          /* Stage 5: separation + display smoothing */
+static OSDMenuItem menu_comb[11];         /* Stage 5: separation + display smoothing */
 static OSDMenuItem menu_chroma[8];        /* Stage 6-7: chroma demod */
 static OSDMenuItem menu_luma[8];          /* Stage 8: luma processing */
 static OSDMenuItem menu_color_decode[13]; /* Stage 9: matrix decode */
@@ -1279,6 +1281,9 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_comb[n++] = MI_FLOAT("H PLL damping", &vc->tv.h_pll_damping, .05f, .1f, 2, gpu_cb_update_rc_params, "%.2f");
     menu_comb[n++] = MI_FLOAT("H PLL V-blank gain", &vc->tv.h_pll_vblank_gain, .1f, 1, 3, gpu_cb_update_rc_params, "%.1f");
     menu_comb[n++] = MI_FLOAT("Black clamp lines", &vc->tv.clamp_lines, .5f, 1, 500, gpu_cb_update_rc_params, "%.1f");
+    /* The burst key that gates the luminance clamp, from the start of sync. */
+    menu_comb[n++] = MI_FLOAT("Clamp key delay us", &vc->tv.clamp_key_delay_us, .1f, 4, 7, gpu_cb_update_rc_params, "%.1f");
+    menu_comb[n++] = MI_FLOAT("Clamp key width us", &vc->tv.clamp_key_width_us, .1f, .5f, 5, gpu_cb_update_rc_params, "%.1f");
     const int menu_comb_count=n;
 
     /* ================================================================

@@ -545,6 +545,12 @@ static ChainGrey chain_grey(SDL_GPUDevice *gpu, const VHSParams *deck, float cla
     CHECK(video_gpu_init(&v, gpu, &c, "shaders/compute", sp.fir_y, sp.fir_y_n, sp.fir_c, sp.fir_c_n, sp.fir_q, sp.fir_q_n));
     CHECK(video_gpu_upload_signal_table(&v, gpu, (float *)sp.table, NULL, SIG_TABLE_ENTRIES, SIG_TABLE_STRIDE));
     CHECK(vhs_gpu_enabled(&v.vhs, &v.sig_chain) == (deck->enabled != 0));
+    /* A black backdrop, as games draw it: the border starts with the
+     * 2C02's one-dot grey (hue 0) pulse at dot 49, a dot after the set's
+     * burst key ends, which the deck spreads ahead of itself. */
+    memcpy(v.backdrop, sp.table[0x0f], sizeof(v.backdrop));
+    memcpy(v.gray_backdrop, sp.table[0x0f & 0x1f0], sizeof(v.gray_backdrop));
+    v.backdrop_entry = 0x0f;
     static uint16_t codes[256 * 240];
     for (int i = 0; i < 256 * 240; i++) codes[i] = 0x10;
     float *rgb = malloc(v.rgb_size);    /* Y, I, Q per active sample */
