@@ -53,10 +53,21 @@ static float demod_burst_reference(const VideoGPUChain *vgc) {
     return vgc->signal_fmt.region == SIGNAL_REGION_PAL ? 150.0f / 700.0f : 0.20f;
 }
 
+/* The overlay covers the console picture's place in the decode window, read
+ * at each dispatch so a window changed after init is followed. */
+static void osd_params(const VideoGPUChain *v,ChainStage *s) {
+    const DecodeWindow *w=&v->window;
+    uint32_t p[]={(uint32_t)decode_window_samples(w),(uint32_t)w->width,
+                  (uint32_t)w->picture_x,(uint32_t)w->picture_row,(uint32_t)w->picture_w,0,0,0};
+    memcpy(s->params,p,sizeof(p)); s->params_size=sizeof(p);
+    s->dispatch_x=(p[0]+255)/256;
+}
+
 static bool rebind_osd(struct SignalChainFwd *chain,struct ChainStageFwd *stage,void *user) {
     (void)chain;
     VideoGPUChain *v=user;
     ChainStage *s=(ChainStage *)stage;
+    osd_params(v,s);
     s->ro_count=1; s->ro[0]=CBR_EXT0; s->external[0]=v->buf_osd;
     s->rw_count=1; s->rw[0]=CBR_EXT1; s->external[1]=v->buf_rgb;
     return v->buf_osd && v->buf_rgb;
@@ -788,14 +799,10 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     }
 
     {
-        /* The overlay covers the console picture's place in the window. */
-        const DecodeWindow *w=&vgc->window;
-        uint32_t p[]={(uint32_t)decode_window_samples(w),(uint32_t)w->width,
-                      (uint32_t)w->picture_x,(uint32_t)w->picture_row,(uint32_t)w->picture_w,0,0,0};
-        vgc->stage_osd=chain_add_stage(&vgc->sig_chain,"TV RGB OSD",CHAIN_KERNEL_OSD,
-                                       p,sizeof(p),(p[0]+255)/256,1);
+        vgc->stage_osd=chain_add_stage(&vgc->sig_chain,"TV RGB OSD",CHAIN_KERNEL_OSD,NULL,0,1,1);
         if(vgc->stage_osd<0) goto fail;
         ChainStage *s=&vgc->sig_chain.stages[vgc->stage_osd];
+        osd_params(vgc,s);
         s->io_typed=true; s->rebind=rebind_osd; s->rebind_user=vgc;
         s->snapshot_src=CBR_EXT1; s->snapshot_size=vgc->rgb_size;
         chain_set_stage_enabled(&vgc->sig_chain,vgc->stage_osd,false);

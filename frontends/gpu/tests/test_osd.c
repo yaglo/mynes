@@ -100,6 +100,26 @@ int test_osd(SDL_GPUDevice *gpu) {
         }
       }
     }
+    /* A window changed after init, the picture alone: the overlay follows
+     * it, one opaque red dot at picture (20, 37). */
+    decode_window_picture(&v.window,v.signal_fmt.region,v.signal_fmt.samples_per_pixel);
+    memset(ui,0,GPU_OSD_PIXELS*sizeof(*ui));
+    ui[37*256+20]=0xff0000ffu;
+    CHECK(video_gpu_set_osd(&v,gpu,ui));
+    CHECK(gpu_buffer_upload(gpu,v.buf_rgb,input,v.rgb_size));
+    CHECK(chain_run(&v.sig_chain,gpu));
+    CHECK(gpu_buffer_download(gpu,v.buf_rgb,output,v.rgb_size));
+    {
+        const DecodeWindow *w=&v.window;
+        size_t red=0,other=0;
+        for(size_t i=0;i<decode_window_samples(w);i++) {
+            int px=(int)(i%w->width)/w->spp, py=(int)(i/w->width);
+            bool dot=px==20 && py==37;
+            if(dot && output[i*3]==1.0f && output[i*3+1]==0.0f) red++;
+            if(!dot && output[i*3]!=.25f) other++;
+        }
+        CHECK(red==(size_t)w->spp && other==0);
+    }
     CHECK(video_gpu_set_osd(&v,gpu,NULL));
     CHECK(gpu_buffer_upload(gpu,v.buf_rgb,input,v.rgb_size));
     CHECK(chain_run(&v.sig_chain,gpu));
