@@ -98,6 +98,14 @@ for rom in tests/nes-test-roms/blargg_apu_2005.07.30/*.nes; do
 done 2>/dev/null
 echo ""
 
+# === Blargg Reset Tests (test_runner presses reset on request) ===
+echo "=== Blargg Reset Tests ==="
+for rom in tests/nes-test-roms/apu_reset/*.nes \
+           tests/nes-test-roms/cpu_reset/ram_after_reset.nes; do
+    run_blargg "$rom"
+done 2>/dev/null
+echo ""
+
 # === Sprite Tests ===
 echo "=== Sprite Tests ==="
 for rom in tests/nes-test-roms/sprite_hit_tests_2005.10.05/*.nes; do
