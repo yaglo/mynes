@@ -54,6 +54,7 @@ void mapper_init(Mapper *m, uint16_t number,
     m->chr_banks = chr_size / 0x2000;  /* 8KB banks */
     m->mirroring = mirroring;
     m->has_chr_ram = (chr_size == 0);
+    m->prg_ram_size = 0x2000;
 
     mapper_reset(m);
 }

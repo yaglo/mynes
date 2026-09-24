@@ -9,7 +9,8 @@
  *   - Scanline IRQ ($5203/$5204)
  *   - Per-quadrant CIRAM/ExRAM/fill nametable mapping ($5105)
  *   - Fill-mode tile/attribute ($5106/$5107)
- *   - PRG RAM at $6000-$7FFF, and in $8000-$DFFF via $5114-$5116 bit 7
+ *   - PRG RAM at $6000-$7FFF, and in $8000-$DFFF via $5114-$5116 bit 7,
+ *     as a 64 KB superset of every board's RAM: bank & 7 picks the page
  *   - Multiplicand/multiplier hardware ($5205/$5206)
  *   - ExRAM ($5C00-$5FFF) as general-purpose RAM
  *
@@ -17,7 +18,7 @@
  *   - ExRAM as extended nametable attributes (needs PPU changes)
  *   - Split-screen mode ($5200-$5202)
  *   - PCM audio channel
- *   - PRG RAM beyond one 8 KB chip ($5113 and the RAM bank bits)
+ *   - RAM write protection ($5102/$5103)
  */
 
 #include "mapper_ops.h"
@@ -63,13 +64,27 @@ static uint8_t mmc5_get_prg_reg(const MMC5 *s, uint16_t addr) {
 }
 
 /* Whether $8000-$DFFF at addr is mapped to PRG RAM: bit 7 clear in the
- * governing $5114-$5116 register. $5117's windows are always ROM. The
- * cartridge RAM is the single 8 KB of Mapper.prg_ram, so the RAM bank
- * number (and $5113) can only select that one chip. */
+ * governing $5114-$5116 register. $5117's windows are always ROM. */
 static bool mmc5_prg_is_ram(const MMC5 *s, uint16_t addr) {
     if (addr >= 0xE000 || s->prg_mode == 0) return false;
     if (s->prg_mode == 1 && addr >= 0xC000) return false;
     return !(mmc5_get_prg_reg(s, addr) & 0x80);
+}
+
+/* Offset into the 64 KB PRG RAM for $6000-$DFFF. Boards carry 8 to 32 KB
+ * on one or two chips, but treating the RAM as 64 KB with bank & 7 as the
+ * 8 KB page runs every game (nesdev "MMC5", PRG RAM). $5113 pages $6000;
+ * a 16 KB window at $8000 ignores bit 0 of its bank as it does for ROM,
+ * and A13 picks the half. */
+static uint32_t mmc5_prg_ram_offset(const MMC5 *s, uint16_t addr) {
+    uint32_t page;
+    if (addr < 0x8000)
+        page = s->prg_regs[0] & 7;
+    else if (addr < 0xC000 && (s->prg_mode == 1 || s->prg_mode == 2))
+        page = (s->prg_regs[2] & 6) | ((addr >> 13) & 1);
+    else
+        page = mmc5_get_prg_reg(s, addr) & 7;
+    return page * 0x2000 + (addr & 0x1FFF);
 }
 
 /*
@@ -197,12 +212,11 @@ static uint8_t mmc5_read_chr(const Mapper *m, uint16_t addr) {
 static uint8_t mapper5_cpu_peek(const Mapper *m, uint16_t addr) {
     const MMC5 *s = &m->ext.mmc5;
 
-    if (addr >= 0x8000)
-        return mmc5_prg_is_ram(s, addr) ? m->prg_ram[addr & 0x1FFF]
-                                        : mmc5_read_prg(m, addr);
+    if (addr >= 0x8000 && !mmc5_prg_is_ram(s, addr))
+        return mmc5_read_prg(m, addr);
 
     if (addr >= 0x6000)
-        return m->prg_ram[addr - 0x6000];
+        return m->prg_ram[mmc5_prg_ram_offset(s, addr)];
 
     /* Internal registers */
     switch (addr) {
@@ -246,14 +260,11 @@ static uint8_t mapper5_cpu_read(Mapper *m, uint16_t addr) {
 static void mapper5_cpu_write(Mapper *m, uint16_t addr, uint8_t val) {
     MMC5 *s = mmc5(m);
 
-    if (addr >= 0x8000) {
-        if (mmc5_prg_is_ram(s, addr))
-            m->prg_ram[addr & 0x1FFF] = val;
+    if (addr >= 0x8000 && !mmc5_prg_is_ram(s, addr))
         return; /* PRG ROM ignores writes */
-    }
 
     if (addr >= 0x6000) {
-        m->prg_ram[addr - 0x6000] = val;
+        m->prg_ram[mmc5_prg_ram_offset(s, addr)] = val;
         return;
     }
 
@@ -425,6 +436,7 @@ static void mapper5_init(Mapper *m) {
     s->nt_mapping = 0;
 
     m->prg_ram_enabled = true;
+    m->prg_ram_size = sizeof(m->prg_ram);
     m->has_chr_ram = false;
 
 }

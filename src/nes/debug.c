@@ -94,9 +94,9 @@ uint8_t debug_read_cpu(const NES *nes, uint16_t addr) {
         return 0; /* Expansion ROM */
     }
     else if (addr < 0x8000) {
-        /* PRG RAM */
+        /* PRG RAM, which MMC5 pages through $5113 */
         if (nes->mapper_loaded)
-            return nes->mapper.prg_ram[addr & 0x1FFF];
+            return mapper_cpu_peek(&nes->mapper, addr);
         return nes->prg_ram[addr & 0x1FFF];
     }
     else {

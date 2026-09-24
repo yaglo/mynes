@@ -80,8 +80,11 @@ typedef struct Mapper {
     uint8_t chr_ram[0x2000]; /* CHR RAM for mappers that use it */
     bool has_chr_ram;
 
-    /* PRG RAM */
-    uint8_t prg_ram[0x2000];
+    /* PRG RAM. Most boards have at most the 8 KB at $6000-$7FFF; MMC5 pages
+     * the whole array in 8 KB units. prg_ram_size is how much of it the
+     * cartridge uses, and so how much a battery save holds. */
+    uint8_t prg_ram[0x10000];
+    uint32_t prg_ram_size;
     bool prg_ram_enabled;
     bool prg_ram_write_protect;
 

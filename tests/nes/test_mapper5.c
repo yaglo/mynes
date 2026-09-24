@@ -139,10 +139,51 @@ int main(void) {
     mapper_cpu_write(m,0x5100,1);       /* 16 KB: $5115 governs $8000 */
     mapper_cpu_write(m,0x5115,0x00);
     mapper_cpu_write(m,0x5117,0x00);
-    CHECK(mapper_cpu_read(m,0xB234)==0x77);
+    CHECK(mapper_cpu_read(m,0x9234)==0x77);
+    CHECK(mapper_cpu_read(m,0xB234)==0x00); /* second half: page 1 */
     CHECK(mapper_cpu_read(m,0xC000)==0x40);
     mapper_cpu_write(m,0x5100,0);       /* 32 KB: always ROM */
     CHECK(mapper_cpu_read(m,0x8000)==0x40);
+
+    /* The RAM is 64 KB of 8 KB pages, bank & 7 picking the page: $5113
+     * for $6000 and the RAM banks of $5114-$5116 for their windows. */
+    CHECK(m->prg_ram_size==0x10000);
+    mapper_cpu_write(m,0x5113,0x01);
+    CHECK(mapper_cpu_read(m,0x6123)==0x00);
+    mapper_cpu_write(m,0x6123,0x11);
+    mapper_cpu_write(m,0x5113,0x00);
+    CHECK(mapper_cpu_read(m,0x6123)==0x5a);
+    CHECK(debug_read_cpu(&nes,0x6123)==0x5a);
+    mapper_cpu_write(m,0x5113,0x09);    /* bits above 2 are ignored */
+    CHECK(mapper_cpu_read(m,0x6123)==0x11);
+    CHECK(debug_read_cpu(&nes,0x6123)==0x11);
+    CHECK(m->prg_ram[0x2123]==0x11 && m->prg_ram[0x0123]==0x5a);
+
+    /* A write through a window reaches only that window's page, never
+     * the one $6000 shows (which may hold the battery save). */
+    mapper_cpu_write(m,0x5113,0x00);
+    mapper_cpu_write(m,0x5100,3);       /* 8 KB windows */
+    mapper_cpu_write(m,0x5114,0x02);
+    mapper_cpu_write(m,0x5115,0x03);
+    mapper_cpu_write(m,0x5116,0x7F);    /* RAM page 7 */
+    mapper_cpu_write(m,0x8123,0x22);
+    mapper_cpu_write(m,0xA123,0x33);
+    mapper_cpu_write(m,0xC123,0x77);
+    CHECK(mapper_cpu_read(m,0x6123)==0x5a);
+    CHECK(m->prg_ram[0x4123]==0x22 && m->prg_ram[0x6123]==0x33 && m->prg_ram[0xE123]==0x77);
+    mapper_cpu_write(m,0x5113,0x02);
+    CHECK(mapper_cpu_read(m,0x6123)==0x22);
+    mapper_cpu_write(m,0x5113,0x00);
+
+    /* 16 KB windows ignore bit 0 of the bank; A13 picks the page. */
+    mapper_cpu_write(m,0x5100,2);
+    mapper_cpu_write(m,0x5115,0x03);
+    CHECK(mapper_cpu_read(m,0x8123)==0x22);
+    CHECK(mapper_cpu_read(m,0xA123)==0x33);
+    CHECK(mapper_cpu_read(m,0xC123)==0x77);
+    mapper_cpu_write(m,0x5115,0x04);
+    mapper_cpu_write(m,0xA000,0x55);
+    CHECK(m->prg_ram[0xA000]==0x55);
     memset(prg,0,0x8000);
 
     /* Exercise the real PPU bus hook over successive frames: counter must
