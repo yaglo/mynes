@@ -374,6 +374,13 @@ static void output_for(const char *output, const char *preset, int count, char *
     snprintf(out, n, "%.*s-%s%s", (int)(dot - output), output, stem, dot);
 }
 
+/* The still converted for the decoder, removed on every way out of main. */
+static char still_png[1024];
+
+static void remove_still_png(void) {
+    if (still_png[0]) remove(still_png);
+}
+
 int main(int argc, char **argv) {
     const char *input_path = NULL, *output = NULL;
     const char *presets[32]; int preset_count = 0;
@@ -425,7 +432,6 @@ int main(int argc, char **argv) {
     const char *ffmpeg = getenv("MYNES_FFMPEG") ? getenv("MYNES_FFMPEG") : "ffmpeg";
     const char *ffprobe = getenv("MYNES_FFPROBE") ? getenv("MYNES_FFPROBE") : "ffprobe";
     Input in = {.path = input_path};
-    char still_png[1024] = "";
     if (!list) {
         if (!probe(&in, ffprobe)) return 1;
         /* A still in any format ffmpeg reads, tiled HEIF included (which
@@ -434,6 +440,7 @@ int main(int argc, char **argv) {
         if (in.still) {
             const char *tmp = getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp";
             snprintf(still_png, sizeof still_png, "%s/mynes_video-%d.png", tmp, (int)getpid());
+            atexit(remove_still_png);
             char *conv[] = {(char *)ffmpeg, "-nostdin", "-v", "error", "-y", "-i", (char *)input_path,
                             "-frames:v", "1", "-pix_fmt", "rgb48be", still_png, NULL};
             if (!run_quiet(conv)) { fprintf(stderr, "%s: ffmpeg cannot decode it\n", input_path); return 1; }
@@ -639,7 +646,6 @@ int main(int argc, char **argv) {
     }
 
     free(rgb48); free(codes); free(silence);
-    if (still_png[0]) remove(still_png);
     gpu_display_destroy(&gpu_disp, gpu);
     video_gpu_destroy(&video_gpu_chain, gpu);
     SDL_ReleaseWindowFromGPUDevice(gpu, window);
