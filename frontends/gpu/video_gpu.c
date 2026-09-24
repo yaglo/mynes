@@ -2439,12 +2439,13 @@ bool video_gpu_process_rgb(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     SDL_DispatchGPUCompute(pass, (total + 255u) / 256u, 1, 1);
     SDL_EndGPUComputePass(pass);
 
-    /* An encoder IC's raster: -40 IRE sync, 40 IRE peak-to-peak sine burst. */
+    /* An encoder IC's raster: -40 IRE sync, 40 IRE peak-to-peak sine burst,
+     * and its pedestal over the whole active line: the console's border is
+     * black at setup, as its picture's black is. */
     vgc->raster_sync_level = -0.4f;
     vgc->raster_burst_amp = 0.2f;
     vgc->raster_burst_sine = true;
-    memset(vgc->backdrop, 0, sizeof(vgc->backdrop));
-    memset(vgc->gray_backdrop, 0, sizeof(vgc->gray_backdrop));
+    for (int k = 0; k < 12; k++) vgc->backdrop[k] = vgc->gray_backdrop[k] = src->setup;
     vgc->signal_phase_base = src->phase_base;
     vgc->signal_line_phase = src->phase_line_adv;
     update_signal_time(vgc);

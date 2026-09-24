@@ -46,6 +46,9 @@ static Console console_snes(void) {
 
 static int gcd(int a, int b) { while (b) { int t = a % b; a = b; b = t; } return a; }
 
+/* The encoder's pedestal (setup) for decode(); 0 unless a test sets it. */
+static float decode_setup;
+
 /* Run `frames` pictures through a fresh chain and return the decoded RGB
  * of the last one (rgb_size floats, caller frees), or NULL. *window_out
  * says where the picture's samples are; *spl_out is its width in samples. */
@@ -69,7 +72,7 @@ static float *decode(SDL_GPUDevice *gpu, const Console *con, VideoConnectionType
         .spp_num = SIGNAL_NTSC_SAMPLES_PER_LINE / g, .spp_den = con->width / g,
         .ramp = con->ramp, .ramp_n = con->ramp_n,
         .phase_base = 0, .phase_line_adv = con->line_phase,
-        .chroma_bw_hz = 1.3e6f, .luma_bw_hz = luma_bw_hz, .luma_trap = luma_trap, .setup = 0,
+        .chroma_bw_hz = 1.3e6f, .luma_bw_hz = luma_bw_hz, .luma_trap = luma_trap, .setup = decode_setup,
         .code_bits = code_bits,
     };
     float *rgb = calloc(v.rgb_size / sizeof(float), sizeof(float));
@@ -205,7 +208,46 @@ static void encoder_linear(SDL_GPUDevice *gpu, VideoConnectionType conn, const c
     free(codes);
 }
 
+/* With a 7.5 IRE setup the encoder's pedestal spans the whole active line:
+ * the console's side border decodes to the black of a black bar, not 7.5
+ * IRE below it. */
+static void encoder_pedestal(SDL_GPUDevice *gpu) {
+    Console con = console_snes();
+    const int lines = 224;
+    uint32_t *codes = malloc((size_t)con.width * lines * sizeof(uint32_t));
+    uint32_t full = (uint32_t)(con.ramp_n - 1);
+    for (int y = 0; y < lines; y++)
+        for (int x = 0; x < con.width; x++) {
+            const int *c = bar_rgb[x * 8 / con.width];
+            codes[y * con.width + x] = (c[0] ? full : 0) | ((c[1] ? full : 0) << 6) | ((c[2] ? full : 0) << 12);
+        }
+    int spl = 0;
+    DecodeWindow w;
+    decode_setup = 0.075f;
+    float *rgb = decode(gpu, &con, VIDEO_CONN_COMPOSITE, codes, lines, 5e6f, 0.0f, 12, &spl, &w, 0);
+    decode_setup = 0;
+    CHECK(rgb != NULL);
+    if (rgb) {
+        double bar[3] = {0}, border[3] = {0};
+        int nb = 0, nd = 0;
+        for (int y = 60; y <= 180; y++) {
+            for (int x = 7 * spl / 8 + spl / 32; x < spl - spl / 32; x++, nb++)
+                for (int c = 0; c < 3; c++) bar[c] += rgb[decode_window_rgb_index(&w, y, x) + c];
+            /* Raster dots 55 to 60, clear of the picture and the dot-49 pulse. */
+            for (int x = (55 - 65) * w.spp; x < (61 - 65) * w.spp; x++, nd++)
+                for (int c = 0; c < 3; c++) border[c] += rgb[decode_window_rgb_index(&w, y, x) + c];
+        }
+        float worst = 0;
+        for (int c = 0; c < 3; c++) worst = fmaxf(worst, fabsf((float)(bar[c] / nb - border[c] / nd)));
+        printf("encoder, 7.5 IRE setup: border against the black bar %.4f\n", worst);
+        CHECK(worst < 0.01f);
+    }
+    free(rgb);
+    free(codes);
+}
+
 int test_encoder(SDL_GPUDevice *gpu) {
+    encoder_pedestal(gpu);
     Console md = console_md(), snes = console_snes();
     const struct { VideoConnectionType conn; const char *name; } conns[] = {
         {VIDEO_CONN_COMPOSITE, "composite"}, {VIDEO_CONN_SVIDEO, "S-Video"}, {VIDEO_CONN_RGB, "RGB"}};

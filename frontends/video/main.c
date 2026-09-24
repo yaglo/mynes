@@ -16,7 +16,7 @@
  * have a console's pattern, not broadcast NTSC's (227.5 cycles per line,
  * 525 interlaced lines), and a video is shown at 240 lines per field. The
  * picture fills the 256-dot, 240-line area a console picture uses, so the
- * tube shows the same narrow side borders.
+ * tube shows the same narrow side borders, black at the encoder's pedestal.
  *
  * Frames come from ffmpeg: resampled to 60.0988 frames per second, fitted
  * to or cropped to the picture area's shape, and scaled to 1024 x 240
