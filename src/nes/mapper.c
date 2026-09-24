@@ -123,6 +123,18 @@ void mapper_ppu_bus_read(Mapper *m, uint16_t addr) {
     if (ops->ppu_bus_read) ops->ppu_bus_read(m, addr);
 }
 
+uint8_t mapper_cpu_peek(Mapper *m, uint16_t addr) {
+    const MapperOps *ops = mapper_ops_for(m->number);
+    if (ops->cpu_peek) return ops->cpu_peek(m, addr);
+    return mapper_cpu_read(m, addr);
+}
+
+uint8_t mapper_ppu_peek(Mapper *m, uint16_t addr) {
+    const MapperOps *ops = mapper_ops_for(m->number);
+    if (ops->ppu_peek) return ops->ppu_peek(m, addr);
+    return mapper_ppu_read(m, addr);
+}
+
 void mapper_cpu_clock(Mapper *m) {
     const MapperOps *ops = mapper_ops_for(m->number);
     if (ops->cpu_clock) ops->cpu_clock(m);

@@ -104,6 +104,18 @@ static uint8_t mapper10_ppu_read(Mapper *m, uint16_t addr) {
     return 0;
 }
 
+/* The latch trigger fetches only switch banks when the PPU makes them. */
+static uint8_t mapper10_ppu_peek(Mapper *m, uint16_t addr) {
+    uint8_t latch0 = m->mmc4_latch0, latch1 = m->mmc4_latch1;
+    uint8_t chr0 = m->mmc4_chr0, chr1 = m->mmc4_chr1;
+    uint8_t val = mapper10_ppu_read(m, addr);
+    m->mmc4_latch0 = latch0;
+    m->mmc4_latch1 = latch1;
+    m->mmc4_chr0 = chr0;
+    m->mmc4_chr1 = chr1;
+    return val;
+}
+
 static void mapper10_ppu_write(Mapper *m, uint16_t addr, uint8_t val) {
     if (addr < 0x2000 && m->has_chr_ram) {
         uint32_t chr_addr = (addr < 0x1000)
@@ -120,4 +132,5 @@ const MapperOps mapper10_ops = {
     .cpu_write = mapper10_cpu_write,
     .ppu_read = mapper10_ppu_read,
     .ppu_write = mapper10_ppu_write,
+    .ppu_peek = mapper10_ppu_peek,
 };

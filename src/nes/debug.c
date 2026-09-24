@@ -100,9 +100,10 @@ uint8_t debug_read_cpu(const NES *nes, uint16_t addr) {
         return nes->prg_ram[addr & 0x1FFF];
     }
     else {
-        /* PRG ROM */
+        /* PRG ROM. A plain read is not safe here: MMC5 ends its frame on
+         * a read of the NMI vector. */
         if (nes->mapper_loaded)
-            return mapper_cpu_read((Mapper *)&nes->mapper, addr);
+            return mapper_cpu_peek((Mapper *)&nes->mapper, addr);
         if (nes->prg_rom)
             return nes->prg_rom[(addr - 0x8000) % nes->prg_rom_size];
         return 0;
@@ -115,24 +116,19 @@ uint16_t debug_read_cpu_word(const NES *nes, uint16_t addr) {
 
 uint8_t debug_read_ppu_vram(const NES *nes, uint16_t addr) {
     const PPU *ppu = &nes->ppu;
-    if (addr < 0x2000) {
-        /* Pattern tables — read via mapper */
+    addr &= 0x3FFF;
+    if (addr < 0x2000 || (ppu->cart_nametables && addr < 0x3F00)) {
+        /* Pattern tables, and nametables the cartridge maps (MMC5):
+         * peek so MMC2/MMC4 latches and MMC5 register state stay put. */
         if (nes->mapper_loaded)
-            return mapper_ppu_read((Mapper *)&nes->mapper, addr);
-        if (nes->chr_rom && nes->chr_rom_size > 0)
-            return nes->chr_rom[addr % nes->chr_rom_size];
-        return ppu->vram[addr];
+            return mapper_ppu_peek((Mapper *)&nes->mapper, addr);
+        if (addr < 0x2000)
+            return (nes->chr_rom && nes->chr_rom_size > 0)
+                ? nes->chr_rom[addr % nes->chr_rom_size] : ppu->vram[addr];
     }
-    else if (addr < 0x3F00) {
-        /* Nametables */
-        return ppu->vram[addr & 0x0FFF];
-    }
-    else {
-        /* Palette */
-        uint16_t idx = addr & 0x1F;
-        if ((idx & 0x03) == 0) idx &= 0x0F; /* Mirror $3F10/$3F14/$3F18/$3F1C */
-        return ppu->palette[idx];
-    }
+    /* The PPU's own nametable mirroring and palette mirrors; both paths
+     * of ppu_read are plain array lookups there. */
+    return ppu_read((PPU *)ppu, addr);
 }
 
 uint8_t debug_read_oam(const NES *nes, uint8_t index) {

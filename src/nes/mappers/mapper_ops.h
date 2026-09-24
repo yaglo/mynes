@@ -17,6 +17,10 @@ typedef struct MapperOps {
     void (*ppu_bus_read)(Mapper *m, uint16_t addr);
     void (*cpu_clock)(Mapper *m);
     void (*scanline)(Mapper *m);   /* Called at end of each visible scanline */
+    /* Debugger reads. Only mappers whose cpu_read/ppu_read change state
+     * provide them; the others are peeked through their plain read. */
+    uint8_t (*cpu_peek)(Mapper *m, uint16_t addr);
+    uint8_t (*ppu_peek)(Mapper *m, uint16_t addr);
 } MapperOps;
 
 extern const MapperOps mapper0_ops;

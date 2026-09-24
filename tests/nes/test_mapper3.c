@@ -2,7 +2,8 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "nes/mapper.h"
+#include "nes/nes.h"
+#include "nes/debug.h"
 
 /* Two 16 KB PRG banks and four 8 KB CHR banks hold their index. */
 static uint8_t prg[2 * 0x4000];
@@ -37,6 +38,17 @@ int main(void) {
     CHECK(mapper_ppu_read(&m, 0x1FFF) == 0x5A);
     mapper_cpu_write(&m, 0x8000, 3);
     CHECK(mapper_ppu_read(&m, 0x0123) == 0xA5);
+
+    /* The debugger sees nametables through the PPU's mirroring: with
+     * vertical mirroring $2C00 is $2400, which lives at vram $2400. */
+    static NES nes;
+    nes_init(&nes);
+    nes_load_mapper(&nes, 3, prg, sizeof(prg), chr, sizeof(chr), 1);
+    ppu_write(&nes.ppu, 0x2400, 0x77);
+    ppu_write(&nes.ppu, 0x2000, 0x66);
+    CHECK(debug_read_ppu_vram(&nes, 0x2C00) == 0x77);
+    CHECK(debug_read_ppu_vram(&nes, 0x2800) == 0x66);
+    CHECK(debug_read_ppu_vram(&nes, 0x3400) == 0x77);
 
     printf("Mapper 3 tests: %s\n", failures ? "FAIL" : "PASS");
     return failures ? 1 : 0;

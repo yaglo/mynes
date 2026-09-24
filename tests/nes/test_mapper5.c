@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "nes/nes.h"
+#include "nes/debug.h"
 
 static NES nes;
 static uint8_t prg[0x8000], chr[0x10000];
@@ -95,6 +96,20 @@ int main(void) {
     mapper_cpu_write(m,0x5203,0);
     scanline(m);
     CHECK(mapper_cpu_read(m,0x5204)==0x40);
+
+    /* Debugger reads leave the frame and IRQ state alone: a real read of
+     * $FFFA ends the frame, a real read of $5204 acknowledges. */
+    mapper_cpu_write(m,0x5203,(uint8_t)(m->ext.mmc5.scanline_counter+1));
+    mapper_cpu_write(m,0x5204,0x80);
+    scanline(m);
+    CHECK(m->irq_pending);
+    CHECK(debug_read_cpu(&nes,0xFFFA)==mapper_cpu_peek(m,0xFFFA));
+    CHECK(debug_read_cpu_word(&nes,0xFFFA)==(prg[0x7ffa]|prg[0x7ffb]<<8));
+    CHECK(mapper_cpu_peek(m,0x5204)==0xC0);
+    CHECK(m->irq_pending && m->ext.mmc5.in_frame);
+    CHECK(mapper_cpu_read(m,0xFFFA)==prg[0x7ffa]);
+    CHECK(!m->irq_pending && !m->ext.mmc5.in_frame);
+    mapper_cpu_write(m,0x5204,0);
 
     /* Exercise the real PPU bus hook over successive frames: counter must
      * restart, assert near line 1's attribute fetch, and clear in vblank. */

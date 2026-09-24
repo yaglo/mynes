@@ -181,16 +181,9 @@ static uint8_t mmc5_read_chr(Mapper *m, uint16_t addr) {
 /* CPU read                                                                   */
 /* ========================================================================== */
 
-static uint8_t mapper5_cpu_read(Mapper *m, uint16_t addr) {
+static uint8_t mapper5_cpu_peek(Mapper *m, uint16_t addr) {
     MMC5 *s = mmc5(m);
 
-    if (addr == 0xFFFA || addr == 0xFFFB) {
-        s->in_frame = false;
-        s->scanline_counter = 0;
-        s->repeated_reads = 0;
-        s->irq_status = false;
-        m->irq_pending = false;
-    }
     if (addr >= 0x8000)
         return mmc5_read_prg(m, addr);
 
@@ -199,14 +192,8 @@ static uint8_t mapper5_cpu_read(Mapper *m, uint16_t addr) {
 
     /* Internal registers */
     switch (addr) {
-    case 0x5204: {
-        uint8_t val = 0;
-        if (s->irq_status) val |= 0x80;
-        if (s->in_frame)   val |= 0x40;
-        s->irq_status = false;
-        m->irq_pending = false;
-        return val;
-    }
+    case 0x5204:
+        return (s->irq_status ? 0x80 : 0) | (s->in_frame ? 0x40 : 0);
     case 0x5205:
         return (uint8_t)(s->multiplicand * s->multiplier);
     case 0x5206:
@@ -218,6 +205,24 @@ static uint8_t mapper5_cpu_read(Mapper *m, uint16_t addr) {
         return s->exram[addr - 0x5C00];
 
     return 0;
+}
+
+static uint8_t mapper5_cpu_read(Mapper *m, uint16_t addr) {
+    MMC5 *s = mmc5(m);
+    uint8_t val = mapper5_cpu_peek(m, addr);
+
+    /* The NMI vector fetch ends the frame; reading $5204 acknowledges. */
+    if (addr == 0xFFFA || addr == 0xFFFB) {
+        s->in_frame = false;
+        s->scanline_counter = 0;
+        s->repeated_reads = 0;
+        s->irq_status = false;
+        m->irq_pending = false;
+    } else if (addr == 0x5204) {
+        s->irq_status = false;
+        m->irq_pending = false;
+    }
+    return val;
 }
 
 /* ========================================================================== */
@@ -320,6 +325,15 @@ static uint8_t mapper5_ppu_read(Mapper *m, uint16_t addr) {
     return offset < 0x3c0 ? s->fill_tile : s->fill_attr * 0x55;
 }
 
+/* Outside 8x16 mode a CHR read forgets which register set was written last. */
+static uint8_t mapper5_ppu_peek(Mapper *m, uint16_t addr) {
+    MMC5 *s = mmc5(m);
+    bool chr_hi_written = s->chr_hi_written;
+    uint8_t val = mapper5_ppu_read(m, addr);
+    s->chr_hi_written = chr_hi_written;
+    return val;
+}
+
 static void mapper5_ppu_write(Mapper *m, uint16_t addr, uint8_t val) {
     if (addr < 0x2000) return; /* CHR ROM */
     MMC5 *s = mmc5(m);
@@ -406,4 +420,6 @@ const MapperOps mapper5_ops = {
     .ppu_write = mapper5_ppu_write,
     .ppu_bus_read = mapper5_ppu_bus_read,
     .cpu_clock = mapper5_cpu_clock,
+    .cpu_peek  = mapper5_cpu_peek,
+    .ppu_peek  = mapper5_ppu_peek,
 };
