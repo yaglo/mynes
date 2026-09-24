@@ -174,11 +174,9 @@ In `out/<shot>/<preset>/<WxH>/`:
 | `lens-hdr-av1.mp4` | 3840x2880 | As `stage-hdr-av1.mp4` at crf 20, no audio; lens shots only |
 | `lens-sdr-hevc.mp4` | 3840x2880 | libx265 Main, crf 14, BT.709, no audio; lens shots only |
 | `still-sdr.png` | 3840x2880 | Frame `thumbnail_frame` of the SDR render, lossless, with an sRGB chunk and no ICC profile (as every SDR PNG here) |
-| `still-hdr.png` | 3840x2880 | The same frame of the HDR render, 16-bit PQ PNG with a cICP chunk |
-| `still-hdr.avif` | 3840x2880 | `avifenc --cicp 9/16/9 --depth 10 --yuv 444 --range full -q 90 --clli MaxCLL,MaxFALL` from `still-hdr.png` |
+| `still-hdr.avif` | 3840x2880 | The same frame of the HDR render: `avifenc --cicp 9/16/9 --depth 10 --yuv 444 --range full -q 90 --clli MaxCLL,MaxFALL` from a 16-bit PQ PNG (`still-hdr.png`, with a cICP chunk), whose light levels give the `--clli` values. The PNG is deleted once the AVIF's size, format, colour tags and light levels check out |
 | `crop-sdr.png` | crop | 1:1 detail crop of `still-sdr.png` |
-| `crop-hdr.png` | crop | The same from the 16-bit HDR frame |
-| `crop-hdr.avif` | crop | AVIF of it, as `still-hdr.avif` |
+| `crop-hdr.avif` | crop | The same crop of the HDR frame, made as `still-hdr.avif` (from `crop-hdr.png`, deleted afterwards) |
 | `flicker.webp` | crop | README presets: eight consecutive frames from `flicker_frame` at 1:1, 125 ms each (8 fps), always lossless: lossy WebP is 4:2:0 and would halve the colour resolution the crop shows. Over 24 MB the encode fails; choose a smaller `flicker_crop` |
 | `readme.webp` | 1600x1200 | README presets: every second frame of the first `readme_seconds` at 30 fps (33 and 34 ms frames), the highest quality from 90 to 30 that is under 10 MB, all candidates encoded at once |
 
@@ -447,8 +445,8 @@ and piped as `yuv444p16le`), runs every encode, feature and install job on
 them and checks the outputs: codecs strings, HDR10 metadata, one-pixel
 columns surviving, colours after the BT.601 to BT.709 change, an 800-nit
 highlight within 1% in the stage video and the still, a PQ-peak patch that
-must read 65535 in `still-hdr.png` and 10000 nits in the AVIF's content
-light level, 1:1 crops, the manifest (a version 1
+must read 65535 in `still-hdr.avif` and 10000 nits in its content light
+level, 1:1 crops, the manifest (a version 1
 clip rewritten in version 2 form), the budget refusal and the cases where
 install stops before copying. It takes under a minute and is skipped when
 ffmpeg lacks one of the encoders or avifenc, numpy or Pillow is missing; the

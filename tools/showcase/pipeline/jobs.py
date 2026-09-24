@@ -7,8 +7,8 @@ Output layout (--out, default tools/showcase/out): one directory per clip
   <WxH>/hdr.mov, hdr.json          the HDR render (BT.2020 PQ) and its sidecar
   <WxH>/{sdr,hdr}.record.log|json  recorder output; command, frames, inputs' SHA-256
   stage sizes   stage-hdr-hevc.mp4, stage-hdr-av1.mp4, stage-sdr.mp4, poster.webp
-  full size     still-sdr.png, still-hdr.png (16-bit PQ), still-hdr.avif,
-                crop-sdr.png, crop-hdr.png, crop-hdr.avif,
+  full size     still-sdr.png, still-hdr.avif, crop-sdr.png, crop-hdr.avif
+                (the AVIFs from 16-bit PQ PNGs, deleted once the AVIFs check out),
                 lens-hdr-hevc.mp4, lens-hdr-av1.mp4, lens-sdr-hevc.mp4   (lens clips)
                 flicker.webp (README presets)
   README size   readme.webp (README presets)
@@ -46,8 +46,9 @@ DEFAULT_BUDGET_MB = 900
 
 HDR_COLOUR = {"color_primaries": "bt2020", "color_transfer": "smpte2084", "color_space": "bt2020nc"}
 SDR_COLOUR = {"color_primaries": "bt709", "color_transfer": "bt709", "color_space": "bt709"}
-STILL_FILES = ("still-sdr.png", "still-hdr.png", "still-hdr.avif")
-CROP_FILES = ("crop-sdr.png", "crop-hdr.png", "crop-hdr.avif")
+STILL_FILES = ("still-sdr.png", "still-hdr.avif")
+CROP_FILES = ("crop-sdr.png", "crop-hdr.avif")
+HDR_PNGS = ("still-hdr.png", "crop-hdr.png")  # avifenc's input, 16-bit PQ; deleted after the encode
 SITE_CROP_FILES = ("crop-sdr.png", "crop-hdr.avif")
 CROP_ALIGN = 6  # detail crop sizes: whole CSS px at pixel ratios 1, 1.5, 2 and 3 (flicker_geometry)
 
@@ -609,14 +610,24 @@ def _write16(path: Path, rgb) -> dict:
     return {path.name: images.light_levels(rgb)}
 
 
-def _verify_avif(path: Path, size) -> None:
-    verify_video(path, size=size, pix_fmt="yuv444p10le", colour=HDR_COLOUR)
+def _verify_avif(path: Path, size, clli=None) -> None:
+    """Size, 10-bit 4:4:4, BT.2020 PQ tags, and the content light level it was given."""
+    info = verify_video(path, size=size, pix_fmt="yuv444p10le", colour=HDR_COLOUR)
+    if clli is None:
+        return
+    light = next((sd for sd in info.stream.get("side_data_list", []) if "light" in sd.get("side_data_type", "").lower()),
+                 None)
+    got = (light.get("max_content"), light.get("max_average")) if light else None
+    if got != tuple(clli):
+        raise PipelineError(f"{path}: content light level {got}, expected MaxCLL and MaxFALL {tuple(clli)}")
 
 
 def encode_still(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dict | None:
     """Stills and 1:1 detail crops of frame thumbnail_frame at full size:
     lossless SDR PNGs and HDR AVIFs from 16-bit PQ PNGs. Nothing is scaled:
-    a 1x display shows the crop 1:1 too, larger on the page."""
+    a 1x display shows the crop 1:1 too, larger on the page. The 16-bit PNGs
+    are avifenc's input only; they are checked, and deleted once the AVIFs
+    are verified with the light levels measured on them."""
     size = ctx.defaults.lens_size
     sdr = render_facts(ctx, runner, shot, preset, size, False)
     hdr = render_facts(ctx, runner, shot, preset, size, True)
@@ -624,7 +635,7 @@ def encode_still(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dict 
     outputs = [d / n for n in STILL_FILES + CROP_FILES]
     if _skip_if_fresh(runner, outputs, _inputs(sdr, hdr)):
         return None
-    with _discard_on_failure(runner, outputs + [d / "still-hdr.yuv"]):
+    with _discard_on_failure(runner, outputs + [d / n for n in HDR_PNGS] + [d / "still-hdr.yuv"]):
         frame = shot.thumbnail_frame
         rect = recipes.flicker_geometry(shot.detail_crop, size, ctx.flicker_scale, align=CROP_ALIGN,
                                         raster=ctx.raster(preset))
@@ -640,7 +651,7 @@ def encode_still(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dict 
         levels = _hdr_frame(runner, hdr, frame, d / "still-hdr.yuv",
                             f"write still-hdr.png and crop-hdr.png ({rect.crop_filter()}) as 16-bit PQ PNGs",
                             hdr_work)
-        for png in ("still-hdr.png", "crop-hdr.png"):
+        for png in HDR_PNGS:
             avif = png.replace(".png", ".avif")
             runner.run(recipes.avifenc_args(d / png, d / avif, clli=levels.get(png)), what=f"{avif} {shot.id}/{preset}")
         if runner.dry_run:
@@ -648,8 +659,10 @@ def encode_still(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dict 
         for name, want in (("still-sdr.png", size), ("still-hdr.png", size), ("crop-sdr.png", (rect.w, rect.h)),
                            ("crop-hdr.png", (rect.w, rect.h))):
             verify_image(d / name, frames=1, size=want)
-        _verify_avif(d / "still-hdr.avif", size)
-        _verify_avif(d / "crop-hdr.avif", (rect.w, rect.h))
+        _verify_avif(d / "still-hdr.avif", size, levels.get("still-hdr.png"))
+        _verify_avif(d / "crop-hdr.avif", (rect.w, rect.h), levels.get("crop-hdr.png"))
+        for png in HDR_PNGS:
+            (d / png).unlink()
     return {"crop": [rect.x, rect.y, rect.w, rect.h], "light_levels": levels}
 
 

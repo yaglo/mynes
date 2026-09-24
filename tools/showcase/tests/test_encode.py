@@ -149,6 +149,17 @@ def decode_hdr(path: Path, size, *, frame: int = 0) -> "np.ndarray":
     return rgb.astype(np.int64)
 
 
+def decode_avif(path: Path, size) -> "np.ndarray":
+    """A 10-bit full-range HDR AVIF as 16-bit PQ R'G'B' codes: ffmpeg's
+    yuv444p16le widened back to the 10 bits it holds, then images.yuv_to_rgb48,
+    so a Y' of 1023 with neutral chroma is 65535."""
+    out = subprocess.run([tool("ffmpeg"), "-v", "error", "-i", str(path), "-frames:v", "1", "-f", "rawvideo",
+                          "-pix_fmt", "yuv444p16le", "-"], capture_output=True, check=True).stdout
+    w, h = size
+    yuv = np.frombuffer(out, "<u2").reshape(3, h, w) >> 6
+    return images.yuv_to_rgb48(yuv, 10, "bt2020", full_range=True).astype(np.int64)
+
+
 def side_data(path: Path) -> dict:
     out = subprocess.run([tool("ffprobe"), "-v", "error", "-select_streams", "v:0", "-show_frames",
                           "-read_intervals", "%+#1", "-of", "json", str(path)], capture_output=True, check=True)
@@ -453,23 +464,26 @@ class EncodePipeline(unittest.TestCase):
             sdr = np.asarray(im).astype(np.int64)
         self.assertLess(np.abs(sdr - self.source(LENS, False)).max(), 12)
         self.assertLess(np.abs(sdr - self.source(LENS, False)).mean(), 1.5)
-        hdr = decode_hdr(d / "still-hdr.png", LENS)
+        # The 16-bit PNG avifenc read is gone once the AVIF checks out; the
+        # AVIF itself holds the conversion: 10-bit codes, lossy at -q 90.
+        self.assertFalse((d / "still-hdr.png").exists())
+        hdr = decode_avif(d / "still-hdr.avif", LENS)
         source = self.source(LENS, True)
-        self.assertLess(np.abs(hdr - source).mean(), 40)  # 10-bit steps and ProRes
-        self.assertLess(abs((hdr - source).mean()), 4)     # no bias: the range expansion is exact
+        self.assertLess(np.abs(hdr - source).mean(), 80)  # 10-bit steps, ProRes and AV1
+        self.assertLess(abs((hdr - source).mean()), 8)     # no bias: the range expansion is exact
         highlight = images.pq_to_nits(hdr[highlight_patch(LENS, inset=4)].astype(np.uint16)).mean()
         self.assertAlmostEqual(highlight, HIGHLIGHT_NITS, delta=HIGHLIGHT_NITS * 0.01)
-        peak = hdr[peak_patch(LENS)]  # Y' 940 is PQ 1.0; ProRes leaves one-code noise around it
-        self.assertEqual((np.median(peak), peak.max()), (65535, 65535))
+        peak = hdr[peak_patch(LENS)]  # Y' 940 is PQ 1.0, a full-range 1023 in the AVIF
+        self.assertEqual(np.median(peak), 65535)
         info = probe_video(d / "still-hdr.avif")
         self.assertEqual((info.width, info.height, info.pix_fmt), (*LENS, "yuv444p10le"))
         self.assertEqual((info.colour["color_primaries"], info.colour["color_transfer"],
                           info.colour["color_space"], info.colour["color_range"]),
                          ("bt2020", "smpte2084", "bt2020nc", "pc"))
         light = next(s for s in info.stream.get("side_data_list", []) if "light" in s["side_data_type"].lower())
-        self.assertEqual((light["max_content"], light["max_average"]),
-                         images.light_levels(hdr.astype(np.uint16)))
-        self.assertEqual(light["max_content"], PEAK_NITS)
+        self.assertEqual(light["max_content"], PEAK_NITS)  # measured on the 16-bit frame before the AVIF
+        self.assertAlmostEqual(light["max_average"], images.light_levels(hdr.astype(np.uint16))[1],
+                               delta=light["max_average"] * 0.02 + 1)
 
     def test_detail_crops_are_1_to_1(self):
         d = self.d(LENS)
@@ -482,11 +496,18 @@ class EncodePipeline(unittest.TestCase):
             kinds = images.png_chunk_types(d / name)
             self.assertIn("sRGB", kinds, name)
             self.assertNotIn("iCCP", kinds, name)
-        still = decode_hdr(d / "still-hdr.png", LENS)
-        crop = decode_hdr(d / "crop-hdr.png", (rect.w, rect.h))
-        self.assertTrue(np.array_equal(crop, still[rect.y:rect.y + rect.h, rect.x:rect.x + rect.w]))
+        self.assertFalse((d / "crop-hdr.png").exists())
         info = probe_video(d / "crop-hdr.avif")
         self.assertEqual((info.width, info.height, info.colour["color_transfer"]), (rect.w, rect.h, "smpte2084"))
+        # The HDR crop is the still's pixels at the same place: two lossy AVIFs
+        # of the same frame agree far better there than one pixel off.
+        still = decode_avif(d / "still-hdr.avif", LENS)
+        crop = decode_avif(d / "crop-hdr.avif", (rect.w, rect.h))
+        def error(dx, dy):
+            return np.abs(crop - still[rect.y + dy:rect.y + dy + rect.h, rect.x + dx:rect.x + dx + rect.w]).mean()
+        here = error(0, 0)
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            self.assertLess(here, error(dx, dy) / 2, (dx, dy))
 
     # -- README media ----------------------------------------------------------
     def test_readme_media(self):
