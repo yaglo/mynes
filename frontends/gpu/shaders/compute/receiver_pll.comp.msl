@@ -46,7 +46,7 @@ float wrap(thread const float& p)
     return mod(p + 3.1415927410125732421875, 6.283185482025146484375) - 3.1415927410125732421875;
 }
 
-kernel void main0(device Reference& _26 [[buffer(2)]], constant Params& _32 [[buffer(0)]], device Measurement& _87 [[buffer(1)]])
+kernel void main0(device Reference& _26 [[buffer(2)]], constant Params& _32 [[buffer(0)]], const device Measurement& _87 [[buffer(1)]])
 {
     float4 state = _26.reference[_32.count];
     float4 _46;
@@ -64,7 +64,8 @@ kernel void main0(device Reference& _26 [[buffer(2)]], constant Params& _32 [[bu
     float _145;
     float _217;
     float _235;
-    float4 _333;
+    float _267;
+    float4 _369;
     for (uint line = 0u; line < _32.count; line++)
     {
         float4 m = _87.measurement[line];
@@ -135,23 +136,56 @@ kernel void main0(device Reference& _26 [[buffer(2)]], constant Params& _32 [[bu
                 _235 = mix(state.w, m.w, _32.h_response);
             }
             float horizontal = _235;
-            bool _257;
-            if (acquire)
+            bool _253 = state.y == 0.0;
+            bool _259;
+            if (_253)
             {
-                _257 = m.z > 0.00999999977648258209228515625;
+                _259 = state.z == 0.0;
             }
             else
             {
-                _257 = acquire;
+                _259 = _253;
             }
-            if (_257)
+            bool _265;
+            if (_259)
             {
-                state = m;
+                _265 = state.w == 0.0;
+            }
+            else
+            {
+                _265 = _259;
+            }
+            bool fresh = _265;
+            if (fresh)
+            {
+                _267 = m.y;
+            }
+            else
+            {
+                _267 = mix(state.y, m.y, _32.clamp_gain);
+            }
+            state.y = _267;
+            bool _290;
+            if (acquire)
+            {
+                _290 = m.z > 0.00999999977648258209228515625;
+            }
+            else
+            {
+                _290 = acquire;
+            }
+            if (_290)
+            {
+                state.x = m.xz.x;
+                state.z = m.xz.y;
+                if (fresh)
+                {
+                    state.w = m.w;
+                }
                 acquire = false;
             }
             else
             {
-                state.y = mix(state.y, m.y, _32.clamp_gain);
                 state.w = mix(state.w, m.w, 0.25);
                 if (m.z > 0.00999999977648258209228515625)
                 {
@@ -165,17 +199,17 @@ kernel void main0(device Reference& _26 [[buffer(2)]], constant Params& _32 [[bu
                     state.z *= 0.64999997615814208984375;
                 }
             }
-            bool _312 = _32.h_response > 0.0;
-            bool _319;
-            if (!_312)
+            bool _348 = _32.h_response > 0.0;
+            bool _355;
+            if (!_348)
             {
-                _319 = _32.h_pll != 0u;
+                _355 = _32.h_pll != 0u;
             }
             else
             {
-                _319 = _312;
+                _355 = _348;
             }
-            if (_319)
+            if (_355)
             {
                 state.w = horizontal;
             }
@@ -186,13 +220,13 @@ kernel void main0(device Reference& _26 [[buffer(2)]], constant Params& _32 [[bu
         }
         if (_32.h_pll != 0u)
         {
-            _333 = float4(state.xyz, predicted);
+            _369 = float4(state.xyz, predicted);
         }
         else
         {
-            _333 = state;
+            _369 = state;
         }
-        _26.reference[line] = _333;
+        _26.reference[line] = _369;
     }
     _26.reference[_32.count] = state;
     if (_32.h_pll != 0u)
