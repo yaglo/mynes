@@ -397,7 +397,8 @@ static void encoder_rgb_window(SDL_GPUDevice *gpu) {
     VideoRGBSource src = {.pixels = pixels, .width = WIDTH, .lines = LINES, .top_line = TOP,
                           .spp_num = sp.samples_per_pixel, .spp_den = 1, .code_bits = 10};
     float *amp = malloc(v.rgb_size), *out = malloc(v.rgb_size);
-    CHECK(video_gpu_process_rgb(&v, gpu, &src, amp));
+    CHECK(video_gpu_process_rgb(&v, gpu, &src));
+    CHECK(video_gpu_download_window_rgb(&v, gpu, amp));
     CHECK(gpu_buffer_download(gpu, v.buf_rgb2, out, v.rgb_size));
     const DecodeWindow *w = &v.window;
     int wrong = 0;

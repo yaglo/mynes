@@ -263,11 +263,22 @@ bool video_gpu_process_full(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
  * DAC. The raster then carries a standard -40 IRE sync and a 40 IRE sine
  * burst, as an encoder IC produces from the console's CSYNC. The rest of
  * the chain (console output pole, cable, receiver, CRT) is unchanged.
- * rgb_out, if non-NULL, receives rgb_size bytes as video_gpu_process_full.
+ * Read the decoded RGB back with video_gpu_download_window_rgb.
  *
  * Returns true if the GPU chain produced output. */
-bool video_gpu_process_rgb(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
-                           const VideoRGBSource *src, float *rgb_out);
+bool video_gpu_process_rgb(VideoGPUChain *vgc, SDL_GPUDevice *gpu, const VideoRGBSource *src);
+
+/* Download the last frame's decoded RGB: rgb_size bytes, the decode
+ * window's rows (vgc->window, decode_window.h), interleaved R, G, B floats.
+ * This is NOT the console picture alone: row r is raster line
+ * window.first_line + r, rows are window.width samples long, and the
+ * picture starts at (picture_x, picture_row). Index a picture sample with
+ * decode_window_rgb_index(&vgc->window, line, sample). Until the decoder
+ * covered the border the buffer held 240 rows of samples_per_line, and
+ * video_gpu_process_rgb took the buffer to fill as its last argument;
+ * that argument was removed so a caller written for the old layout fails
+ * to build instead of reading the border as picture. */
+bool video_gpu_download_window_rgb(VideoGPUChain *vgc, SDL_GPUDevice *gpu, float *window_rgb);
 
 /* Update the color decode matrix. Call when connection type, hue, saturation,
  * or color temperature changes. The matrix maps Y,I,Q -> R,G,B as floats

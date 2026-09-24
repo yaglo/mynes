@@ -2347,8 +2347,7 @@ bool video_gpu_process_full(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
  * RGB console path: encoder IC source + signal chain
  * ============================================================================ */
 
-bool video_gpu_process_rgb(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
-                           const VideoRGBSource *src, float *rgb_out) {
+bool video_gpu_process_rgb(VideoGPUChain *vgc, SDL_GPUDevice *gpu, const VideoRGBSource *src) {
     const bool linear = src && src->code_bits == 10;
     if (!vgc || !src || !src->pixels || (!linear && !src->ramp) || !vgc->pipe_encoder.pipeline) return false;
     if (src->width <= 0 || src->width > 1024 || src->lines <= 0 || src->lines > 240 ||
@@ -2474,5 +2473,9 @@ bool video_gpu_process_rgb(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
         vgc->deflection_cache_valid = false;
         return false;
     }
-    return !rgb_out || gpu_buffer_download(gpu, vgc->buf_rgb, rgb_out, vgc->rgb_size);
+    return true;
+}
+
+bool video_gpu_download_window_rgb(VideoGPUChain *vgc, SDL_GPUDevice *gpu, float *window_rgb) {
+    return vgc && window_rgb && vgc->buf_rgb && gpu_buffer_download(gpu, vgc->buf_rgb, window_rgb, vgc->rgb_size);
 }

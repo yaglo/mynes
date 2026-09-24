@@ -82,7 +82,7 @@ static float *decode(SDL_GPUDevice *gpu, const Console *con, VideoConnectionType
         v.signal_frame_counter = (uint32_t)f;
         v.beam_frame_counter = (uint32_t)f;
         video_gpu_set_demod(&v, (float)src.phase_base * 2.0f * (float)M_PI / 12.0f, v.demod_dp);
-        ok = video_gpu_process_rgb(&v, gpu, &src, f == frames - 1 ? rgb : NULL);
+        ok = video_gpu_process_rgb(&v, gpu, &src) && (f + 1 < frames || video_gpu_download_window_rgb(&v, gpu, rgb));
         if (con->line_phase) src.phase_base = (src.phase_base + ((f & 1) ? 8 : 4)) % 12;
     }
     *spl_out = chain.signal_fmt.samples_per_line;
