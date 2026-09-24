@@ -1869,10 +1869,9 @@ static void palette_init(const char *exe_path) {
 
     /* Resolve the real path of the executable so palette loading works
        regardless of the working directory the user launches from. */
-    char resolved[1024];
-    const char *real_exe = NULL;
-    if (exe_path && realpath(exe_path, resolved))
-        real_exe = resolved;
+    /* realpath allocates: glibc's fortified realpath aborts when handed a
+     * buffer smaller than PATH_MAX. */
+    char *real_exe = exe_path ? realpath(exe_path, NULL) : NULL;
 
     /* Try CWD-relative first */
     palette_scan_directory("palettes");
@@ -1890,6 +1889,7 @@ static void palette_init(const char *exe_path) {
             palette_scan_directory(dir);
         }
     }
+    free(real_exe);
 
     /* Don't auto-select a default here — the region detection code in
      * main() picks the right palette after the ROM region is known
