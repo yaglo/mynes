@@ -118,7 +118,8 @@
         "agc_attack_ms": 0.0,
         "agc_release_ms": 0.0,
         "sound_am_rejection_db": 45.0,
-        "icpm_deg": 0.0
+        "icpm_deg": 0.0,
+        "detector": 0
     },
     "brightness": 0.0,
     "contrast": 1.0,
