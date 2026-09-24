@@ -477,35 +477,113 @@
 (define (bus-op? form)
   (and (pair? form) (memq (car form) '(fetch read write dummy))))
 
-;; Returns the C expression for the address of a bus op.
-;; Uses addr->expr (side-effect-free) for the peek function.
-;; - (fetch dl)        → cpu->PC
-;; - (fetch dl pc)     → cpu->PC
-;; - (read dl ad)      → addr->expr of "ad" (third element)
-;; - (dummy ad)        → addr->expr of "ad" (second element)
-;; - (write ad reg)    → #f (DMC DMA cannot halt on write cycles)
-(define (bus-op-addr-expr op)
+;; ----------------------------------------------------------------------------
+;; Bus address peek
+;;
+;; cpu_get_next_read_addr() is asked before a cycle runs, but the address a
+;; cycle reads can depend on ops that run earlier in that same cycle (the
+;; page-cross ADH fixup, the (zp,X)/(zp),Y pointer steps, JMP (ind)'s ADL
+;; increment). A DMA halting on that cycle repeats the CPU's read, so the
+;; peek has to see those ops too. The ops ahead of the read are folded into
+;; the address expression: env maps a register to the C expression of its
+;; value at that point, or to #f once an op changes it in a way the peek
+;; does not follow. Using such a register in the address is a generator
+;; error rather than a silently wrong peek.
+;; ----------------------------------------------------------------------------
+
+(define (peek-reg env r)
+  (let ((b (assq (case r ((pcl pch) 'pc) (else r)) env)))
+    (cond ((not b) (reg->field r))
+          ((not (cdr b)) #f)
+          ((eq? r 'pcl) (sprintf "(~a & 0xFF)" (cdr b)))
+          ((eq? r 'pch) (sprintf "((~a >> 8) & 0xFF)" (cdr b)))
+          (else (cdr b)))))
+
+(define (peek-format fmt . args)
+  (and (not (memq #f args)) (apply sprintf fmt args)))
+
+(define (peek-bind env r v)
+  (cons (cons (case r ((pcl pch) 'pc) (else r)) v) env))
+
+(define (peek-pc env)
+  (let ((b (assq 'pc env)))
+    (if b (cdr b) "cpu->PC")))
+
+(define (peek-page-cross env)
+  (let ((b (assq 'page-cross env)))
+    (if b (cdr b) "cpu->page_cross")))
+
+;; Registers each internal op writes besides the one named as its first
+;; argument, for ops the peek does not model.
+(define (peek-implicit-writes op)
   (case (car op)
-    ((fetch) "cpu->PC")
-    ((read)  (addr->expr (caddr op)))
-    ((dummy) (addr->expr (cadr op)))
-    ((write) #f)  ;; DMC DMA can't interrupt a write cycle
-    (else #f)))
+    ((sha-page-fixup shx-page-fixup shy-page-fixup) '(adh dl page-cross))
+    ((tas-page-fixup) '(adh sp dl page-cross))
+    ((las-op) '(a x sp))
+    ((tas-op sha-op shx-op shy-op prep-push-p) '(dl))
+    ((branch-rel branch-decide) '(pc page-cross))
+    ((branch-update-pcl branch-correct-pch) '(pc))
+    ((select-interrupt-vector) '(ivec))
+    (else '())))
 
-;; Returns the bus op (or #f) that DMA can halt on for this cycle.
-;; Walks the cycle's forms looking for a read/dummy/fetch op (not a write).
-(define (cycle-read-bus-op cycle-forms)
-  (find (lambda (f)
-          (and (pair? f)
-               (memq (car f) '(fetch read dummy))))
-        cycle-forms))
+(define (peek-step env op)
+  (case (car op)
+    ((mov)
+     (let ((v (peek-reg env (caddr op))))
+       (case (cadr op)
+         ((pcl) (peek-bind env 'pc (peek-format "((~a & 0xFF00) | ~a)" (peek-pc env) v)))
+         ((pch) (peek-bind env 'pc (peek-format "((~a & 0x00FF) | (~a << 8))" (peek-pc env) v)))
+         (else (peek-bind env (cadr op) v)))))
+    ((inc-nf)
+     (peek-bind env (cadr op) (peek-format "(uint8_t)(~a + 1)" (peek-reg env (cadr op)))))
+    ((add8-latch-carry)
+     (let ((a (peek-reg env (caddr op))) (b (peek-reg env (cadddr op))))
+       (peek-bind (peek-bind env 'page-cross (peek-format "(~a + ~a > 0xFF)" a b))
+                  (cadr op) (peek-format "(uint8_t)(~a + ~a)" a b))))
+    ((adc8-from-pagecross)
+     (peek-bind (peek-bind env (cadr op)
+                           (peek-format "(uint8_t)(~a + (~a ? 1 : 0))"
+                                        (peek-reg env (caddr op)) (peek-page-cross env)))
+                'page-cross "0"))
+    ((set-adh-zero) (peek-bind env 'adh "0"))
+    ((pc+1) (peek-bind env 'pc (peek-format "((~a + 1) & 0xFFFF)" (peek-pc env))))
+    ((sp+1) (peek-bind env 'sp (peek-format "(uint8_t)(~a + 1)" (peek-reg env 'sp))))
+    ((sp-1) (peek-bind env 'sp (peek-format "(uint8_t)(~a - 1)" (peek-reg env 'sp))))
+    (else
+     (let ((env (let loop ((rs (peek-implicit-writes op)) (env env))
+                  (if (null? rs) env (loop (cdr rs) (peek-bind env (car rs) #f))))))
+       (if (and (pair? (cdr op))
+                (memq (cadr op) '(a x y sp ir dl adl adh pcl pch)))
+           (peek-bind env (cadr op) #f)
+           env)))))
 
-;; Find the first read-style bus op in a cycle body (fetch/read/dummy) and
-;; return its address expression. Returns #f if the cycle is a pure write
-;; cycle (DMC DMA cannot halt on those) or has no bus access at all.
+(define (peek-addr-expr a env)
+  (case a
+    ((pc) (peek-pc env))
+    ((ad) (peek-format "((uint16_t)~a << 8) | ~a" (peek-reg env 'adh) (peek-reg env 'adl)))
+    ((sp) (peek-format "(0x0100 | ~a)" (peek-reg env 'sp)))
+    ((vec-irq-hijack-lo vec-irq-hijack-hi)
+     (if (assq 'ivec env) #f (addr->expr a)))
+    (else (addr->expr a))))
+
+;; Address the first read-style bus op (fetch/read/dummy) of a cycle drives,
+;; given the cycle's forms in the order they are emitted. Returns #f for a
+;; pure write cycle (DMC DMA cannot halt on those) or one with no bus access.
 (define (cycle-bus-addr cycle-forms)
-  (let ((bus-op (cycle-read-bus-op cycle-forms)))
-    (and bus-op (bus-op-addr-expr bus-op))))
+  (let loop ((forms cycle-forms) (env '()))
+    (cond
+     ((null? forms) #f)
+     ((not (pair? (car forms))) (loop (cdr forms) env))
+     (else
+      (let ((f (car forms)))
+        (case (car f)
+          ((fetch read dummy)
+           (or (peek-addr-expr (case (car f) ((read) (caddr f)) ((dummy) (cadr f)) (else 'pc))
+                               env)
+               (error "cycle's read address depends on an op the peek cannot follow"
+                      cycle-forms)))
+          ((write assert) (loop (cdr forms) env))
+          (else (loop (cdr forms) (peek-step env f)))))))))
 
 (define (record-case-addr! upc addr-expr)
   (set! *peek-addrs* (cons (cons upc addr-expr) *peek-addrs*)))
@@ -643,8 +721,6 @@
           (cond
            ;; Regular cycle
            ((and (pair? item) (eq? (car item) 'cycle))
-            (let ((addr (cycle-bus-addr (cdr item))))
-              (when addr (record-case-addr! upc addr)))
             (when (eq? (cycle-bus-category (cdr item)) 'write)
               (record-write-case! upc))
             ;; If this cycle contains an SHA/SHX/SHY/TAS page-fixup op, the
@@ -672,6 +748,12 @@
                     (and next-item (pair? next-item)
                          (eq? (car next-item) 'when)
                          (eq? (cadr next-item) 'page-cross))))
+              ;; The page-cross split below emits the bus ops first, so none
+              ;; of the cycle's other ops run ahead of its read.
+              (let ((addr (cycle-bus-addr (if followed-by-page-cross
+                                              (filter bus-op? (cdr item))
+                                              (cdr item)))))
+                (when addr (record-case-addr! upc addr)))
               (if followed-by-page-cross
                   ;; Split: bus ops → page-cross bail → ALU ops → done return
                   (let* ((forms (cdr item))

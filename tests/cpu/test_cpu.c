@@ -528,6 +528,74 @@ int test_indexed_page_cross_reads(void) {
     return ok;
 }
 
+/* A DMA that halts the CPU repeats the read the CPU was about to make, at
+ * the address cpu_get_next_read_addr() reports. Step every instruction
+ * cycle by cycle and check that address against the first read the cycle
+ * then makes, with indexes that cross pages and without. */
+int test_next_read_addr(void) {
+    static const struct { uint8_t xy, p; } setups[] = {
+        { 0x00, 0x24 },  /* no page cross, branches on clear flags taken */
+        { 0x20, 0x24 },  /* abs,X/abs,Y/(zp),Y cross; (zp,X) pointer moves */
+        { 0x20, 0xE7 },  /* same, branches on set flags taken */
+        { 0x0F, 0xE7 },  /* (zp,X) pointer high byte wraps within page 0 */
+    };
+    CPU cpu;
+    int ok = 1, checked = 0;
+
+    for (int op = 0; op < 256; op++) {
+        if (cpu_entry[op] == cpu_entry[0x02]) continue;  /* STP jams */
+        for (size_t s = 0; s < sizeof(setups) / sizeof(setups[0]); s++) {
+            cpu_init(&cpu);
+            cpu.mem_read = logged_read;
+            cpu.mem_write = mem_write;
+            memset(memory, 0, sizeof(memory));
+            /* Operand $10F0: abs $10F0, zp $F0, JMP ($10F0), branch -16
+             * from $0202 into page 1. (zp),Y reads its pointer from
+             * $F0/$F1 = $10F0; (zp,X) from $F0+X. */
+            memory[0x200] = (uint8_t)op;
+            memory[0x201] = 0xF0;
+            memory[0x202] = 0x10;
+            memory[0xF0] = 0xF0;
+            memory[0xF1] = 0x10;
+            memory[0xFF] = 0x34;
+            memory[0x00] = 0x12;
+            memory[0x10F0] = 0x80;
+            memory[0x10F1] = 0x40;
+            cpu.PC = 0x200;
+            cpu.uPC = 0;
+            cpu.X = cpu.Y = setups[s].xy;
+            cpu.P = setups[s].p;
+            cpu.SP = 0xF0;
+
+            int cycles = 0;
+            do {
+                if (++cycles > 20) {
+                    printf("TEST next_read_addr: FAIL op %02X did not finish in 20 cycles\n",
+                           op);
+                    ok = 0;
+                    break;
+                }
+                uint16_t upc = cpu.uPC;
+                bool write = cpu_next_is_write(&cpu);
+                uint16_t peek = cpu_get_next_read_addr(&cpu);
+                read_count = 0;
+                cpu_step(&cpu);
+                if (write || read_count == 0) continue;
+                checked++;
+                if (read_log[0] != peek) {
+                    printf("TEST next_read_addr: FAIL op %02X X=Y=%02X uPC %d "
+                           "peek %04X, read %04X\n",
+                           op, setups[s].xy, upc, peek, read_log[0]);
+                    ok = 0;
+                }
+            } while (cpu.uPC != 0);
+        }
+    }
+
+    if (ok) printf("TEST next_read_addr: PASS (%d cycles checked)\n", checked);
+    return ok;
+}
+
 int main(int argc, char **argv) {
     int trace = (argc > 1 && strcmp(argv[1], "-trace") == 0);
     (void)trace;
@@ -553,6 +621,7 @@ int main(int argc, char **argv) {
     total++; passed += test_reset();
     total++; passed += test_jmp_ind_flags();
     total++; passed += test_indexed_page_cross_reads();
+    total++; passed += test_next_read_addr();
 
     printf("\n=== Results: %d/%d tests passed ===\n", passed, total);
 
