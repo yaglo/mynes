@@ -197,6 +197,10 @@ int main(void) {
     memcpy(again + sizeof(header) + offsetof(NES, mapper.chr_banks), &bogus_banks, sizeof(bogus_banks));
     memcpy(again + sizeof(header) + offsetof(NES, mapper.number), &bogus_banks, sizeof(bogus_banks));
     memcpy(again + sizeof(header) + offsetof(NES, mapper.has_chr_ram), &bogus_banks, sizeof(bogus_banks));
+    /* PRG RAM size too: battery saves copy that many bytes out of the
+     * console, so 0 would stop them and a large value overrun them. */
+    uint32_t live_ram_size = nes.mapper.prg_ram_size;
+    memcpy(again + sizeof(header) + offsetof(NES, mapper.prg_ram_size), &bogus_size, sizeof(bogus_size));
     memcpy(&header, again, sizeof(header));
     header.image_crc = nes_crc32(0, again + sizeof(header), sizeof(NES));
     memcpy(again, &header, sizeof(header));
@@ -205,6 +209,7 @@ int main(void) {
     CHECK(nes.mapper.prg_rom_size == rom.prg_size && nes.mapper.chr_rom_size == rom.chr_size);
     CHECK(nes.mapper.prg_banks == rom.prg_size / 0x4000 && nes.mapper.chr_banks == rom.chr_size / 0x2000);
     CHECK(nes.mapper.number == rom.mapper && nes.mapper.has_chr_ram == (rom.chr_size == 0));
+    CHECK(nes.mapper.prg_ram_size == live_ram_size);
     frames(&nes, 60);
     replay = snapshot(&nes);
     CHECK(same(&replay, &reference));

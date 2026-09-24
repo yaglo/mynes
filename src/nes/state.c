@@ -56,6 +56,7 @@ static const StateField state_live_fields[] = {
     STATE_FIELD(mapper.prg_rom),
     STATE_FIELD(mapper.prg_rom_size),
     STATE_FIELD(mapper.prg_banks),
+    STATE_FIELD(mapper.prg_ram_size),
     STATE_FIELD(mapper.chr_rom),
     STATE_FIELD(mapper.chr_rom_size),
     STATE_FIELD(mapper.chr_banks),
