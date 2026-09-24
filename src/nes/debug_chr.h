@@ -40,7 +40,10 @@ static inline void debug_chr_render(const struct NES *nes, uint8_t *buf) {
                     /* Read two bitplanes */
                     uint8_t lo = 0, hi = 0;
                     /* Use mapper for CHR reads if available */
-                    if (nes->mapper_loaded) {
+                    if (nes->mapper_loaded && nes->mapper.has_chr_ram) {
+                        lo = nes->mapper.chr_ram[tile_addr + row];
+                        hi = nes->mapper.chr_ram[tile_addr + row + 8];
+                    } else if (nes->mapper_loaded) {
                         lo = nes->mapper.chr_rom ?
                              nes->mapper.chr_rom[(tile_addr + row) % nes->mapper.chr_rom_size] : 0;
                         hi = nes->mapper.chr_rom ?
