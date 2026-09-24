@@ -348,6 +348,49 @@ static int test_prg_size_zero(void) {
     return pass;
 }
 
+/* Flags 6 bit 2 puts a 512-byte trainer between the header and PRG ROM.
+ * Both loaders keep it, and it lands at $7000 once the mapper is up. */
+static int test_trainer(void) {
+    static uint8_t data[INES_HEADER_SIZE + INES_TRAINER_SIZE + INES_PRG_BANK_SIZE];
+    memcpy(data, "NES\x1A\x01\x00", 6);
+    data[6] = 0x04;
+    for (int i = 0; i < INES_TRAINER_SIZE; ++i)
+        data[INES_HEADER_SIZE + i] = (uint8_t)(i ^ 0x5A);
+    data[INES_HEADER_SIZE + INES_TRAINER_SIZE] = 0xC3;
+    const char *path = "/tmp/test_trainer.nes";
+    FILE *fp = fopen(path, "wb");
+    if (!fp) return 0;
+    fwrite(data, 1, sizeof(data), fp);
+    fclose(fp);
+
+    int pass = 1;
+    for (int from_file = 0; from_file < 2; ++from_file) {
+        ROM rom;
+        int result = from_file ? nes_rom_load(&rom, path)
+                               : nes_rom_load_data(&rom, data, sizeof(data));
+        if (result != ROM_OK || !rom.has_trainer || rom.prg_rom[0] != 0xC3) {
+            printf("TEST trainer: FAIL (%s: result %d)\n", from_file ? "file" : "buffer", result);
+            if (result == ROM_OK) nes_rom_free(&rom);
+            pass = 0;
+            continue;
+        }
+        Mapper m;
+        mapper_init(&m, rom.mapper, rom.prg_rom, rom.prg_size, rom.chr_rom, rom.chr_size,
+                    rom.mirroring);
+        nes_rom_apply_trainer(&rom, &m);
+        if (mapper_cpu_read(&m, 0x7000) != 0x5A || mapper_cpu_read(&m, 0x71FF) != (uint8_t)(0x1FF ^ 0x5A) ||
+            mapper_cpu_read(&m, 0x6FFF) != 0 || mapper_cpu_read(&m, 0x7200) != 0) {
+            printf("TEST trainer: FAIL (%s: trainer not at $7000)\n", from_file ? "file" : "buffer");
+            pass = 0;
+        }
+        nes_rom_free(&rom);
+    }
+    remove(path);
+    if (pass)
+        printf("TEST trainer: PASS (trainer kept and loaded at $7000)\n");
+    return pass;
+}
+
 int test_battery_flag(void) {
     const char *path = "/tmp/test_battery.nes";
     create_test_rom(path, 1, 1, 0x02, 0x00);  /* Battery flag set (bit 1) */
@@ -449,6 +492,7 @@ int main(void) {
     total++; passed += test_nes2_mapper();
     total++; passed += test_four_screen();
     total++; passed += test_prg_size_zero();
+    total++; passed += test_trainer();
     total++; passed += test_battery_flag();
     total++; passed += test_rom_free();
 

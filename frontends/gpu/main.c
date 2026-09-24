@@ -1259,6 +1259,7 @@ int main(int argc, char **argv) {
                         rom.prg_rom, rom.prg_size,
                         rom.chr_rom, rom.chr_size,
                         rom.mirroring);
+        nes_rom_apply_trainer(&rom, &nes.mapper);
 
         /* Persist this ROM as the most-recent. */
         mynes_config_add_recent(&mynes_config, rom_path);

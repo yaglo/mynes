@@ -78,6 +78,7 @@ typedef struct {
     bool is_nes2;           /* true if NES 2.0 header detected */
     bool has_battery;       /* Battery-backed RAM */
     bool has_trainer;       /* 512-byte trainer present */
+    uint8_t trainer[INES_TRAINER_SIZE]; /* Loaded at $7000 by nes_rom_apply_trainer */
 } ROM;
 
 /* ============================================================================
@@ -211,9 +212,10 @@ static inline int nes_rom_load(ROM *rom, const char *path) {
         rom->region_from_filename = true;
     }
 
-    /* Skip trainer if present */
-    if (rom->has_trainer) {
-        fseek(fp, INES_TRAINER_SIZE, SEEK_CUR);
+    if (rom->has_trainer &&
+        fread(rom->trainer, 1, INES_TRAINER_SIZE, fp) != INES_TRAINER_SIZE) {
+        fclose(fp);
+        return ROM_ERR_FILE;
     }
 
     /* Allocate and read PRG ROM */
@@ -270,6 +272,8 @@ static inline int nes_rom_load_data(ROM *rom, const uint8_t *data, size_t size) 
 
     if (size < offset + rom->prg_size + rom->chr_size)
         return ROM_ERR_FILE;
+    if (rom->has_trainer)
+        memcpy(rom->trainer, data + INES_HEADER_SIZE, INES_TRAINER_SIZE);
 
     if (rom->prg_size > 0) {
         rom->prg_rom = (uint8_t *)malloc(rom->prg_size);
@@ -283,6 +287,14 @@ static inline int nes_rom_load_data(ROM *rom, const uint8_t *data, size_t size) 
         memcpy(rom->chr_rom, data + offset, rom->chr_size);
     }
     return ROM_OK;
+}
+
+/* A trainer is 512 bytes that copier hardware held at $7000-$71FF; the
+ * patched games that carry one expect it there at power-on. Call after the
+ * mapper is initialised, since mapper_init clears the cartridge RAM. */
+static inline void nes_rom_apply_trainer(const ROM *rom, Mapper *m) {
+    if (rom->has_trainer)
+        memcpy(m->prg_ram + 0x1000, rom->trainer, INES_TRAINER_SIZE);
 }
 
 /* Free ROM memory */

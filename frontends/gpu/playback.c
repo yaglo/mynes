@@ -395,6 +395,7 @@ void playback_load_cartridge(Playback *p, const ROM *rom, int region) {
     nes_init(p->nes);
     nes_load_mapper(p->nes,rom->mapper,rom->prg_rom,rom->prg_size,
                     rom->chr_rom,rom->chr_size,rom->mirroring);
+    nes_rom_apply_trainer(rom,&p->nes->mapper);
     ppu_set_region(&p->nes->ppu,region ? PPU_REGION_PAL : PPU_REGION_NTSC);
     nes_reset(p->nes);
     apu_set_region(&p->nes->apu,region);

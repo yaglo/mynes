@@ -2080,6 +2080,7 @@ void handle_input(void) {
                                 new_rom.prg_rom, new_rom.prg_size,
                                 new_rom.chr_rom, new_rom.chr_size,
                                 new_rom.mirroring);
+                            nes_rom_apply_trainer(&new_rom, &nes.mapper);
                             nes_reset(&nes);
                             rom = new_rom;
                             rom_loaded = true;
@@ -2852,6 +2853,7 @@ int main(int argc, char *argv[]) {
                         rom.prg_rom, rom.prg_size,
                         rom.chr_rom, rom.chr_size,
                         rom.mirroring);
+        nes_rom_apply_trainer(&rom, &nes.mapper);
         saves_attach(rom_path);
     }
 
