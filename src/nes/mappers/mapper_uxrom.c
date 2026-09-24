@@ -23,7 +23,8 @@ static uint8_t mapper2_cpu_read(Mapper *m, uint16_t addr) {
 
 static void mapper2_cpu_write(Mapper *m, uint16_t addr, uint8_t val) {
     if (addr >= 0x8000) {
-        m->prg_bank0 = val & (m->prg_banks - 1);
+        /* A mask of prg_banks - 1 is only right for power-of-two sizes. */
+        m->prg_bank0 = m->prg_banks ? val % m->prg_banks : 0;
     } else if (addr >= 0x6000) {
         m->prg_ram[addr - 0x6000] = val;
     }
