@@ -518,12 +518,83 @@ def encode_record_path(out: Path) -> Path:
     return out.with_name(out.stem + ".encode.json")
 
 
-def read_encode_record(out: Path) -> dict:
+def _read_record(record: Path) -> dict:
     try:
-        data = json.loads(encode_record_path(out).read_text())
+        data = json.loads(record.read_text())
     except (OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def read_encode_record(out: Path) -> dict:
+    return _read_record(encode_record_path(out))
+
+
+def _json_value(value):
+    """``value`` as it reads back from JSON (tuples become lists), so a stored
+    record compares equal to the one computed now."""
+    return json.loads(json.dumps(value))
+
+
+def _skip_if_same(runner: Runner, outputs: list[Path], inputs: list[Path], record: Path, params: dict) -> bool:
+    """_skip_if_fresh for outputs that depend on shots.json and the command
+    line as well as on the render: ``record`` keeps the parameters they were
+    made with, and outputs made with others (a new thumbnail_frame or crop,
+    say) are built again even when they are newer than the render. A stale
+    record is removed first, so a build that fails leaves none behind."""
+    stored = _read_record(record)
+    if stored.get("params") == _json_value(params):
+        if _skip_if_fresh(runner, outputs + [record], inputs):
+            return True
+    elif stored and outputs[0].exists():
+        runner.say(f"building {outputs[0]} again: its parameters changed")
+    if not runner.dry_run:
+        outputs[0].parent.mkdir(parents=True, exist_ok=True)
+        record.unlink(missing_ok=True)
+    return False
+
+
+def _write_params(runner: Runner, record: Path, params: dict) -> None:
+    runner.write_json(record, {"params": _json_value(params)})
+
+
+def _colour(facts: RenderFacts) -> list[str]:
+    return [facts.matrix, facts.range]
+
+
+def poster_params(shot: Shot, facts: RenderFacts) -> dict:
+    """What poster.webp depends on besides the render's contents."""
+    return {"frame": shot.thumbnail_frame, "colour": _colour(facts)}
+
+
+def still_rect(ctx: Context, shot: Shot) -> recipes.Rect:
+    return recipes.flicker_geometry(shot.detail_crop, ctx.defaults.lens_size, ctx.flicker_scale, align=CROP_ALIGN)
+
+
+def still_params(ctx: Context, shot: Shot, sdr: RenderFacts, hdr: RenderFacts) -> dict:
+    """What the stills and detail crops depend on besides the renders' contents."""
+    rect = still_rect(ctx, shot)
+    return {"frame": shot.thumbnail_frame, "crop": [rect.x, rect.y, rect.w, rect.h],
+            "sdr_colour": _colour(sdr), "hdr_colour": _colour(hdr), "hdr_pix_fmt": hdr.pix_fmt}
+
+
+def readme_params(shot: Shot, sdr: RenderFacts, hdr: RenderFacts) -> dict:
+    """What the README media depend on besides the renders' contents."""
+    return {"frame": shot.thumbnail_frame, "source_frames": min(sdr.frames, shot.readme_frames),
+            "qualities": list(recipes.README_QUALITIES), "limit": recipes.LIMITS["readme_webp"],
+            "sdr_colour": _colour(sdr), "hdr_colour": _colour(hdr), "hdr_pix_fmt": hdr.pix_fmt}
+
+
+def flicker_rect(ctx: Context, shot: Shot) -> recipes.Rect:
+    return recipes.flicker_geometry(shot.flicker_crop, ctx.defaults.lens_size, ctx.flicker_scale)
+
+
+def flicker_params(ctx: Context, shot: Shot, sdr: RenderFacts, hdr: RenderFacts) -> dict:
+    """What the flicker clip depends on besides the renders' contents."""
+    rect = flicker_rect(ctx, shot)
+    return {"first_frame": shot.flicker_first_frame, "crop": [rect.x, rect.y, rect.w, rect.h],
+            "qualities": list(recipes.FLICKER_QUALITIES), "limit": recipes.LIMITS["flicker_webp"],
+            "sdr_colour": _colour(sdr), "hdr_colour": _colour(hdr), "hdr_pix_fmt": hdr.pix_fmt}
 
 
 def encode_video(ctx: Context, runner: Runner, shot: Shot, preset: str, size, spec: VideoOutput) -> dict | None:
@@ -566,18 +637,22 @@ def _encoder(cmd: list[str]) -> str:
 
 
 def encode_poster(ctx: Context, runner: Runner, shot: Shot, preset: str, size) -> dict | None:
-    """poster.webp: frame thumbnail_frame of the SDR render of this stage size."""
+    """poster.webp: frame thumbnail_frame of the SDR render of this stage size.
+    poster.encode.json keeps the frame, so a new thumbnail_frame makes it again."""
     facts = render_facts(ctx, runner, shot, preset, size, False)
     out = ctx.size_dir(shot, preset, size) / "poster.webp"
-    if _skip_if_fresh(runner, [out], [facts.path]):
+    record = encode_record_path(out)
+    params = poster_params(shot, facts)
+    if _skip_if_same(runner, [out], [facts.path], record, params):
         return None
-    with _discard_on_failure(runner, [out]):
+    with _discard_on_failure(runner, [out, record]):
         runner.run(recipes.poster_args(facts.path, out, shot.thumbnail_frame, matrix=facts.matrix,
                                        range_=facts.range),
                    what=f"poster {shot.id}/{preset} {recipes.size_string(size)}")
         if runner.dry_run:
             return None
         verify_image(out, frames=1, size=size)
+        _write_params(runner, record, params)
     return {"bytes": out.stat().st_size}
 
 
@@ -613,17 +688,21 @@ def _verify_avif(path: Path, size) -> None:
 
 def encode_still(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dict | None:
     """Stills and 1:1 detail crops of frame thumbnail_frame at full size:
-    lossless SDR PNGs, HDR AVIFs from 16-bit PQ PNGs, @1x by 2x2 average."""
+    lossless SDR PNGs, HDR AVIFs from 16-bit PQ PNGs, @1x by 2x2 average.
+    still.encode.json keeps the frame and the crop, which the manifest
+    recomputes from shots.json, so the files are cut again when either changes."""
     size = ctx.defaults.lens_size
     sdr = render_facts(ctx, runner, shot, preset, size, False)
     hdr = render_facts(ctx, runner, shot, preset, size, True)
     d = ctx.size_dir(shot, preset, size)
     outputs = [d / n for n in STILL_FILES + CROP_FILES]
-    if _skip_if_fresh(runner, outputs, _inputs(sdr, hdr)):
+    record = d / "still.encode.json"
+    params = still_params(ctx, shot, sdr, hdr)
+    if _skip_if_same(runner, outputs, _inputs(sdr, hdr), record, params):
         return None
-    with _discard_on_failure(runner, outputs + [d / "still-hdr.yuv"]):
+    with _discard_on_failure(runner, outputs + [record, d / "still-hdr.yuv"]):
         frame = shot.thumbnail_frame
-        rect = recipes.flicker_geometry(shot.detail_crop, size, ctx.flicker_scale, align=CROP_ALIGN)
+        rect = still_rect(ctx, shot)
         runner.run(recipes.sdr_png_args(sdr.path, d / "still-sdr.png", frame, matrix=sdr.matrix, range_=sdr.range),
                    what=f"still-sdr {shot.id}/{preset}")
         runner.step("rewrite still-sdr.png with the sRGB chunk, cut crop-sdr.png "
@@ -652,6 +731,7 @@ def encode_still(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dict 
         _verify_avif(d / "still-hdr.avif", size)
         _verify_avif(d / "crop-hdr.avif", (rect.w, rect.h))
         _verify_avif(d / "crop-hdr@1x.avif", half)
+        _write_params(runner, record, params)
     return {"crop": [rect.x, rect.y, rect.w, rect.h], "light_levels": levels}
 
 
@@ -701,16 +781,20 @@ def _update_report(runner: Runner, path: Path, note: dict) -> None:
 def encode_readme(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dict | None:
     """README media from the 1600x1200 render: an animated WebP (every second
     frame at 30 fps, quality lowered until under the limit), a lossless PNG of
-    frame thumbnail_frame and, on macOS 15, that frame as a gain-map JPEG."""
+    frame thumbnail_frame and, on macOS 15, that frame as a gain-map JPEG.
+    readme.encode.json keeps the frame and the length (readme_seconds)."""
     size = ctx.defaults.readme_size
     sdr = render_facts(ctx, runner, shot, preset, size, False)
     hdr = render_facts(ctx, runner, shot, preset, size, True)
     d = ctx.size_dir(shot, preset, size)
     webp, png, hdr_png, jpg = d / "readme.webp", d / "readme.png", d / "readme-hdr.png", d / "readme-hdr.jpg"
-    if _skip_if_fresh(runner, [webp, png, hdr_png], _inputs(sdr, hdr)):
+    record = encode_record_path(webp)
+    params = readme_params(shot, sdr, hdr)
+    if _skip_if_same(runner, [webp, png, hdr_png], _inputs(sdr, hdr), record, params):
         return None
     candidates = {q: webp.with_name(f"readme.q{q}.webp") for q in recipes.README_QUALITIES}
-    with _discard_on_failure(runner, [webp, png, hdr_png, jpg, d / "readme-hdr.yuv", *candidates.values()]):
+    with _discard_on_failure(runner, [webp, png, hdr_png, jpg, record, d / "readme-hdr.yuv",
+                                      *candidates.values()]):
         source_frames = min(sdr.frames, shot.readme_frames)
         frames = recipes.readme_frames(source_frames)
         limit = recipes.LIMITS["readme_webp"]
@@ -741,6 +825,7 @@ def encode_readme(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dict
                                 f"(now {shot.readme_seconds:g} s)") from e
         verify_timing(webp, frames=frames, fps=recipes.README_FPS)
         verify_image(png, frames=1, size=size)
+        _write_params(runner, record, params)
     note = {"readme_webp": {"quality": quality, "bytes": webp_size, "frames": frames, "stored_frames": stored,
                             "fps": recipes.README_FPS,
                             "source_frames": source_frames, "size": list(size), "embed_width": size[0] // 2},
@@ -753,17 +838,23 @@ def encode_readme(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dict
 
 def encode_flicker(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dict | None:
     """Eight consecutive frames of the flicker crop at 1:1 full-size pixels,
-    lossless when under the limit; the first frame as PNG and gain-map JPEG."""
+    lossless when under the limit; the first frame as PNG and gain-map JPEG.
+    flicker.encode.json keeps the first frame and the crop in render pixels
+    (from flicker_crop and --flicker-scale), so the clip is cut again when
+    they change."""
     size = ctx.defaults.lens_size
     sdr = render_facts(ctx, runner, shot, preset, size, False)
     hdr = render_facts(ctx, runner, shot, preset, size, True)
     d = ctx.size_dir(shot, preset, size)
     webp, png, hdr_png, jpg = d / "flicker.webp", d / "flicker.png", d / "flicker-hdr.png", d / "flicker-hdr.jpg"
-    if _skip_if_fresh(runner, [webp, png, hdr_png], _inputs(sdr, hdr)):
+    record = encode_record_path(webp)
+    params = flicker_params(ctx, shot, sdr, hdr)
+    if _skip_if_same(runner, [webp, png, hdr_png], _inputs(sdr, hdr), record, params):
         return None
     candidates = {q: webp.with_name(f"flicker.q{q}.webp") for q in recipes.FLICKER_QUALITIES}
-    with _discard_on_failure(runner, [webp, png, hdr_png, jpg, d / "flicker-hdr.yuv", *candidates.values()]):
-        rect = recipes.flicker_geometry(shot.flicker_crop, size, ctx.flicker_scale)
+    with _discard_on_failure(runner, [webp, png, hdr_png, jpg, record, d / "flicker-hdr.yuv",
+                                      *candidates.values()]):
+        rect = flicker_rect(ctx, shot)
         first = shot.flicker_first_frame
         if first + recipes.FLICKER_FRAMES > sdr.frames:
             raise PipelineError(f"flicker frames {first}..{first + recipes.FLICKER_FRAMES - 1} exceed the render")
@@ -794,6 +885,7 @@ def encode_flicker(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dic
         stored = verify_animation(webp, frames=recipes.FLICKER_FRAMES, size=(rect.w, rect.h), limit=limit,
                                   fps=recipes.FLICKER_FPS)
         verify_image(png, frames=1, size=(rect.w, rect.h))
+        _write_params(runner, record, params)
     note = {"flicker_webp": {"quality": quality, "bytes": webp_size, "frames": recipes.FLICKER_FRAMES,
                              "stored_frames": stored,
                              "fps": recipes.FLICKER_FPS, "first_frame": first,
@@ -935,7 +1027,7 @@ def collect_clip(ctx: Context, runner: Runner, shot: Shot, preset: str) -> ClipI
 
 def crop_entry(ctx: Context, shot: Shot, rels: dict[str, str]) -> dict:
     """The manifest's detail crop: its four files and where it sits in the still."""
-    rect = recipes.flicker_geometry(shot.detail_crop, ctx.defaults.lens_size, ctx.flicker_scale, align=CROP_ALIGN)
+    rect = still_rect(ctx, shot)
     return {"sdr": rels["crop-sdr.png"], "sdr_1x": rels["crop-sdr@1x.png"], "hdr": rels["crop-hdr.avif"],
             "hdr_1x": rels["crop-hdr@1x.avif"], "x": rect.x, "y": rect.y, "width": rect.w, "height": rect.h}
 
