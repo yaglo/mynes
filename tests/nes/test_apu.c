@@ -98,6 +98,21 @@ int main(void) {
         for (int i=0;i<100;i++) apu_step(&b);
         CHECK(b.noise.lfsr!=lfsr && apu_noise_output(&b.noise)==0);
     }
+    /* Power-on acts as $4017 = $00; a reset rewrites the last value and
+     * keeps bit 0 of the DMC counter. */
+    {
+        APU c; apu_init(&c); apu_reset(&c);
+        CHECK(!c.frame.five_step && !c.frame.irq_inhibit && c.dmc.output_level==0);
+        apu_write(&c,0x4017,0xC0); apu_write(&c,0x4011,0x45);
+        for (int i=0;i<10;i++) apu_step(&c);
+        apu_reset(&c);
+        CHECK(c.regs[0x17]==0xC0 && c.frame.five_step && c.frame.irq_inhibit);
+        CHECK(!c.frame.pending_write && c.frame.cycle==0);
+        CHECK(c.dmc.output_level==1);
+        apu_write(&c,0x4017,0x40); apu_write(&c,0x4011,0x44);
+        apu_reset(&c);
+        CHECK(!c.frame.five_step && c.frame.irq_inhibit && c.dmc.output_level==0);
+    }
     printf("APU region/triangle tests: %s\n",failures?"FAIL":"PASS");
     return failures?1:0;
 }

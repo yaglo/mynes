@@ -1413,6 +1413,11 @@ static inline void apu_reset(APU *apu) {
     /* Filter and analog character are user settings, not console state. */
     APUFilterConfig saved_filter = apu->filter_config;
     APUAnalog saved_analog = apu->analog;
+    /* Reset leaves the frame counter's last $4017 write and bit 0 of the
+     * DMC counter alone (nesdev "CPU power up state"; blargg
+     * apu_reset/4017_written). At power-on both are still zero. */
+    uint8_t saved_4017 = apu->regs[0x17];
+    uint8_t saved_dmc_bit0 = apu->dmc.output_level & 1;
 
     memset(apu, 0, sizeof(APU));
     apu->sample_rate = saved_rate ? saved_rate : APU_SAMPLE_RATE;
@@ -1439,6 +1444,16 @@ static inline void apu_reset(APU *apu) {
     /* Restore triangle control flag (unaffected by reset) */
     apu->triangle.reg0 = saved_tri_reg0;
     apu->length_halt = (saved_tri_reg0 & 0x80) ? 4 : 0;
+
+    /* The frame counter acts as if the last value were written again, on
+     * the same schedule as the $00 at power-on (blargg
+     * apu_reset/4017_timing), so it restarts here rather than through
+     * apu_write's delay. The quarter and half frame a mode-1 write clocks
+     * would find every unit it drives cleared, so they are left out. */
+    apu->regs[0x17] = saved_4017;
+    apu->frame.five_step = (saved_4017 & 0x80) != 0;
+    apu->frame.irq_inhibit = (saved_4017 & 0x40) != 0;
+    apu->dmc.output_level = saved_dmc_bit0;
 
     /* Restore audio callback */
     apu->audio_callback = saved_cb;
