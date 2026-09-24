@@ -5,7 +5,7 @@
  * are recognised by simple substring match, unknown lines are skipped.
  * No external deps.
  */
-#define _XOPEN_SOURCE 700  /* realpath under strict C11 */
+#define _XOPEN_SOURCE 700  /* realpath and getcwd under strict C11 */
 #include "config.h"
 #include "saves.h"
 
@@ -16,6 +16,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <errno.h>
+#include <unistd.h>
 
 /* ---------------------------------------------------------------------------
  * Path resolution
@@ -328,13 +329,45 @@ bool mynes_config_save(const MynesConfig *cfg) {
     return ok;
 }
 
+/* `path` made absolute with its file name untouched. A relative path from the
+ * command line only means something in the directory it was typed in, and
+ * the list is opened from anywhere. Only the directory is resolved: realpath
+ * on the whole path would follow a symlinked ROM to its target's name, and
+ * on macOS rewrite the name's case, and saves and states are named after
+ * the ROM's basename, so the same cartridge would get a second save file
+ * depending on how it was opened. Returns false when `path` cannot be made
+ * absolute within MYNES_PATH_MAX. */
+static bool absolute_rom_path(const char *path, char *out, size_t out_sz) {
+    const char *slash = strrchr(path, '/');
+    const char *name = slash ? slash + 1 : path;
+    bool plain_name = *name && strcmp(name, ".") != 0 && strcmp(name, "..") != 0;
+    if (plain_name) {
+        char dir[MYNES_PATH_MAX];
+        if (!slash) snprintf(dir, sizeof(dir), ".");
+        else if (slash == path) snprintf(dir, sizeof(dir), "/");
+        else snprintf(dir, sizeof(dir), "%.*s", (int)(slash - path), path);
+        char *real = realpath(dir, NULL);
+        if (real) {
+            bool root = strcmp(real, "/") == 0;
+            int n = snprintf(out, out_sz, "%s%s%s", real, root ? "" : "/", name);
+            free(real);
+            if (n >= 0 && (size_t)n < out_sz) return true;
+        }
+    }
+    /* No such directory: keep the path as typed, anchored where it was. */
+    if (path[0] == '/') return (size_t)snprintf(out, out_sz, "%s", path) < out_sz;
+    char cwd[MYNES_PATH_MAX];
+    if (!getcwd(cwd, sizeof(cwd))) return false;
+    const char *rest = strncmp(path, "./", 2) == 0 ? path + 2 : path;
+    return (size_t)snprintf(out, out_sz, "%s%s%s", cwd,
+                            strcmp(cwd, "/") == 0 ? "" : "/", rest) < out_sz;
+}
+
 void mynes_config_add_recent(MynesConfig *cfg, const char *path) {
     if (!cfg || !path || !*path) return;
 
-    /* A relative path from the command line only means something in the
-     * directory it was typed in, and the list is opened from anywhere. */
-    char *absolute = realpath(path, NULL);
-    if (absolute && strlen(absolute) < MYNES_PATH_MAX) path = absolute;
+    char absolute[MYNES_PATH_MAX];
+    if (absolute_rom_path(path, absolute, sizeof(absolute))) path = absolute;
 
     /* If already present, remove the existing entry first (move-to-front). */
     int found = -1;
@@ -358,7 +391,6 @@ void mynes_config_add_recent(MynesConfig *cfg, const char *path) {
     strncpy(cfg->recent_roms[0], path, MYNES_PATH_MAX - 1);
     cfg->recent_roms[0][MYNES_PATH_MAX - 1] = '\0';
     if (cfg->recent_count < MYNES_RECENT_MAX) cfg->recent_count++;
-    free(absolute);
 }
 
 void mynes_config_set_last_preset(MynesConfig *cfg, const char *slug) {

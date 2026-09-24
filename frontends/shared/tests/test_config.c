@@ -108,25 +108,40 @@ int main(void) {
     CHECK(cfg.recent_count == 0);
     CHECK(strcmp(cfg.last_preset, "w.json") == 0);
 
-    /* A relative path is stored absolute; a missing file as given. */
-    char cwd[MYNES_PATH_MAX], rom[MYNES_PATH_MAX + 16];
+    /* A relative path is stored absolute, through its directory. */
+    char cwd[MYNES_PATH_MAX], rom[MYNES_PATH_MAX + 32], other[MYNES_PATH_MAX + 32];
     CHECK(getcwd(cwd, sizeof(cwd)) != NULL);
     CHECK(chdir(dir) == 0);
-    FILE *rf = fopen("game.nes", "wb");
+    char *real_dir = realpath(".", NULL);
+    CHECK(real_dir != NULL);
+    if (!real_dir) return 1;
+    CHECK(mkdir("roms", 0755) == 0);
+    FILE *rf = fopen("roms/game.nes", "wb");
     CHECK(rf != NULL);
     if (rf) fclose(rf);
     MynesConfig recents;
     memset(&recents, 0, sizeof(recents));
-    mynes_config_add_recent(&recents, "game.nes");
+    mynes_config_add_recent(&recents, "roms/game.nes");
     mynes_config_add_recent(&recents, "missing.nes");
-    mynes_config_add_recent(&recents, "./game.nes");
-    char *real_dir = realpath(dir, NULL);
-    snprintf(rom, sizeof(rom), "%s/game.nes", real_dir ? real_dir : dir);
-    free(real_dir);
+    mynes_config_add_recent(&recents, "./roms/../roms/game.nes");
+    snprintf(rom, sizeof(rom), "%s/roms/game.nes", real_dir);
     CHECK(recents.recent_count == 2);
     CHECK(strcmp(recents.recent_roms[0], rom) == 0);
-    CHECK(strcmp(recents.recent_roms[1], "missing.nes") == 0);
-    remove("game.nes");
+    /* A missing file is anchored where it was typed. */
+    snprintf(other, sizeof(other), "%s/missing.nes", real_dir);
+    CHECK(strcmp(recents.recent_roms[1], other) == 0);
+
+    /* A symlinked ROM keeps its own name, which its saves are named after,
+     * rather than its target's. */
+    CHECK(symlink("roms/game.nes", "Linked Game.nes") == 0);
+    mynes_config_add_recent(&recents, "Linked Game.nes");
+    snprintf(other, sizeof(other), "%s/Linked Game.nes", real_dir);
+    CHECK(recents.recent_count == 3);
+    CHECK(strcmp(recents.recent_roms[0], other) == 0);
+    remove("Linked Game.nes");
+    remove("roms/game.nes");
+    rmdir("roms");
+    free(real_dir);
     CHECK(chdir(cwd) == 0);
 
     /* A save that cannot be written reports it and leaves the old file. */
