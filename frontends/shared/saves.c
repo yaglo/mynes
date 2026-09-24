@@ -2,6 +2,7 @@
  * saves.c — battery RAM and save-state files (see saves.h).
  */
 #define _POSIX_C_SOURCE 200809L  /* fileno, fsync and lstat under strict C11 */
+#define _DARWIN_C_SOURCE         /* and F_FULLFSYNC, which strict POSIX hides on macOS */
 #include "saves.h"
 
 #include <errno.h>
@@ -142,6 +143,22 @@ void *mynes_state_read(const MynesSaves *s, int slot, size_t *size) {
 }
 
 #ifndef _WIN32
+/* On macOS fsync hands the data to the drive and stops there: it can sit in
+ * the drive's cache and reach the medium out of order, so a power cut may
+ * keep the rename and lose the data, or lose both. Apple's fsync(2) names
+ * F_FULLFSYNC for that, which flushes the cache and costs several
+ * milliseconds a call, so only callers that ask for it pay (see saves.h).
+ * Filesystems that do not support it (some network and FAT volumes) fall
+ * back to fsync. Elsewhere fsync already waits for stable storage. */
+static int sync_fd(int fd, bool full_flush) {
+#ifdef F_FULLFSYNC
+    if (full_flush && fcntl(fd, F_FULLFSYNC) == 0) return 0;
+#else
+    (void)full_flush;
+#endif
+    return fsync(fd);
+}
+
 /* The directory part of `path`: "." when there is none. */
 static void parent_dir(const char *path, char *out, size_t out_sz) {
     snprintf(out, out_sz, "%s", path);
@@ -152,14 +169,14 @@ static void parent_dir(const char *path, char *out, size_t out_sz) {
 }
 
 /* A rename is durable only once the directory holding it is on disk. */
-static void sync_parent_dir(const char *path) {
+static void sync_parent_dir(const char *path, bool full_flush) {
     char dir[MYNES_PATH_MAX];
     parent_dir(path, dir, sizeof(dir));
     int fd = open(dir, O_RDONLY);
     if (fd < 0) return;
     /* Some filesystems refuse to sync a directory; the file itself is
      * already in place by now, so that is not a failed write. */
-    (void)fsync(fd);
+    (void)sync_fd(fd, full_flush);
     close(fd);
 }
 
@@ -197,7 +214,7 @@ static bool follow_links(const char *path, char *out, size_t out_sz) {
 }
 #endif
 
-bool mynes_write_file_atomic(const char *path, const void *data, size_t size) {
+static bool write_atomic(const char *path, const void *data, size_t size, bool full_flush) {
     char tmp[MYNES_PATH_MAX], target[MYNES_PATH_MAX];
     if (!*path) return false;
 #ifndef _WIN32
@@ -206,6 +223,7 @@ bool mynes_write_file_atomic(const char *path, const void *data, size_t size) {
         return false;
     }
 #else
+    (void)full_flush;
     snprintf(target, sizeof(target), "%s", path);
 #endif
     /* Beside the file the link names, since rename cannot cross filesystems. */
@@ -222,7 +240,7 @@ bool mynes_write_file_atomic(const char *path, const void *data, size_t size) {
 #ifndef _WIN32
     /* Otherwise the rename can reach the disk before the data, and a crash
      * leaves an empty file where the previous one used to be. */
-    ok = ok && fsync(fileno(f)) == 0;
+    ok = ok && sync_fd(fileno(f), full_flush) == 0;
 #endif
     ok = (fclose(f) == 0) && ok;
     if (!ok) fprintf(stderr, "Cannot write %s: %s\n", tmp, strerror(errno));
@@ -231,8 +249,16 @@ bool mynes_write_file_atomic(const char *path, const void *data, size_t size) {
         ok = false;
     }
 #ifndef _WIN32
-    if (ok) sync_parent_dir(target);
+    if (ok) sync_parent_dir(target, full_flush);
 #endif
     if (!ok) remove(tmp);
     return ok;
+}
+
+bool mynes_write_file_atomic(const char *path, const void *data, size_t size) {
+    return write_atomic(path, data, size, true);
+}
+
+bool mynes_write_file_atomic_cached(const char *path, const void *data, size_t size) {
+    return write_atomic(path, data, size, false);
 }

@@ -64,7 +64,17 @@ void *mynes_state_read(const MynesSaves *s, int slot, size_t *size);
 
 /* Write through a temporary file and rename it into place, so an interrupted
  * write leaves the previous file intact rather than a truncated one. A
- * symlinked `path` stays a link: the file it names is the one replaced. */
+ * symlinked `path` stays a link: the file it names is the one replaced.
+ * The data and the rename are on stable storage when this returns; on
+ * macOS that takes F_FULLFSYNC, about 5 ms against 1 ms for fsync, which
+ * battery saves and save states are worth. */
 bool mynes_write_file_atomic(const char *path, const void *data, size_t size);
+
+/* The same with plain fsync, for config.json, which every OSD slider step
+ * rewrites on the render thread. On macOS the write can then still be in
+ * the drive's cache when this returns, and a power cut may lose it or keep
+ * the rename without the data; losing the latest settings change is an
+ * acceptable price there. */
+bool mynes_write_file_atomic_cached(const char *path, const void *data, size_t size);
 
 #endif /* MYNES_SAVES_H */

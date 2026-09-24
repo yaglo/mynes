@@ -323,7 +323,7 @@ bool mynes_config_save(const MynesConfig *cfg) {
 
     bool ok = !t.failed;
     if (!ok) fprintf(stderr, "mynes_config_save: out of memory\n");
-    ok = ok && mynes_write_file_atomic(path, t.data, t.len);
+    ok = ok && mynes_write_file_atomic_cached(path, t.data, t.len);
     free(t.data);
     return ok;
 }
