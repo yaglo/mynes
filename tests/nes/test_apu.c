@@ -5,10 +5,16 @@ static int failures;
 int main(void) {
     APU a; apu_init(&a); apu_set_region(&a,1); apu_reset(&a);
     CHECK(a.pal && a.cpu_clock==APU_CPU_CLOCK_PAL);
-    apu_write(&a,0x400e,2); CHECK(a.noise.timer==14);
+    /* A period write leaves the running divider alone; the new period
+     * loads at the next reload. */
+    a.noise.enabled=true; a.noise.length_counter=1; a.noise.timer=1;
+    apu_write(&a,0x400e,2); CHECK(a.noise.timer==1);
+    apu_clock_noise_timer(&a.noise,a.pal); CHECK(a.noise.timer==14);
     apu_write(&a,0x4010,15); CHECK(a.dmc.timer_reload==50);
     apu_set_region(&a,0);
-    apu_write(&a,0x400e,2); CHECK(a.noise.timer==16);
+    a.noise.timer=1;
+    apu_write(&a,0x400e,2); apu_clock_noise_timer(&a.noise,a.pal);
+    CHECK(a.noise.timer==16);
     apu_write(&a,0x4010,15); CHECK(a.dmc.timer_reload==54);
     apu_set_region(&a,1); CHECK(a.dmc.timer_reload==50);
     /* A PAL half-frame clocks lengths every 16626/16626 CPU cycles, rather
@@ -39,6 +45,10 @@ int main(void) {
     apu_write(&a,0x4003,0); apu_write(&a,0x4007,0); apu_write(&a,0x400f,0);
     CHECK(a.pulse[0].envelope_start && a.pulse[1].envelope_start &&
           a.noise.envelope_start);
+    /* Pulse period writes keep the running divider as well. */
+    a.pulse[0].timer=5;
+    apu_write(&a,0x4002,0x40); apu_write(&a,0x4003,0x01);
+    CHECK(a.pulse[0].timer==5 && a.pulse[0].timer_reload==0x140);
     printf("APU region/triangle tests: %s\n",failures?"FAIL":"PASS");
     return failures?1:0;
 }

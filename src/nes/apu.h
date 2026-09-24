@@ -359,12 +359,13 @@ static inline int apu_noise_volume(const APU_Noise *n) {
 }
 
 /* ============================================================================
- * Pulse Timer Update
+ * Pulse Period Update
  * ============================================================================ */
 
-static inline void apu_update_pulse_timer(APU_Pulse *p) {
+/* Only the reload period changes here: a running timer divider keeps
+ * counting and picks up the new period at its next reload. */
+static inline void apu_update_pulse_period(APU_Pulse *p) {
     p->timer_reload &= 0x7FF;
-    p->timer = (p->timer_reload + 1) * 2;
     p->sweep_mute = (p->timer_reload < 8);
 }
 
@@ -452,7 +453,7 @@ static inline void apu_clock_sweep(APU_Pulse *p, bool negate_correction) {
             int target = p->timer_reload + change;
             if (target >= 0 && target <= 0x7FF && p->timer_reload >= 8) {
                 p->timer_reload = target;
-                apu_update_pulse_timer(p);
+                apu_update_pulse_period(p);
             }
         }
         p->sweep_divider = p->sweep_period;
@@ -1158,12 +1159,12 @@ static inline void apu_write(APU *apu, uint16_t addr, uint8_t val) {
     case 0x4002:
         apu->pulse[0].reg[2] = val;
         apu->pulse[0].timer_reload = (apu->pulse[0].timer_reload & 0x700) | val;
-        apu_update_pulse_timer(&apu->pulse[0]);
+        apu_update_pulse_period(&apu->pulse[0]);
         break;
     case 0x4003:
         apu->pulse[0].reg[3] = val;
         apu->pulse[0].timer_reload = ((val & 0x07) << 8) | apu->pulse[0].reg[2];
-        apu_update_pulse_timer(&apu->pulse[0]);
+        apu_update_pulse_period(&apu->pulse[0]);
         apu->pulse[0].sequence_step = 0;
         apu->pulse[0].envelope_start = true;
         if (apu->pulse[0].enabled) {
@@ -1189,12 +1190,12 @@ static inline void apu_write(APU *apu, uint16_t addr, uint8_t val) {
     case 0x4006:
         apu->pulse[1].reg[2] = val;
         apu->pulse[1].timer_reload = (apu->pulse[1].timer_reload & 0x700) | val;
-        apu_update_pulse_timer(&apu->pulse[1]);
+        apu_update_pulse_period(&apu->pulse[1]);
         break;
     case 0x4007:
         apu->pulse[1].reg[3] = val;
         apu->pulse[1].timer_reload = ((val & 0x07) << 8) | apu->pulse[1].reg[2];
-        apu_update_pulse_timer(&apu->pulse[1]);
+        apu_update_pulse_period(&apu->pulse[1]);
         apu->pulse[1].sequence_step = 0;
         apu->pulse[1].envelope_start = true;
         if (apu->pulse[1].enabled) {
@@ -1237,8 +1238,8 @@ static inline void apu_write(APU *apu, uint16_t addr, uint8_t val) {
         /* Unused */
         break;
     case 0x400E:
+        /* The new period takes effect at the timer's next reload. */
         apu->noise.reg2 = val;
-        apu->noise.timer = (apu->pal ? apu_noise_period_table_pal : apu_noise_period_table)[val & 0x0F];
         break;
     case 0x400F:
         apu->noise.reg3 = val;
