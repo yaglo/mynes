@@ -411,6 +411,43 @@ static void encoder_rgb_window(SDL_GPUDevice *gpu) {
     free(amp); free(out); video_gpu_destroy(&v, gpu);
 }
 
+/* An isolated line carries the light of a line of a uniform field whatever
+ * the output row's pitch in raster lines: each row integrates the spot over
+ * the lines it covers on the face, 287 active PAL lines, or an NTSC field
+ * enlarged by 4% overscan, on 240 output rows. The spot is narrower than a
+ * row, so a row that integrated a whole line would be off by the ratio of
+ * the pitches. */
+static void line_energy(SDL_GPUDevice *gpu) {
+    enum { W = 32, H = 240 };
+    const struct { int region; float overscan; } cases[] = {{SIGNAL_REGION_PAL, 0}, {SIGNAL_REGION_NTSC, .04f}};
+    for (int k = 0; k < 2; k++) {
+        SignalPrecompute sp; VideoChain c; VideoGPUChain v;
+        CHECK(chain(gpu, &v, &c, &sp, cases[k].region, VIDEO_CONN_RGB, VIDEO_COMB_NONE));
+        float matrix[3][3] = {{1, 0, 0}, {1, 0, 0}, {1, 0, 0}}, bias[3] = {0};
+        video_gpu_set_color_matrix(&v, matrix, bias);
+        c.tv.overscan = cases[k].overscan;
+        CHECK(video_gpu_set_beam_params(&v, gpu, W, H, 1, .1f, .1f));
+        set_backdrop(&v, &sp, 0x0f);
+        static uint16_t codes[256 * 240];
+        uint16_t *out = malloc(W * H * 8);
+        double field = 0, line = 0;
+        for (int pass = 0; pass < 2; pass++) {
+            for (int i = 0; i < 256 * 240; i++) codes[i] = pass == 0 || i / 256 == 120 ? 0x30 : 0x0f;
+            CHECK(frames(gpu, &v, &sp, codes, 2 * pass, 2, NULL));
+            CHECK(gpu_buffer_download(gpu, v.buf_beam_rgba, out, W * H * 8));
+            /* The field's mean over whole rows: a spot this narrow puts one
+             * line in some rows and two in others. */
+            if (pass == 0) for (int y = H / 4; y < 3 * H / 4; y++) field += gpu_half_to_float(out[(y * W + W / 2) * 4 + 1]) / (H / 2);
+            else for (int y = 0; y < H; y++) line += gpu_half_to_float(out[(y * W + W / 2) * 4 + 1]);
+        }
+        double pitch = v.window.active_lines * (1 - 2 * cases[k].overscan) / H;
+        printf("Line energy %s: %.4f of a uniform field's line at %.3f lines per row\n",
+               k ? "NTSC, 4% overscan" : "PAL", line * pitch / field, pitch);
+        CHECK(field > .5 && fabs(line * pitch / field - 1) < .02);
+        free(out); video_gpu_destroy(&v, gpu);
+    }
+}
+
 int test_border(SDL_GPUDevice *gpu) {
     window_arithmetic();
     backdrop_decodes(gpu, VIDEO_CONN_COMPOSITE, VIDEO_COMB_NONE, "composite");
@@ -422,5 +459,6 @@ int test_border(SDL_GPUDevice *gpu) {
     pal_border(gpu);
     rgb_ppu_border(gpu);
     encoder_rgb_window(gpu);
+    line_energy(gpu);
     return failures;
 }
