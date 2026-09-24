@@ -109,6 +109,22 @@ int main(void) {
     /* An unwritable destination fails cleanly and leaves no temp file. */
     CHECK(!mynes_write_file_atomic("/nonexistent-dir/x/y.sav", ram, sizeof(ram)));
 
+    /* A config directory too long for the slot suffix gives no path at all,
+     * rather than one truncated path shared by every slot. */
+    char deep[MYNES_PATH_MAX];
+    snprintf(deep, sizeof(deep), "%s/%0*d", root, (int)(490 - strlen(root)), 0);
+    setenv("XDG_CONFIG_HOME", deep, 1);
+    MynesSaves d;
+    mynes_saves_open(&d, "/roms/Zelda (U).nes", 0xDEADBEEF, true);
+    CHECK(d.sav_path[0] == '\0');
+    char p1[MYNES_PATH_MAX], p2[MYNES_PATH_MAX];
+    mynes_state_path(&d, 1, p1, sizeof(p1));
+    mynes_state_path(&d, 2, p2, sizeof(p2));
+    CHECK(p1[0] == '\0' && p2[0] == '\0');
+    CHECK(mynes_state_read(&d, 1, &size) == NULL);
+    CHECK(!mynes_write_file_atomic("", ram, sizeof(ram)));
+    setenv("XDG_CONFIG_HOME", root, 1);
+
     /* Tidy up. */
     remove(path);
     remove(s.sav_path);

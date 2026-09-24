@@ -13,23 +13,31 @@
 #endif
 
 /* Bounded append. Paths are joined this way rather than with one snprintf
- * so that GCC's format-truncation analysis has nothing to guess about. */
-static void append(char *out, int out_sz, const char *s) {
-    if (out_sz <= 0) return;
-    size_t used = strlen(out), room = (size_t)out_sz - 1 - used, len = strlen(s);
-    if (len > room) len = room;
-    memcpy(out + used, s, len);
-    out[used + len] = '\0';
+ * so that GCC's format-truncation analysis has nothing to guess about.
+ * A path that does not fit is an error, not a shorter path: cutting off
+ * the ".s<N>" suffix would give every state slot the same file. */
+static bool append(char *out, int out_sz, const char *s) {
+    if (out_sz <= 0) return false;
+    size_t used = strlen(out), len = strlen(s);
+    if (len >= (size_t)out_sz - used) return false;
+    memcpy(out + used, s, len + 1);
+    return true;
+}
+
+/* Leave an empty path, which every reader and writer here refuses. */
+static void path_too_long(char *out, int out_sz, const char *what) {
+    fprintf(stderr, "%s: path too long\n", what);
+    if (out_sz > 0) out[0] = '\0';
 }
 
 void mynes_saves_dir(char *out, int out_sz) {
     mynes_config_dir(out, out_sz);
-    append(out, out_sz, "/saves");
+    if (!append(out, out_sz, "/saves")) path_too_long(out, out_sz, "Battery saves");
 }
 
 void mynes_states_dir(char *out, int out_sz) {
     mynes_config_dir(out, out_sz);
-    append(out, out_sz, "/states");
+    if (!append(out, out_sz, "/states")) path_too_long(out, out_sz, "Save states");
 }
 
 void mynes_save_basename(const char *rom_path, uint32_t rom_crc, char *out, int out_sz) {
@@ -53,9 +61,10 @@ void mynes_saves_open(MynesSaves *s, const char *rom_path, uint32_t rom_crc, boo
     s->rom_crc = rom_crc;
     mynes_save_basename(rom_path, rom_crc, s->name, sizeof(s->name));
     mynes_saves_dir(s->sav_path, sizeof(s->sav_path));
-    append(s->sav_path, sizeof(s->sav_path), "/");
-    append(s->sav_path, sizeof(s->sav_path), s->name);
-    append(s->sav_path, sizeof(s->sav_path), ".sav");
+    if (!*s->sav_path || !append(s->sav_path, sizeof(s->sav_path), "/")
+        || !append(s->sav_path, sizeof(s->sav_path), s->name)
+        || !append(s->sav_path, sizeof(s->sav_path), ".sav"))
+        path_too_long(s->sav_path, sizeof(s->sav_path), "Battery save");
 }
 
 bool mynes_saves_restore(MynesSaves *s, uint8_t *prg_ram) {
@@ -92,9 +101,9 @@ void mynes_state_path(const MynesSaves *s, int slot, char *out, int out_sz) {
     char suffix[16];
     snprintf(suffix, sizeof(suffix), ".s%d", slot);
     mynes_states_dir(out, out_sz);
-    append(out, out_sz, "/");
-    append(out, out_sz, s->name);
-    append(out, out_sz, suffix);
+    if (!*out || !append(out, out_sz, "/") || !append(out, out_sz, s->name)
+        || !append(out, out_sz, suffix))
+        path_too_long(out, out_sz, "Save state");
 }
 
 bool mynes_state_write(const MynesSaves *s, int slot, const void *data, size_t size) {
@@ -112,7 +121,7 @@ void *mynes_state_read(const MynesSaves *s, int slot, size_t *size) {
     char path[MYNES_PATH_MAX];
     mynes_state_path(s, slot, path, sizeof(path));
     *size = 0;
-    FILE *f = fopen(path, "rb");
+    FILE *f = *path ? fopen(path, "rb") : NULL;
     if (!f) return NULL;
     if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return NULL; }
     long length = ftell(f);
@@ -147,6 +156,7 @@ static void sync_parent_dir(const char *path) {
 
 bool mynes_write_file_atomic(const char *path, const void *data, size_t size) {
     char tmp[MYNES_PATH_MAX];
+    if (!*path) return false;
     if (snprintf(tmp, sizeof(tmp), "%s.tmp", path) >= (int)sizeof(tmp)) {
         fprintf(stderr, "Cannot write %s: path too long\n", path);
         return false;

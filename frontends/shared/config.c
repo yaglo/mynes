@@ -58,6 +58,7 @@ void mynes_user_presets_dir(char *out, int out_sz) {
 /* mkdir -p — public via mynes_mkdir_p (declared in config.h). */
 bool mynes_mkdir_p(const char *path) {
     char buf[MYNES_PATH_MAX];
+    if (!*path) return false;
     snprintf(buf, sizeof(buf), "%s", path);
     for (char *p = buf + 1; *p; p++) {
         if (*p == '/') {
