@@ -32,7 +32,8 @@ layout(set = 1, binding = 0) writeonly buffer DeflectionX {
     float out_x[];
 };
 
-/* Output B: landed output-row Y for R/G/B + sigma scale.
+/* Output B: landed Y for R/G/B, in decode-window lines (row r spans
+ * r to r + 1), + sigma scale.
  *   out_y[pixel*4 + 0] = r_y
  *   out_y[pixel*4 + 1] = g_y
  *   out_y[pixel*4 + 2] = b_y
@@ -191,9 +192,14 @@ void main() {
 
     float cx = raster.x * 2.0 - 1.0;
     float cy = raster.y * 2.0 - 1.0;
-    int sy_i = clamp(int(floor(raster.y * active_lines - picture_top)), 0, 239);
+    // The picture line being scanned, negative above the picture, held to
+    // the decoded lines. The flyback ring and the top settle are timed from
+    // picture line 0.
+    int sy_i = clamp(int(floor(raster.y * active_lines - picture_top)),
+                     -int(picture_row), int(map_h) - 1 - int(picture_row));
     uint sy_nom = uint(sy_i);
-    float line_uv = (float(sy_nom) + 0.5) / 240.0;
+    float line_f = float(sy_i), settle_f = float(max(sy_i, 0));
+    float line_uv = (line_f + 0.5) / 240.0;
     uint line_seed = sy_nom * 1103515245u + frame_counter * 12345u + 0x9e3779b9u;
 
     /* Horizontal timebase: combine slow sway, line-locked jitter,
@@ -202,13 +208,13 @@ void main() {
     if(h_jitter!=0.0) {
         float slow_sway=sin(frame_t*.63)*.7 + sin(frame_t*.21+1.7)*.3;
         float pll_jitter=hashSigned(line_seed)+.5*hashSigned(line_seed^0x85ebca6bu);
-        float ripple=sin(float(sy_nom)*.19+frame_t*1.4);
-        float flyback_ring=exp(-float(sy_nom)/18.0)*sin(float(sy_nom)*.92+frame_t*1.9);
-        float group_shift=sin(floor(float(sy_nom)/4.0)*.83+frame_t*.7);
+        float ripple=sin(line_f*.19+frame_t*1.4);
+        float flyback_ring=exp(-settle_f/18.0)*sin(settle_f*.92+frame_t*1.9);
+        float group_shift=sin(floor(line_f/4.0)*.83+frame_t*.7);
         h_shift_px=h_jitter*(.28*slow_sway+.22*pll_jitter+.18*ripple+.22*flyback_ring+.10*group_shift);
     }
     if (rf_interference > 0.001) {
-        float rf_step = sin(float(sy_nom) * 0.47 + frame_t * 0.31);
+        float rf_step = sin(line_f * 0.47 + frame_t * 0.31);
         h_shift_px += floor(rf_step * rf_interference + 0.5);
     }
 
@@ -216,7 +222,7 @@ void main() {
     float field_jump_px=0.0, top_settle_px=0.0;
     if(v_jitter!=0.0) {
         field_jump_px=v_jitter*.25*hashSigned(frame_counter*4099u+17u);
-        top_settle_px=v_jitter*1.6*exp(-float(sy_nom)/14.0)*sin(float(sy_nom)*.78+frame_t*1.25);
+        top_settle_px=v_jitter*1.6*exp(-settle_f/14.0)*sin(settle_f*.78+frame_t*1.25);
     }
     float bottom_compress=geometry_warp*.016*(cy*cy*cy-.25*cy);
     float s_correction=geometry_warp*.034*(cx*cx*cx-.35*cx);
@@ -231,17 +237,17 @@ void main() {
     }
     float line_bow_x=0.0,line_bow_y=0.0,bow_slope=0.0;
     if(scanline_wobble!=0.0) {
-        float phase=x_uv*6.283185+float(sy_nom)*.63+frame_t*.9;
+        float phase=x_uv*6.283185+line_f*.63+frame_t*.9;
         line_bow_x=scanline_wobble*.015*sin(phase);
-        line_bow_y=scanline_wobble*.020*sin(x_uv*6.283185+float(sy_nom)*.39+frame_t*.9);
+        line_bow_y=scanline_wobble*.020*sin(x_uv*6.283185+line_f*.39+frame_t*.9);
         bow_slope=scanline_wobble*.0471239*cos(phase);
     }
     float band_lo = min(top_band_start, top_band_end);
     float band_hi = max(top_band_start, top_band_end);
     float band_soft = 2.5;
-    float band_window = smoothstep(band_lo - band_soft, band_lo + band_soft, float(sy_nom))
+    float band_window = smoothstep(band_lo - band_soft, band_lo + band_soft, line_f)
                       * (1.0 - smoothstep(band_hi - band_soft, band_hi + band_soft,
-                                          float(sy_nom)));
+                                          line_f));
     float edge_width = max(top_edge_width, 0.01);
     float top_edge_env = top_edge_skew!=0.0 ? exp(-max(raster.x, 0.0) / edge_width) : 0.0;
     float top_band_px = top_band_shift * band_window;
@@ -262,17 +268,20 @@ void main() {
     float generic_conv_signal = generic_conv_px * spp * active_dots / fw;
 
     /* The tube face is the active raster and the picture a window in it, so
-     * NES dots are 8:7 on a 4:3 face. X lands in decode-window samples. */
+     * NES dots are 8:7 on a 4:3 face. X lands in decode-window samples and
+     * Y in decode-window lines. */
     float base_x = ((x_land_n * 0.5 + 0.5) * active_dots - picture_left) * spp + picture_x;
-    float base_y = ((y_land_n * 0.5 + 0.5) * active_lines - picture_top) / 240.0 * fh;
+    float base_y = (y_land_n * 0.5 + 0.5) * active_lines - picture_top + picture_row;
 
     float r_x = base_x - generic_conv_signal + conv_r_x * conv_edge;
     float g_x = base_x;
     float b_x = base_x + generic_conv_signal + conv_b_x * conv_edge;
 
-    float r_y = base_y + conv_r_y * conv_edge;
+    /* Vertical convergence is calibrated in rows of a 240-row face. */
+    float conv_lines = conv_edge * 240.0 / fh;
+    float r_y = base_y + conv_r_y * conv_lines;
     float g_y = base_y;
-    float b_y = base_y + conv_b_y * conv_edge;
+    float b_y = base_y + conv_b_y * conv_lines;
 
     /* Focus growth + astigmatism. */
     float focus_scale = 1.0 + edge_factor * edge_focus;

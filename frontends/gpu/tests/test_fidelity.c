@@ -528,7 +528,7 @@ static void independent_guns(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoChain *c
     uint16_t a[W*H*4],b[W*H*4];
     for(int y=0;y<H;y++) for(int x=0;x<W;x++) {
         int i=(y*W+x)*4; dx[i]=dx[i+1]=dx[i+2]=500;dx[i+3]=1;
-        dy[i]=dy[i+1]=dy[i+2]=y+.5f;dy[i+3]=1;
+        dy[i]=dy[i+1]=dy[i+2]=(y+.5f)*240/H+v->window.picture_row;dy[i+3]=1;
     }
     CHECK(gpu_buffer_upload(gpu,v->buf_deflection_x,dx,W*H*16));
     CHECK(gpu_buffer_upload(gpu,v->buf_deflection_y,dy,W*H*16));
@@ -785,7 +785,7 @@ static void fw900_measurements(SDL_GPUDevice *gpu, VideoGPUChain *v) {
             if(scaler) px=x<8 ? 80 : 960;
             // Uniform fields average exactly one full vertical raster period.
             dx[i]=dx[i+1]=dx[i+2]=(px+.5f)/SW*SW;dx[i+3]=1;
-            dy[i]=dy[i+1]=dy[i+2]=(py+.5f)/SH*(test>=2 ? SH : H);dy[i+3]=1;
+            dy[i]=dy[i+1]=dy[i+2]=(py+.5f)/SH*source_h;dy[i+3]=1; // in source lines
         }
         CHECK(gpu_buffer_upload(gpu,input,rgb,SW*source_h*3*sizeof(float)));
         CHECK(gpu_buffer_upload(gpu,bx,dx,N*16));CHECK(gpu_buffer_upload(gpu,by,dy,N*16));
@@ -797,7 +797,9 @@ static void fw900_measurements(SDL_GPUDevice *gpu, VideoGPUChain *v) {
             uint32_t monitor,lines;
             int32_t picture_x,picture_row;
             uint32_t picture_w,picture_h;
-        } p={SW,W,test>=2 ? SH : H,1,.2f,.7f,0,0,1.8f,2.4f,0,0,0,1,(uint32_t)source_h,0,0,SW,(uint32_t)source_h};
+            float lines_per_row;
+        } p={SW,W,test>=2 ? SH : H,1,.2f,.7f,0,0,1.8f,2.4f,0,0,0,1,(uint32_t)source_h,0,0,SW,(uint32_t)source_h,
+             (float)source_h/(test>=2 ? SH : H)};
         SDL_GPUCommandBuffer *cmd=SDL_AcquireGPUCommandBuffer(gpu);
         SDL_GPUStorageBufferReadWriteBinding rw={.buffer=result};
         SDL_GPUComputePass *pass=SDL_BeginGPUComputePass(cmd,NULL,0,&rw,1);
@@ -845,7 +847,7 @@ static void beam_energy(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoChain *c) {
         for(int y=0;y<h;y++) for(int x=0;x<w;x++) {
             int i=(y*w+x)*4;
             dx[i]=dx[i+1]=dx[i+2]=500; dx[i+3]=1;
-            dy[i]=dy[i+1]=dy[i+2]=y+0.5f; dy[i+3]=1;
+            dy[i]=dy[i+1]=dy[i+2]=(y+0.5f)*240/h+v->window.picture_row; dy[i+3]=1;
         }
         CHECK(gpu_buffer_upload(gpu,v->buf_deflection_x,dx,w*h*16));
         CHECK(gpu_buffer_upload(gpu,v->buf_deflection_y,dy,w*h*16));
@@ -874,7 +876,7 @@ static void beam_height_response(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoChai
     float *rgb=calloc(1,v->rgb_size); uint16_t *out=malloc(W*H*8);
     for(int y=0;y<H;y++) for(int x=0;x<W;x++) {
         int i=(y*W+x)*4; dx[i]=dx[i+1]=dx[i+2]=500;dx[i+3]=1;
-        dy[i]=dy[i+1]=dy[i+2]=y+.5f;dy[i+3]=1;
+        dy[i]=dy[i+1]=dy[i+2]=(y+.5f)/16+v->window.picture_row;dy[i+3]=1;
     }
     CHECK(gpu_buffer_upload(gpu,v->buf_deflection_x,dx,W*H*16));
     CHECK(gpu_buffer_upload(gpu,v->buf_deflection_y,dy,W*H*16));
@@ -924,7 +926,7 @@ static void black_floor_deposition(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoCh
     uint16_t *out=malloc(W*H*8);
     for(int y=0;y<H;y++) for(int x=0;x<W;x++) {
         int i=(y*W+x)*4; dx[i]=dx[i+1]=dx[i+2]=500; dx[i+3]=x>0 ? 1 : 0;
-        dy[i]=dy[i+1]=dy[i+2]=y+.5f; dy[i+3]=1;
+        dy[i]=dy[i+1]=dy[i+2]=(y+.5f)*240/H+v->window.picture_row; dy[i+3]=1;
     }
     CHECK(gpu_buffer_upload(gpu,v->buf_deflection_x,dx,W*H*16));
     CHECK(gpu_buffer_upload(gpu,v->buf_deflection_y,dy,W*H*16));
@@ -966,6 +968,42 @@ static void black_floor_deposition(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoCh
     c->tv.black_floor=0;
     c->tv.phosphor_gamma_offset_g=c->tv.phosphor_gamma_offset_b=0;
     free(rgb);free(current);free(dx);free(dy);free(out);
+}
+
+/* Below and above the picture the beam finds no picture line: the raster
+ * ends where the last line's spot does instead of repeating that line. A
+ * PAL set scans 19.5 lines above the picture and 27.5 below it. */
+static void beam_below_picture(SDL_GPUDevice *gpu) {
+    enum { W=8,H=1200 };
+    SignalPrecompute sp; VideoChain c; VideoGPUChain v;
+    signal_precompute_init(&sp,SIGNAL_REGION_PAL);
+    video_chain_init_preset(&c,VIDEO_CONN_COMPOSITE,VIDEO_COMB_NONE,SIGNAL_REGION_PAL);
+    memset(&c.tv,0,sizeof(c.tv)); c.tv.gamma=1; c.tv.h_size=c.tv.v_size=1;
+    c.console_psu_hum=0; c.cable.shield_effectiveness=1;
+    CHECK(video_gpu_init(&v,gpu,&c,"shaders/compute",sp.fir_y,sp.fir_y_n,sp.fir_c,sp.fir_c_n,sp.fir_q,sp.fir_q_n));
+    CHECK(video_gpu_set_beam_params(&v,gpu,W,H,5,.3f,.3f));
+    for(int i=0;i<v.sig_chain.num_stages;i++) chain_set_stage_enabled(&v.sig_chain,i,i==v.stage_deflection);
+    CHECK(chain_run(&v.sig_chain,gpu));
+    float *dy=malloc(W*H*16), *rgb=calloc(1,v.rgb_size);
+    uint16_t *out=malloc(W*H*8);
+    CHECK(gpu_buffer_download(gpu,v.buf_deflection_y,dy,W*H*16));
+    for(int line=0;line<240;line++) for(int x=0;x<v.window.width;x++) for(int ch=0;ch<3;ch++)
+        rgb[((size_t)(line+v.window.picture_row)*v.window.width+x)*3+ch]=1;
+    CHECK(gpu_buffer_upload(gpu,v.buf_rgb2,rgb,v.rgb_size));
+    SDL_GPUCommandBuffer *cmd=SDL_AcquireGPUCommandBuffer(gpu);
+    CHECK(dispatch_beam_profile_public(&v,cmd)); CHECK(SDL_SubmitGPUCommandBuffer(cmd));
+    CHECK(gpu_buffer_download(gpu,v.buf_beam_rgba,out,W*H*8));
+    /* The spot reaches at most four lines (beam_profile's radius). */
+    int dark=0,lit=0;
+    for(int y=0;y<H;y++) {
+        float line=dy[(y*W+W/2)*4+1]-v.window.picture_row;
+        float light=gpu_half_to_float(out[(y*W+W/2)*4+1]);
+        if(line>=244 || line<-4) { CHECK(light==0); dark++; }
+        if(line>=2 && line<238) { CHECK(light>.1f); lit++; }
+    }
+    printf("Beam past the picture: %d dark rows beyond the spot, %d lit rows inside\n",dark,lit);
+    CHECK(dark>50 && lit>900);
+    free(dy);free(rgb);free(out);video_gpu_destroy(&v,gpu);
 }
 
 static void separated_yc(SDL_GPUDevice *gpu) {
@@ -1359,6 +1397,7 @@ int main(void) {
     decoder_gain(gpu);
     decoder_voltage_range(gpu);
     separated_yc(gpu);
+    beam_below_picture(gpu);
     rgb_source(gpu);
     rf(gpu);
     rf_sidebands(gpu);

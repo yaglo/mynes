@@ -83,7 +83,7 @@ vec3 fw900_render(uint pix) {
     uint d=pix*4u;
     float dwell=max(deflection_x[d+3u],0.0);
     if(dwell<=0.0) return vec3(0);
-    vec2 scale=vec2(picture_w,out_h), origin=vec2(float(picture_x),0.0);
+    vec2 scale=vec2(picture_w,picture_h), origin=vec2(float(picture_x),float(picture_row));
     vec2 r=(vec2(deflection_x[d],deflection_y[d])-origin)/scale;
     vec2 g=(vec2(deflection_x[d+1u],deflection_y[d+1u])-origin)/scale;
     vec2 b=(vec2(deflection_x[d+2u],deflection_y[d+2u])-origin)/scale;

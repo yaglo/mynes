@@ -65,6 +65,7 @@ struct Params
     int picture_row;
     uint picture_w;
     uint picture_h;
+    float lines_per_row;
 };
 
 struct RGBIn
@@ -287,7 +288,7 @@ float3 fw900_deposit(thread const float2& uv, constant Params& _76, device RGBIn
 }
 
 static inline __attribute__((always_inline))
-float3 fw900_render(thread const uint& pix, constant Params& _76, device RGBIn& _142, device DeflectionX& _1063, device DeflectionY& _1094)
+float3 fw900_render(thread const uint& pix, constant Params& _76, device RGBIn& _142, device DeflectionX& _1063, device DeflectionY& _1097)
 {
     uint d = pix * 4u;
     float dwell = fast::max(_1063.deflection_x[d + 3u], 0.0);
@@ -295,11 +296,11 @@ float3 fw900_render(thread const uint& pix, constant Params& _76, device RGBIn& 
     {
         return float3(0.0);
     }
-    float2 scale = float2(float(_76.picture_w), float(_76.out_h));
-    float2 origin = float2(float(_76.picture_x), 0.0);
-    float2 r = (float2(_1063.deflection_x[d], _1094.deflection_y[d]) - origin) / scale;
-    float2 g = (float2(_1063.deflection_x[d + 1u], _1094.deflection_y[d + 1u]) - origin) / scale;
-    float2 b = (float2(_1063.deflection_x[d + 2u], _1094.deflection_y[d + 2u]) - origin) / scale;
+    float2 scale = float2(float(_76.picture_w), float(_76.picture_h));
+    float2 origin = float2(float(_76.picture_x), float(_76.picture_row));
+    float2 r = (float2(_1063.deflection_x[d], _1097.deflection_y[d]) - origin) / scale;
+    float2 g = (float2(_1063.deflection_x[d + 1u], _1097.deflection_y[d + 1u]) - origin) / scale;
+    float2 b = (float2(_1063.deflection_x[d + 2u], _1097.deflection_y[d + 2u]) - origin) / scale;
     float2 param = g;
     float3 light = fw900_deposit(param, _76, _142);
     if (any(r != g))
@@ -358,21 +359,21 @@ float sample_rgb_channel_linear(thread const float& sx, thread const int& sy, th
     return mix(a, b, tx);
 }
 
-kernel void main0(constant Params& _76 [[buffer(0)]], device RGBIn& _142 [[buffer(1)]], device DeflectionX& _1063 [[buffer(2)]], device DeflectionY& _1094 [[buffer(3)]], device RGBAOut& _1208 [[buffer(4)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+kernel void main0(constant Params& _76 [[buffer(0)]], device RGBIn& _142 [[buffer(1)]], device DeflectionX& _1063 [[buffer(2)]], device DeflectionY& _1097 [[buffer(3)]], device RGBAOut& _1211 [[buffer(4)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
     uint ox = gl_GlobalInvocationID.x;
     uint oy = gl_GlobalInvocationID.y;
-    bool _1176 = ox >= _76.out_w;
-    bool _1184;
-    if (!_1176)
+    bool _1179 = ox >= _76.out_w;
+    bool _1187;
+    if (!_1179)
     {
-        _1184 = oy >= _76.out_h;
+        _1187 = oy >= _76.out_h;
     }
     else
     {
-        _1184 = _1176;
+        _1187 = _1179;
     }
-    if (_1184)
+    if (_1187)
     {
         return;
     }
@@ -380,9 +381,9 @@ kernel void main0(constant Params& _76 [[buffer(0)]], device RGBIn& _142 [[buffe
     if (_76.monitor_model == 1u)
     {
         uint param = pix;
-        float3 light = fw900_render(param, _76, _142, _1063, _1094);
-        _1208.rgba_out[pix * 2u] = as_type<uint>(half2(light.xy));
-        _1208.rgba_out[(pix * 2u) + 1u] = as_type<uint>(half2(float2(light.z, 1.0)));
+        float3 light = fw900_render(param, _76, _142, _1063, _1097);
+        _1211.rgba_out[pix * 2u] = as_type<uint>(half2(light.xy));
+        _1211.rgba_out[(pix * 2u) + 1u] = as_type<uint>(half2(float2(light.z, 1.0)));
         return;
     }
     uint didx = pix * 4u;
@@ -390,44 +391,36 @@ kernel void main0(constant Params& _76 [[buffer(0)]], device RGBIn& _142 [[buffe
     float g_center = _1063.deflection_x[didx + 1u];
     float b_center = _1063.deflection_x[didx + 2u];
     float dwell = _1063.deflection_x[didx + 3u];
-    float r_vy = _1094.deflection_y[didx + 0u];
-    float g_vy = _1094.deflection_y[didx + 1u];
-    float b_vy = _1094.deflection_y[didx + 2u];
-    float focus_scale = _1094.deflection_y[didx + 3u];
+    float r_vy = _1097.deflection_y[didx + 0u];
+    float g_vy = _1097.deflection_y[didx + 1u];
+    float b_vy = _1097.deflection_y[didx + 2u];
+    float focus_scale = _1097.deflection_y[didx + 3u];
     if (dwell <= 9.9999997473787516355514526367188e-05)
     {
         uint idx0 = pix * 2u;
-        _1208.rgba_out[idx0 + 0u] = as_type<uint>(half2(float2(0.0)));
-        _1208.rgba_out[idx0 + 1u] = as_type<uint>(half2(float2(0.0, 1.0)));
+        _1211.rgba_out[idx0 + 0u] = as_type<uint>(half2(float2(0.0)));
+        _1211.rgba_out[idx0 + 1u] = as_type<uint>(half2(float2(0.0, 1.0)));
         return;
     }
-    float rows_per_line = float(_76.out_h) / 240.0;
-    uint out_h_clamped = max(_76.out_h, 1u);
-    float r_vy_clamped = fast::clamp(r_vy, 0.0, float(out_h_clamped - 1u));
-    float g_vy_clamped = fast::clamp(g_vy, 0.0, float(out_h_clamped - 1u));
-    float b_vy_clamped = fast::clamp(b_vy, 0.0, float(out_h_clamped - 1u));
-    float r_linef = r_vy_clamped / rows_per_line;
-    float g_linef = g_vy_clamped / rows_per_line;
-    float b_linef = b_vy_clamped / rows_per_line;
-    float r_d = fract(r_linef) - 0.5;
-    float g_d = fract(g_linef) - 0.5;
-    float b_d = fract(b_linef) - 0.5;
-    uint r_sy = clamp(uint(floor(r_linef)), 0u, 239u);
-    uint g_sy = clamp(uint(floor(g_linef)), 0u, 239u);
-    uint b_sy = clamp(uint(floor(b_linef)), 0u, 239u);
+    float r_d = fract(r_vy) - 0.5;
+    float g_d = fract(g_vy) - 0.5;
+    float b_d = fract(b_vy) - 0.5;
+    int r_sy = int(floor(r_vy));
+    int g_sy = int(floor(g_vy));
+    int b_sy = int(floor(b_vy));
     float R = 0.0;
     float G = 0.0;
     float B = 0.0;
-    int radius = min(4, int(ceil((3.0 * fast::clamp(fast::max(_76.sigma_narrow, (2.0 * _76.sigma_wide) - _76.sigma_narrow) * focus_scale, 0.0500000007450580596923828125, 1.0)) + (0.5 / rows_per_line))));
-    int _1380 = -radius;
-    for (int soff = _1380; soff <= radius; soff++)
+    int radius = min(4, int(ceil((3.0 * fast::clamp(fast::max(_76.sigma_narrow, (2.0 * _76.sigma_wide) - _76.sigma_narrow) * focus_scale, 0.0500000007450580596923828125, 1.0)) + (0.5 * _76.lines_per_row))));
+    int _1341 = -radius;
+    for (int soff = _1341; soff <= radius; soff++)
     {
         float lR = 0.0;
         float lG = 0.0;
         float lB = 0.0;
-        int r_line = int(r_sy) + soff;
-        int g_line = int(g_sy) + soff;
-        int b_line = int(b_sy) + soff;
+        int r_line = r_sy + soff;
+        int g_line = g_sy + soff;
+        int b_line = b_sy + soff;
         float param_1 = r_center;
         int param_2 = r_line;
         uint param_3 = 0u;
@@ -443,7 +436,7 @@ kernel void main0(constant Params& _76 [[buffer(0)]], device RGBIn& _142 [[buffe
         float3 exponent = float3(_76.bloom_gamma) / fast::max(float3(_76.gamma) + float3(_76.gamma_r, _76.gamma_g, _76.gamma_b), float3(1.0));
         float3 bloom_t = fast::min(powr(fast::max(float3(lR, lG, lB), float3(0.0)), exponent), float3(2.0));
         float3 sv = fast::clamp(mix(float3(_76.sigma_narrow), float3(_76.sigma_wide), bloom_t) * focus_scale, float3(0.0500000007450580596923828125), float3(1.0));
-        float pixel_width = 1.0 / rows_per_line;
+        float pixel_width = _76.lines_per_row;
         float rd = r_d - float(soff);
         float gd = g_d - float(soff);
         float bd = b_d - float(soff);
@@ -463,10 +456,9 @@ kernel void main0(constant Params& _76 [[buffer(0)]], device RGBIn& _142 [[buffe
     R *= dwell;
     G *= dwell;
     B *= dwell;
-    uint sy = g_sy;
     if (_76.hum_bar_amplitude > 0.0)
     {
-        float hum_phase = ((float(sy) / 240.0) * 6.28318500518798828125) + (float(_76.frame_counter) * 0.006000000052154064178466796875);
+        float hum_phase = ((float(g_sy - _76.picture_row) / 240.0) * 6.28318500518798828125) + (float(_76.frame_counter) * 0.006000000052154064178466796875);
         float hum_wave = (sin(hum_phase) + (0.4000000059604644775390625 * sin((2.0 * hum_phase) + 0.800000011920928955078125))) + (0.1500000059604644775390625 * sin((3.0 * hum_phase) + 1.5));
         float hum = 1.0 - (_76.hum_bar_amplitude * (0.5 + (0.3499999940395355224609375 * hum_wave)));
         R *= hum;
@@ -474,6 +466,6 @@ kernel void main0(constant Params& _76 [[buffer(0)]], device RGBIn& _142 [[buffe
         B *= hum;
     }
     uint idx = pix * 2u;
-    _1208.rgba_out[idx + 0u] = as_type<uint>(half2(float2(R, G)));
-    _1208.rgba_out[idx + 1u] = as_type<uint>(half2(float2(B, 1.0)));
+    _1211.rgba_out[idx + 0u] = as_type<uint>(half2(float2(R, G)));
+    _1211.rgba_out[idx + 1u] = as_type<uint>(half2(float2(B, 1.0)));
 }

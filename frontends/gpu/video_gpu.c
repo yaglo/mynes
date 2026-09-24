@@ -1963,6 +1963,7 @@ static bool dispatch_beam_profile(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd)
         uint32_t monitor_model, lines;
         int32_t picture_x, picture_row;
         uint32_t picture_w, picture_h;
+        float lines_per_row;        /* the face's 240 picture lines over out_h rows */
     } beam_params;
 
     const TVDisplayParams *tv = vgc->chain ? &vgc->chain->tv : NULL;
@@ -1973,6 +1974,7 @@ static bool dispatch_beam_profile(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd)
     beam_params.picture_row = w->picture_row;
     beam_params.picture_w = (uint32_t)w->picture_w;
     beam_params.picture_h = (uint32_t)w->picture_h;
+    beam_params.lines_per_row = 240.0f / (float)vgc->beam_out_h;
     beam_params.gamma = tv && tv->gamma > 0 ? tv->gamma : 2.2f;
     beam_params.gamma_r = tv ? tv->phosphor_gamma_offset_r : 0;
     beam_params.gamma_g = tv ? tv->phosphor_gamma_offset_g : 0;
