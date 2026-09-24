@@ -266,6 +266,24 @@ class RomInfo(unittest.TestCase):
         self.assertEqual(shots.rom_info(nes2(3)).region, "ntsc")  # only NES_TV_PAL selects the PAL rate
         self.assertEqual(shots.rom_info(nes2(0), "Game (E).nes").region, "ntsc")  # NES 2.0 wins over the name
 
+    def test_nes2_only_when_its_sizes_fit(self):
+        # Byte 7 has the NES 2.0 bits, but byte 9 as size MSBs would claim
+        # 4 MB of CHR: rom.h reads such a header as archaic iNES, so the
+        # sizes come from bytes 4-5, byte 9 is not the PAL bit and the CRC
+        # covers the image the emulator loads.
+        data = bytearray(ines(prg=2, chr_=1, seed=9))
+        data[7], data[9] = 0xC9, 0x91
+        info = shots.rom_info(bytes(data))
+        self.assertEqual((info.prg_size, info.chr_size), (32768, 8192))
+        self.assertEqual(info.region, "ntsc")
+        self.assertEqual(info.crc, zlib.crc32(data[16:]) & 0xFFFFFFFF)
+        # A header whose byte-9 MSBs do fit is NES 2.0: 0x101 PRG banks.
+        body = bytes((i * 3) & 0xFF for i in range(0x101 * 16384))
+        big = bytes(b"NES\x1a" + bytes([0x01, 0, 0, 0x08, 0, 0x01, 0, 0, 0, 0, 0, 0])) + body
+        info = shots.rom_info(big)
+        self.assertEqual((info.prg_size, info.chr_size), (0x101 * 16384, 0))
+        self.assertEqual(info.crc, zlib.crc32(body) & 0xFFFFFFFF)
+
     def test_file_name_tag(self):
         self.assertEqual(shots.rom_info(ines(), "Metroid (E).nes").region, "pal")
         self.assertEqual(shots.rom_info(ines(), "Metroid (U).nes").region, "ntsc")

@@ -451,17 +451,51 @@ class RomInfo:
 PAL_NAME_TAGS = ("(e)", "(europe)", "(pal)", "(australia)", "(europe, australia)")
 
 
-def header_region(header: bytes, name: str | None = None) -> str:
+MAX_ROM_SIZE = 64 * 1024 * 1024  # INES_MAX_ROM_SIZE in src/nes/rom.h
+
+
+def _nes2_size(lsb: int, msb: int, unit: int) -> int | None:
+    """NES 2.0 ROM size from the iNES size byte and its byte-9 nibble, as
+    nes_rom_nes2_size reads it; $F selects the exponent-multiplier form."""
+    if msb == 0x0F:
+        if lsb >> 2 > 26:
+            return None
+        size = (1 << (lsb >> 2)) * ((lsb & 0x03) * 2 + 1)
+    else:
+        size = ((msb << 8) | lsb) * unit
+    return size if size <= MAX_ROM_SIZE else None
+
+
+def header_layout(header: bytes, image_size: int) -> tuple[bool, int, int]:
+    """(NES 2.0, PRG bytes, CHR bytes), the way nes_rom_parse_header decides:
+    the NES 2.0 bits in byte 7 count only when the sizes they give, byte 9
+    included, fit the image; otherwise the header is read as iNES."""
+    if (header[7] & 0x0C) == 0x08:
+        prg = _nes2_size(header[4], header[9] & 0x0F, 16384)
+        chr_ = _nes2_size(header[5], header[9] >> 4, 8192)
+        need = 16 + (512 if header[6] & 0x04 else 0)
+        if prg is not None and chr_ is not None and need + prg + chr_ <= image_size:
+            return True, prg, chr_
+    return False, header[4] * 16384, header[5] * 8192
+
+
+def header_region(header: bytes, name: str | None = None, nes2: bool | None = None) -> str:
     """The TV system the emulator runs, read the way src/nes/rom.h reads it.
 
-    NES 2.0 (flags 7 bits 2-3 = 10) keeps it in byte 12. An iNES 1.0 header
-    keeps it in byte 9 bit 0, but only when bytes 12-15 are zero: old dumps
-    such as the "DiskDude!" ones carry ASCII in bytes 7-15, so byte 9 is junk
-    and the emulator runs NTSC. Without NES 2.0, an NTSC result becomes PAL
-    when the file name has a tag such as "(E)" or "(Europe)"."""
-    if (header[7] & 0x0C) == 0x08:
+    NES 2.0 keeps it in byte 12. ``nes2`` is header_layout's answer; without
+    it the byte-7 bits alone decide. An iNES 1.0 header keeps it in byte 9
+    bit 0, but only when the header is not archaic: bytes 12-15 zero and no
+    NES 2.0 bits that failed the size check. Old dumps such as the
+    "DiskDude!" ones carry ASCII in bytes 7-15, so byte 9 is junk and the
+    emulator runs NTSC. Without NES 2.0, an NTSC result becomes PAL when the
+    file name has a tag such as "(E)" or "(Europe)"."""
+    nes2_bits = (header[7] & 0x0C) == 0x08
+    if nes2 is None:
+        nes2 = nes2_bits
+    if nes2:
         return "pal" if header[12] & 0x03 == 1 else "ntsc"
-    if not any(header[12:16]) and header[9] & 0x01:
+    archaic = nes2_bits or any(header[12:16])
+    if not archaic and header[9] & 0x01:
         return "pal"
     if name and any(tag in name.lower() for tag in PAL_NAME_TAGS):
         return "pal"
@@ -472,15 +506,14 @@ def rom_info(data: bytes, name: str | None = None) -> RomInfo:
     """CRC-32 over PRG then CHR, as frontends/shared/saves.c names save files."""
     if len(data) < 16 or data[:4] != INES_MAGIC:
         raise ShotListError("not an iNES file")
-    prg = data[4] * 16384
-    chr_ = data[5] * 8192
+    nes2, prg, chr_ = header_layout(data[:16], len(data))
     offset = 16 + (512 if data[6] & 0x04 else 0)
     if len(data) < offset + prg + chr_:
         raise ShotListError("iNES file is shorter than its header claims")
     crc = zlib.crc32(data[offset:offset + prg])
     if chr_:
         crc = zlib.crc32(data[offset + prg:offset + prg + chr_], crc)
-    return RomInfo(crc & 0xFFFFFFFF, header_region(data[:16], name), prg, chr_)
+    return RomInfo(crc & 0xFFFFFFFF, header_region(data[:16], name, nes2), prg, chr_)
 
 
 def read_rom_info(path: Path | str) -> RomInfo:
