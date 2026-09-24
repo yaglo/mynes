@@ -159,6 +159,18 @@ typedef struct {
      * buzz; see AudioRFSoundStage. */
     float sound_am_rejection_db;
     float icpm_deg;
+    /* Link budget, the one origin of the snow: the console modulator's
+     * sync-tip output in dBmV into 75 ohm (47 CFR 15.115 caps a TV
+     * interface device at 3 mV, 9.5 dBmV), the losses between it and the
+     * tuner (RF switch, splitters, balun, lead) and the tuner's noise
+     * figure (VHF-low tuners 5 to 9 dB). The carrier and noise above are
+     * derived from these by video_rf_link_budget; a preset with no
+     * modulator level keeps its carrier and noise and gets an equivalent
+     * budget. cnr_db is derived too: carrier to noise in 4 MHz. */
+    float modulator_dbmv;
+    float link_loss_db;
+    float tuner_nf_db;
+    float cnr_db;
     /* Video detector: 0 = auto (synchronous), 1 = synchronous (a PLL VIF,
      * every one-chip IF since the late 1970s), 2 = envelope (a diode on
      * the IF, pre-1978 sets), which carries the Nyquist slope's quadrature
@@ -225,6 +237,32 @@ static inline void vhs_params_defaults(VHSParams *v) {
         .tbe_slow_fraction = 0.4f, .tbe_slow_tau_ms = 2000, .tbe_slow_period_ms = 1733,
         .line_jitter_ns = 5, .switch_lines_before_vsync = 6.5f,
         .skew_ba_ns = 810, .skew_ab_ns = 810, .deck_seed = 1};
+}
+
+/* The RF link from its budget. 0 dBmV is 1 mV rms across 75 ohm, -48.75
+ * dBm. The noise is the tuner's kTF, -174 dBm/Hz plus its noise figure,
+ * over the chain's complex band (the sample rate), which is what the RF
+ * stage injects; the carrier is the modulator's level less the losses.
+ * A preset that sets only the old carrier and noise pair keeps its
+ * carrier-to-noise ratio and is given the budget that produces it: the
+ * FCC-cap modulator, a 7 dB tuner and the loss that makes up the rest. */
+#define VIDEO_RF_FCC_CAP_DBMV   9.5f
+#define VIDEO_RF_TUNER_NF_DB    7.0f
+static inline void video_rf_link_budget(RFModulatorParams *rf, float sample_rate_hz) {
+    float band_db = 10.0f * log10f(fmaxf(sample_rate_hz, 1e6f));
+    if (rf->tuner_nf_db <= 0) rf->tuner_nf_db = VIDEO_RF_TUNER_NF_DB;
+    float noise = -174.0f + rf->tuner_nf_db + band_db;
+    if (rf->modulator_dbmv == 0) {
+        float carrier = rf->carrier_level_dbm != 0 ? rf->carrier_level_dbm : -20;
+        float legacy_noise = rf->noise_floor_dbm != 0 ? rf->noise_floor_dbm : -70;
+        rf->modulator_dbmv = VIDEO_RF_FCC_CAP_DBMV;
+        float direct = rf->modulator_dbmv - 48.75f - noise;
+        rf->link_loss_db = fmaxf(direct - (carrier - legacy_noise), 0.0f);
+    }
+    rf->link_loss_db = fmaxf(rf->link_loss_db, 0.0f);
+    rf->carrier_level_dbm = rf->modulator_dbmv - 48.75f - rf->link_loss_db;
+    rf->noise_floor_dbm = noise;
+    rf->cnr_db = rf->carrier_level_dbm - noise + band_db - 10.0f * log10f(4e6f);
 }
 
 static inline float video_rf_noise_rms(const RFModulatorParams *rf) {

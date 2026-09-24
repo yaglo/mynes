@@ -255,6 +255,10 @@ static void make_distinctive_preset(PhysicalPreset *p)
     p->rf.noise_floor_dbm = -65.5f;
     p->rf.agc_attack_ms   = 12.5f;
     p->rf.agc_release_ms  = 120.0f;
+    p->rf.modulator_dbmv  = 6.5f;
+    p->rf.link_loss_db    = 18.5f;
+    p->rf.tuner_nf_db     = 8.0f;
+    p->rf.detector        = 2;
 
     /* Signal decode overrides. */
     p->brightness  = 0.03f;
@@ -281,6 +285,10 @@ static int compare_presets(const PhysicalPreset *a, const PhysicalPreset *b,
     (void)context;
 
     ASSERT_NEAR(b->rf.carrier_level_dbm,a->rf.carrier_level_dbm,FLOAT_TOL,"RF carrier level");
+    ASSERT_NEAR(b->rf.modulator_dbmv,a->rf.modulator_dbmv,FLOAT_TOL,"RF modulator level");
+    ASSERT_NEAR(b->rf.link_loss_db,a->rf.link_loss_db,FLOAT_TOL,"RF link loss");
+    ASSERT_NEAR(b->rf.tuner_nf_db,a->rf.tuner_nf_db,FLOAT_TOL,"RF tuner noise figure");
+    ASSERT_EQ_INT(b->rf.detector,a->rf.detector,"RF video detector");
     ASSERT_NEAR(b->tv.decoder_red_gain,a->tv.decoder_red_gain,FLOAT_TOL,"decoder red gain");
     ASSERT_NEAR(b->tv.decoder_blue_gain,a->tv.decoder_blue_gain,FLOAT_TOL,"decoder blue gain");
     ASSERT_NEAR(b->tv.beam_spot_growth,a->tv.beam_spot_growth,FLOAT_TOL,"beam spot growth");

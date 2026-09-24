@@ -264,6 +264,52 @@ static void rf(SDL_GPUDevice *gpu) {
     SDL_ReleaseGPUBuffer(gpu,carrier);
 }
 
+/* The snow's level through the real RF stage, IF and detector against the
+ * analytic value. Complex white noise of per-axis sigma through the IF's
+ * complex taps h leaves sigma * sqrt(sum |h|^2) on each axis; the
+ * synchronous detector reads the in-phase axis, so the detected video's
+ * sigma is that over the detector's gain, at every level. The envelope
+ * detector agrees above a few sigma of carrier and reads the Rician mean
+ * and a smaller spread near zero carrier (white on an overmodulated set). */
+static void rf_snow_level(SDL_GPUDevice *gpu) {
+    enum {LINE=2048, LINES=32, N=LINE*LINES};
+    SignalChain sc; CHECK(chain_init(&sc,gpu,N,"shaders/compute"));
+    RFModulatorParams link={.modulator_dbmv=9.5f,.link_loss_db=21.4f,.tuner_nf_db=7};
+    video_rf_link_budget(&link,42954540.0f);
+    GpuRFParams p={.count=N,.samples_per_line=LINE,.noise_amplitude=video_rf_noise_rms(&link),
+        .sample_rate=42954540.0f,.full_line_samples=2728,.hum_hz=60.0f};
+    int stage=chain_add_stage(&sc,"RF snow",CHAIN_KERNEL_RF,&p,sizeof(p),(N+255)/256,1);
+    SDL_GPUBuffer *carrier=gpu_buffer_create(gpu,N*2*sizeof(float),GPU_BUF_READWRITE);
+    sc.stages[stage].external[0]=carrier;
+    float taps[2*SIGNAL_RF_IF_TAPS];
+    signal_design_rf_if(taps,42954540.0f,4.2e6f,1,0);
+    double h2=0; for(int k=0;k<2*SIGNAL_RF_IF_TAPS;k++) h2+=(double)taps[k]*taps[k];
+    int ti=chain_upload_taps(&sc,gpu,taps,2*SIGNAL_RF_IF_TAPS);
+    GpuRFIFParams ip={N,LINE,SIGNAL_RF_IF_TAPS,1};
+    int det=chain_add_stage(&sc,"IF",CHAIN_KERNEL_RF_IF,&ip,sizeof(ip),(N+255)/256,1);
+    sc.stages[det].external[0]=carrier; sc.stages[det].taps_index=ti;
+    const float gain=.875f/(1+264.0f/788),predicted=(float)(p.noise_amplitude*sqrt(h2)/gain);
+    float *in=malloc(N*sizeof(float)),*out=malloc(N*sizeof(float));
+    const float levels[]={0.0f,0.4f,1.0f};   /* blanking, a mid grey, NES white */
+    for(int d=1;d>=0;d--) {
+        ip.detector=(uint32_t)d; chain_update_params(&sc,det,&ip,sizeof(ip));
+        for(int l=0;l<3;l++) {
+            for(int i=0;i<N;i++) in[i]=levels[l];
+            p.frame_seed=(uint32_t)(7+l); chain_update_params(&sc,stage,&p,sizeof(p));
+            CHECK(chain_upload_input(&sc,gpu,in,N*sizeof(float)));CHECK(chain_run(&sc,gpu));
+            CHECK(chain_download_output(&sc,gpu,out,N*sizeof(float)));
+            double s=0,s2=0; int n=0;
+            for(int y=0;y<LINES;y++) for(int x=100;x<LINE-100;x++) { double v=out[y*LINE+x]; s+=v; s2+=v*v; n++; }
+            double mean=s/n, sigma=sqrt(s2/n-mean*mean);
+            printf("RF snow at %.1f dB CNR, %s detector, level %.1f: sigma %.5f (analytic %.5f), mean %.4f\n",
+                   link.cnr_db,d ? "synchronous" : "envelope",levels[l],sigma,predicted,mean);
+            CHECK(fabs(sigma/predicted-1)<0.05);
+            CHECK(fabs(mean-levels[l])<0.01);
+        }
+    }
+    free(in);free(out);SDL_ReleaseGPUBuffer(gpu,carrier);chain_destroy(&sc,gpu);
+}
+
 /* Exercise the actual DAC -> RF -> receiver path over multiple colour-phase
  * cycles. A constant grey input isolates snow from legitimate dot crawl. */
 static void rf_temporal_continuity(SDL_GPUDevice *gpu) {
@@ -1348,6 +1394,7 @@ int main(void) {
     separated_yc(gpu);
     rgb_source(gpu);
     rf(gpu);
+    rf_snow_level(gpu);
     rf_sidebands(gpu);
     failures += test_vhs_fidelity(gpu);
     failures += test_encoder(gpu);

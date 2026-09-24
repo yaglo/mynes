@@ -203,6 +203,7 @@ typedef enum {
     OSD_MI_TOGGLE,      /* int used as bool; Left/Right toggles */
     OSD_MI_SUBMENU,     /* Enter descends into `submenu` */
     OSD_MI_ACTION,      /* Enter calls `action()` */
+    OSD_MI_INFO,        /* read-only float: a quantity derived from the settings around it */
 } OSDMenuItemType;
 
 typedef struct OSDMenuItem {
@@ -355,6 +356,7 @@ static inline void osd_menu_format_value(const OSDMenuItem *it, char *buf,
     if (!it->target) { buf[0] = '\0'; return; }
     switch (it->type) {
     case OSD_MI_FLOAT:
+    case OSD_MI_INFO:
         snprintf(buf, cap, it->format ? it->format : "%.2f",
                  *(float *)it->target);
         break;

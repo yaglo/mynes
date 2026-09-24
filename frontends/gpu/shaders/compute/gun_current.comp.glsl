@@ -11,11 +11,12 @@ layout(set=2,binding=0) uniform Params {
     float black_floor;
     float apl_bias;
 };
-float noise(uint seed) {
+uint mix32(uint seed) {
     seed ^= seed >> 16u; seed *= 0x7feb352du;
     seed ^= seed >> 15u; seed *= 0x846ca68bu; seed ^= seed >> 16u;
-    return float(seed & 65535u) / 65535.0 - 0.5;
+    return seed;
 }
+float noise(uint seed) { return float(mix32(seed) & 65535u) / 65535.0 - 0.5; }
 void main() {
     uint i=gl_GlobalInvocationID.x;
     if(i>=count) return;
@@ -24,10 +25,13 @@ void main() {
     // Smooth at the video bandwidth, then let gun transfer and both spot
     // axes shape it. RF snow itself is generated earlier in the RF stage.
     if(noise_level > 0.0) {
+        // Nested mixing of frame, line and position. The old linear seed
+        // (line*7919 + frame*6271 + x*1999) made frame f+2 a copy of frame
+        // f shifted by 85 lines and 343 steps, so the grain repeated.
         float sample_x=float(i % samples_per_line)/max(samples_per_pixel*0.5,1.0);
-        uint seed=(i/samples_per_line)*7919u + frame_seed*6271u;
+        uint row=mix32(mix32(frame_seed ^ 0x9e3779b9u) ^ (i/samples_per_line));
         uint x=uint(floor(sample_x));
-        float n=mix(noise(seed+x*1999u),noise(seed+(x+1u)*1999u),smoothstep(0.0,1.0,fract(sample_x)));
+        float n=mix(noise(row ^ mix32(x)),noise(row ^ mix32(x+1u)),smoothstep(0.0,1.0,fract(sample_x)));
         v=max(v+vec3(noise_level*n),0.0);
     }
     // Residual gun drive must deposit light through the same spot as the

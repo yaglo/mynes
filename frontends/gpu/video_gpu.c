@@ -1456,12 +1456,15 @@ bool dispatch_h_blur_rgb_public(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd) {
 bool dispatch_gun_current_public(VideoGPUChain *v, SDL_GPUCommandBuffer *cmd) {
     const TVDisplayParams *tv=&v->chain->tv;
     float gamma=tv->gamma>0 ? tv->gamma : 2.4f;
-    float pickup=(1.0f-v->chain->cable.shield_effectiveness)*v->chain->cable.length_meters*0.005f;
+    /* On RF the lead's pickup and the set's own grain are not the picture's
+     * noise: the link budget is its one origin (fidelity to-do item 12). */
+    bool rf=v->chain->connection==VIDEO_CONN_RF;
+    float pickup=rf ? 0.0f : (1.0f-v->chain->cable.shield_effectiveness)*v->chain->cable.length_meters*0.005f;
     struct { uint32_t count; float r,g,b; uint32_t width,seed; float noise,spp,black_floor,apl_bias; }
         p={v->rgb_size/(3*sizeof(float)), gamma+tv->phosphor_gamma_offset_r,
            gamma+tv->phosphor_gamma_offset_g,gamma+tv->phosphor_gamma_offset_b,
            (uint32_t)v->signal_fmt.samples_per_line,v->beam_frame_counter,
-           tv->noise_level+pickup,(float)v->signal_fmt.samples_per_line/256.0f,tv->black_floor,
+           (rf ? 0.0f : tv->noise_level)+pickup,(float)v->signal_fmt.samples_per_line/256.0f,tv->black_floor,
            tv->apl_black_lift*(v->apl_smoothed-0.5f)*0.15f};
     GpuDispatchDesc d={.pipeline=&v->sig_chain.pipelines[CHAIN_KERNEL_GUN_CURRENT],
         .readonly_buffers={v->buf_rgb},.num_readonly_buffers=1,

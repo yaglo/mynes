@@ -83,9 +83,16 @@ static void apply_audio_preset(PresetCtx *ctx,const PhysicalPreset *p) {
     ac->rf_deemphasis_us = deemphasis ? (ctx->region == SIGNAL_REGION_PAL ? 50.0f : 75.0f) : 0.0f;
     float fm_noise = 0;
     if (rf) {
-        float carrier = p->rf.carrier_level_dbm != 0 ? p->rf.carrier_level_dbm : -20.0f;
-        float noise = p->rf.noise_floor_dbm != 0 ? p->rf.noise_floor_dbm : -70.0f;
-        float sn_db = (carrier - noise) - 13.0f + 16.6f + (deemphasis ? 13.0f : 0.0f);
+        /* The sound carrier's CNR in the sound IF's 200 kHz, from the same
+         * link budget as the picture: 13 dB under vision, the tuner's noise
+         * density over 200 kHz. (Taking the picture's noise over the whole
+         * simulated band, as this did before, overstated the hiss by about
+         * 23 dB; FM sound stays clean long after the picture is snowy.) The
+         * FM threshold near 10 dB is not modelled. */
+        RFModulatorParams link = p->rf;
+        video_rf_link_budget(&link, signal_region_sample_rate_hz(ctx->region));
+        float sound_cnr = link.cnr_db - 13.0f + 10.0f * log10f(4e6f / 200e3f);
+        float sn_db = sound_cnr + 16.6f + (deemphasis ? 13.0f : 0.0f);
         fm_noise = 0.7f * powf(10.0f, -sn_db / 20.0f) * 1.732f; /* full modulation about 0.7 units; uniform noise peak from rms */
     }
     float preset_noise = fmaxf(0, p->audio_noise_floor);
@@ -151,8 +158,9 @@ static void preset_apply_cpu_state_ex(PresetCtx *ctx, const PhysicalPreset *p,
     // Expose effective defaults in the OSD, not a misleading zero value.
     RFModulatorParams *rf=&ctx->video_chain->rf;
     rf->enabled=p->connection==VIDEO_CONN_RF;
-    if(rf->carrier_level_dbm==0) rf->carrier_level_dbm=-20;
-    if(rf->noise_floor_dbm==0) rf->noise_floor_dbm=-70;
+    /* The carrier and noise follow from the link budget; an old preset's
+     * carrier and noise pair becomes the budget that produces it. */
+    video_rf_link_budget(rf, signal_region_sample_rate_hz(new_region));
     if(rf->sound_am_rejection_db<=0) rf->sound_am_rejection_db=45;
     if(rf->mod_bandwidth<=0) rf->mod_bandwidth=4e6f;
     if(rf->agc_attack_ms<=0) {
@@ -540,6 +548,16 @@ static void gpu_cb_update_beam_params(void) {
     vgc->blend_g = signal_persistence_weight(region, tv->persistence_ms, tv->persistence_g);
     vgc->blend_b = signal_persistence_weight(region, tv->persistence_ms, tv->persistence_b);
 
+}
+
+static void gpu_cb_reinit_stages(void);
+static void gpu_cb_audio_setup(void);
+/* A link-budget edit: re-derive the carrier, noise and CNR, then the RF
+ * stage and the FM sound's hiss that follow from them. */
+static void gpu_cb_rf_link(void) {
+    video_rf_link_budget(&g_ctx->video_chain->rf, signal_region_sample_rate_hz(g_ctx->region));
+    gpu_cb_reinit_stages();
+    gpu_cb_audio_setup();
 }
 
 static void gpu_cb_reinit_stages(void) {
@@ -1064,7 +1082,7 @@ static OSDMenuItem menu_phosphor[48];     /* Stage 12: phosphor screen */
 static OSDMenuItem menu_glass[48];        /* Stage 13: CRT glass + service geometry */
 static OSDMenuItem menu_env[48];           /* Stage 14: environment */
 static OSDMenuItem menu_audio_chain[16];
-static OSDMenuItem menu_rf[12],menu_vhs[32];
+static OSDMenuItem menu_rf[16],menu_vhs[32];
 
 /* Mid-level submenus. menu_video[] + preset_menu_root[] are forward-
  * declared near the top of this file so the save action can reach them. */
@@ -1148,6 +1166,9 @@ static OSDMenuItem make_item(const char *label, OSDMenuItemType type,
     make_item(lbl, OSD_MI_SUBMENU, NULL, 0,0,0, NULL, arr, cnt, NULL, NULL)
 #define MI_ACTION(lbl, fn) \
     make_item(lbl, OSD_MI_ACTION, NULL, 0,0,0, NULL, NULL, 0, fn, NULL)
+/* A read-only value derived from the settings next to it. */
+#define MI_INFO(lbl, tgt, fmt) \
+    make_item(lbl, OSD_MI_INFO, tgt, 0,0,0, NULL, NULL, 0, NULL, fmt)
 
 void preset_ctx_init(PresetCtx *ctx) {
     g_ctx = ctx;
@@ -1508,8 +1529,10 @@ void preset_ctx_init(PresetCtx *ctx) {
     const int menu_audio_chain_count=n;
 
     n=0;
-    menu_rf[n++]=MI_FLOAT("Carrier level dBm", &vc->rf.carrier_level_dbm, 1,-80,-5,gpu_cb_reinit_stages,"%.0f");
-    menu_rf[n++]=MI_FLOAT("Noise floor dBm", &vc->rf.noise_floor_dbm, 1,-110,-30,gpu_cb_reinit_stages,"%.0f");
+    menu_rf[n++]=MI_FLOAT("Modulator dBmV", &vc->rf.modulator_dbmv, .5f,-20,20,gpu_cb_rf_link,"%.1f");
+    menu_rf[n++]=MI_FLOAT("Link loss dB", &vc->rf.link_loss_db, .5f,0,60,gpu_cb_rf_link,"%.1f");
+    menu_rf[n++]=MI_FLOAT("Tuner noise fig dB", &vc->rf.tuner_nf_db, .5f,2,15,gpu_cb_rf_link,"%.1f");
+    menu_rf[n++]=MI_INFO("CNR in 4 MHz dB", &vc->rf.cnr_db, "%.1f");
     menu_rf[n++]=MI_FLOAT("IF video edge Hz", &vc->rf.mod_bandwidth, 100000,1000000,6000000,gpu_cb_redesign_firs,"%.0f");
     menu_rf[n++]=MI_FLOAT("IF asymmetry", &vc->rf.if_asymmetry, .05f,0,1,gpu_cb_redesign_firs,"%.2f");
     menu_rf[n++]=MI_FLOAT("IF detuning Hz", &vc->rf.tuning_offset_hz, 10000,-1000000,1000000,gpu_cb_redesign_firs,"%.0f");
@@ -1518,6 +1541,7 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_rf[n++]=MI_CYCLIC("Video detector", &vc->rf.detector, 0,2,gpu_cb_reinit_stages,"Auto|Synchronous|Envelope");
     menu_rf[n++]=MI_FLOAT("Sound AM rejection dB", &vc->rf.sound_am_rejection_db, 1,20,80,gpu_cb_audio_setup,"%.0f");
     menu_rf[n++]=MI_FLOAT("Modulator ICPM deg", &vc->rf.icpm_deg, .5f,0,30,gpu_cb_audio_setup,"%.1f");
+    const int menu_rf_count=n;
     n=0;
     menu_vhs[n++]=MI_TOGGLE("NTSC composite/RF tape", &vc->vhs.enabled,gpu_cb_redesign_firs);
     menu_vhs[n++]=MI_FLOAT("White clip %", &vc->vhs.white_clip_pct, 5,110,250,gpu_cb_redesign_firs,"%.0f");
@@ -1568,7 +1592,7 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_video[n++] = MI_SUB("PPU / connection", menu_dac, menu_dac_count);
     menu_video[n++] = MI_SUB("Console output", menu_console, menu_console_count);
     menu_video[n++] = MI_SUB("Cable", menu_cable, menu_cable_count);
-    menu_video[n++] = MI_SUB("RF receiver",menu_rf,7);
+    menu_video[n++] = MI_SUB("RF receiver",menu_rf,menu_rf_count);
     menu_video[n++] = MI_SUB("VHS recording / playback",menu_vhs,menu_vhs_count);
     menu_video[n++] = MI_SUB("Y/C separation", menu_comb, menu_comb_count);
     menu_video[n++] = MI_SUB("Chroma decoder", menu_chroma, menu_chroma_count);
@@ -1705,8 +1729,9 @@ void preset_register_debug_controls(PresetCtx *ctx, DebugServer *server) {
         {"RF video bandwidth (Hz)", "Connection", &ctx->video_chain->rf.mod_bandwidth, 1000000, 6000000, gpu_cb_redesign_firs},
         {"RF IF asymmetry", "Connection", &ctx->video_chain->rf.if_asymmetry, 0, 1, gpu_cb_redesign_firs},
         {"RF tuning offset (Hz)", "Connection", &ctx->video_chain->rf.tuning_offset_hz, -1000000, 1000000, gpu_cb_redesign_firs},
-        {"RF carrier level (dBm)", "Connection", &ctx->video_chain->rf.carrier_level_dbm, -60, -5, gpu_cb_reinit_stages},
-        {"RF noise floor (dBm)", "Connection", &ctx->video_chain->rf.noise_floor_dbm, -90, -30, gpu_cb_reinit_stages},
+        {"RF modulator level (dBmV)", "Connection", &ctx->video_chain->rf.modulator_dbmv, -20, 20, gpu_cb_rf_link},
+        {"RF link loss (dB)", "Connection", &ctx->video_chain->rf.link_loss_db, 0, 60, gpu_cb_rf_link},
+        {"RF tuner noise figure (dB)", "Connection", &ctx->video_chain->rf.tuner_nf_db, 2, 15, gpu_cb_rf_link},
         {"RF sound AM rejection (dB)", "Connection", &ctx->video_chain->rf.sound_am_rejection_db, 20, 80, gpu_cb_audio_setup},
         {"RF modulator ICPM (deg)", "Connection", &ctx->video_chain->rf.icpm_deg, 0, 30, gpu_cb_audio_setup},
         {"Amplifier drive", "Audio", &ac->amp_saturation.drive, 1, 6, gpu_cb_audio_prepare},

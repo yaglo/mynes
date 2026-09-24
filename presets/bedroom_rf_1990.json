@@ -118,14 +118,16 @@
         "enabled": true,
         "carrier_freq": 61250000.0,
         "mod_bandwidth": 4000000,
-        "noise_floor_dbm": -52,
         "agc_attack_ms": 2.0,
         "agc_release_ms": 25.0,
         "if_asymmetry": 1.0,
         "tuning_offset_hz": 0.0,
         "sound_am_rejection_db": 46.0,
         "icpm_deg": 5.0,
-        "detector": 0
+        "detector": 0,
+        "modulator_dbmv": 9.5,
+        "link_loss_db": 19.4,
+        "tuner_nf_db": 7.0
     },
     "brightness": 0.0,
     "contrast": 1.0,

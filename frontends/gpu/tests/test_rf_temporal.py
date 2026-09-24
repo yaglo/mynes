@@ -18,7 +18,8 @@ p.add_argument('binary',type=Path);p.add_argument('output',type=Path)
 a=p.parse_args();a.binary=a.binary.resolve();a.output=a.output.resolve();a.output.mkdir(parents=True,exist_ok=True)
 with tempfile.TemporaryDirectory(prefix='mynes-rf-review-') as temp:
     preset=json.loads((root/'presets/stass_favourite.json').read_text())
-    preset['name']='RF temporal regression';preset['rf']['noise_floor_dbm']=-45
+    # 30 dB carrier-to-noise in 4 MHz: the direct link's 61.7 dB less 31.4 dB of loss.
+    preset['name']='RF temporal regression';preset['rf']['link_loss_db']=31.4
     preset['console_psu_hum']=0;preset['tv']['noise_level']=0;preset['tv']['hum_bar_amplitude']=0
     preset['video_cable']['shield_effectiveness']=1
     path=Path(temp)/'rf.json';path.write_text(json.dumps(preset))
