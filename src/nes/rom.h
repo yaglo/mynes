@@ -30,6 +30,8 @@
  * 8-15    8     Padding (zeros in iNES 1.0)
  *
  * NES 2.0 byte 8: bits 0-3 are mapper bits 8-11, bits 4-7 the submapper.
+ * NES 2.0 byte 9: bits 0-3 are PRG size bits 8-11, bits 4-7 CHR size bits
+ * 8-11. An MSB nibble of $F switches that size to exponent-multiplier form.
  */
 
 #define INES_HEADER_SIZE 16
@@ -109,6 +111,27 @@ static inline bool nes_rom_pal_filename(const char *path) {
     return false;
 }
 
+/* Largest PRG or CHR size accepted. Mapper keeps its bank counts in 16
+ * bits, and nothing real comes close (the plain NES 2.0 form tops out
+ * just under 64 MB). */
+#define INES_MAX_ROM_SIZE (64u * 1024 * 1024)
+
+/* NES 2.0 ROM size from the iNES size byte and its byte-9 MSB nibble. The
+ * $F nibble selects exponent-multiplier form, 2^E * (MM*2+1) bytes with
+ * the size byte read as EEEEEEMM. False when the size is out of range. */
+static inline bool nes_rom_nes2_size(uint8_t lsb, uint8_t msb, uint32_t unit,
+                                     uint32_t *size) {
+    uint64_t bytes;
+    if (msb == 0x0F) {
+        if ((lsb >> 2) > 26) return false;
+        bytes = ((uint64_t)1 << (lsb >> 2)) * ((lsb & 0x03) * 2u + 1u);
+    } else
+        bytes = (((uint64_t)msb << 8) | lsb) * unit;
+    if (bytes > INES_MAX_ROM_SIZE) return false;
+    *size = (uint32_t)bytes;
+    return true;
+}
+
 /* Reads the 16-byte header into rom (sizes, flags, mapper, TV system) and
  * applies the mapper gate. Both loaders call it, so a file and a buffer
  * holding the same bytes describe the same cartridge. */
@@ -142,8 +165,14 @@ static inline int nes_rom_parse_header(ROM *rom, const uint8_t *header) {
         flags7 = 0;
     }
 
-    rom->prg_size = prg_banks * INES_PRG_BANK_SIZE;
-    rom->chr_size = chr_banks * INES_CHR_BANK_SIZE;
+    if (is_nes2) {
+        if (!nes_rom_nes2_size(prg_banks, header[9] & 0x0F, INES_PRG_BANK_SIZE, &rom->prg_size) ||
+            !nes_rom_nes2_size(chr_banks, header[9] >> 4, INES_CHR_BANK_SIZE, &rom->chr_size))
+            return ROM_ERR_HEADER;
+    } else {
+        rom->prg_size = prg_banks * INES_PRG_BANK_SIZE;
+        rom->chr_size = chr_banks * INES_CHR_BANK_SIZE;
+    }
     /* Every mapper reduces PRG addresses modulo the ROM size and needs the
      * vectors at $FFFA-$FFFF, so a cartridge without PRG ROM cannot run. */
     if (rom->prg_size == 0)

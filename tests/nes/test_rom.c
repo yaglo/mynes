@@ -327,6 +327,75 @@ static int test_four_screen(void) {
     return pass;
 }
 
+/* NES 2.0 byte 9 extends both sizes: the low nibble is PRG size bits 8-11
+ * and the high nibble CHR size bits 8-11, with $F selecting the
+ * exponent-multiplier form 2^E * (2M+1). iNES 1.0 ignores the byte. */
+static int test_nes2_sizes(void) {
+    static uint8_t data[INES_HEADER_SIZE + 0x100 * INES_PRG_BANK_SIZE + 3 * 0x2000];
+    int pass = 1;
+    ROM rom;
+    memset(data, 0, INES_HEADER_SIZE);
+    memcpy(data, "NES\x1A", 4);
+
+    /* PRG $100 banks (4 MB) through the MSB nibble; CHR 3 x 8 KB as
+     * 2^13 * 3 in exponent form. */
+    data[4] = 0x00;
+    data[5] = (13 << 2) | 1;
+    data[7] = 0x08;
+    data[9] = 0xF1;
+    int result = nes_rom_load_data(&rom, data, sizeof(data));
+    if (result != ROM_OK || rom.prg_size != 0x100u * INES_PRG_BANK_SIZE ||
+        rom.chr_size != 3 * 0x2000) {
+        printf("TEST nes2_sizes: FAIL (MSB/exponent: result %d, PRG %u, CHR %u)\n",
+               result, rom.prg_size, rom.chr_size);
+        pass = 0;
+    } else {
+        Mapper m;
+        mapper_init(&m, 0, rom.prg_rom, rom.prg_size, rom.chr_rom, rom.chr_size, 0);
+        if (m.prg_banks != 0x100) {
+            printf("TEST nes2_sizes: FAIL (Mapper.prg_banks %u)\n", m.prg_banks);
+            pass = 0;
+        }
+    }
+    if (result == ROM_OK) nes_rom_free(&rom);
+
+    /* 8 KB PRG in exponent form (2^13 * 1). */
+    data[4] = 13 << 2;
+    data[5] = 0;
+    data[9] = 0x0F;
+    result = nes_rom_load_data(&rom, data, INES_HEADER_SIZE + 0x2000);
+    if (result != ROM_OK || rom.prg_size != 0x2000 || rom.chr_size != 0) {
+        printf("TEST nes2_sizes: FAIL (8 KB PRG: result %d, PRG %u)\n", result, rom.prg_size);
+        pass = 0;
+    }
+    if (result == ROM_OK) nes_rom_free(&rom);
+
+    /* Sizes past what the mapper can count are refused, not wrapped. */
+    data[4] = 63 << 2;
+    result = nes_rom_load_data(&rom, data, sizeof(data));
+    if (result != ROM_ERR_HEADER) {
+        printf("TEST nes2_sizes: FAIL (2^63 PRG: result %d)\n", result);
+        if (result == ROM_OK) nes_rom_free(&rom);
+        pass = 0;
+    }
+
+    /* iNES 1.0: byte 9 is the TV system bit, not a size. */
+    data[4] = 1;
+    data[7] = 0x00;
+    data[9] = 0x11;
+    result = nes_rom_load_data(&rom, data, INES_HEADER_SIZE + INES_PRG_BANK_SIZE);
+    if (result != ROM_OK || rom.prg_size != INES_PRG_BANK_SIZE || rom.chr_size != 0) {
+        printf("TEST nes2_sizes: FAIL (iNES 1.0 byte 9: result %d, PRG %u)\n",
+               result, rom.prg_size);
+        pass = 0;
+    }
+    if (result == ROM_OK) nes_rom_free(&rom);
+
+    if (pass)
+        printf("TEST nes2_sizes: PASS (byte 9 MSB and exponent-multiplier sizes)\n");
+    return pass;
+}
+
 /* Every mapper reduces PRG addresses modulo the PRG size, so a header
  * declaring no PRG ROM must be refused rather than divide by zero. */
 static int test_prg_size_zero(void) {
@@ -491,6 +560,7 @@ int main(void) {
     total++; passed += test_mapper_gate();
     total++; passed += test_nes2_mapper();
     total++; passed += test_four_screen();
+    total++; passed += test_nes2_sizes();
     total++; passed += test_prg_size_zero();
     total++; passed += test_trainer();
     total++; passed += test_battery_flag();

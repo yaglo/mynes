@@ -66,7 +66,7 @@ typedef struct Mapper {
     /* PRG ROM banking */
     uint8_t *prg_rom;
     uint32_t prg_rom_size;
-    uint8_t prg_banks;      /* Number of 16KB PRG banks */
+    uint16_t prg_banks;     /* Number of 16KB PRG banks */
     uint8_t prg_bank0;      /* Bank at $8000-$BFFF */
     uint8_t prg_bank1;      /* Bank at $C000-$FFFF */
     uint8_t prg_mode;       /* PRG banking mode */
@@ -74,7 +74,7 @@ typedef struct Mapper {
     /* CHR ROM/RAM banking */
     uint8_t *chr_rom;
     uint32_t chr_rom_size;
-    uint8_t chr_banks;      /* Number of 8KB CHR banks (or 4KB for some mappers) */
+    uint16_t chr_banks;     /* Number of 8KB CHR banks (or 4KB for some mappers) */
     uint8_t chr_bank0;      /* Bank at $0000-$0FFF (or $0000-$1FFF) */
     uint8_t chr_bank1;      /* Bank at $1000-$1FFF */
     uint8_t chr_ram[0x2000]; /* CHR RAM for mappers that use it */
