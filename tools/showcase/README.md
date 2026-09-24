@@ -21,8 +21,6 @@ Requirements on the Mac:
   libwebp or drawtext);
 - `avifenc` (`brew install libavif`);
 - Python 3.10 or newer with Pillow and numpy (`pip3 install Pillow numpy`);
-- optionally `swift` on macOS 15 or later, for the gain-map JPEGs (skipped
-  with a note otherwise);
 - your own ROMs.
 
 ffmpeg and ffprobe are taken from `--ffmpeg`/`--ffprobe`, then
@@ -65,7 +63,7 @@ is given them as absolute paths.
    case-insensitive globs; it prints what matched and refuses an ambiguous
    match), reads each ROM's TV system the way `src/nes/rom.h` does, lists
    the save states, and checks ffmpeg's encoders and filters, avifenc,
-   Pillow, numpy, a caption font, swift and the recorder's flags.
+   Pillow, numpy, a caption font and the recorder's flags.
 
 2. Create one save state per shot. The pipeline never records a shot whose
    state is missing; `states` prints what to do:
@@ -139,17 +137,19 @@ is given them as absolute paths.
 ## Render sizes
 
 Each clip (shot and preset) is recorded twice at each size, SDR and HDR,
-and each pass runs until the last frame read from it:
+and each pass runs until the last frame read from it. The README size is
+recorded in SDR only: the README's WebPs are SDR, so nothing reads an HDR
+render there.
 
 | Size | SDR frames | HDR frames | Built from it |
 |---|---|---|---|
 | 1920x1440 | the whole shot | the whole shot | stage clips and poster for 2x displays |
 | 960x720 | the whole shot | the whole shot | stage clips and poster for 1x displays |
-| 3840x2880 | the whole shot for lens clips and features; otherwise up to the still frame, or the eight flicker frames for README presets | the whole shot for lens clips; otherwise up to the still frame and the first flicker frame | lens clips, stills, detail crops, flicker crop, feature clips |
+| 3840x2880 | the whole shot for lens clips and features; otherwise up to the still frame, or the eight flicker frames for README presets | the whole shot for lens clips; otherwise up to the still frame | lens clips, stills, detail crops, flicker crop, feature clips |
+| 1600x1200 | the first `readme_seconds` | none | `readme.webp`, presets in `readme` only |
 
 A crop preset is recorded at 3840x2880 only, up to the still frame in both
 passes.
-| 1600x1200 | the first `readme_seconds` | up to the still frame | README media, presets in `readme` only |
 
 Emulation from a state and a replay is deterministic, so a short render
 holds the same first frames as the stage renders. Frames =
@@ -180,16 +180,14 @@ In `out/<shot>/<preset>/<WxH>/`:
 | `crop-hdr.png` | crop | The same from the 16-bit HDR frame |
 | `crop-hdr.avif` | crop | AVIF of it, as `still-hdr.avif` |
 | `flicker.webp` | crop | README presets: eight consecutive frames from `flicker_frame` at 1:1, 125 ms each (8 fps), always lossless: lossy WebP is 4:2:0 and would halve the colour resolution the crop shows. Over 24 MB the encode fails; choose a smaller `flicker_crop` |
-| `flicker.png` | crop | Frame `flicker_frame` of the crop, lossless |
-| `flicker-hdr.png`, `flicker-hdr.jpg` | crop | The HDR crop, and a JPEG with the SDR crop as base image and a gain map toward the HDR one |
 | `readme.webp` | 1600x1200 | README presets: every second frame of the first `readme_seconds` at 30 fps (33 and 34 ms frames), the highest quality from 90 to 30 that is under 10 MB, all candidates encoded at once |
-| `readme.png` | 1600x1200 | Frame `thumbnail_frame`, lossless |
-| `readme-hdr.png`, `readme-hdr.jpg` | 1600x1200 | The HDR frame, and its gain-map JPEG |
 
 `out/<shot>/<preset>/readme.json` records the WebP qualities and sizes and
-the crop in render and NES pixels. In the README, embed `readme.webp` or
-`readme.png` with `width="800"` and the flicker crop with `width="750"`, so
-a 2x display shows render pixels 1:1. libwebp stores a run of identical
+the crop in render and NES pixels. In the README, embed `readme.webp` with
+`width="800"` and `flicker.webp` at half its width (`embed_width` in
+`readme.json`, 679 for the 1358-pixel crop), so a 2x display shows render
+pixels 1:1. Nothing else is written for the README: the PNG copies and
+gain-map JPEGs the pipeline used to make were never embedded. libwebp stores a run of identical
 frames as one longer frame, so a still stretch of picture gives an animation
 with fewer frames and the same length.
 
@@ -454,5 +452,4 @@ light level, 1:1 crops, the manifest (a version 1
 clip rewritten in version 2 form), the budget refusal and the cases where
 install stops before copying. It takes under a minute and is skipped when
 ffmpeg lacks one of the encoders or avifenc, numpy or Pillow is missing; the
-gain-map and `--fast` checks are skipped without swift on macOS 15 or
-`hevc_videotoolbox`.
+`--fast` check is skipped without `hevc_videotoolbox`.

@@ -282,10 +282,6 @@ class Stills(unittest.TestCase):
         self.assertEqual(cmd[-2:], ["still-hdr.png", "still-hdr.avif"])
         self.assertNotIn("--clli", recipes.avifenc_args("a.png", "a.avif"))
 
-    def test_gainmap(self):
-        self.assertEqual(recipes.gainmap_args("g.swift", "s.png", "h.png", "o.jpg"),
-                         ["swift", "g.swift", "s.png", "h.png", "o.jpg", "0.90"])
-
     def test_readme_and_flicker(self):
         self.assertEqual(recipes.readme_frames(361), 181)
         s = shlex.join(recipes.readme_webp_args("sdr.mov", "r.webp", 361, 80))

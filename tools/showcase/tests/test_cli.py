@@ -96,19 +96,19 @@ class Cli(unittest.TestCase):
         readme = sum(len(s.readme) for s in sl.shots)
         lens = sum(len(s.lens) for s in sl.shots)
         stage = len(sl.defaults.stage_sizes)
-        # Every clip at each stage size and the full size, README clips also at
-        # 1600x1200, crop presets at the full size only, each size recorded
-        # twice (SDR and HDR).
-        passes = clips * (stage + 1) + readme + crops
-        self.assertEqual(out.count(recorder), passes * 2)
-        self.assertEqual(out.count("--offscreen 1600x1200"), readme * 2)
+        # Every clip at each stage size and the full size, crop presets at the
+        # full size only, each size recorded twice (SDR and HDR); README clips
+        # also at 1600x1200, in SDR only.
+        passes = clips * (stage + 1) + crops
+        self.assertEqual(out.count(recorder), passes * 2 + readme)
+        self.assertEqual(out.count("--offscreen 1600x1200"), readme)
         self.assertEqual(out.count("--record-hdr --record-headroom 4 --record-hdr-white 203"), passes)
         self.assertIn("--record-seconds 6 --record-after 2", out)
         # The full size keeps the mask at whole pixels; the stage and README sizes use its physical pitch.
         self.assertIn("--offscreen 3840x2880 --mask-alignment pixels", out)
         self.assertIn("--offscreen 1920x1440 --mask-alignment physical", out)
         self.assertIn("--offscreen 960x720 --sdr --mask-alignment physical", out)
-        self.assertIn("--offscreen 1600x1200 --mask-alignment physical", out)
+        self.assertIn("--offscreen 1600x1200 --sdr --mask-alignment physical", out)  # SDR only
         self.assertNotIn("--offscreen 1920x1440 --mask-alignment pixels", out)
         self.assertNotIn("--offscreen 1920x1440 --sdr --mask-alignment pixels", out)
         self.assertIn("--record-seconds 15", out)
@@ -128,9 +128,7 @@ class Cli(unittest.TestCase):
         self.assertIn(one, full_size("punch-out", "sony_pvm_14l2", hdr=True)[0])
         self.assertIn("--record-seconds 15 ", full_size("mega-man-2", "jvc_d_series_2000")[0])  # a feature
         self.assertIn(one, full_size("mega-man-2", "jvc_d_series_2000", hdr=True)[0])
-        readme_hdr = [l for l in lines if recorder in l and "/1600x1200/hdr.mov" in l]
-        self.assertEqual(len(readme_hdr), readme)
-        self.assertTrue(all(one in l for l in readme_hdr))
+        self.assertEqual([l for l in lines if recorder in l and "/1600x1200/hdr.mov" in l], [])  # SDR only
         for s in sl.shots:
             for p in s.lens:
                 for hdr in (False, True):
@@ -151,7 +149,8 @@ class Cli(unittest.TestCase):
                 self.assertEqual(len(runs), 2, (shot_id, preset))  # the full-size still, SDR and HDR
                 self.assertTrue(all("--offscreen 3840x2880" in " ".join(a) and one in " ".join(a) for a in runs))
                 continue
-            self.assertEqual(len(runs), 2 * (stage + 1 + (preset in shot.readme)), (shot_id, preset))
+            # SDR and HDR at each stage size and the full size; SDR only at the README size.
+            self.assertEqual(len(runs), 2 * (stage + 1) + (preset in shot.readme), (shot_id, preset))
             for flag in ("--load-state", "--input-replay", "--record-after", "--preset"):
                 values = {a[a.index(flag) + 1] if flag in a else None for a in runs}
                 self.assertEqual(len(values), 1, (shot_id, preset, flag, values))

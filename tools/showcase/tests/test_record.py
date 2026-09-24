@@ -86,24 +86,24 @@ class Record(unittest.TestCase):
     def test_every_pass_records_once(self):
         result, _ = self.record()
         self.assertEqual(result.failed, {})
-        self.assertEqual(len(result.ok), 6)  # three sizes, SDR and HDR
-        self.assertEqual(len(self.calls()), 6)
-        for size in (STAGE, LENS, README):
-            for hdr in (False, True):
-                provenance = self.render(size, hdr).with_name(("hdr" if hdr else "sdr") + ".record.json")
-                self.assertTrue(provenance.exists(), provenance)
+        self.assertEqual(len(result.ok), 5)  # SDR and HDR at the stage and full sizes, SDR at the README size
+        self.assertEqual(len(self.calls()), 5)
+        for size, hdr in ((STAGE, False), (STAGE, True), (LENS, False), (LENS, True), (README, False)):
+            provenance = self.render(size, hdr).with_name(("hdr" if hdr else "sdr") + ".record.json")
+            self.assertTrue(provenance.exists(), provenance)
+        self.assertFalse(self.render(README, True).exists())  # the README's WebPs are SDR
         result, _ = self.record()
         self.assertEqual(result.failed, {})
-        self.assertEqual(len(self.calls()), 6)  # all up to date
+        self.assertEqual(len(self.calls()), 5)  # all up to date
 
     def test_hdr_passes_stop_after_the_frames_read(self):
-        """The stills read frame 0 of the full-size and README-size HDR
-        renders; the SDR passes hold the flicker frames and the README loop."""
+        """The HDR still reads frame 0 of the full-size HDR render; the SDR
+        passes hold the flicker frames and the README loop."""
         self.record()
-        frames = {(size, hdr): probe_video(self.render(size, hdr)).frames
-                  for size in (STAGE, LENS, README) for hdr in (False, True)}
+        passes = ((STAGE, False), (STAGE, True), (LENS, False), (LENS, True), (README, False))
+        frames = {(size, hdr): probe_video(self.render(size, hdr)).frames for size, hdr in passes}
         self.assertEqual(frames, {(STAGE, False): 60, (STAGE, True): 60, (LENS, False): 8, (LENS, True): 1,
-                                  (README, False): 60, (README, True): 1})
+                                  (README, False): 60})
 
     def test_passes_share_state_replay_and_start(self):
         """Every pass of a clip starts from the same state, replay and frame,
@@ -131,7 +131,7 @@ class Record(unittest.TestCase):
     def test_a_420_render_is_refused(self):
         with mock.patch.dict(os.environ, {"FAKE_RECORDER_CODEC_ARGS": "-c:v libx264 -preset ultrafast -pix_fmt yuv420p"}):
             result, ctx = self.record()
-        self.assertEqual(len(result.failed), 6)
+        self.assertEqual(len(result.failed), 5)
         self.assertTrue(all("pixel format yuv420p, expected yuv444p" in e or "expected yuv444p10le" in e
                             for e in result.failed.values()), result.failed)
         self.assertFalse(self.render(STAGE, False).with_name("sdr.record.json").exists())
@@ -143,30 +143,30 @@ class Record(unittest.TestCase):
         self.record()
         with mock.patch.dict(os.environ, {"FAKE_RECORDER_FRAMES": "20", "FAKE_RECORDER_EXIT": "4"}):
             result, _ = self.record(force=True)
-        self.assertEqual(len(result.failed), 6)
+        self.assertEqual(len(result.failed), 5)
         self.assertFalse(self.render(STAGE, False).with_name("sdr.record.json").exists())
         self.assertFalse(self.render(STAGE, True).with_name("hdr.record.json").exists())
         before = len(self.calls())
         result, _ = self.record()  # no --force: the failed passes run again
         self.assertEqual(result.failed, {})
-        self.assertEqual(len(self.calls()), before + 6)
+        self.assertEqual(len(self.calls()), before + 5)
         self.assertEqual(probe_video(self.render(STAGE, False)).frames, 60)
 
     def test_changed_settings_record_again(self):
         self.record()
         self.set_defaults(hdr={"headroom": 2.0, "white_nits": 100})
         self.record()
-        calls = self.calls()[6:]
-        self.assertEqual(len(calls), 3)  # the HDR passes only
+        calls = self.calls()[5:]
+        self.assertEqual(len(calls), 2)  # the HDR passes only
         self.assertTrue(all("--record-hdr" in c["argv"] for c in calls))
         sidecar = json.loads(self.render(STAGE, True).with_suffix(".json").read_text())
         self.assertEqual((sidecar["headroom"], sidecar["white_nits"]), (2.0, 100))
         self.set_defaults(record_after=5)
         self.record()
-        self.assertEqual(len(self.calls()), 6 + 3 + 6)  # a later start changes every pass
+        self.assertEqual(len(self.calls()), 5 + 2 + 5)  # a later start changes every pass
         self.set_defaults(record_args=["--room-reflections"])
         self.record()
-        self.assertEqual(len(self.calls()), 6 + 3 + 6 + 6)
+        self.assertEqual(len(self.calls()), 5 + 2 + 5 + 5)
 
     def test_relative_paths_name_files_under_the_current_directory(self):
         """The recorder runs from the repository root, so showcase.py hands it

@@ -177,8 +177,6 @@ def cmd_check(ctx: jobs_mod.Context, args, runner: Runner) -> int:
     say(f"  avifenc: {runner_mod.tool('avifenc')}: {avifenc or 'MISSING'}")
     if not avifenc:
         errors.append("avifenc not found (brew install libavif): the HDR stills need it")
-    ok, reason = jobs_mod.gainmap_available()
-    say(f"  gain-map JPEGs: {'swift ' + runner_mod.tool('swift') if ok else 'skipped: ' + reason}")
     for module, why in (("PIL", "Pillow verifies images and cuts the SDR crops (pip install Pillow)"),
                         ("numpy", "numpy handles the 16-bit HDR frames (pip install numpy)")):
         try:

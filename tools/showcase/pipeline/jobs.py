@@ -10,8 +10,8 @@ Output layout (--out, default tools/showcase/out): one directory per clip
   full size     still-sdr.png, still-hdr.png (16-bit PQ), still-hdr.avif,
                 crop-sdr.png, crop-hdr.png, crop-hdr.avif,
                 lens-hdr-hevc.mp4, lens-hdr-av1.mp4, lens-sdr-hevc.mp4   (lens clips)
-                flicker.webp, flicker.png, flicker-hdr.png, flicker-hdr.jpg (README presets)
-  README size   readme.webp, readme.png, readme-hdr.png, readme-hdr.jpg  (README presets)
+                flicker.webp (README presets)
+  README size   readme.webp (README presets)
   readme.json   what the README media fitting chose
   features/<id>/youtube.mp4
 """
@@ -21,9 +21,6 @@ import contextlib
 import dataclasses
 import hashlib
 import json
-import platform
-import shutil
-import sys
 import threading
 from dataclasses import dataclass, field
 from fractions import Fraction
@@ -35,7 +32,7 @@ from . import recipes
 from . import shots as shots_mod
 from .codecs import mime_type
 from .recipes import VideoOutput
-from .runner import (Job, PipelineError, Runner, env_for_capture, find_font, image_info, probe_video, tool,
+from .runner import (Job, PipelineError, Runner, env_for_capture, find_font, image_info, probe_video,
                      verify_animation, verify_image, verify_timing, verify_video)
 from .shots import Feature, Shot, ShotList
 
@@ -43,7 +40,6 @@ SHOWCASE_DIR = shots_mod.SHOWCASE_DIR
 ROOT = shots_mod.ROOT
 DEFAULT_OUT = SHOWCASE_DIR / "out"
 DEFAULT_BUILD = ROOT / "build"
-GAINMAP_SCRIPT = SHOWCASE_DIR / "gainmap.swift"
 RECORD_TIMEOUT = 60 * 60
 ENCODE_TIMEOUT = 3 * 3600
 DEFAULT_BUDGET_MB = 900
@@ -152,9 +148,9 @@ def render_plan(ctx: Context, shot: Shot, preset: str) -> list[Render]:
     (3840x2880) the SDR pass runs the whole shot when a lens clip or a
     feature needs it, and the HDR pass when a lens clip does; otherwise a
     pass stops after the last frame read from it: the still frame, and for
-    README presets the eight flicker frames (SDR) or the first of them (HDR).
-    At the README size the SDR pass runs readme_seconds and the HDR pass
-    stops after the still frame. Emulation from a state and a replay is
+    README presets the eight flicker frames (SDR only). The README size is
+    recorded in SDR only, for readme_seconds: the README's WebPs are SDR.
+    Emulation from a state and a replay is
     deterministic, so those are the same frames the stage renders show. A
     crop preset (``shot.crops``) is recorded at full size for the still
     frame only."""
@@ -175,8 +171,8 @@ def render_plan(ctx: Context, shot: Shot, preset: str) -> list[Render]:
         add(d.lens_size, "lens", shot.frames, shot.frames)
     if preset in shot.readme:
         first = shot.flicker_first_frame
-        add(d.lens_size, "flicker", first + recipes.FLICKER_FRAMES, first + 1)
-        add(d.readme_size, "readme", max(shot.readme_frames, still), still)
+        add(d.lens_size, "flicker", first + recipes.FLICKER_FRAMES, 0)
+        add(d.readme_size, "readme", max(shot.readme_frames, still), 0)
     if preset in ctx.feature_presets(shot):
         add(d.lens_size, "feature", shot.frames, 0)
     return [Render(size, sdr, hdr, tuple(roles)) for size, (sdr, hdr, roles) in plan.items()]
@@ -657,38 +653,6 @@ def encode_still(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dict 
     return {"crop": [rect.x, rect.y, rect.w, rect.h], "light_levels": levels}
 
 
-def gainmap_available() -> tuple[bool, str]:
-    """gainmap.swift needs macOS 15 (Core Image's hdrImage option) and swift."""
-    if sys.platform != "darwin":
-        return False, "gain-map JPEGs need macOS"
-    try:
-        major = int(platform.mac_ver()[0].split(".")[0])
-    except ValueError:
-        major = 0
-    if major < 15:
-        return False, f"gain-map JPEGs need macOS 15 or later (this is {platform.mac_ver()[0] or 'unknown'})"
-    if not shutil.which(tool("swift")):
-        return False, "swift is not installed (xcode-select --install)"
-    return True, ""
-
-
-GAINMAP_MARKERS = (b"urn:iso:std:iso:ts:21496:-1", b"HDRGainMap", b"hdrgm")
-
-
-def _gainmap(runner: Runner, sdr_png: Path, hdr_png: Path, out: Path, size) -> str | None:
-    ok, reason = gainmap_available()
-    if not ok:
-        runner.say(f"skip {out.name}: {reason}")
-        return None
-    runner.run(recipes.gainmap_args(GAINMAP_SCRIPT, sdr_png, hdr_png, out), what=f"gain map {out.name}")
-    if runner.dry_run:
-        return out.name
-    verify_image(out, size=size)  # Pillow counts the gain map as a second MPO frame
-    if not any(m in out.read_bytes() for m in GAINMAP_MARKERS):
-        raise PipelineError(f"{out}: JPEG written without a gain map")
-    return out.name
-
-
 _REPORT_LOCK = threading.Lock()
 
 
@@ -701,18 +665,16 @@ def _update_report(runner: Runner, path: Path, note: dict) -> None:
 
 
 def encode_readme(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dict | None:
-    """README media from the 1600x1200 render: an animated WebP (every second
-    frame at 30 fps, quality lowered until under the limit), a lossless PNG of
-    frame thumbnail_frame and, on macOS 15, that frame as a gain-map JPEG."""
+    """The README's animation from the 1600x1200 SDR render: an animated WebP
+    of every second frame at 30 fps, quality lowered until under the limit."""
     size = ctx.defaults.readme_size
     sdr = render_facts(ctx, runner, shot, preset, size, False)
-    hdr = render_facts(ctx, runner, shot, preset, size, True)
     d = ctx.size_dir(shot, preset, size)
-    webp, png, hdr_png, jpg = d / "readme.webp", d / "readme.png", d / "readme-hdr.png", d / "readme-hdr.jpg"
-    if _skip_if_fresh(runner, [webp, png, hdr_png], _inputs(sdr, hdr)):
+    webp = d / "readme.webp"
+    if _skip_if_fresh(runner, [webp], _inputs(sdr)):
         return None
     candidates = {q: webp.with_name(f"readme.q{q}.webp") for q in recipes.README_QUALITIES}
-    with _discard_on_failure(runner, [webp, png, hdr_png, jpg, d / "readme-hdr.yuv", *candidates.values()]):
+    with _discard_on_failure(runner, [webp, *candidates.values()]):
         source_frames = min(sdr.frames, shot.readme_frames)
         frames = recipes.readme_frames(source_frames)
         limit = recipes.LIMITS["readme_webp"]
@@ -729,11 +691,6 @@ def encode_readme(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dict
             candidates[quality].replace(webp)
             for other in others:
                 Path(other).unlink(missing_ok=True)
-        runner.run(recipes.sdr_png_args(sdr.path, png, shot.thumbnail_frame, matrix=sdr.matrix, range_=sdr.range),
-                   what="readme png")
-        _hdr_frame(runner, hdr, shot.thumbnail_frame, d / "readme-hdr.yuv", "write readme-hdr.png as 16-bit PQ PNG",
-                   lambda rgb: _write16(hdr_png, rgb))
-        gain = _gainmap(runner, png, hdr_png, jpg, size)
         if runner.dry_run:
             return None
         try:
@@ -742,29 +699,25 @@ def encode_readme(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dict
             raise PipelineError(f"{e}; lower readme_seconds for shot {shot.id!r} in shots.json "
                                 f"(now {shot.readme_seconds:g} s)") from e
         verify_timing(webp, frames=frames, fps=recipes.README_FPS)
-        verify_image(png, frames=1, size=size)
     note = {"readme_webp": {"quality": quality, "bytes": webp_size, "frames": frames, "stored_frames": stored,
                             "fps": recipes.README_FPS,
-                            "source_frames": source_frames, "size": list(size), "embed_width": size[0] // 2},
-            "readme_png": {"frame": shot.thumbnail_frame, "bytes": png.stat().st_size},
-            "readme_gainmap": {"file": gain, "bytes": jpg.stat().st_size} if gain else None}
+                            "source_frames": source_frames, "size": list(size), "embed_width": size[0] // 2}}
     _update_report(runner, ctx.clip_dir(shot, preset) / "readme.json", note)
-    runner.say(f"README render: WebP quality {quality} ({webp_size} bytes)" + (f", {gain}" if gain else ""))
+    runner.say(f"README render: WebP quality {quality} ({webp_size} bytes)")
     return note
 
 
 def encode_flicker(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dict | None:
     """Eight consecutive frames of the flicker crop at 1:1 full-size pixels,
-    lossless; a file over the limit is an error, not a lossy fallback. The
-    first frame as PNG and gain-map JPEG."""
+    from the SDR render, lossless; a file over the limit is an error, not a
+    lossy fallback."""
     size = ctx.defaults.lens_size
     sdr = render_facts(ctx, runner, shot, preset, size, False)
-    hdr = render_facts(ctx, runner, shot, preset, size, True)
     d = ctx.size_dir(shot, preset, size)
-    webp, png, hdr_png, jpg = d / "flicker.webp", d / "flicker.png", d / "flicker-hdr.png", d / "flicker-hdr.jpg"
-    if _skip_if_fresh(runner, [webp, png, hdr_png], _inputs(sdr, hdr)):
+    webp = d / "flicker.webp"
+    if _skip_if_fresh(runner, [webp], _inputs(sdr)):
         return None
-    with _discard_on_failure(runner, [webp, png, hdr_png, jpg, d / "flicker-hdr.yuv"]):
+    with _discard_on_failure(runner, [webp]):
         rect = recipes.flicker_geometry(shot.flicker_crop, size, ctx.flicker_scale, raster=ctx.raster(preset))
         first = shot.flicker_first_frame
         if first + recipes.FLICKER_FRAMES > sdr.frames:
@@ -777,25 +730,17 @@ def encode_flicker(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dic
             raise PipelineError(f"{webp}: the lossless flicker crop is {webp_size / recipes.MB:.1f} MB, over the "
                                 f"{limit / recipes.MB:.0f} MB limit; choose a smaller flicker_crop for shot "
                                 f"{shot.id!r} rather than a lossy file, which would halve its colour resolution")
-        runner.run(recipes.sdr_png_args(sdr.path, png, first, matrix=sdr.matrix, range_=sdr.range, rect=rect),
-                   what="flicker png")
-        _hdr_frame(runner, hdr, first, d / "flicker-hdr.yuv",
-                   f"write flicker-hdr.png ({rect.crop_filter()}) as 16-bit PQ PNG",
-                   lambda rgb: _write16(hdr_png, images.crop(rgb, rect)))
-        gain = _gainmap(runner, png, hdr_png, jpg, (rect.w, rect.h))
         if runner.dry_run:
             runner.say(f"dry-run: flicker crop {rect} (NES {shot.flicker_crop} at "
                        f"{recipes.nes_scale(size, ctx.flicker_scale)} render pixels per NES pixel)")
             return None
         stored = verify_animation(webp, frames=recipes.FLICKER_FRAMES, size=(rect.w, rect.h), limit=limit,
                                   fps=recipes.FLICKER_FPS)
-        verify_image(png, frames=1, size=(rect.w, rect.h))
     note = {"flicker_webp": {"quality": "lossless", "bytes": webp_size, "frames": recipes.FLICKER_FRAMES,
                              "stored_frames": stored,
                              "fps": recipes.FLICKER_FPS, "first_frame": first,
                              "crop_px": [rect.x, rect.y, rect.w, rect.h], "crop_nes_px": list(shot.flicker_crop),
-                             "embed_width": rect.w // 2},
-            "flicker_gainmap": {"file": gain, "bytes": jpg.stat().st_size} if gain else None}
+                             "embed_width": rect.w // 2}}
     _update_report(runner, ctx.clip_dir(shot, preset) / "readme.json", note)
     runner.say(f"flicker crop: lossless ({webp_size} bytes), {rect}")
     return note

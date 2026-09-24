@@ -199,6 +199,8 @@ class EncodePipeline(unittest.TestCase):
         cls.sidecars = {}
         for r in jobs_mod.render_plan(cls.ctx, cls.shot, "p_sony"):
             for hdr in (False, True):
+                if not r.frames(hdr):
+                    continue  # record_jobs skips a pass nothing reads
                 path = cls.ctx.render_path(cls.shot, "p_sony", r.size, hdr)
                 cls.sidecars[(r.size, hdr)] = write_render(path, r.size, hdr, r.frames(hdr))
         full = cls.ctx.render_path(cls.shot, "p_sony", LENS, False)
@@ -232,7 +234,7 @@ class EncodePipeline(unittest.TestCase):
                 for r in jobs_mod.render_plan(self.ctx, self.shot, "p_sony")}
         self.assertEqual(plan[(256, 192)], (60, 60, ("stage",)))
         self.assertEqual(plan[LENS], (60, 60, ("still", "lens", "flicker", "feature")))
-        self.assertEqual(plan[README], (60, 1, ("readme",)))  # readme-hdr.png reads frame 0 only
+        self.assertEqual(plan[README], (60, 0, ("readme",)))  # the README's WebPs are SDR: no HDR pass
         # Without a lens clip, the full size stops after the frames read from each pass.
         ctx = jobs_mod.Context(shot_list=self.shot_list, out=self.out)
         ctx.shot_list = shots.load(self.shot_list.path, self.presets_dir)
@@ -495,50 +497,32 @@ class EncodePipeline(unittest.TestCase):
         durations = animation_durations(self.d(README) / "readme.webp")
         self.assertEqual(set(durations), {33, 34})  # 30 fps in whole milliseconds
         self.assertEqual(sum(durations), 1000)
-        self.assertEqual(image_info(self.d(README) / "readme.png"), (1, README))
+        for name in ("readme.png", "readme-hdr.png", "readme-hdr.jpg"):
+            self.assertFalse((self.d(README) / name).exists(), name)
         flicker = report["flicker_webp"]
         rect = recipes.flicker_geometry([78, 73, 100, 93.75], LENS)
         self.assertEqual(flicker["crop_px"], [rect.x, rect.y, rect.w, rect.h])
         self.assertEqual(flicker["quality"], "lossless")
         self.assertEqual(image_info(self.d(LENS) / "flicker.webp"), (8, (rect.w, rect.h)))
         self.assertEqual(animation_durations(self.d(LENS) / "flicker.webp"), [125] * 8)  # an even 8 fps
-        with Image.open(self.d(LENS) / "flicker.png") as png, Image.open(self.d(LENS) / "still-sdr.png") as still:
-            self.assertEqual(np.asarray(png).tolist(), np.asarray(still.crop(rect.box)).tolist())
-        with Image.open(self.d(LENS) / "flicker.webp") as anim:  # lossless: frame 0 is the PNG exactly
+        # Lossless: frame 0 is the still's crop exactly (the flicker crop starts at the still frame).
+        with Image.open(self.d(LENS) / "flicker.webp") as anim, Image.open(self.d(LENS) / "still-sdr.png") as still:
             anim.seek(0)
-            self.assertEqual(np.asarray(anim.convert("RGB")).tolist(),
-                             np.asarray(Image.open(self.d(LENS) / "flicker.png").convert("RGB")).tolist())
+            self.assertEqual(np.asarray(anim.convert("RGB")).tolist(), np.asarray(still.crop(rect.box)).tolist())
+        for name in ("flicker.png", "flicker-hdr.png", "flicker-hdr.jpg"):
+            self.assertFalse((self.d(LENS) / name).exists(), name)
 
     def test_flicker_over_its_limit_fails(self):
         """The flicker crop is lossless or nothing: over the limit the job
         fails and leaves no file, instead of writing a lossy 4:2:0 one."""
         d = self.d(LENS)
-        kept = [d / n for n in ("flicker.webp", "flicker.png", "flicker-hdr.png", "flicker-hdr.jpg") if (d / n).exists()]
-        self.backup(*kept, self.ctx.clip_dir(self.shot, "p_sony") / "readme.json")
+        self.backup(d / "flicker.webp", self.ctx.clip_dir(self.shot, "p_sony") / "readme.json")
         runner = Runner(quiet=True, force=True)
         with mock.patch.dict(recipes.LIMITS, {"flicker_webp": 1}):
             with self.assertRaisesRegex(PipelineError, r"lossless flicker crop is .* MB, over the 0 MB limit"):
                 jobs_mod.encode_flicker(self.ctx, runner, self.shot, "p_sony")
         self.assertFalse((d / "flicker.webp").exists())
         self.assertEqual([a for a in runner.ran if "libwebp_anim" in a and "-quality" in a], [])
-
-    def test_gainmap_jpegs(self):
-        ok, reason = jobs_mod.gainmap_available()
-        report = json.loads((self.ctx.clip_dir(self.shot, "p_sony") / "readme.json").read_text())
-        if not ok:
-            self.assertIsNone(report["readme_gainmap"])
-            self.skipTest(reason)
-        for jpg, png, size in ((self.d(README) / "readme-hdr.jpg", self.d(README) / "readme.png", README),
-                               (self.d(LENS) / "flicker-hdr.jpg", self.d(LENS) / "flicker.png",
-                                tuple(report["flicker_webp"]["crop_px"][2:]))):
-            frames, got = image_info(jpg)
-            self.assertEqual((frames, got), (2, size))  # the base image and the gain map (MPO)
-            self.assertIn(b"urn:iso:std:iso:ts:21496:-1", jpg.read_bytes())
-            # The base image is the SDR render, so a viewer without HDR shows the SDR picture.
-            with Image.open(jpg) as base, Image.open(png) as sdr:
-                base.seek(0)
-                error = np.abs(np.asarray(base.convert("RGB")).astype(np.int64) - np.asarray(sdr.convert("RGB")))
-            self.assertLess(error.mean(), 3, jpg.name)
 
     # -- features ------------------------------------------------------------
     def test_features(self):

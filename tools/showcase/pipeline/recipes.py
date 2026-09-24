@@ -62,7 +62,6 @@ README_QUALITIES = (90, 85, 80, 75, 70, 65, 60, 50, 40, 30)
 POSTER_QUALITY = 85
 AVIF_QUALITY = 90
 AVIF_SPEED = 6
-GAINMAP_QUALITY = 0.9
 
 FFMPEG_BASE = ("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-nostdin")
 PASSTHROUGH = ("-fps_mode", "passthrough")
@@ -537,12 +536,6 @@ def avifenc_args(png: Path | str, out: Path | str, *, quality: int = AVIF_QUALIT
     if clli:
         cmd += ["--clli", f"{int(clli[0])},{int(clli[1])}"]
     return cmd + [str(png), str(out)]
-
-
-def gainmap_args(script: Path | str, sdr_png: Path | str, hdr_png: Path | str, out: Path | str,
-                 quality: float = GAINMAP_QUALITY) -> list[str]:
-    """gainmap.swift: the SDR render as the JPEG base plus a gain map toward the HDR render."""
-    return ["swift", str(script), str(sdr_png), str(hdr_png), str(out), f"{quality:.2f}"]
 
 
 def readme_frames(source_frames: int) -> int:
