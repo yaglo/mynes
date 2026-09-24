@@ -537,7 +537,8 @@ class EncodePipeline(unittest.TestCase):
         """The flicker crop is lossless or nothing: over the limit the job
         fails and leaves no file, instead of writing a lossy 4:2:0 one."""
         d = self.d(LENS)
-        self.backup(d / "flicker.webp", self.ctx.clip_dir(self.shot, "p_sony") / "readme.json")
+        self.backup(d / "flicker.webp", d / "flicker.encode.json",
+                    self.ctx.clip_dir(self.shot, "p_sony") / "readme.json")
         runner = Runner(quiet=True, force=True)
         with mock.patch.dict(recipes.LIMITS, {"flicker_webp": 1}):
             with self.assertRaisesRegex(PipelineError, r"lossless flicker crop is .* MB, over the 0 MB limit"):
