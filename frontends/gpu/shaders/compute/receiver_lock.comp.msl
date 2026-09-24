@@ -16,6 +16,14 @@ struct Params
     uint full_width;
     uint samples_per_dot;
     uint region;
+    float key_start;
+    float key_width;
+    float trap_b0;
+    float trap_a1;
+    float trap_a2;
+    float pad0;
+    float pad1;
+    float pad2;
 };
 
 struct Measurement
@@ -125,29 +133,39 @@ float crossing_raw(thread const uint& base, thread const int& from, thread const
 }
 
 static inline __attribute__((always_inline))
-float keyed_black(thread const uint& base, thread const float& edge, thread const int& spp, device Raster& _72)
+float keyed_black(thread const uint& base, thread const float& edge, thread const int& spp, device Raster& _72, constant Params& _372)
 {
-    int start = int(round(edge + 0.5)) + (21 * spp);
-    float black = 0.0;
-    for (int x = 0; x < 24; x++)
+    float k0 = (edge + 0.5) + _372.key_start;
+    float k1 = k0 + _372.key_width;
+    int x0 = max((int(floor(edge)) - (8 * spp)), 0);
+    int x1 = min(int(ceil(k1)), int(_372.full_width));
+    float v0 = _72.raster[base + uint(x0)];
+    float s1 = v0 * (1.0 - _372.trap_b0);
+    float s2 = s1;
+    float sum = 0.0;
+    for (int x = x0; x < x1; x++)
     {
-        black += _72.raster[base + uint(start + x)];
+        float v = _72.raster[base + uint(x)];
+        float y = (_372.trap_b0 * v) + s1;
+        s1 = (_372.trap_a1 * (v - y)) + s2;
+        s2 = (_372.trap_b0 * v) - (_372.trap_a2 * y);
+        sum += (y * fast::clamp(fast::min(float(x + 1), k1) - fast::max(float(x), k0), 0.0, 1.0));
     }
-    return black / 24.0;
+    return sum / _372.key_width;
 }
 
-kernel void main0(device Raster& _72 [[buffer(1)]], constant Params& _414 [[buffer(0)]], device Measurement& _567 [[buffer(3)]], device Reference& _579 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+kernel void main0(device Raster& _72 [[buffer(1)]], constant Params& _372 [[buffer(0)]], device Measurement& _640 [[buffer(3)]], device Reference& _652 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
     uint line = gl_GlobalInvocationID.x;
-    if (line >= _414.count)
+    if (line >= _372.count)
     {
         return;
     }
-    uint base = line * _414.full_width;
-    int spp = int(_414.samples_per_dot);
+    uint base = line * _372.full_width;
+    int spp = int(_372.samples_per_dot);
     float porch = 0.0;
-    int _435 = 334 * spp;
-    for (int x = _435; x < (338 * spp); x++)
+    int _508 = 334 * spp;
+    for (int x = _508; x < (338 * spp); x++)
     {
         porch += _72.raster[base + uint(x)];
     }
@@ -168,43 +186,43 @@ kernel void main0(device Raster& _72 [[buffer(1)]], constant Params& _414 [[buff
     bool vertical = tip < (porch - 0.07999999821186065673828125);
     for (int _dot = 80; _dot <= 300; _dot += 20)
     {
-        bool _556;
+        bool _629;
         if (vertical)
         {
-            _556 = _72.raster[base + uint(_dot * spp)] < threshold;
+            _629 = _72.raster[base + uint(_dot * spp)] < threshold;
         }
         else
         {
-            _556 = vertical;
+            _629 = vertical;
         }
-        vertical = _556;
+        vertical = _629;
     }
     if (vertical)
     {
-        _567.measurement[line] = float4(0.0, porch, -1.0, 0.0);
+        _640.measurement[line] = float4(0.0, porch, -1.0, 0.0);
         return;
     }
-    bool _585 = ((device float*)&_579.reference[_414.count])[2u] > 0.0;
-    bool _598;
-    if (_585)
+    bool _658 = ((device float*)&_652.reference[_372.count])[2u] > 0.0;
+    bool _671;
+    if (_658)
     {
-        _598 = abs(((device float*)&_579.reference[line])[3u]) < (8.0 * float(spp));
+        _671 = abs(((device float*)&_652.reference[line])[3u]) < (8.0 * float(spp));
     }
     else
     {
-        _598 = _585;
+        _671 = _658;
     }
-    bool locked = _598;
-    float _606;
+    bool locked = _671;
+    float _679;
     if (locked)
     {
-        _606 = ((device float*)&_579.reference[line])[3u];
+        _679 = ((device float*)&_652.reference[line])[3u];
     }
     else
     {
-        _606 = 0.0;
+        _679 = 0.0;
     }
-    float predicted = ((25.0 * float(spp)) - 0.5) + _606;
+    float predicted = ((25.0 * float(spp)) - 0.5) + _679;
     bool keyed = false;
     float coarse = -1000000000.0;
     if (tip < (porch - 0.07999999821186065673828125))
@@ -214,14 +232,14 @@ kernel void main0(device Raster& _72 [[buffer(1)]], constant Params& _414 [[buff
         int param_2 = 46 * spp;
         int param_3 = spp;
         float param_4 = threshold;
-        float _638 = plausible_crossing(param, param_1, param_2, param_3, param_4, _72);
-        coarse = _638;
+        float _710 = plausible_crossing(param, param_1, param_2, param_3, param_4, _72);
+        coarse = _710;
     }
     if (coarse < (-100000000.0))
     {
         if (!locked)
         {
-            _567.measurement[line] = float4(0.0, porch, 0.0, 1000000.0);
+            _640.measurement[line] = float4(0.0, porch, 0.0, 1000000.0);
             return;
         }
         keyed = true;
@@ -252,7 +270,7 @@ kernel void main0(device Raster& _72 [[buffer(1)]], constant Params& _414 [[buff
     uint param_9 = base;
     float param_10 = edge;
     int param_11 = spp;
-    float black = keyed_black(param_9, param_10, param_11, _72);
+    float black = keyed_black(param_9, param_10, param_11, _72, _372);
     float offset = edge - ((25.0 * float(spp)) - 0.5);
     int shift = int(round(offset));
     uint bstart = uint((31 * spp) + shift);
@@ -267,15 +285,15 @@ kernel void main0(device Raster& _72 [[buffer(1)]], constant Params& _414 [[buff
         sn += (v * sin(p));
     }
     float amplitude = (2.0 * length(float2(c, sn))) / float(n);
-    float _835;
-    if (_414.region == 1u)
+    float _907;
+    if (_372.region == 1u)
     {
-        _835 = ((line & 1u) == 1u) ? 1.5 : 4.5;
+        _907 = ((line & 1u) == 1u) ? 1.5 : 4.5;
     }
     else
     {
-        _835 = 5.5;
+        _907 = 5.5;
     }
-    float burst_axis = _835;
-    _567.measurement[line] = float4(precise::atan2(-sn, c) - ((burst_axis * 6.283185482025146484375) / 12.0), black, amplitude, keyed ? 500000.0 : offset);
+    float burst_axis = _907;
+    _640.measurement[line] = float4(precise::atan2(-sn, c) - ((burst_axis * 6.283185482025146484375) / 12.0), black, amplitude, keyed ? 500000.0 : offset);
 }
