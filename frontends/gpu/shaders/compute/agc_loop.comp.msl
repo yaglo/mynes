@@ -1,0 +1,164 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+#pragma clang diagnostic ignored "-Wmissing-braces"
+
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+template<typename T, size_t Num>
+struct spvUnsafeArray
+{
+    T elements[Num ? Num : 1];
+
+    thread T& operator [] (size_t pos) thread
+    {
+        return elements[pos];
+    }
+    constexpr const thread T& operator [] (size_t pos) const thread
+    {
+        return elements[pos];
+    }
+
+    device T& operator [] (size_t pos) device
+    {
+        return elements[pos];
+    }
+    constexpr const device T& operator [] (size_t pos) const device
+    {
+        return elements[pos];
+    }
+
+    constexpr const constant T& operator [] (size_t pos) const constant
+    {
+        return elements[pos];
+    }
+
+    threadgroup T& operator [] (size_t pos) threadgroup
+    {
+        return elements[pos];
+    }
+    constexpr const threadgroup T& operator [] (size_t pos) const threadgroup
+    {
+        return elements[pos];
+    }
+};
+
+struct Params
+{
+    uint total_count;
+    uint samples_per_line;
+    uint num_lines;
+    float target_level;
+    float attack_coeff;
+    float release_coeff;
+    float min_gain;
+    float max_gain;
+    float attack_slew_db;
+    float noise_peak;
+    float pad0;
+    float pad1;
+};
+
+struct DataBuf
+{
+    float data[1];
+};
+
+struct Gains
+{
+    float4 gains[1];
+};
+
+constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
+
+static inline __attribute__((always_inline))
+float to_db(thread const float& x)
+{
+    return 6.020599842071533203125 * log2(x);
+}
+
+static inline __attribute__((always_inline))
+float from_db(thread const float& db)
+{
+    return exp2(db / 6.020599842071533203125);
+}
+
+kernel void main0(constant Params& _31 [[buffer(0)]], device DataBuf& _87 [[buffer(1)]], device Gains& _199 [[buffer(2)]], uint3 gl_LocalInvocationID [[thread_position_in_threadgroup]])
+{
+    threadgroup spvUnsafeArray<float, 320> tip_mean;
+    threadgroup spvUnsafeArray<float, 320> tip_sigma;
+    threadgroup spvUnsafeArray<float, 320> porch_mean;
+    uint spp = _31.samples_per_line / 341u;
+    for (uint line = gl_LocalInvocationID.x; (line < _31.num_lines) && (line < 320u); line += 256u)
+    {
+        uint start = line * _31.samples_per_line;
+        float s = 0.0;
+        float p = 0.0;
+        uint _73 = 8u * spp;
+        for (uint x = _73; x < (20u * spp); x++)
+        {
+            s += _87.data[start + x];
+        }
+        uint _102 = 46u * spp;
+        for (uint x_1 = _102; x_1 < (49u * spp); x_1++)
+        {
+            p += _87.data[start + x_1];
+        }
+        float n = float(12u * spp);
+        float m = s / n;
+        float d2 = 0.0;
+        uint _134 = 8u * spp;
+        for (uint x_2 = _134; x_2 < (20u * spp); x_2++)
+        {
+            float d = _87.data[start + x_2] - m;
+            d2 += (d * d);
+        }
+        tip_mean[line] = m;
+        tip_sigma[line] = sqrt(d2 / n);
+        porch_mean[line] = p / float(3u * spp);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (gl_LocalInvocationID.x != 0u)
+    {
+        return;
+    }
+    float4 state = _199.gains[_31.num_lines];
+    float gain_db = state.x;
+    bool fresh = state.w == 0.0;
+    float _247;
+    for (uint line_1 = 0u; (line_1 < _31.num_lines) && (line_1 < 320u); line_1++)
+    {
+        float depth = fast::max((porch_mean[line_1] - tip_mean[line_1]) + (_31.noise_peak * tip_sigma[line_1]), 0.0);
+        if (depth > 9.9999997473787516355514526367188e-05)
+        {
+            float param = depth / _31.target_level;
+            _247 = to_db(param);
+        }
+        else
+        {
+            _247 = -60.0;
+        }
+        float measured_db = _247;
+        if (fresh)
+        {
+            gain_db = -measured_db;
+            fresh = false;
+        }
+        float excess = measured_db + gain_db;
+        if (excess > 0.0)
+        {
+            gain_db -= fast::min(_31.attack_coeff * excess, _31.attack_slew_db);
+        }
+        else
+        {
+            gain_db += fast::min(_31.release_coeff, -excess);
+        }
+        float param_1 = _31.min_gain;
+        float param_2 = _31.max_gain;
+        gain_db = fast::clamp(gain_db, to_db(param_1), to_db(param_2));
+        float param_3 = gain_db;
+        _199.gains[line_1] = float4(from_db(param_3), depth, tip_sigma[line_1], 0.0);
+    }
+    _199.gains[_31.num_lines] = float4(gain_db, 0.0, 0.0, 1.0);
+}

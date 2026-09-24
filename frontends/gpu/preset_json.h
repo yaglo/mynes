@@ -434,7 +434,8 @@ static inline bool preset_json_save(const PhysicalPreset *p, const char *path)
     fprintf(f, "        \"agc_attack_ms\": %.2f,\n",        p->rf.agc_attack_ms);
     fprintf(f, "        \"agc_release_ms\": %.2f,\n",       p->rf.agc_release_ms);
     fprintf(f, "        \"sound_am_rejection_db\": %.2f,\n", p->rf.sound_am_rejection_db);
-    fprintf(f, "        \"icpm_deg\": %.2f\n",              p->rf.icpm_deg);
+    fprintf(f, "        \"icpm_deg\": %.2f,\n",             p->rf.icpm_deg);
+    fprintf(f, "        \"detector\": %d\n",                p->rf.detector);
     fprintf(f, "    },\n");
 
     /* ---- Console supply ---- */
@@ -807,6 +808,7 @@ static inline void preset_json__assign(PhysicalPreset *p, PresetJsonSection sect
         else MATCH_FLOAT(PJSON_SEC_RF, "agc_release_ms",       p->rf.agc_release_ms)
         else MATCH_FLOAT(PJSON_SEC_RF, "sound_am_rejection_db", p->rf.sound_am_rejection_db)
         else MATCH_FLOAT(PJSON_SEC_RF, "icpm_deg",             p->rf.icpm_deg)
+        else MATCH_INT  (PJSON_SEC_RF, "detector",             p->rf.detector)
 
         /* ---- Console supply ---- */
         else MATCH_FLOAT(PJSON_SEC_PSU, "adaptor_vac",            p->psu.adaptor_vac)
