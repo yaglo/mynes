@@ -5,6 +5,7 @@
 #include "video_gpu.h"
 #include "signal_precompute.h"
 #include "gpu_half.h"
+#include "preset_json.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -448,8 +449,97 @@ static void line_energy(SDL_GPUDevice *gpu) {
     }
 }
 
+/* Monitors that show the whole active raster, border included: studio and
+ * reference monitors in underscan, arcade and computer monitors, and the
+ * PC monitor behind a scaler. Every other shipped preset is a household
+ * set, whose service alignment hides the border. */
+static const char *const border_monitors[] = {
+    "sony_pvm_14l2", "sony_pvm_20m4u", "studio_pvm", "reference_composite", "measured_glare_experiment",
+    "nec_xm29_arcade", "arcade_cabinet", "sony_gdm_fw900", "commodore_1702", "warm_desktop_monitor",
+};
+
+/* The landing at the edge of the visible glass along n output pixels (a
+ * row, or a column with stride the width): the display pass clips the
+ * light where the tube-face warp of the output coordinate, with curvature
+ * k along the scan and the other coordinate at other_uv, leaves [0, 1]
+ * (crt_display.frag.glsl), so the landing is interpolated to that point. */
+static float glass_inside(int j, int n, float k, float other_uv, bool far_edge) {
+    float u = (j + .5f) / n - .5f, o = other_uv - .5f;
+    float face = u * (1 + k * (u * u + o * o)) + .5f;
+    return far_edge ? 1 - face : face;
+}
+static float glass_edge(const float *map, int n, int stride, float k, float other_uv, bool far_edge) {
+    for (int i = 1; i < n; i++) {
+        int j = far_edge ? n - 1 - i : i;
+        if (glass_inside(j, n, k, other_uv, far_edge) < 0) continue;
+        /* The glass edge lies between this pixel and the one before it, or
+         * half a pixel outside the first one. */
+        int a = far_edge ? j + 1 : j - 1;
+        float ia = glass_inside(a, n, k, other_uv, far_edge), ib = glass_inside(j, n, k, other_uv, far_edge);
+        float la = map[(size_t)a * stride * 4 + 1], lb = map[(size_t)j * stride * 4 + 1];   /* green */
+        return la + (lb - la) * -ia / (ib - ia);
+    }
+    return NAN;
+}
+
+/* A household set's service alignment hides the 2C02's border: through the
+ * deflection map, the glass edges land within 2 dots of the picture at the
+ * sides and within a line of it at the bottom (the border is 14.5 dots of
+ * the 282.7-dot active line on the left, 11 dots and 1.2 of blanking on the
+ * right, two lines below). A monitor shows most of the side border. */
+static void household_overscan(SDL_GPUDevice *gpu) {
+    enum { W = 1128, H = 846 };
+    static char names[64][128], paths[64][512];
+    int count = preset_json_scan_dir(MYNES_TEST_PRESET_DIR, names, paths, 64);
+    CHECK(count >= 20);
+    SignalPrecompute sp; VideoChain c; VideoGPUChain v;
+    CHECK(chain(gpu, &v, &c, &sp, SIGNAL_REGION_NTSC, VIDEO_CONN_COMPOSITE, VIDEO_COMB_NONE));
+    CHECK(video_gpu_set_beam_params(&v, gpu, W, H, 4, .3f, .5f));
+    static uint16_t codes[256 * 240];
+    for (int i = 0; i < 256 * 240; i++) codes[i] = 0x0f;
+    set_backdrop(&v, &sp, 0x0f);
+    float *dx = malloc(W * H * 16), *dy = malloc(W * H * 16);
+    const DecodeWindow *w = &v.window;
+    int households = 0;
+    for (int k = 0; k < count; k++) {
+        PhysicalPreset p;
+        CHECK(preset_json_load(&p, paths[k]));
+        bool monitor = false;
+        for (size_t m = 0; m < sizeof border_monitors / sizeof *border_monitors; m++)
+            monitor |= strcmp(names[k], border_monitors[m]) == 0;
+        c.tv.overscan = p.tv.overscan; c.tv.h_size = p.tv.h_size; c.tv.v_size = p.tv.v_size;
+        c.tv.h_pos = p.tv.h_pos; c.tv.v_pos = p.tv.v_pos;
+        c.tv.barrel = p.tv.barrel; c.tv.barrel_v = p.tv.barrel_v;
+        c.tv.keystone = p.tv.keystone; c.tv.rotation = p.tv.rotation;
+        c.tv.skew_x = p.tv.skew_x; c.tv.skew_y = p.tv.skew_y;
+        CHECK(frames(gpu, &v, &sp, codes, 2 * k, 1, NULL));
+        CHECK(gpu_buffer_download(gpu, v.buf_deflection_x, dx, W * H * 16));
+        CHECK(gpu_buffer_download(gpu, v.buf_deflection_y, dy, W * H * 16));
+        float kh = p.tv.barrel, kv = p.tv.barrel_v != 0 ? p.tv.barrel_v : p.tv.barrel;
+        float mid_v = (H / 2 + .5f) / H, mid_u = (W / 2 + .5f) / W;
+        const float *row = dx + (size_t)(H / 2) * W * 4, *col = dy + (size_t)(W / 2) * 4;
+        float x0 = glass_edge(row, W, 1, kh, mid_v, false), x1 = glass_edge(row, W, 1, kh, mid_v, true);
+        float y1 = glass_edge(col, H, W, kv, mid_u, true);
+        float left = SIGNAL_PICTURE_DOT - (w->start_dot + x0 / w->spp);
+        float right = (w->start_dot + x1 / w->spp) - (SIGNAL_PICTURE_DOT + SIGNAL_NES_WIDTH);
+        float bottom = (y1 - w->picture_row) - SIGNAL_NES_HEIGHT;
+        printf("  %-26s %s: border %5.2f dots left, %5.2f right, %5.2f lines below\n", names[k],
+               monitor ? "monitor  " : "household", left, right, bottom);
+        if (monitor) {
+            CHECK(left > 8 && right > 8);
+        } else {
+            CHECK(left <= 2 && right <= 2 && bottom <= 1);
+            households++;
+        }
+    }
+    printf("Household sets: %d of %d presets hide the border to 2 dots\n", households, count);
+    CHECK(households >= 12);
+    free(dx); free(dy); video_gpu_destroy(&v, gpu);
+}
+
 int test_border(SDL_GPUDevice *gpu) {
     window_arithmetic();
+    household_overscan(gpu);
     backdrop_decodes(gpu, VIDEO_CONN_COMPOSITE, VIDEO_COMB_NONE, "composite");
     backdrop_decodes(gpu, VIDEO_CONN_SVIDEO, VIDEO_COMB_NONE, "S-Video");
     backdrop_decodes(gpu, VIDEO_CONN_COMPOSITE, VIDEO_COMB_3LINE, "composite, 3-line comb");

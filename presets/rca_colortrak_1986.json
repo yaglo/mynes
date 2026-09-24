@@ -87,7 +87,7 @@
         "luma_peaking": 0.0,
         "h_pos": 0.0,
         "v_pos": 0.0,
-        "h_size": 1.0,
+        "h_size": 1.0222,
         "v_size": 1.0,
         "halation_tint_r": 1.0,
         "halation_tint_g": 1.0,
@@ -104,7 +104,7 @@
         "skew_x": 0,
         "skew_y": 0,
         "scanline_wobble": 0,
-        "overscan": 0.012
+        "overscan": 0.04
     },
     "console_coupling_R": 75.0,
     "console_amp_bw": 6000000,
