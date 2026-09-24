@@ -84,6 +84,7 @@ int main(int argc, char **argv) {
     }
     nes_load_mapper(&nes, rom.mapper, rom.prg_rom, rom.prg_size,
                     rom.chr_rom, rom.chr_size, rom.mirroring);
+    nes_rom_apply_trainer(&rom, &nes.mapper);
     if (rom.tv_system == NES_TV_PAL) nes_set_region(&nes, NES_REGION_PAL);
     if (region >= 0) nes_set_region(&nes, region);
     nes_reset(&nes);
