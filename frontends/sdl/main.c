@@ -124,6 +124,9 @@ static SDL_Window   *window;     /* forward decl for apply_display_for_nes_regio
  * can re-apply the appropriate display mode when entering/leaving
  * exclusive fullscreen. */
 static int nes_region_current = NES_REGION_NTSC;
+/* --pal: every ROM runs as PAL, whatever its header says. */
+static bool force_pal = false;
+static int apply_rom_region(void);   /* fwd decl for the ROM browser */
 
 /* ============================================================================
  * Audio Ring Buffer
@@ -2093,9 +2096,13 @@ void handle_input(void) {
                                 new_rom.chr_rom, new_rom.chr_size,
                                 new_rom.mirroring);
                             nes_rom_apply_trainer(&new_rom, &nes.mapper);
-                            nes_reset(&nes);
+                            /* The mapper now points into new_rom, so the
+                             * old image is no longer referenced. */
+                            nes_rom_free(&rom);
                             rom = new_rom;
                             rom_loaded = true;
+                            apply_rom_region();
+                            nes_reset(&nes);
                             saves_attach(browser.chosen_path);
                             mynes_config_add_recent(&mynes_config,
                                                     browser.chosen_path);
@@ -2446,6 +2453,48 @@ static void apply_display_for_nes_region(int nes_region) {
     }
 }
 
+/* Put the console, the composite pipeline and the display rate in the
+ * loaded ROM's region (or PAL under --pal). Called at startup and for each
+ * ROM the browser loads, before nes_reset. Without a ROM the browser runs
+ * with NTSC defaults. Returns the region. */
+static int apply_rom_region(void) {
+    int region = NES_REGION_NTSC;
+    if (force_pal) {
+        region = NES_REGION_PAL;
+    } else if (rom_loaded && rom.tv_system == NES_TV_PAL) {
+        region = NES_REGION_PAL;
+        printf("Region: PAL (auto-detected from ROM header)\n");
+    }
+    nes_set_region(&nes, region);
+    if (region == NES_REGION_PAL)
+        printf("Region: PAL (312 scanlines, 1.66MHz CPU)\n");
+    /* ppu_set_region selects the built-in palette; keep the one in use. */
+    if (current_palette >= 0 && current_palette < palette_count)
+        nes.ppu.color_palette = palettes[current_palette].colors;
+
+    /* Wire the same region into the composite pipeline so PAL ROMs get
+     * 2C07 voltages, YUV decoding, and per-line V-flip. Safe to call
+     * after comp_init — comp_set_region rebuilds the signal table, FIR
+     * coefficients, and the output color matrix to match. */
+    comp_set_region(&composite,
+                    region == NES_REGION_PAL ? COMP_REGION_PAL
+                                             : COMP_REGION_NTSC);
+
+    /* Compute the derived PAL palette from the just-initialized
+     * composite decoder state, so palettes[2] holds 2C07 RGB values
+     * that are mathematically consistent with what the waveform
+     * pipeline will produce. */
+    palette_refresh_composite_derived();
+
+    /* Match the display refresh rate / vsync policy to the NES region's
+     * native frame rate. PAL on a 60 Hz display is the most visible
+     * mismatch — apply_display_for_nes_region tries exclusive display
+     * mode switching first, then falls back to disabling vsync so the
+     * main-loop timer paces frames without stutter. */
+    apply_display_for_nes_region(region);
+    return region;
+}
+
 void toggle_fullscreen(void) {
     Uint32 flags = SDL_GetWindowFlags(window);
     if (flags & SDL_WINDOW_FULLSCREEN_DESKTOP)
@@ -2627,7 +2676,6 @@ int main(int argc, char *argv[]) {
 
     const char *rom_path = NULL;
     const char *palette_path = NULL;
-    int region = NES_REGION_NTSC;
 
     /* First positional argument that isn't a recognised option is the ROM. */
     for (int i = 1; i < argc; i++) {
@@ -2640,7 +2688,7 @@ int main(int argc, char *argv[]) {
         } else if (strcmp(argv[i], "--no-composite") == 0) {
             composite_enabled = false;
         } else if (strcmp(argv[i], "--pal") == 0) {
-            region = NES_REGION_PAL;
+            force_pal = true;
         } else if (strcmp(argv[i], "--scale") == 0 && i + 1 < argc) {
             char *endptr = NULL;
             errno = 0;
@@ -2878,30 +2926,8 @@ int main(int argc, char *argv[]) {
 
     apu_set_audio_callback(&nes.apu, apu_sample_callback, NULL);
 
-    /* Set region — auto-detect from ROM header, or override with --pal.
-     * Without a ROM the browser runs with NTSC defaults. */
-    if (rom_loaded && region == NES_REGION_NTSC && rom.tv_system == NES_TV_PAL) {
-        region = NES_REGION_PAL;
-        printf("Region: PAL (auto-detected from ROM header)\n");
-    }
-    if (region == NES_REGION_PAL) {
-        nes_set_region(&nes, NES_REGION_PAL);
-        printf("Region: PAL (312 scanlines, 1.66MHz CPU)\n");
-    }
-
-    /* Wire the same region into the composite pipeline so PAL ROMs get
-     * 2C07 voltages, YUV decoding, and per-line V-flip. Safe to call
-     * after comp_init — comp_set_region rebuilds the signal table, FIR
-     * coefficients, and the output color matrix to match. */
-    comp_set_region(&composite,
-                    region == NES_REGION_PAL ? COMP_REGION_PAL
-                                             : COMP_REGION_NTSC);
-
-    /* Compute the derived PAL palette from the just-initialized
-     * composite decoder state, so palettes[2] holds 2C07 RGB values
-     * that are mathematically consistent with what the waveform
-     * pipeline will produce. */
-    palette_refresh_composite_derived();
+    /* Region — auto-detected from the ROM header, or forced by --pal. */
+    int region = apply_rom_region();
 
 #ifdef MYNES_CRT_CAPTURE
     const char *crt_capture_path = getenv("MYNES_CRT_CAPTURE");
@@ -2922,13 +2948,6 @@ int main(int argc, char *argv[]) {
         }
     }
 #endif
-
-    /* Match the display refresh rate / vsync policy to the NES region's
-     * native frame rate. PAL on a 60 Hz display is the most visible
-     * mismatch — apply_display_for_nes_region tries exclusive display
-     * mode switching first, then falls back to disabling vsync so the
-     * main-loop timer paces frames without stutter. */
-    apply_display_for_nes_region(region);
 
     /* Apply the region-appropriate default palette to the PPU, unless
      * the user passed --palette on the command line (in which case
@@ -2991,7 +3010,7 @@ int main(int argc, char *argv[]) {
      * Audio stays smooth because game logic always runs on time.
      */
     Uint64 freq = SDL_GetPerformanceFrequency();
-    Uint64 frame_ticks = freq / (region == NES_REGION_PAL ? 50 : 60);
+    Uint64 frame_ticks = 0;
     Uint64 next_frame = SDL_GetPerformanceCounter();
     int frames_behind = 0;
     const int MAX_SKIP = 4;
@@ -3003,6 +3022,8 @@ int main(int argc, char *argv[]) {
 
     while (running) {
         handle_input();
+        /* A ROM loaded from the browser can change the region. */
+        frame_ticks = freq / (nes_region_current == NES_REGION_PAL ? 50 : 60);
         /* Battery RAM reaches disk within a couple of seconds of a change. */
         if (saves.battery && SDL_GetTicks() >= battery_next_check) {
             battery_next_check = SDL_GetTicks() + 2000;
