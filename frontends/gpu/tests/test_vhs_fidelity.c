@@ -77,7 +77,7 @@ static void rig_run(Rig *r, SDL_GPUDevice *gpu, const float *raster, uint32_t fr
     static float buf[N_RASTER];
     CHECK(chain_upload_input(&r->sc, gpu, raster, N_RASTER * sizeof(float)));
     SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(gpu);
-    CHECK(vhs_gpu_frame(&r->g, &r->sc, gpu, cmd, frame));
+    CHECK(vhs_gpu_frame(&r->g, &r->sc, gpu, cmd, frame, 264.0f / 788.0f));
     CHECK(SDL_SubmitGPUCommandBuffer(cmd));
     if (table) CHECK(gpu_buffer_upload(gpu, r->g.lines, table, VHS_TABLE_LINES * sizeof(VHSLineEntry)));
     if (defects) {

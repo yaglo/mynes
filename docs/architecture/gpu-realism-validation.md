@@ -65,8 +65,10 @@ luma playback, 1H chroma comb). The host builds a timing table and a dropout
 list for each frame in `vhs_deck.c`. The stage is active only for NTSC
 composite and RF; separated, component and RGB inputs bypass it. Units inside
 the kernels are IRE referenced to the input sync. The deck's keyed AGC holds
-NES sync at -40 IRE (119.4 IRE per chain unit) and the deck outputs 7.14 mV per
-IRE, so its output is standard level, 8% above the NES itself.
+the source's sync at -40 IRE, 119.4 IRE per chain unit for the NES's 264 mV
+sync and 100 for an encoder IC's standard 40 IRE one (the RGB encoder source
+and `mynes_video`), and the deck outputs 7.14 mV per IRE, so its output is
+standard level, 8% above the NES itself.
 
 ### Record
 

@@ -1554,7 +1554,8 @@ bool video_gpu_process(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
 
     /* ---- 1. Upload waveform (copy pass in shared cmd) ---- */
     if (!chain_upload_input_cmd(&vgc->sig_chain, gpu, master_cmd, waveform, upload_bytes) ||
-        !vhs_gpu_frame(&vgc->vhs, &vgc->sig_chain, gpu, master_cmd, vgc->signal_frame_counter - 1)) {
+        !vhs_gpu_frame(&vgc->vhs, &vgc->sig_chain, gpu, master_cmd, vgc->signal_frame_counter - 1,
+                       -vgc->raster_sync_level)) {
         SDL_SubmitGPUCommandBuffer(master_cmd);
         fprintf(stderr, "video_gpu_process: waveform upload failed\n");
         return false;
@@ -2264,7 +2265,8 @@ bool video_gpu_process_full(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     vgc->demod_line_phase = phase_line_adv * 2.0f * (float)M_PI / 12.0f;
     update_demod_params(vgc);
     vgc->sig_chain.current_buf = 0;
-    if (!vhs_gpu_frame(&vgc->vhs, &vgc->sig_chain, gpu, cmd, vgc->signal_frame_counter - 1) ||
+    if (!vhs_gpu_frame(&vgc->vhs, &vgc->sig_chain, gpu, cmd, vgc->signal_frame_counter - 1,
+                       -vgc->raster_sync_level) ||
         !chain_run_cmd(&vgc->sig_chain, cmd)) {
         vgc->deflection_cache_valid = false;
         SDL_CancelGPUCommandBuffer(cmd);
@@ -2391,7 +2393,8 @@ bool video_gpu_process_rgb(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     vgc->demod_line_phase = src->phase_line_adv * 2.0f * (float)M_PI / 12.0f;
     update_demod_params(vgc);
     vgc->sig_chain.current_buf = 0;
-    if (!vhs_gpu_frame(&vgc->vhs, &vgc->sig_chain, gpu, cmd, vgc->signal_frame_counter - 1) ||
+    if (!vhs_gpu_frame(&vgc->vhs, &vgc->sig_chain, gpu, cmd, vgc->signal_frame_counter - 1,
+                       -vgc->raster_sync_level) ||
         !chain_run_cmd(&vgc->sig_chain, cmd)) {
         vgc->deflection_cache_valid = false;
         SDL_CancelGPUCommandBuffer(cmd);
