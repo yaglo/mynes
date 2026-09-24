@@ -57,6 +57,12 @@
 /* NES visible screen dimensions (constant, hardware-defined). */
 #define SIGNAL_NES_WIDTH       256   /* visible PPU dots per scanline */
 #define SIGNAL_NES_HEIGHT      240   /* visible scanlines per frame */
+/* Raster dot where the 2C02's picture starts, counted from the leading edge
+ * of horizontal sync (raster_encode.comp.glsl): 25 dots of sync, the back
+ * porch with the burst at dots 29 to 43, the grey pulse at dot 49 and 15
+ * dots of border. raster_encode.comp.glsl and receiver_lock.comp.glsl carry
+ * the same figure. */
+#define SIGNAL_PICTURE_DOT     65
 
 /* Samples per NES pixel (PPU dot). 8 for NTSC, 10 for PAL.
  * The colorburst subcarrier has 12 samples per cycle in both regions:

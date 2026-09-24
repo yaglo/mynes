@@ -632,7 +632,7 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
     if (ctx->split_mode && ctx->raw_tex && chain) {
         const TVDisplayParams *tv = &chain->tv;
         float active_dots, picture_left, active_lines, picture_top;
-        decode_window_geometry(chain->signal_fmt.region, chain->signal_fmt.samples_per_pixel, 65,
+        decode_window_geometry(chain->signal_fmt.region, chain->signal_fmt.samples_per_pixel, SIGNAL_PICTURE_DOT,
                                &active_dots, &picture_left, &active_lines, &picture_top);
         int line0 = (int)fmaxf(0.0f, ceilf(-picture_top)), line1 = (int)fminf(240.0f, active_lines - picture_top);
         float hs = tv->h_size > 0.01f ? tv->h_size : 1.0f, vs = tv->v_size > 0.01f ? tv->v_size : 1.0f;

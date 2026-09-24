@@ -255,7 +255,7 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     vgc->signal_line_phase = signal_region_line_phase(chain->signal_fmt.region);
     /* Decode everything the receiver scans, the console's border included. */
     decode_window_raster(&vgc->window, chain->signal_fmt.region, chain->signal_fmt.samples_per_pixel,
-                         chain->signal_fmt.dots_per_line, 65);
+                         chain->signal_fmt.dots_per_line, SIGNAL_PICTURE_DOT);
     vgc->backdrop_entry = 0x0f;
 
     /* Initialize stage indices to -1 (not registered). */
@@ -1543,7 +1543,7 @@ static void update_demod_params(VideoGPUChain *vgc) {
     p.dp = vgc->demod_dp;
     p.param_a = 1;
     p.samples_per_line = (uint32_t)vgc->raster_fmt.samples_per_line;
-    p.line_phase_inc = (float)(65 * vgc->signal_fmt.samples_per_pixel); /* active offset */
+    p.line_phase_inc = (float)(SIGNAL_PICTURE_DOT * vgc->signal_fmt.samples_per_pixel); /* the picture's first sample */
     p.burst_reference = demod_burst_reference(vgc);
     chain_update_params(&vgc->sig_chain, vgc->stage_chroma_demod, &p, sizeof(p));
 }

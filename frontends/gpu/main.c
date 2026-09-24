@@ -1433,8 +1433,8 @@ int main(int argc, char **argv) {
          * decode window of the two regions. */
         int wf_size = SIGNAL_MAX_FRAME_FLOATS;
         DecodeWindow ntsc_window, pal_window;
-        decode_window_raster(&ntsc_window, SIGNAL_REGION_NTSC, SIGNAL_NTSC_SAMPLES_PER_PIXEL, 341, 65);
-        decode_window_raster(&pal_window, SIGNAL_REGION_PAL, SIGNAL_PAL_SAMPLES_PER_PIXEL, 341, 65);
+        decode_window_raster(&ntsc_window, SIGNAL_REGION_NTSC, SIGNAL_NTSC_SAMPLES_PER_PIXEL, 341, SIGNAL_PICTURE_DOT);
+        decode_window_raster(&pal_window, SIGNAL_REGION_PAL, SIGNAL_PAL_SAMPLES_PER_PIXEL, 341, SIGNAL_PICTURE_DOT);
         size_t rgb_floats = decode_window_samples(&ntsc_window);
         if (decode_window_samples(&pal_window) > rgb_floats) rgb_floats = decode_window_samples(&pal_window);
         if ((size_t)wf_size > rgb_floats) rgb_floats = (size_t)wf_size;
@@ -2368,7 +2368,7 @@ int main(int argc, char **argv) {
                         gpu_buffer_download(gpu, _sc->aux[i_idx], _i_buf, _ts * sizeof(float));
                         gpu_buffer_download(gpu, _sc->aux[q_idx], _q_buf, _ts * sizeof(float));
                         int _sl = 120 * video_gpu_chain.raster_fmt.samples_per_line
-                                + 65 * video_gpu_chain.raster_fmt.samples_per_pixel;
+                                + SIGNAL_PICTURE_DOT * video_gpu_chain.raster_fmt.samples_per_pixel;
                         printf("Chroma I[120,0..7]: %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f\n",
                                _i_buf[_sl], _i_buf[_sl+1], _i_buf[_sl+2], _i_buf[_sl+3],
                                _i_buf[_sl+4], _i_buf[_sl+5], _i_buf[_sl+6], _i_buf[_sl+7]);

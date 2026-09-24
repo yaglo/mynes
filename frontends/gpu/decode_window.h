@@ -13,7 +13,7 @@
  *                                raster sample start_dot * spp + x
  *
  * Raster sample 0 is the leading edge of the line's sync (raster_encode),
- * so the console's picture starts at dot picture_dot (65). The picture sits
+ * so the console's picture starts at dot picture_dot (SIGNAL_PICTURE_DOT). The picture sits
  * in the window at (picture_x, picture_row), picture_w x picture_h samples.
  * trace_x0..trace_x1 and trace_row0..trace_row1 are the part of the window
  * the receiver leaves unblanked: the active line and the lines that overlap
@@ -125,11 +125,11 @@ static inline void decode_window_raster(DecodeWindow *w, int region, int spp, in
     decode_window_place(w);
 }
 
-/* The console picture alone, 256 dots from dot 65 and lines 0 to 239: the
- * layout the decoder used before it decoded the border. */
+/* The console picture alone, 256 dots from SIGNAL_PICTURE_DOT and lines 0 to
+ * 239: the layout the decoder used before it decoded the border. */
 static inline void decode_window_picture(DecodeWindow *w, int region, int spp) {
-    decode_window_begin(w, region, spp, 341, 65);
-    w->start_dot = 65;
+    decode_window_begin(w, region, spp, 341, SIGNAL_PICTURE_DOT);
+    w->start_dot = SIGNAL_PICTURE_DOT;
     w->dots = SIGNAL_NES_WIDTH;
     w->first_line = 0;
     w->lines = SIGNAL_NES_HEIGHT;

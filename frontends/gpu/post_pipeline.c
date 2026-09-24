@@ -121,7 +121,7 @@ static bool matrix_decode_rebind(struct SignalChainFwd *chain_fwd,
 /* The picture's place on the receiver's active raster (decode_window.h). */
 void post_pipeline_raster_window(int region, int samples_per_pixel, float *active_dots, float *picture_left,
                                  float *active_lines, float *picture_top) {
-    decode_window_geometry(region, samples_per_pixel, 65, active_dots, picture_left, active_lines, picture_top);
+    decode_window_geometry(region, samples_per_pixel, SIGNAL_PICTURE_DOT, active_dots, picture_left, active_lines, picture_top);
 }
 
 typedef struct {
