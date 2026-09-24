@@ -312,11 +312,13 @@ typedef struct {
  * h_pll selects a second-order loop (proportional h_kp, integral h_ki per
  * line) whose detector gain is h_vblank_gain for h_vblank_lines from
  * vertical sync; it keeps its state across frames. clamp_gain is the
- * keyed black clamp's charge per line, 1 - exp(-1 / clamp lines). */
+ * keyed black clamp's charge per line, 1 - exp(-1 / clamp lines).
+ * frame_step is the colour oscillator's phase over the time since the
+ * last decoded frame beyond count lines of full_width samples (radians). */
 typedef struct {
     uint32_t count, full_width, samples_per_dot, region;
     float h_response, h_kp, h_ki, h_vblank_gain;
-    uint32_t h_pll, h_vblank_lines; float clamp_gain; uint32_t reserved1;
+    uint32_t h_pll, h_vblank_lines; float clamp_gain, frame_step;
 } GpuReceiverPLLParams;
 
 /* Comb filter Y/C separator parameters (matches comb_filter.comp.glsl). */

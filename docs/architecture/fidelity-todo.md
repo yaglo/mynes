@@ -28,7 +28,7 @@ for a hardware measurement listed at the end.
 - [ ] 12. M/H/S. One physical noise origin on RF: FCC-capped modulator level, losses and noise figure give a CNR in the OSD; remove `tv.noise_level` and gun-level pickup on RF presets; hash the gun noise seed (it repeats every 2 frames). WP-B, WP-E, WP-P.
 - [ ] 13. M/H/S. Millimetre and nanosecond units for spot, convergence and jitter; convergence basis in mm. Pixel units change with window size and render scale. WP-F.
 - [ ] 14. M/H/M. Band-limited step resampler at exact fractional time; exact 3-input TND; remove the cubic warp and DMC crosstalk. Aliases sit only 30–46 dB down. WP-I.
-- [ ] 15. M/H/S. Real horizontal timing: the odd-frame 340-dot line in the raster; PI AFC from the M61283FP filter; colour loop advancing by the true line length; PAL broad pulse of 320 dots. WP-A, WP-C.
+- [~] 15. M/H/S. Real horizontal timing. Done: the colour oscillator advances by each frame's true length, from the carrier phase of the frame it decodes, so the 2C02's shortened frame no longer turns the top of the next field's hue (`receiver_pll.comp.glsl`, `test_border`). Open: the odd-frame 340-dot line in the raster; PI AFC from the M61283FP filter; PAL broad pulse of 320 dots. WP-A, WP-C.
 - [ ] 16. M/M/M. Persistence: bypass when invisible; Kuhn-shaped P22 decay; per-channel BFI dark level. Saves 1.2–1.4 ms on 12 presets. WP-H.
 - [ ] 17. L-M/M/M. Large-signal RGB output stage per gun: causal FIR plus to-black RC limit; retire `asym_rise_fall` (wrong sign), `vertical_smear`, `velocity_mod`. WP-E.
 - [ ] 18. M/M/M. PVM ABL/EHT from the G and B boards (attack 0.44–11 ms, release about 0.23 s) using gun_current's current law. WP-E.

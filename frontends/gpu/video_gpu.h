@@ -72,6 +72,10 @@ typedef struct {
     int stage_y_console, stage_y_cable, stage_y_ghost, stage_yc_route;
     bool source_separated;
     int signal_phase_base, signal_line_phase;
+    /* The carrier phase of the last frame the receiver decoded, for the
+     * colour oscillator's step to the next (receiver_pll.comp.glsl). */
+    int receiver_phase_base;
+    bool receiver_phase_known;
     SDL_GPUBuffer *buf_receiver, *buf_receiver_measurements;
     /* The border the PPU draws around the picture: the backdrop's waveform
      * and its hue-0 grey for the raster, and its 9-bit palette entry for an

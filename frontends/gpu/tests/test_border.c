@@ -439,6 +439,38 @@ static void scaler_sees_first_line(SDL_GPUDevice *gpu) {
     }
 }
 
+/* The colour oscillator runs through the whole time between fields: on the
+ * frame after the one the 2C02 shortens by a dot, and on the one after
+ * that, the top of the field decodes with the hue of its middle, where the
+ * burst loop has long settled. */
+static void field_top_hue(SDL_GPUDevice *gpu) {
+    SignalPrecompute sp; VideoChain c; VideoGPUChain v;
+    CHECK(chain(gpu, &v, &c, &sp, SIGNAL_REGION_NTSC, VIDEO_CONN_COMPOSITE, VIDEO_COMB_NONE));
+    set_backdrop(&v, &sp, 0x22);
+    static uint16_t codes[256 * 240];
+    for (int i = 0; i < 256 * 240; i++) codes[i] = 0x22;
+    float *rgb = malloc(v.rgb_size);
+    const DecodeWindow *w = &v.window;
+    double worst = 0;
+    for (unsigned f = 0; f < 10; f++) {
+        CHECK(frames(gpu, &v, &sp, codes, f, 1, rgb));
+        if (f < 6) continue;
+        double top[3] = {0}, middle[3] = {0}, probe[3];
+        for (int line = 2; line < 20; line++) {
+            mean_rgb(&v, rgb, w->picture_row + line, w->picture_x + 400, w->picture_x + 1600, probe);
+            for (int ch = 0; ch < 3; ch++) top[ch] += probe[ch] / 18;
+        }
+        for (int line = 110; line < 128; line++) {
+            mean_rgb(&v, rgb, w->picture_row + line, w->picture_x + 400, w->picture_x + 1600, probe);
+            for (int ch = 0; ch < 3; ch++) middle[ch] += probe[ch] / 18;
+        }
+        for (int ch = 0; ch < 3; ch++) worst = fmax(worst, fabs(top[ch] - middle[ch]));
+    }
+    printf("Field top against middle over four frames: within %.4f\n", worst);
+    CHECK(worst < .01);
+    free(rgb); video_gpu_destroy(&v, gpu);
+}
+
 /* An isolated line carries the light of a line of a uniform field whatever
  * the output row's pitch in raster lines: each row integrates the spot over
  * the lines it covers on the face, 287 active PAL lines, or an NTSC field
@@ -578,5 +610,6 @@ int test_border(SDL_GPUDevice *gpu) {
     encoder_rgb_window(gpu);
     line_energy(gpu);
     scaler_sees_first_line(gpu);
+    field_top_hue(gpu);
     return failures;
 }

@@ -22,7 +22,7 @@ layout(set=1,binding=0) buffer Reference { vec4 reference[]; };
 layout(set=2,binding=0) uniform Params {
     uint count, full_width, samples_per_dot, region;
     float h_response, h_kp, h_ki, h_vblank_gain;
-    uint h_pll, h_vblank_lines; float clamp_gain; uint reserved1;
+    uint h_pll, h_vblank_lines; float clamp_gain, frame_step;
 };
 const float TAU=6.28318530718;
 const float BURST_GAIN=0.05;
@@ -31,6 +31,12 @@ void main() {
     vec4 state=reference[count];
     vec4 loop=h_pll!=0u ? reference[count+1u] : vec4(0);
     float advance=float(full_width%12u)*TAU/12.0;
+    /* The oscillator ran on through the whole time since the last frame
+     * it decoded; the loop below counts count lines of full_width samples,
+     * so the rest (the 2C02's dropped dot every other frame, frames the
+     * renderer skipped) is added here, and the set enters the field on
+     * the burst's phase. */
+    state.x=wrap(state.x+frame_step);
     /* The colour loop acquires once, when the set has never seen a burst;
      * from then on it tracks through retrace and across frames, so no
      * single noisy line at the top of a field sets the hue or the level. */

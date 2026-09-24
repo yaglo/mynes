@@ -1565,6 +1565,25 @@ static void update_demod_params(VideoGPUChain *vgc) {
     chain_update_params(&vgc->sig_chain, vgc->stage_chroma_demod, &p, sizeof(p));
 }
 
+/* The receiver's colour oscillator runs through the time between the frames
+ * it decodes, and receiver_pll advances it by count lines of full_width
+ * samples a frame. The carrier's phase at this frame's first sample says
+ * how much more time passed: the 2C02 drops a dot from every other frame,
+ * 8 samples, and frames the renderer skipped count too. */
+static void update_receiver_frame_step(VideoGPUChain *vgc, int phase_base) {
+    if (vgc->stage_receiver_pll < 0) return;
+    GpuReceiverPLLParams *p = (GpuReceiverPLLParams *)vgc->sig_chain.stages[vgc->stage_receiver_pll].params;
+    int step = 0;
+    if (vgc->receiver_phase_known) {
+        int nominal = (int)((long long)p->count * p->full_width % 12);
+        step = ((phase_base - vgc->receiver_phase_base - nominal) % 12 + 12) % 12;
+        if (step > 6) step -= 12;
+    }
+    p->frame_step = (float)step * 2.0f * (float)M_PI / 12.0f;
+    vgc->receiver_phase_base = phase_base;
+    vgc->receiver_phase_known = true;
+}
+
 static void update_signal_time(VideoGPUChain *vgc) {
     if (vgc->stage_rf >= 0) {
         GpuRFParams *p = (GpuRFParams *)vgc->sig_chain.stages[vgc->stage_rf].params;
@@ -1582,6 +1601,7 @@ bool video_gpu_process(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
                        const float *waveform, float *rgb_out)
 {
     vgc->source_separated=false; // Externally supplied waveform is composite.
+    update_receiver_frame_step(vgc, vgc->signal_phase_base);   /* the caller sets the waveform's phase */
     update_signal_time(vgc);
     const SignalFormat *fmt = &vgc->signal_fmt;
     int total_samples = fmt->total_samples;
@@ -2097,6 +2117,7 @@ void video_gpu_reset_temporal_state(VideoGPUChain *vgc, SDL_GPUDevice *gpu)
         gpu_buffer_upload(gpu, vgc->buf_receiver, zeros,
                           (Uint32)(vgc->raster_fmt.lines + 2) * 4 * sizeof(float));
     }
+    vgc->receiver_phase_known = false;   /* the colour loop acquires afresh */
 
     if (vgc->buf_crt_load) {
         size_t bytes = ((size_t)vgc->window.dots * vgc->window.lines + vgc->window.lines + 1) * sizeof(float);
@@ -2332,6 +2353,7 @@ bool video_gpu_process_full(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     SDL_EndGPUComputePass(pass);
     vgc->signal_phase_base = phase_base;
     vgc->signal_line_phase = phase_line_adv;
+    update_receiver_frame_step(vgc, phase_base);
     update_signal_time(vgc);
     vgc->demod_line_phase = phase_line_adv * 2.0f * (float)M_PI / 12.0f;
     update_demod_params(vgc);
@@ -2465,6 +2487,7 @@ bool video_gpu_process_rgb(VideoGPUChain *vgc, SDL_GPUDevice *gpu, const VideoRG
     for (int k = 0; k < 12; k++) vgc->backdrop[k] = vgc->gray_backdrop[k] = src->setup;
     vgc->signal_phase_base = src->phase_base;
     vgc->signal_line_phase = src->phase_line_adv;
+    update_receiver_frame_step(vgc, src->phase_base);
     update_signal_time(vgc);
     vgc->demod_line_phase = src->phase_line_adv * 2.0f * (float)M_PI / 12.0f;
     update_demod_params(vgc);
