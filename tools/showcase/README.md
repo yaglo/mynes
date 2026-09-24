@@ -199,7 +199,9 @@ it would run, so a plain `encode` after `--fast` replaces the previews;
 README media and flicker crops keep `poster.encode.json`, `still.encode.json`,
 `readme.encode.json` and `flicker.encode.json` with the frame, crop and
 quality settings they were made with, and `encode` makes them again when a
-setting in `shots.json` or `--flicker-scale` changes. A job whose output
+setting in `shots.json` or `--flicker-scale` changes. Outputs made before
+these records existed have none, so the first `encode` after updating makes
+every poster, still, README WebP and flicker crop once more. A job whose output
 fails its checks deletes what it wrote, so the next run builds it again and
 `install` cannot copy it.
 
