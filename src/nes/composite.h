@@ -2227,8 +2227,13 @@ static void comp_apply_barrel(Composite *n) {
             float s = 1.0f + k * (u * u + v2);
             float sx = (u * s + 1.0f) * half_W;
             float sy = (v * s + 1.0f) * half_H;
-            int ix = (int)sx;
-            int iy = (int)sy;
+            /* floorf, not a cast: truncation maps sx in (-1, 0) to ix 0
+             * with a negative fraction, and those weights wrap the u8
+             * result into speckles along the top and left edges. */
+            float fx = floorf(sx);
+            float fy = floorf(sy);
+            int ix = (int)fx;
+            int iy = (int)fy;
             if (ix < 0 || ix >= W - 1 || iy < 0 || iy >= H - 1) {
                 dst[x*3]   = 0;
                 dst[x*3+1] = 0;
@@ -2239,8 +2244,8 @@ static void comp_apply_barrel(Composite *n) {
              * integer multiply-shift. Avoids 12 float→int conversions
              * per pixel that the float path had. Total weights sum to
              * 65536 so the final >>16 recovers the correct scale. */
-            int fx8 = (int)((sx - (float)ix) * 256.0f);
-            int fy8 = (int)((sy - (float)iy) * 256.0f);
+            int fx8 = (int)((sx - fx) * 256.0f);
+            int fy8 = (int)((sy - fy) * 256.0f);
             int ifx = 256 - fx8;
             int ify = 256 - fy8;
             int w00 = ifx * ify;   /* (256-fx)(256-fy) */
