@@ -1,6 +1,8 @@
 #version 450
 // Audio is temporal, not a set of independent scanlines. Keep every IIR,
 // oscillator and noise state across blocks; CPU and GPU use the same layout.
+// Input: 16 filter states, hum phase, rng, then count samples and, when
+// flag 32 is set, count samples of the block's RF sound buzz.
 layout(local_size_x = 1) in;
 layout(set = 0, binding = 0) readonly buffer Input { float src[]; };
 layout(set = 1, binding = 0) buffer Output { float dst[]; };
@@ -40,6 +42,7 @@ void main() {
         if (phase >= 6.28318530718) phase -= 6.28318530718;
         rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5;
         if ((flags & 4u) != 0u) y += (float(rng >> 8)/8388608.0 - 1.0)*effects.w;
+        if ((flags & 32u) != 0u) y += src[18u+count+n];
         for (int i=3; i<6; ++i) y = filter_rc(i,y);
         if ((flags & 8u) != 0u) for (int i=0; i<2; ++i) {
             vec4 b = speaker[2*i];

@@ -151,6 +151,14 @@ typedef struct {
     float noise_floor_dbm;      /* total additive channel noise before video filtering */
     float agc_attack_ms;        /* AGC attack time constant */
     float agc_release_ms;       /* AGC release time constant */
+    /* Sound: the receiver's intercarrier detector rejects the vision
+     * carrier's AM only to this ratio (dB; 0 = 45, a quadrature detector
+     * IC's typical figure), and the console's modulator shifts the carrier
+     * phase by this much from blanking to white (incidental phase
+     * modulation, degrees; 0 = none). Both make the picture audible as
+     * buzz; see AudioRFSoundStage. */
+    float sound_am_rejection_db;
+    float icpm_deg;
 } RFModulatorParams;
 
 /* NTSC SP VHS deck (vhs_deck.c, vhs_tape/vhs_playback shaders): FM luma

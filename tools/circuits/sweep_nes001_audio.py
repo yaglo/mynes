@@ -91,7 +91,7 @@ def main():
     with tempfile.TemporaryDirectory() as d:
         ac, tr, op = run(deck, params, Path(d))
     f, jack_db = ac[:, 0], ac[:, 1]
-    for h in (60, 120, 180, 240, 360, 1000):
+    for h in (60, 120, 180, 240, 360, 1000, 5000, 15734, 20000):
         g = float(np.interp(h, f, jack_db))
         results["supply"].append({"hz": h, "gain_db": g})
         print(f"supply to jack at {h:4d} Hz: {g:+.1f} dB")

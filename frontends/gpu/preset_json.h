@@ -431,7 +431,17 @@ static inline bool preset_json_save(const PhysicalPreset *p, const char *path)
     fprintf(f, "        \"if_asymmetry\": %.6f,\n", p->rf.if_asymmetry);
     fprintf(f, "        \"tuning_offset_hz\": %.6f,\n", p->rf.tuning_offset_hz);
     fprintf(f, "        \"agc_attack_ms\": %.2f,\n",        p->rf.agc_attack_ms);
-    fprintf(f, "        \"agc_release_ms\": %.2f\n",        p->rf.agc_release_ms);
+    fprintf(f, "        \"agc_release_ms\": %.2f,\n",       p->rf.agc_release_ms);
+    fprintf(f, "        \"sound_am_rejection_db\": %.2f,\n", p->rf.sound_am_rejection_db);
+    fprintf(f, "        \"icpm_deg\": %.2f\n",              p->rf.icpm_deg);
+    fprintf(f, "    },\n");
+
+    /* ---- Console supply ---- */
+    fprintf(f, "    \"psu\": {\n");
+    fprintf(f, "        \"adaptor_vac\": %.2f,\n",          p->psu.adaptor_vac);
+    fprintf(f, "        \"reservoir_uf\": %.1f,\n",         p->psu.reservoir_uf);
+    fprintf(f, "        \"load_ma\": %.1f,\n",              p->psu.load_ma);
+    fprintf(f, "        \"regulator_rejection_db\": %.1f\n", p->psu.regulator_rejection_db);
     fprintf(f, "    },\n");
 
     /* ---- Signal decode overrides ---- */
@@ -467,14 +477,9 @@ static inline bool preset_json_save(const PhysicalPreset *p, const char *path)
                 i + 1 < vhs_count ? "," : "");
     fprintf(f, "    },\n");
 
-    fprintf(f, "    \"audio_psu_hum_amplitude\": %.6f,\n",  p->audio_psu_hum_amplitude);
-    fprintf(f, "    \"audio_hum_frequency\": %.6f,\n", p->audio_hum_frequency);
-    fprintf(f, "    \"audio_hum_harmonic_2\": %.6f,\n", p->audio_hum_harmonic_2);
-    fprintf(f, "    \"audio_hum_harmonic_3\": %.6f,\n", p->audio_hum_harmonic_3);
     fprintf(f, "    \"audio_noise_floor\": %.6f,\n",        p->audio_noise_floor);
     fprintf(f, "    \"audio_saturation_drive\": %.6f,\n",   p->audio_saturation_drive);
     fprintf(f, "    \"audio_cable_length_m\": %.6f,\n",      p->audio_cable_length_m);
-    fprintf(f, "    \"audio_gate_window_v\": %.6f,\n",       p->audio_gate_window_v);
     fprintf(f, "    \"audio_pickup_mv\": %.6f,\n",           p->audio_pickup_mv);
     fprintf(f, "    \"audio_tv_input_kohm\": %.6f,\n",       p->audio_tv_input_kohm);
     fprintf(f, "    \"audio_rf_deemphasis\": %d\n",          p->audio_rf_deemphasis);
@@ -498,6 +503,7 @@ typedef enum {
     PJSON_SEC_TV,
     PJSON_SEC_RF,
     PJSON_SEC_VHS,
+    PJSON_SEC_PSU,
 } PresetJsonSection;
 
 /* The field mapping is independent of whitespace and object order. */
@@ -558,14 +564,9 @@ static inline void preset_json__assign(PhysicalPreset *p, PresetJsonSection sect
         else MATCH_FLOAT(PJSON_SEC_TOP, "chroma_gain",   p->chroma_gain)
 
         /* Audio overrides. */
-        else MATCH_FLOAT(PJSON_SEC_TOP, "audio_psu_hum_amplitude",  p->audio_psu_hum_amplitude)
-        else MATCH_FLOAT(PJSON_SEC_TOP, "audio_hum_frequency", p->audio_hum_frequency)
-        else MATCH_FLOAT(PJSON_SEC_TOP, "audio_hum_harmonic_2", p->audio_hum_harmonic_2)
-        else MATCH_FLOAT(PJSON_SEC_TOP, "audio_hum_harmonic_3", p->audio_hum_harmonic_3)
         else MATCH_FLOAT(PJSON_SEC_TOP, "audio_noise_floor",        p->audio_noise_floor)
         else MATCH_FLOAT(PJSON_SEC_TOP, "audio_saturation_drive",   p->audio_saturation_drive)
         else MATCH_FLOAT(PJSON_SEC_TOP, "audio_cable_length_m",     p->audio_cable_length_m)
-        else MATCH_FLOAT(PJSON_SEC_TOP, "audio_gate_window_v",      p->audio_gate_window_v)
         else MATCH_FLOAT(PJSON_SEC_TOP, "audio_pickup_mv",          p->audio_pickup_mv)
         else MATCH_FLOAT(PJSON_SEC_TOP, "audio_tv_input_kohm",      p->audio_tv_input_kohm)
         else MATCH_INT(PJSON_SEC_TOP, "audio_rf_deemphasis",        p->audio_rf_deemphasis)
@@ -800,6 +801,14 @@ static inline void preset_json__assign(PhysicalPreset *p, PresetJsonSection sect
         else MATCH_FLOAT(PJSON_SEC_RF, "tuning_offset_hz", p->rf.tuning_offset_hz)
         else MATCH_FLOAT(PJSON_SEC_RF, "agc_attack_ms",        p->rf.agc_attack_ms)
         else MATCH_FLOAT(PJSON_SEC_RF, "agc_release_ms",       p->rf.agc_release_ms)
+        else MATCH_FLOAT(PJSON_SEC_RF, "sound_am_rejection_db", p->rf.sound_am_rejection_db)
+        else MATCH_FLOAT(PJSON_SEC_RF, "icpm_deg",             p->rf.icpm_deg)
+
+        /* ---- Console supply ---- */
+        else MATCH_FLOAT(PJSON_SEC_PSU, "adaptor_vac",            p->psu.adaptor_vac)
+        else MATCH_FLOAT(PJSON_SEC_PSU, "reservoir_uf",           p->psu.reservoir_uf)
+        else MATCH_FLOAT(PJSON_SEC_PSU, "load_ma",                p->psu.load_ma)
+        else MATCH_FLOAT(PJSON_SEC_PSU, "regulator_rejection_db", p->psu.regulator_rejection_db)
 
 #undef MATCH_FLOAT
 #undef MATCH_INT
@@ -841,6 +850,7 @@ static inline int preset_json__section(const char *key)
     if (!strcmp(key,"tv")) return PJSON_SEC_TV;
     if (!strcmp(key,"rf")) return PJSON_SEC_RF;
     if (!strcmp(key,"vhs")) return PJSON_SEC_VHS;
+    if (!strcmp(key,"psu")) return PJSON_SEC_PSU;
     return -1;
 }
 

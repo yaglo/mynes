@@ -59,7 +59,7 @@
 
 /* Stage counts. */
 #define VIDEO_STAGE_COUNT  14
-#define AUDIO_STAGE_COUNT  10
+#define AUDIO_STAGE_COUNT  11
 
 /* ============================================================================
  * Mini bitmap font (4x6 pixels, printable ASCII 0x20 .. 0x7E)
@@ -204,6 +204,7 @@ static const char *audio_stage_names[AUDIO_STAGE_COUNT] = {
     "TV Input",          /*  8 */
     "Speaker",           /*  9 */
     "Speaker cap",       /* 10 */
+    "RF sound buzz",     /* 11 */
 };
 
 /* ============================================================================
@@ -324,6 +325,7 @@ static bool audio_stage_enabled(AudioChain *ac, int stage) {
     case 7:  return ac->tv_input_coupling.enabled;
     case 8:  return ac->speaker.enabled;
     case 9:  return ac->speaker_coupling.enabled;
+    case 10: return ac->rf_sound.enabled;
     default: return false;
     }
 }

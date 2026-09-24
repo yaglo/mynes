@@ -259,11 +259,13 @@ static void make_distinctive_preset(PhysicalPreset *p)
     p->contrast    = 0.96f;
     p->chroma_gain = 1.22f;
 
-    /* Audio overrides. */
-    p->audio_psu_hum_amplitude = 0.006f;
-    p->audio_hum_frequency = 60.0f;
-    p->audio_hum_harmonic_2 = 0.3f;
-    p->audio_hum_harmonic_3 = 0.15f;
+    /* Console supply and audio overrides. */
+    p->psu.adaptor_vac = 9.5f;
+    p->psu.reservoir_uf = 1000.0f;
+    p->psu.load_ma = 700.0f;
+    p->psu.regulator_rejection_db = 62.0f;
+    p->rf.sound_am_rejection_db = 40.0f;
+    p->rf.icpm_deg = 6.0f;
     p->audio_noise_floor       = 0.0015f;
     p->audio_saturation_drive  = 1.4f;
     p->audio_cable_length_m    = 2.5f;
@@ -457,11 +459,13 @@ static int compare_presets(const PhysicalPreset *a, const PhysicalPreset *b,
     ASSERT_NEAR(b->contrast,    a->contrast,    FLOAT_TOL, "contrast");
     ASSERT_NEAR(b->chroma_gain, a->chroma_gain, FLOAT_TOL, "chroma_gain");
 
-    /* Audio overrides. */
-    ASSERT_NEAR(b->audio_hum_frequency, a->audio_hum_frequency, FLOAT_TOL, "audio_hum_frequency");
-    ASSERT_NEAR(b->audio_hum_harmonic_2, a->audio_hum_harmonic_2, FLOAT_TOL, "audio_hum_harmonic_2");
-    ASSERT_NEAR(b->audio_hum_harmonic_3, a->audio_hum_harmonic_3, FLOAT_TOL, "audio_hum_harmonic_3");
-    ASSERT_NEAR(b->audio_psu_hum_amplitude, a->audio_psu_hum_amplitude, FLOAT_TOL, "audio_psu_hum_amplitude");
+    /* Console supply and audio overrides. */
+    ASSERT_NEAR(b->psu.adaptor_vac, a->psu.adaptor_vac, FLOAT_TOL, "psu.adaptor_vac");
+    ASSERT_NEAR(b->psu.reservoir_uf, a->psu.reservoir_uf, FLOAT_TOL, "psu.reservoir_uf");
+    ASSERT_NEAR(b->psu.load_ma, a->psu.load_ma, FLOAT_TOL, "psu.load_ma");
+    ASSERT_NEAR(b->psu.regulator_rejection_db, a->psu.regulator_rejection_db, FLOAT_TOL, "psu.regulator_rejection_db");
+    ASSERT_NEAR(b->rf.sound_am_rejection_db, a->rf.sound_am_rejection_db, FLOAT_TOL, "rf.sound_am_rejection_db");
+    ASSERT_NEAR(b->rf.icpm_deg, a->rf.icpm_deg, FLOAT_TOL, "rf.icpm_deg");
     ASSERT_NEAR(b->audio_noise_floor,       a->audio_noise_floor,       FLOAT_TOL, "audio_noise_floor");
     ASSERT_NEAR(b->audio_saturation_drive,  a->audio_saturation_drive,  FLOAT_TOL, "audio_saturation_drive");
     ASSERT_NEAR(b->audio_cable_length_m,    a->audio_cable_length_m,    FLOAT_TOL, "audio_cable_length_m");
@@ -747,7 +751,7 @@ static int test_missing_fields_use_defaults(void)
     ASSERT_NEAR(p.tv.halation_sigma, 0.0f, 1e-9f, "legacy scatter kernel default");
     ASSERT_EQ_INT(p.rf.enabled ? 1 : 0, 0, "rf.enabled default false");
     ASSERT_NEAR(p.console_coupling_R, 0.0f, 1e-9f, "console_coupling_R default 0");
-    ASSERT_NEAR(p.audio_psu_hum_amplitude, 0.0f, 1e-9f, "audio_psu_hum_amplitude default 0");
+    ASSERT_NEAR(p.psu.reservoir_uf, 0.0f, 1e-9f, "psu.reservoir_uf default 0 (nominal NES-001 supply)");
 
     unlink(path);
     return 1;

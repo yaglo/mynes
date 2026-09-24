@@ -38,6 +38,11 @@ struct Playback {
      * captured picture rather than from power-on. */
     unsigned replay_offset;
     float input[AUDIO_BLOCK_CAPACITY], output[AUDIO_BLOCK_CAPACITY];
+    /* On RF the set's sound detector hears the picture: the frame's
+     * per-line level makes the block's buzz, added by either backend. */
+    float aux[AUDIO_BLOCK_CAPACITY];
+    bool aux_valid;
+    AudioVideoFrame frame_load;
     int count, fade;
     float energy;
     AudioState state;
@@ -112,8 +117,9 @@ static void submit_audio(Playback *p, const PlaybackControls *c, Uint64 deadline
     /* An expired GPU block never enters the stream. Reuse its buffers only
      * after the fence signals; CPU fallback starts with the same input state. */
     if (p->audio && p->audio->pending) audio_gpu_poll(p->audio, p->gpu, NULL, NULL);
+    const float *aux = p->aux_valid ? p->aux : NULL;
     if (c->gpu_audio && !fast && p->audio && !p->audio->pending) {
-        if (audio_gpu_begin(p->audio, p->gpu, &c->audio, &p->state, p->input, p->count)) {
+        if (audio_gpu_begin(p->audio, p->gpu, &c->audio, &p->state, p->input, aux, p->count)) {
             Uint64 latest = SDL_GetTicksNS() + 3000000;
             if (deadline > 2000000 && deadline - 2000000 < latest) latest = deadline - 2000000;
             do {
@@ -124,7 +130,7 @@ static void submit_audio(Playback *p, const PlaybackControls *c, Uint64 deadline
             } while (true);
         }
     }
-    if (!processed) audio_chain_process(&c->audio, &p->state, p->input, p->output, p->count);
+    if (!processed) audio_chain_process_aux(&c->audio, &p->state, p->input, aux, p->output, p->count);
     if (p->stream && !fast) {
         int queued = SDL_GetAudioStreamQueued(p->stream) / (int)sizeof(float);
         if (audio_sync_stale(queued, p->count)) {
@@ -256,6 +262,11 @@ static int run(void *user) {
         Uint64 duration = SDL_GetPerformanceCounter() - start;
         ++p->number;
         Uint64 audio_start=SDL_GetTicksNS();
+        p->aux_valid = c.audio.rf_sound.enabled && p->count > 0;
+        if (p->aux_valid) {
+            audio_video_frame_from_codes(&p->frame_load, p->nes->ppu.index_framebuffer, c.region);
+            audio_chain_rf_buzz(&c.audio, &p->frame_load, p->aux, p->count);
+        }
         submit_audio(p, &c, deadline);
         Uint64 ready_ns=SDL_GetTicksNS();
         SDL_LockMutex(p->mutex);

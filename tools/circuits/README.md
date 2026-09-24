@@ -179,20 +179,47 @@ its slot now carries the output-pin pole.
 python3 tools/circuits/sweep_nes001_psu.py /tmp/nes001-psu --golden tools/circuits/golden
 ```
 
-`nes001_psu.cir` is the Electronix trace's supply: the NES-002's 9 VAC into
-a bridge, 2200 µF, then a 7805 (behavioural, with the TI data sheet's 62 dB
-minimum and about 73 dB typical ripple rejection at 120 Hz and 10 mΩ of
-load regulation) into 100 µF, with the console as a 0.4 to 0.8 A load and
-the modulator as 40 mA on the raw rail. The transformer's source
-resistance (0.8 Ω) and the load current are assumptions; the trace labels
-the raw rail +13 V, which needs an unloaded adaptor above 9 V. At 0.6 A the
-reservoir shows 3.7 V peak to peak of ripple and the +5 V rail 0.16 mV peak
-at 120 Hz (73 dB) to 0.57 mV (62 dB), with the 240 Hz component a fifth of
-that. Through the gate's +9 dB the jack carries 0.45 to 1.6 mV peak of
-120 Hz hum, 58 to 70 dB below full scale: the NES-001 presets' ripple
-setting (0.00023 units) is this, not an audible authored hum. Below about
-7 V on the raw rail the 7805 drops out and the ripple passes; that case is
-not in the presets.
+`nes001_psu.cir` is the Electronix trace's supply: the NES-002's secondary
+into a bridge, 2200 µF, then a 7805 (behavioural: the TI data sheet's
+62 dB minimum and about 73 dB typical ripple rejection at 120 Hz, 10 mΩ
+of load regulation in series with 1 µH for the inductive rise of its
+output impedance, and dropout when its input comes within 2 V of the
+output) into 100 µF with 0.3 Ω of ESR, with the console as a 0.4 to 0.8 A
+load and the modulator as 40 mA on the raw rail. The transformer's source
+resistance (0.8 Ω), the ESR and the load current are assumptions; the
+adaptor is run at 10 VAC, where a transformer marked 9 VAC at 1.3 A sits at
+the console's draw (the trace labels the raw rail +13 V). The sweep runs
+the load, the rejection, the reservoir (1000, 2200, 4700 µF) and the
+adaptor (8 to 11 VAC).
+
+At the nominal point the reservoir shows 2.3 V peak to peak of ripple
+with its trough at 9.1 V, and the +5 V rail 0.15 mV peak at 120 Hz (73 dB)
+to 0.53 mV (62 dB), the 240 Hz component a third of that. Through the
+gate's +9 dB the jack carries 0.41 to 1.5 mV peak of 120 Hz hum, 62 to
+74 dB under a unit. The trough falls under the 7 V dropout between 8.5 and
+8.0 VAC, where the raw ripple passes and the jack hum jumps to 0.55 V,
+and a reservoir dried to 1000 µF drops out at 0.8 A on the nominal
+adaptor: a sagging adaptor or an old capacitor hums by itself. The
+frontend does not carry these numbers; it runs the same circuit each time
+a preset is applied (`audio_psu_derive`, from the preset's `psu` block)
+and `test_audio` holds it to every row of this sweep within 10% with the
+regulator in and within a factor of two through the dropout. An earlier
+revision of this deck returned the secondary to ground, which made the
+bridge a half-wave rectifier; its "120 Hz" figures were the second
+harmonic of a 60 Hz sawtooth and its trough sat 1.7 V too low.
+
+The video output stage draws its emitter current from the same rail,
+through R2 with the line and field structure of the picture (vid=1 in the
+deck). Differenced against the same run without it, the rail carries 24 to
+60 µV of 15.734 kHz and 0.4 to 2 µV of 60 Hz for pictures of 10 to 50%
+average level, which the gate's supply gain (+6.4 dB at the line rate)
+puts at 50 to 125 µV and 1 to 5 µV on the jack: 84 to 110 dB under a
+unit, so the regulator is not how the picture reaches the sound. nesdev
+recordings (tepples, thread 156) do show video in the NES-001's audio, at
+the line rate and its divisions and as a 60 Hz component from the PPU's
+blanking, and lidnariq attributes it to the audio's run past the PPU and
+video circuits on the board; that coupling has no published magnitude and
+is measurement A2 of the plan.
 
 ## Monitor speakers
 
@@ -205,9 +232,30 @@ output through C3510 100 µF to the 7×5 cm speaker (part 1-544-063-12). At
 8 Ω that capacitor is a 199 Hz high-pass, the dominant feature of the
 PVM's sound. The Toshiba 14AF43 (service manual G-9): AN5891 tone control
 into the AN5276 (34 dB) with 6.8 kΩ and 3.9 nF at its inputs, outputs
-through 1000 µF to 8 Ω 5 W speakers, a 20 Hz corner. Both drivers remain
-class estimates; the amplifier output networks are in `speaker_presets[]`
-in `audio_chain.c` and `test_audio` checks the 199 Hz corner.
+through 1000 µF to two 4 × 7 cm 8 Ω ovals, a 20 Hz corner. Both drivers
+remain class estimates; the amplifier output networks are in
+`speaker_presets[]` in `audio_chain.c` and `test_audio` checks the 199 Hz
+corner.
+
+The other named sets follow the same rule, the sourced part being the
+amplifier's output network and the driver a class value for its size:
+the JVC AV-27D201's two 5 × 12 cm ovals at 5 W (service manual; the
+amplifier IC is not legible in it, so no capacitor is carried); the Sony
+KV-27FS120's two 6 × 12 cm drivers on a TDA8947J bridge at 10 W (service
+manual), which has no output capacitor; the Commodore 1702's 10 cm 8 Ω
+driver on an AN5265 through its 1000 µF (service manual; 2.3 W clip,
+0.6 mV output noise, 30.5 dB gain, 10 kΩ input); the Zenith L1960P9's
+single PM speaker on a 2 W module (owner's manual and a parts
+cross-reference; capacitor assumed); the RCA CTC131's two 5-inch woofers
+and two 2-inch tweeters at 16 Ω, 50 Hz to 15 kHz (spec sheet; amplifier
+wattage and capacitor assumed); the PVM-20M4U's 0.8 W mono speaker on an
+AN5265 (brochure and service manual; capacitor assumed); and the NEC
+XM29 Plus's two 9 × 5.5 cm 16 Ω ovals on a TA8211AH at 2.5 W (service
+manual; capacitor assumed). The GDM-FW900 has no audio path at all. The
+sets' own amplifier noise is 84 to 111 dB under rated output on the data
+sheets (AN5276 0.22 mV, TDA7056A 20 to 210 µV, TDA2611A 0.2 mV) and
+their supply hum 63 to 77 dB under it for typical ripple at 45 to 60 dB
+of rejection; neither is carried, being under the RF hiss and the room.
 
 To hear the whole account, `tools/audio/record_presets.sh rom outdir` records
 a ROM through the frontend with every preset that has a distinct audio path

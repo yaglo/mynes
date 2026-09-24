@@ -8,42 +8,74 @@
 *
 * The 7805 is behavioural: 5 V plus the input ripple attenuated by the
 * ripple rejection RR (dB) of the TI LM7805 data sheet, 62 dB minimum and
-* about 73 dB typical at 120 Hz with the input above the dropout, plus a
-* load-regulation output resistance r_load (10 milliohm, from 15 mV over
-* 1.5 A). The +5 V load is the console at i_load (swept 0.4 to 0.8 A; not
-* measured here), the +13 V load the modulator at 40 mA (assumed).
-* Transformer regulation is folded into a 0.8 ohm source resistance
-* (assumed). Diodes are generic.
+* about 73 dB typical at 120 Hz with the input above the dropout, plus an
+* output impedance of r_load (10 milliohm, from 15 mV over 1.5 A of load
+* regulation) in series with l_out: the 78xx family's output impedance
+* rises inductively above a few kilohertz (TI LM340/LM78xx data sheet
+* typical curve, tens of milliohm below 1 kHz to a few hundred milliohm at
+* 100 kHz; 1 uH puts 0.1 ohm at 16 kHz). The output electrolytic has an
+* ESR r_esr (0.3 ohm assumed for a 100 uF/6.3 V part). The +5 V load is
+* the console at i_load (swept 0.4 to 0.8 A; not measured here), the +13 V
+* load the modulator at 40 mA (assumed). Transformer regulation is folded
+* into a 0.8 ohm source resistance (assumed). Diodes are generic.
+*
+* The video output stage's draw on +5 V (vid=1): Q1's emitter resistor R2
+* 510 ohm carries (5 V - Vppu - 0.65 V)/510 with the PPU pin at 0.86 V in
+* sync, 1.4 V in blanking and 1.4 V + 1.5 V x level in the picture (the
+* video deck's levels), so the rail sees the line structure at 15.734 kHz
+* (4.7 us sync, 10.9 us blanking, 52.6 us active at the picture's average
+* level apl) and the field structure at 60 Hz (21 blank lines of 262).
+* This is what reaches the audio through the gate's supply gain.
+*
+* The regulator drops out when its input falls within 2 V of the output
+* (TI LM7805 data sheet, 2 V typical at 1 A), so below 7 V on the reservoir
+* the raw ripple passes to +5 V: a sagging or under-rated adaptor hums by
+* itself. The NES-002 is marked 9 VAC at 1.3 A; at the console's 0.6 A its
+* output sits nearer 10 VAC (transformer regulation), the default here, and
+* the sweep runs vac from 8 to 11 V to place the onset.
 
-.param rr_db=73 i_load=0.6 i_mod=0.04 r_load=0.01 r_src=0.8 vac=9
+.param rr_db=73 i_load=0.6 i_mod=0.04 r_load=0.01 r_src=0.8 vac=10 c_res=2200u l_out=1u r_esr=0.3 vid=0 apl=0.25
 
-Vac ac1 0 sin(0 {vac*1.41421} 60)
+* The adaptor's secondary floats between ac1 and acn; the bridge rectifies
+* both half cycles into raw against ground.
+Vac ac1 acn sin(0 {vac*1.41421} 60)
+Racn acn 0 1meg
 Rsrc ac1 ac2 {r_src}
 D1 ac2 raw DGEN
-D2 0 ac2 DGEN
-D3 0 raw_n DGEN
-D4 raw_n raw DGEN
-Vret raw_n 0 dc 0
-Cres raw 0 2200u
+D2 acn raw DGEN
+D3 0 ac2 DGEN
+D4 0 acn DGEN
+Cres raw 0 {c_res}
 Cb1 raw 0 0.01u
 Imod raw 0 dc {i_mod}
 Cin raw 0 10u
-* Regulator: output follows 5 V plus attenuated input ripple, minus load
-* regulation; its input draws the output current from the reservoir.
-Bvreg reg 0 V = 5 + (V(raw) - 12.0) * pow(10, -rr_db/20)
+* Regulator: output follows 5 V plus attenuated input ripple, through its
+* output impedance; its input draws the output current from the reservoir.
+Bvreg reg 0 V = min(5 + (V(raw) - 12.0) * pow(10, -rr_db/20), V(raw) - 2.0)
 Vsense reg regs dc 0
-Rreg regs five {r_load}
+Rreg regs regl {r_load}
+Lreg regl five {l_out}
 Bin raw 0 I = i(Vsense)
-Cout five 0 100u
+Cout five cesr 100u
+Resr cesr 0 {r_esr}
 Cout2 five 0 0.01u
 Iload five 0 dc {i_load}
+* Video stage: line phase tl in [0, 63.556 us), field phase tf in [0, 262 lines).
+Bvid five 0 I = {vid} * ((5 - 0.65 - (
++ (time - 63.5556u*floor(time/63.5556u)) < 4.7u ? 0.86 :
++ ((time - 63.5556u*floor(time/63.5556u)) < 10.9u ? 1.4 :
++ ((time - 16.6516m*floor(time/16.6516m)) < 21*63.5556u ? 1.4 : 1.4 + 1.5*apl)))) / 510)
 
 .model DGEN D(IS=1e-9 RS=0.05 N=1.7 BV=100)
 
 .control
 set wr_singlescale
 set wr_vecnames
-tran 20u 0.5 0.4
+if {vid} = 1
+  tran 0.5u 0.45 0.4
+else
+  tran 20u 0.5 0.4
+end
 wrdata tran.txt v(raw) v(five)
 quit
 .endc

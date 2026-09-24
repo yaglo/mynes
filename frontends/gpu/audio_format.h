@@ -38,6 +38,36 @@ typedef struct {
 #define AUDIO_JACK_VOLTS_PER_UNIT   2.0f
 #define AUDIO_CORNERS_DENDY         ((AudioFilterCorners){ 37.0,     0.0,  8000.0 })
 
+/* The NES-001 supply and its way into the sound, the circuit of
+ * tools/circuits/nes001_psu.cir (Electronix trace of the RF/AV module)
+ * as audio_psu_derive runs it: the adaptor through the transformer's
+ * source resistance (assumed) and the bridge's two conducting diodes
+ * (the deck's generic exponential diodes) into the reservoir, the
+ * console and the modulator (40 mA, assumed) drawing from it, and the
+ * 7805 with its rejection until its input falls within the dropout (TI
+ * data sheet, 2 V typical at 1 A). The 74HC04 gate carries the rail to
+ * the jack at SUPPLY_GAIN_DB (nes001_audio.cir: about 2.8 V/V, flat to
+ * 1 kHz, +6.4 dB at the line rate). test_audio holds the derivation to
+ * the deck's sweep in golden/nes001_psu.h. */
+#define AUDIO_NES001_PSU_SOURCE_OHM  0.8f
+#define AUDIO_NES001_PSU_DIODE_IS    1e-9f   /* the deck's generic diode: IS, N, RS */
+#define AUDIO_NES001_PSU_DIODE_N     1.7f
+#define AUDIO_NES001_PSU_DIODE_RS    0.05f
+#define AUDIO_NES001_PSU_MODULATOR_A 0.04f
+#define AUDIO_NES001_PSU_DROPOUT_V   2.0f
+#define AUDIO_NES001_SUPPLY_GAIN_DB  8.91f
+/* Nominal NES-001 supply: the NES-002 adaptor (9 VAC at 1.3 A on its
+ * plate, nearer 10 VAC at the console's draw), the module's 2200 uF
+ * reservoir, about 600 mA on +5 V, the 7805's typical rejection. A preset
+ * that leaves the PSU block at zero gets these. */
+#define AUDIO_NES001_ADAPTOR_VAC     10.0f
+#define AUDIO_NES001_RESERVOIR_UF    2200.0f
+#define AUDIO_NES001_LOAD_MA         600.0f
+#define AUDIO_NES001_REJECTION_DB    73.0f
+/* The gate's rail window: the 74HC04 swings at most VCC - 2 V as a linear
+ * amplifier (Nexperia data sheet), 3 V peak to peak on the 5 V rail. */
+#define AUDIO_NES001_GATE_WINDOW_V   3.0f
+
 /* Speaker model parameters. */
 typedef struct {
     float resonance_hz;     /* fundamental resonance (200-400 Hz for small TV) */

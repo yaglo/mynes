@@ -1,6 +1,6 @@
 {
     "name": "Sony PVM-14L2 (nominal)",
-    "description": "14L2 grille, D65, 1 ms AFC and 10 MHz (-3 dB) RGB. Aperture spans 0-6 dB with approximate shape; generic adaptive comb and nominal phosphor/spot, not an individually measured tube.",
+    "description": "14L2 grille, D65, 1 ms AFC and 10 MHz (-3 dB) RGB. The manual gives P22 phosphors, 600 TV lines and aperture OFF at the factory (ON is 2 to 6 dB); the 0.25 mm pitch is a database figure. Digital NTSC comb (MC141627) and nominal spot, not an individually measured tube. Sound: AN5278 through 100 uF into the 7 x 5 cm speaker from the service manual.",
     "connection": "composite",
     "comb_type": "2line",
     "console_variant": 1,
@@ -121,22 +121,25 @@
         "mod_bandwidth": 0.0,
         "noise_floor_dbm": -70.0,
         "agc_attack_ms": 0.0,
-        "agc_release_ms": 0.0
+        "agc_release_ms": 0.0,
+        "sound_am_rejection_db": 45.0,
+        "icpm_deg": 0.0
     },
     "brightness": 0.0,
     "contrast": 1.0,
     "chroma_gain": 1.0,
-    "audio_psu_hum_amplitude": 0.00023,
     "audio_noise_floor": 0,
     "audio_saturation_drive": 1.0,
     "audio_cable_length_m": 1.0,
     "comb_notch_depth": 1,
     "console_phase_distortion_ns": 30,
     "audio_pickup_mv": 0.0,
-    "audio_hum_frequency": 120.0,
-    "audio_hum_harmonic_2": 0.2,
-    "audio_hum_harmonic_3": 0.05,
-    "audio_gate_window_v": 3.0,
     "audio_tv_input_kohm": 47.0,
-    "audio_rf_deemphasis": 0
+    "audio_rf_deemphasis": 0,
+    "psu": {
+        "adaptor_vac": 10.0,
+        "reservoir_uf": 2200.0,
+        "load_ma": 600.0,
+        "regulator_rejection_db": 73.0
+    }
 }

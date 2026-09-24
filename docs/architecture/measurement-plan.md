@@ -41,19 +41,35 @@ an estimate today).
 - Goes to: `AUDIO_CORNERS_NES_FRONT` (`audio_format.h`), the golden file,
   `AUDIO_JACK_VOLTS_PER_UNIT`.
 
-**A2. Hum and noise floor.** Settles the PSU ripple at the jack (the deck
-says 0.5 to 1.7 mV peak at 120 Hz, below what most rooms will let you hear)
-and whether there is a field-rate buzz from the picture.
+**A2. Hum, noise floor and the picture in the sound.** Settles the PSU
+ripple at the jack (the deck says 0.4 to 1.5 mV peak at 120 Hz, 62 to
+74 dB under a unit) and the board's video-to-audio coupling: nesdev
+recordings (tepples, thread 156) show the line rate and its divisions
+(7.9 kHz from alternate black and white lines, 983 Hz from a half-black
+picture) and a 60 Hz component from the PPU's blanking in the NES-001's
+audio, quietest on a black screen; the deck rules out the regulator as the
+path (84 dB under a unit), leaving the audio's run past the PPU and video
+nets on the board, whose coupling has no published value. A picofarad
+into the gate's summing node would put the line rate 60 dB under a unit.
 
 - Needs: the same interface, a ROM with a silent screen and one with a
   bright full screen, cable shielding as used at the TV.
 - Procedure: record 30 s of silence on a black screen and 30 s on a white
   screen at the highest clean gain; FFT, read the 60, 120, 180, 240 Hz
   lines and the 60 Hz field component; repeat with the AV lead lifted from
-  the ground of the interface (ground-loop check).
-- Goes to: `audio_psu_hum_amplitude`, `audio_hum_harmonic_*`,
-  `audio_pickup_mv` on the NES-001 presets; a field-rate buzz would be a
-  new stage.
+  the ground of the interface (ground-loop check). Then the two nesdev
+  patterns (alternate black and white lines; top half black, bottom half
+  white) with the music muted: the 7.9 kHz and 983 Hz lines against the
+  15.7 kHz line give the coupling's frequency law, and their level against
+  a known pulse tone its magnitude, which would drive the same per-line
+  track the RF buzz already uses.
+- Goes to: the `psu` block's values (adaptor voltage under load, the
+  reservoir's real capacitance, the console's draw) and `audio_pickup_mv`
+  on the NES-001 presets; the hum itself is derived from them. The deck
+  puts the video stage's draw on the rail at 50 to 125 µV of 15.7 kHz and
+  10 µV of 60 Hz at the jack, 80 to 95 dB under a unit, so a measured
+  field-rate buzz on composite would point at another path (ground return,
+  the modulator's rail) rather than the regulator.
 
 **A3. Level and clipping.** Settles the gate's rail window (3 V peak to
 peak from the data sheet) and whether real games reach it.
@@ -61,7 +77,32 @@ peak from the data sheet) and whether real games reach it.
 - Procedure: record a game with all channels at full volume (Battletoads
   pause music, or a DPCM-heavy title); look for flattened peaks; measure
   the peak voltage from the interface's calibration.
-- Goes to: `audio_gate_window_v`.
+- Goes to: `AUDIO_NES001_GATE_WINDOW_V` (`audio_format.h`) and the jack
+  level scale.
+
+**A4. RF sound buzz.** Settles the two numbers the RF buzz is derived
+from: the set's sound-detector AM rejection (`rf.sound_am_rejection_db`,
+45 dB assumed) and the NES modulator's incidental phase modulation
+(`rf.icpm_deg`, 0 assumed).
+
+- Needs: a set with RF input and a line or headphone output (the PVM has
+  no tuner; a consumer set or a VCR's tuner into the interface), the
+  console on channel 3, a ROM that can show a black field, a white field
+  and a 50% field with the music muted.
+- Procedure: record 20 s of each field; the 60 Hz buzz harmonics against
+  the field's average level give the AM rejection (the buzz should scale
+  with the level step between the picture and blanking); a tick at the
+  field edges that does not scale that way is the modulator's phase
+  modulation. Read the 15.7 kHz line whistle as well.
+- Goes to: the two `rf` values on the RF presets; a set's own value in
+  its preset.
+
+**A5. The set's acoustic whine.** The flyback and yoke of a CRT radiate
+the line rate, 15.7 kHz, and nothing in the electrical chain carries it,
+so it cannot be derived; a phone's spectrum analyser at the viewing
+position, with the set on a black field and the sound muted, gives its
+level in dB SPL against the game audio at normal volume. Without that
+measurement it stays out of the model.
 
 ## B. NES-001 video output (needs a scope)
 

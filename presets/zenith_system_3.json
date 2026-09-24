@@ -1,10 +1,10 @@
 {
-    "name": "Zenith System 3 (19-inch, 1981)",
-    "description": "A 19-inch Zenith System 3 table set of 1981 (model L1960P9 class) fed by the NES RF modulator on channel 3 through a short cable and an RF switch. In-line gun tube with phosphor stripes and a black matrix, no comb filter, the sharpness control's peaking, Color Sentry holding tint and contrast, white set cool as the factory did. Tube type, controls and circuits from Zenith's 1984 catalogue and the L1960P9 owner's manual; stripe pitch, bandwidths and spot are class estimates, not measurements of one set.",
+    "name": "Zenith System 3 (19-inch, 1980)",
+    "description": "A 19-inch Zenith System 3 table set of the 1980 line (L1960P9, Sams 1891-2) fed by the NES RF modulator on channel 3 through a short cable and an RF switch. Tri-focus in-line gun 100-degree tube with phosphor stripes (reported), no comb filter (Zenith's glass-delay-line comb arrived with the 1981 line), the sharpness control at its detent, Color Sentry holding tint and contrast, white set cool as the factory did. Sound: one PM speaker on a 2 W module, no tone controls; the set's intercarrier detector passes the picture as buzz at an assumed 42 dB AM rejection. Stripe pitch, bandwidths, spot and speaker are class estimates.",
     "connection": "rf",
     "comb_type": "none",
     "console_variant": 1,
-    "speaker_type": 1,
+    "speaker_type": 11,
     "region": "ntsc",
     "video_cable": {
         "length_meters": 1.5,
@@ -36,7 +36,7 @@
         "fir_ringing": 0.12,
         "rf_interference": 0,
         "geometry_warp": 0.0,
-        "color_temperature": 9000.0,
+        "color_temperature": 9300,
         "r_drive": 1.0,
         "g_drive": 1.0,
         "b_drive": 1.0,
@@ -101,7 +101,7 @@
         "halation_tint_g": 1.0,
         "halation_tint_b": 1.0,
         "beam_current_load": 0.06,
-        "mask_triads": 480,
+        "mask_triads": 457,
         "beam_fwhm_min": 0.55,
         "beam_fwhm_max": 1.2,
         "video_black_droop": 0.05,
@@ -125,22 +125,25 @@
         "agc_attack_ms": 2.0,
         "agc_release_ms": 50.0,
         "if_asymmetry": 1.0,
-        "tuning_offset_hz": 0.0
+        "tuning_offset_hz": 0.0,
+        "sound_am_rejection_db": 42.0,
+        "icpm_deg": 5.0
     },
     "brightness": 0.0,
     "contrast": 1.0,
     "chroma_gain": 1.0,
-    "audio_psu_hum_amplitude": 0.00023,
     "audio_noise_floor": 0,
     "audio_saturation_drive": 1.0,
     "audio_cable_length_m": 1.5,
     "comb_notch_depth": 0.0,
     "console_phase_distortion_ns": 30,
     "audio_pickup_mv": 0.0,
-    "audio_hum_frequency": 120.0,
-    "audio_hum_harmonic_2": 0.2,
-    "audio_hum_harmonic_3": 0.05,
-    "audio_gate_window_v": 3.0,
     "audio_tv_input_kohm": 47.0,
-    "audio_rf_deemphasis": 0
+    "audio_rf_deemphasis": 0,
+    "psu": {
+        "adaptor_vac": 10.0,
+        "reservoir_uf": 2200.0,
+        "load_ma": 600.0,
+        "regulator_rejection_db": 73.0
+    }
 }
