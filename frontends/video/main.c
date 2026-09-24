@@ -16,7 +16,7 @@
  * have a console's pattern, not broadcast NTSC's (227.5 cycles per line,
  * 525 interlaced lines), and a video is shown at 240 lines per field. The
  * picture fills the 256-dot, 240-line area a console picture uses, so the
- * tube shows the same narrow side borders.
+ * tube shows the same narrow side borders, black at the encoder's pedestal.
  *
  * Frames come from ffmpeg: resampled to 60.0988 frames per second, fitted
  * to or cropped to the picture area's shape, and scaled to 1024 x 240
@@ -275,7 +275,7 @@ static bool calibrate_white(SDL_GPUDevice *gpu, const Encoder *enc) {
     for (int i = 0; i < SRC_W * SRC_H; i++) white[i] = 1023u | (1023u << 10) | (1023u << 20);
     VideoRGBSource src = source_for(white, 0, enc);
     for (int i = 0; i < 24; i++)
-        if (!video_gpu_process_rgb(&video_gpu_chain, gpu, &src, NULL)) return false;
+        if (!video_gpu_process_rgb(&video_gpu_chain, gpu, &src)) return false;
     bool measured = false;
     int beam_w, beam_h;
     SDL_GPUTexture *beam = video_gpu_get_beam_texture(&video_gpu_chain);
@@ -311,7 +311,7 @@ static bool render_field(SDL_GPUDevice *gpu, unsigned field, int *phase, const u
         else if (++failures >= 3) { render_ctx.white_dirty = false; fprintf(stderr, "White: measurement failed\n"); }
     }
     video_gpu_set_dynamic_state(&video_gpu_chain, render_ctx.hv_sag_state, render_ctx.apl_slow_state, 0.0f);
-    if (!video_gpu_process_rgb(&video_gpu_chain, gpu, &src, NULL)) {
+    if (!video_gpu_process_rgb(&video_gpu_chain, gpu, &src)) {
         fprintf(stderr, "GPU chain failed on field %u: %s\n", field, SDL_GetError());
         return false;
     }

@@ -558,7 +558,7 @@ static ChainGrey chain_grey(SDL_GPUDevice *gpu, const VHSParams *deck, float cla
         mean[f] = 0;
         for (int b = 0; b < BANDS; b++) band[f][b] = 0;
         for (int y = Y0; y < Y1; y++) for (int x = X0; x < X1; x += XSTEP) {
-            float g = rgb[((size_t)y * sp.samples_per_line + x) * 3];    /* decoded Y */
+            float g = rgb[decode_window_rgb_index(&v.window, y, x)];    /* decoded Y */
             mean[f] += g; band[f][(y - Y0) * BANDS / H] += g;
             if (f >= SETTLE) kept[((size_t)(f - SETTLE) * H + (y - Y0)) * W + (x - X0) / XSTEP] = g;
         }
@@ -569,7 +569,7 @@ static ChainGrey chain_grey(SDL_GPUDevice *gpu, const VHSParams *deck, float cla
             gpu_buffer_download(gpu, v.buf_receiver, ref, sizeof(ref));
             fprintf(stderr, "chain frame %d: mean %.5f bands %.4f %.4f %.4f %.4f; rgb[100,900] %.4f %.4f %.4f; ref line 100: phase %.3f black %.4f burst %.4f offset %.2f; line 240: %.3f %.4f %.4f %.2f\n",
                     f, mean[f], band[f][0], band[f][3], band[f][5], band[f][7],
-                    rgb[((size_t)100 * sp.samples_per_line + 900) * 3], rgb[((size_t)100 * sp.samples_per_line + 900) * 3 + 1], rgb[((size_t)100 * sp.samples_per_line + 900) * 3 + 2],
+                    rgb[decode_window_rgb_index(&v.window, 100, 900)], rgb[decode_window_rgb_index(&v.window, 100, 900) + 1], rgb[decode_window_rgb_index(&v.window, 100, 900) + 2],
                     ref[100 * 4], ref[100 * 4 + 1], ref[100 * 4 + 2], ref[100 * 4 + 3], ref[240 * 4], ref[240 * 4 + 1], ref[240 * 4 + 2], ref[240 * 4 + 3]);
         }
     }

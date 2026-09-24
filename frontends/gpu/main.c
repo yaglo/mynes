@@ -166,15 +166,31 @@ static bool calib_gpu_dac;
 static bool calibrate_white(unsigned frame) {
     static uint16_t white[256 * 240]; static bool ready;
     if (!ready) { for (int i = 0; i < 256 * 240; i++) white[i] = 0x30; ready = true; }
+    /* The white field sits in a black ($0F) border whatever the running
+     * game's backdrop, so the gain does not depend on the game. */
+    float backdrop[12], gray_backdrop[12];
+    memcpy(backdrop, video_gpu_chain.backdrop, sizeof(backdrop));
+    memcpy(gray_backdrop, video_gpu_chain.gray_backdrop, sizeof(gray_backdrop));
+    unsigned backdrop_entry = video_gpu_chain.backdrop_entry;
+    bool border_lines_set = video_gpu_chain.border_lines_set;
+    memcpy(video_gpu_chain.backdrop, sig_state.table[0x0f], 12 * sizeof(float));
+    memcpy(video_gpu_chain.gray_backdrop, sig_state.table[0x0f & 0x1f0], 12 * sizeof(float));
+    video_gpu_chain.backdrop_entry = 0x0f;
+    video_gpu_chain.border_lines_set = false;
     for (int i = 0; i < 24; i++)
         video_gpu_process_full(&video_gpu_chain, gpu, white,
             sig_state.phase_base + signal_frame_phase(&sig_state, frame + i), sig_state.phase_line_adv, 0, NULL);
+    memcpy(video_gpu_chain.backdrop, backdrop, sizeof(backdrop));
+    memcpy(video_gpu_chain.gray_backdrop, gray_backdrop, sizeof(gray_backdrop));
+    video_gpu_chain.backdrop_entry = backdrop_entry;
+    video_gpu_chain.border_lines_set = border_lines_set;
     bool measured = false;
     int beam_w, beam_h;
     SDL_GPUTexture *beam = video_gpu_get_beam_texture(&video_gpu_chain);
     if (beam && video_gpu_get_beam_size(&video_gpu_chain, &beam_w, &beam_h)) {
         render_ctx.display_tex = beam; render_ctx.display_tex_w = beam_w; render_ctx.display_tex_h = beam_h;
         render_ctx.owns_display_tex = false;
+        render_ctx.display_content = GPU_DISPLAY_BEAM;
         measured = gpu_render_measure_white(&render_ctx, &video_chain);
         if (measured)
             LOGV("White: peak %.2f, average %.2f at gain 1; Auto gain %.2f\n", render_ctx.white_peak_measured,
@@ -1417,10 +1433,17 @@ int main(int argc, char **argv) {
         /* Size CPU-side readback buffers for the wider region (PAL)
          * so mid-session region switches never require reallocating.
          * NTSC wastes ~500 KB of host RAM; acceptable price for
-         * simplifying the switch path. */
+         * simplifying the switch path. The RGB readback holds the larger
+         * decode window of the two regions. */
         int wf_size = SIGNAL_MAX_FRAME_FLOATS;
+        DecodeWindow ntsc_window, pal_window;
+        decode_window_raster(&ntsc_window, SIGNAL_REGION_NTSC, SIGNAL_NTSC_SAMPLES_PER_PIXEL, 341, SIGNAL_PICTURE_DOT);
+        decode_window_raster(&pal_window, SIGNAL_REGION_PAL, SIGNAL_PAL_SAMPLES_PER_PIXEL, 341, SIGNAL_PICTURE_DOT);
+        size_t rgb_floats = decode_window_samples(&ntsc_window);
+        if (decode_window_samples(&pal_window) > rgb_floats) rgb_floats = decode_window_samples(&pal_window);
+        if ((size_t)wf_size > rgb_floats) rgb_floats = (size_t)wf_size;
         waveform_buf = (float *)calloc(wf_size, sizeof(float));
-        gpu_rgb_out = (float *)calloc(wf_size * 3, sizeof(float));
+        gpu_rgb_out = (float *)calloc(rgb_floats * 3, sizeof(float));
         LOGV("GPU video chain: initialized (%dx240, %d-sample buffers)\n",
                spl, wf_size);
 
@@ -1826,15 +1849,14 @@ int main(int argc, char **argv) {
                             gpu_buffer_download(gpu, video_gpu_chain.buf_rgb, gpu_rgb_out,
                                                 video_gpu_chain.rgb_size)) {
                             int spl = sig_state.samples_per_line;
-                            dump_frame_ppm("/tmp/gpu_rgb_out.ppm", gpu_rgb_out, spl, 240);
+                            const DecodeWindow *dw = &video_gpu_chain.window;
+                            dump_frame_ppm("/tmp/gpu_rgb_out.ppm", gpu_rgb_out, dw->width, dw->lines);
                             /* Print actual float values at key positions. */
                             printf("RGB float samples (scanline 120):\n");
                             int sl = 120 * spl;
                             for (int x = 0; x < spl; x += spl/8) {
-                                float r = gpu_rgb_out[(sl+x)*3+0];
-                                float g = gpu_rgb_out[(sl+x)*3+1];
-                                float b = gpu_rgb_out[(sl+x)*3+2];
-                                printf("  [%d] R=%.4f G=%.4f B=%.4f\n", x, r, g, b);
+                                const float *px = gpu_rgb_out + decode_window_rgb_index(dw, 120, x);
+                                printf("  [%d] R=%.4f G=%.4f B=%.4f\n", x, px[0], px[1], px[2]);
                             }
                             /* Print waveform float values. */
                             printf("Waveform float (scanline 120, first 16):\n  ");
@@ -2194,11 +2216,17 @@ int main(int argc, char **argv) {
             }
         }
 
-        /* The core exposes the backdrop at frame handoff. Raster-side palette
-         * writes are not observed here; this snapshot is used only outside the picture. */
-        unsigned backdrop = live ? picture.backdrop : 0x0f;
+        /* The border as the 2C02 drew it on each raster line (playback.c,
+         * run_frame), and the backdrop at frame handoff for what takes one
+         * colour. A paused or covered game keeps showing its retained
+         * picture, border included; a static frame and the empty screen
+         * have a black one. */
+        unsigned backdrop = rom_loaded && !static_frame_buf ? picture.backdrop : 0x0f;
+        const uint16_t (*border_lines)[2] = rom_loaded && !static_frame_buf ? (const uint16_t (*)[2])picture.border : NULL;
         memcpy(video_gpu_chain.backdrop, sig_state.table[backdrop], 12 * sizeof(float));
         memcpy(video_gpu_chain.gray_backdrop, sig_state.table[backdrop & 0x1f0], 12 * sizeof(float));
+        video_gpu_chain.backdrop_entry = backdrop;
+        video_gpu_set_border_lines(&video_gpu_chain, border_lines);
 
         /* --- Overlays (before signal processing) --- */
         preset_composite_overlays(&preset_ctx);
@@ -2241,8 +2269,26 @@ int main(int argc, char **argv) {
 
         /* --- Video output --- */
         Uint64 t_gpu0 = SDL_GetPerformanceCounter(), t_gpu1 = t_gpu0;
-        render_ctx.frame_brightness =
-            gpu_render_compute_frame_brightness(display_ppu.framebuffer);
+        /* The beam's load: the picture and the border over the whole
+         * active raster, as the GPU's rail sees it. The 2C07 blanks its
+         * border. */
+        {
+            DecodeWindow raster;
+            decode_window_raster(&raster, sig_state.region, sig_state.samples_per_pixel, 341, SIGNAL_PICTURE_DOT);
+            const uint8_t (*pal)[3] = display_ppu.color_palette ? display_ppu.color_palette : ppu_palette_2c02;
+            static uint8_t border_rgb[242][2][3];
+            for (int line = 0; line < 242; line++)
+                for (int side = 0; side < 2; side++) {
+                    unsigned entry = border_lines ? border_lines[line][side] : backdrop;
+                    if (sig_state.region == SIGNAL_REGION_PAL) memset(border_rgb[line][side], 0, 3);
+                    else memcpy(border_rgb[line][side], pal[entry & 0x3f], 3);
+                }
+            float means[4];
+            decode_window_raster_mean(&raster, display_ppu.framebuffer, (const uint8_t (*)[2][3])border_rgb, means);
+            render_ctx.frame_brightness = means[3];
+            memcpy(render_ctx.frame_rgb, means, sizeof(render_ctx.frame_rgb));
+            render_ctx.frame_rgb_valid = true;
+        }
         render_ctx.raw_ppu_rgb = display_ppu.framebuffer;
         gpu_render_update_dynamic_state(&render_ctx);
 
@@ -2298,9 +2344,6 @@ int main(int argc, char **argv) {
                 video_gpu_set_demod(&video_gpu_chain, base_phase, video_gpu_chain.demod_dp);
             }
 
-            int spl = sig_state.samples_per_line;
-            int out_w = spl;
-            int out_h = 240;
 
             bool dump_this_frame = signal_decode_active && debug_dump &&
                 frame_wanted(frame_count, debug_dump_frames, debug_dump_count);
@@ -2339,16 +2382,18 @@ int main(int argc, char **argv) {
             if (gpu_ok) {
                 /* Full RGB + I/Q + PPM snapshot on dumped frames. */
                 if (dump_this_frame) {
-                    /* Download I and Q aux buffers to check chroma. */
+                    /* Download I and Q aux buffers to check chroma. They
+                     * hold the whole raster; print picture line 120. */
                     SignalChain *_sc = &video_gpu_chain.sig_chain;
-                    int _ts = sig_state.samples_per_line * 240;
+                    int _ts = video_gpu_chain.raster_fmt.total_samples;
                     float *_i_buf = (float *)malloc(_ts * sizeof(float));
                     float *_q_buf = (float *)malloc(_ts * sizeof(float));
                     if (_i_buf && _q_buf) {
                         int i_idx = 2, q_idx = 3; /* aux[2]=filtered I, aux[3]=filtered Q */
                         gpu_buffer_download(gpu, _sc->aux[i_idx], _i_buf, _ts * sizeof(float));
                         gpu_buffer_download(gpu, _sc->aux[q_idx], _q_buf, _ts * sizeof(float));
-                        int _sl = 120 * sig_state.samples_per_line;
+                        int _sl = 120 * video_gpu_chain.raster_fmt.samples_per_line
+                                + SIGNAL_PICTURE_DOT * video_gpu_chain.raster_fmt.samples_per_pixel;
                         printf("Chroma I[120,0..7]: %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f\n",
                                _i_buf[_sl], _i_buf[_sl+1], _i_buf[_sl+2], _i_buf[_sl+3],
                                _i_buf[_sl+4], _i_buf[_sl+5], _i_buf[_sl+6], _i_buf[_sl+7]);
@@ -2366,17 +2411,16 @@ int main(int argc, char **argv) {
                         free(_q_buf);
                     }
                     int spl = sig_state.samples_per_line;
-                    int sl = 120 * spl;
-                    printf("  RGB[0]:    R=%.4f G=%.4f B=%.4f\n",
-                           gpu_rgb_out[sl*3], gpu_rgb_out[sl*3+1], gpu_rgb_out[sl*3+2]);
-                    printf("  RGB[128]:  R=%.4f G=%.4f B=%.4f\n",
-                           gpu_rgb_out[(sl+128)*3], gpu_rgb_out[(sl+128)*3+1], gpu_rgb_out[(sl+128)*3+2]);
-                    printf("  RGB[1024]: R=%.4f G=%.4f B=%.4f\n",
-                           gpu_rgb_out[(sl+1024)*3], gpu_rgb_out[(sl+1024)*3+1], gpu_rgb_out[(sl+1024)*3+2]);
+                    const DecodeWindow *dw = &video_gpu_chain.window;
+                    const int probes[] = {0, 128, 1024};
+                    for (int k = 0; k < 3; k++) {
+                        const float *px = gpu_rgb_out + decode_window_rgb_index(dw, 120, probes[k]);
+                        printf("  RGB[%d]: R=%.4f G=%.4f B=%.4f\n", probes[k], px[0], px[1], px[2]);
+                    }
                     char ppm_rgb[256], ppm_wf[256];
                     snprintf(ppm_rgb, sizeof(ppm_rgb), "/tmp/gpu_rgb_f%u.ppm", frame_count);
                     snprintf(ppm_wf,  sizeof(ppm_wf),  "/tmp/gpu_waveform_f%u.ppm", frame_count);
-                    dump_frame_ppm(ppm_rgb, gpu_rgb_out, spl, 240);
+                    dump_frame_ppm(ppm_rgb, gpu_rgb_out, dw->width, dw->lines);
                     dump_waveform_ppm(ppm_wf, waveform_buf, spl, 240);
                     printf("[dump frame %u] wrote %s, %s\n", frame_count, ppm_rgb, ppm_wf);
                 }
@@ -2392,27 +2436,50 @@ int main(int argc, char **argv) {
                     render_ctx.display_tex_w = beam_w;
                     render_ctx.display_tex_h = beam_h;
                     render_ctx.owns_display_tex = false;
+                    render_ctx.display_content = GPU_DISPLAY_BEAM;
                 } else {
-                    gpu_render_ensure_texture(&render_ctx, out_w, out_h);
-                    uint8_t *rgba = gpu_render_float_rgb_to_rgba8(gpu_rgb_out,
-                                                        out_w * out_h);
-                    gpu_render_upload_rgba(&render_ctx, rgba, out_w, out_h);
+                    /* No beam: show the part of the decoded raster the
+                     * receiver unblanks, border included, retrace cut off. */
+                    const DecodeWindow *dw = &video_gpu_chain.window;
+                    int x0, x1, row0, row1;
+                    decode_window_trace_crop(dw, &x0, &x1, &row0, &row1);
+                    int cols = x1 - x0, rows = row1 - row0;
+                    static float *crop; static size_t crop_floats;
+                    size_t need = (size_t)cols * rows * 3;
+                    if (need > crop_floats) {
+                        free(crop);
+                        crop = malloc(need * sizeof(float));
+                        crop_floats = crop ? need : 0;
+                    }
+                    if (crop && cols > 0 && rows > 0) {
+                        for (int r = 0; r < rows; r++)
+                            memcpy(crop + (size_t)r * cols * 3,
+                                   gpu_rgb_out + ((size_t)(row0 + r) * dw->width + x0) * 3,
+                                   (size_t)cols * 3 * sizeof(float));
+                        gpu_render_ensure_texture(&render_ctx, cols, rows);
+                        render_ctx.display_content = GPU_DISPLAY_TRACE;
+                        uint8_t *rgba = gpu_render_float_rgb_to_rgba8(crop, cols * rows);
+                        gpu_render_upload_rgba(&render_ctx, rgba, cols, rows);
+                    }
                 }
             } else {
                 /* GPU dispatch failed: keep host UI usable on the raw fallback. */
                 if(osd_visible) gpu_osd_blend_rgb(display_ppu.framebuffer,osd_pixels);
                 gpu_render_ensure_texture(&render_ctx, 256, 240);
+                render_ctx.display_content = GPU_DISPLAY_PICTURE;
                 gpu_render_upload_rgba(&render_ctx,
                     gpu_render_ppu_to_rgba8(display_ppu.framebuffer), 256, 240);
             }
         } else if (composite_enabled) {
             /* GPU video is unavailable. */
             gpu_render_ensure_texture(&render_ctx, 256, 240);
+            render_ctx.display_content = GPU_DISPLAY_PICTURE;
             gpu_render_upload_rgba(&render_ctx,
                 gpu_render_ppu_to_rgba8(display_ppu.framebuffer), 256, 240);
         } else {
             /* Raw RGB path: palette LUT output, no composite. */
             gpu_render_ensure_texture(&render_ctx, 256, 240);
+            render_ctx.display_content = GPU_DISPLAY_PICTURE;
             gpu_render_upload_rgba(&render_ctx,
                 gpu_render_ppu_to_rgba8(display_ppu.framebuffer), 256, 240);
         }

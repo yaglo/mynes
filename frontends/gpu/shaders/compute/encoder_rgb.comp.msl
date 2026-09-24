@@ -26,6 +26,10 @@ struct Params
     float4 rgb_row_r;
     float4 rgb_row_g;
     float4 rgb_row_b;
+    uint window_width;
+    uint window_lines;
+    int picture_x;
+    int picture_row;
 };
 
 struct PixelBuf
@@ -84,67 +88,94 @@ float sinc_w(thread const float& cut, thread const float& x)
     return _32;
 }
 
-kernel void main0(constant Params& _57 [[buffer(0)]], device PixelBuf& _69 [[buffer(1)]], device RampBuf& _107 [[buffer(2)]], device WaveformBuf& _268 [[buffer(3)]], device LumaBuf& _299 [[buffer(4)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+kernel void main0(constant Params& _57 [[buffer(0)]], device PixelBuf& _69 [[buffer(1)]], device RampBuf& _107 [[buffer(2)]], device WaveformBuf& _292 [[buffer(3)]], device LumaBuf& _365 [[buffer(4)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
     uint i = gl_GlobalInvocationID.x;
+    if (_57.source_mode == 2u)
+    {
+        if (i >= (_57.window_width * _57.window_lines))
+        {
+            return;
+        }
+        int row = int(i / _57.window_width) - _57.picture_row;
+        int column = int(i % _57.window_width) - _57.picture_x;
+        bool _207 = row >= int(_57.top_line);
+        bool _218;
+        if (_207)
+        {
+            _218 = row < int(_57.top_line + _57.lines);
+        }
+        else
+        {
+            _218 = _207;
+        }
+        bool _221 = _218 && (column >= 0);
+        bool _230;
+        if (_221)
+        {
+            _230 = column < int(_57.samples_per_line);
+        }
+        else
+        {
+            _230 = _221;
+        }
+        bool lit = _230;
+        float3 _233;
+        if (lit)
+        {
+            uint param = uint(row) - _57.top_line;
+            int param_1 = int((uint(column) * _57.spp_den) / _57.spp_num);
+            float3 _254 = gun_at(param, param_1, _57, _69, _107);
+            _233 = _254;
+        }
+        else
+        {
+            _233 = float3(0.0);
+        }
+        float3 gun = _233;
+        float3 rgb = float3((_57.rgb_row_r.x * gun.x) + _57.rgb_row_r.w, (_57.rgb_row_g.x * gun.y) + _57.rgb_row_g.w, (_57.rgb_row_b.x * gun.z) + _57.rgb_row_b.w);
+        _292.waveform[i * 3u] = rgb.x;
+        _292.waveform[(i * 3u) + 1u] = rgb.y;
+        _292.waveform[(i * 3u) + 2u] = rgb.z;
+        return;
+    }
     uint line = i / _57.samples_per_line;
     uint s = i % _57.samples_per_line;
     if (line >= 240u)
     {
         return;
     }
-    bool _184 = line >= _57.top_line;
-    bool _194;
-    if (_184)
+    bool _331 = line >= _57.top_line;
+    bool _341;
+    if (_331)
     {
-        _194 = line < (_57.top_line + _57.lines);
+        _341 = line < (_57.top_line + _57.lines);
     }
     else
     {
-        _194 = _184;
+        _341 = _331;
     }
-    bool in_picture = _194;
-    uint _197;
+    bool in_picture = _341;
+    uint _344;
     if (in_picture)
     {
-        _197 = line - _57.top_line;
+        _344 = line - _57.top_line;
     }
     else
     {
-        _197 = 0u;
+        _344 = 0u;
     }
-    uint pic_line = _197;
-    if (_57.source_mode == 2u)
-    {
-        float3 _214;
-        if (in_picture)
-        {
-            uint param = pic_line;
-            int param_1 = int((s * _57.spp_den) / _57.spp_num);
-            float3 _230 = gun_at(param, param_1, _57, _69, _107);
-            _214 = _230;
-        }
-        else
-        {
-            _214 = float3(0.0);
-        }
-        float3 gun = _214;
-        float3 rgb = float3((_57.rgb_row_r.x * gun.x) + _57.rgb_row_r.w, (_57.rgb_row_g.x * gun.y) + _57.rgb_row_g.w, (_57.rgb_row_b.x * gun.z) + _57.rgb_row_b.w);
-        _268.waveform[i * 3u] = rgb.x;
-        _268.waveform[(i * 3u) + 1u] = rgb.y;
-        _268.waveform[(i * 3u) + 2u] = rgb.z;
-        return;
-    }
+    uint pic_line = _344;
     if (!in_picture)
     {
-        _268.waveform[i] = _57.setup;
-        _299.source_y[i] = _57.setup;
+        _292.waveform[i] = _57.setup;
+        _365.source_y[i] = _57.setup;
         return;
     }
     uint param_2 = pic_line;
     int param_3 = int((s * _57.spp_den) / _57.spp_num);
-    float3 _317 = gun_at(param_2, param_3, _57, _69, _107);
-    float3 param_4 = _317;
+    float3 _383 = gun_at(param_2, param_3, _57, _69, _107);
+    float3 param_4 = _383;
     float3 yuv = yuv_of(param_4);
     float2 uv = yuv.yz;
     if (_57.taps > 1u)
@@ -156,16 +187,16 @@ kernel void main0(constant Params& _57 [[buffer(0)]], device PixelBuf& _69 [[buf
         float y_norm = 0.0;
         float t_acc = 0.0;
         float t_norm = 0.0;
-        int _345 = -half_n;
-        for (int k = _345; k <= half_n; k++)
+        int _411 = -half_n;
+        for (int k = _411; k <= half_n; k++)
         {
             float x = float(k);
             float win = 0.540000021457672119140625 + (0.4600000083446502685546875 * cos((3.1415927410125732421875 * x) / float(half_n + 1)));
             int ss = int(s) + k;
             uint param_5 = pic_line;
             int param_6 = (((ss < 0) ? 0 : ss) * int(_57.spp_den)) / int(_57.spp_num);
-            float3 _390 = gun_at(param_5, param_6, _57, _69, _107);
-            float3 param_7 = _390;
+            float3 _456 = gun_at(param_5, param_6, _57, _69, _107);
+            float3 param_7 = _456;
             float3 n = yuv_of(param_7);
             if (_57.chroma_cut > 0.0)
             {
@@ -208,6 +239,6 @@ kernel void main0(constant Params& _57 [[buffer(0)]], device PixelBuf& _69 [[buf
     float a = (6.283185482025146484375 * p) / 12.0;
     float chroma = (uv.x * cos(a - 2.4085543155670166015625)) + (uv.y * cos(a - 0.83775806427001953125));
     float y = _57.setup + ((1.0 - _57.setup) * yuv.x);
-    _268.waveform[i] = y + ((1.0 - _57.setup) * chroma);
-    _299.source_y[i] = y;
+    _292.waveform[i] = y + ((1.0 - _57.setup) * chroma);
+    _365.source_y[i] = y;
 }

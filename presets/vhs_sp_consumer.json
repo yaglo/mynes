@@ -101,7 +101,7 @@
         "skew_x": 0,
         "skew_y": 0,
         "scanline_wobble": 0,
-        "overscan": 0.022,
+        "overscan": 0.045,
         "hv_sag": 0.025,
         "focus_breathing": 0.02,
         "phosphor_gamut": 1,

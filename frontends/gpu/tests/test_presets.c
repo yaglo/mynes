@@ -84,6 +84,12 @@ static int test_all_presets_loadable(void) {
             printf("\n  FAIL: preset %s has null/empty description", p->name);
             return 0;
         }
+        /* The loader cuts a description at the field's size; a shipped one
+         * that fills it has been cut. */
+        if (strlen(p->description) >= sizeof(p->description) - 1) {
+            printf("\n  FAIL: preset %s: description cut at %zu bytes", p->name, sizeof(p->description) - 1);
+            return 0;
+        }
     }
     return 1;
 }

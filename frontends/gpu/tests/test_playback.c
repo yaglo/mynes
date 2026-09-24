@@ -121,8 +121,27 @@ static double cpu_wait_ns(void) {
 #endif
 }
 
+/* The 2C02's border: the backdrop at $3F00 through greyscale, with the
+ * emphasis bits; with rendering off and v in palette space the entry v
+ * points at, $3F10 mirroring $3F00. */
+static void border_entry(void) {
+    PPU ppu; memset(&ppu,0,sizeof(ppu));
+    for(int i=0;i<32;i++) ppu.palette[i]=(uint8_t)(0x20+i);
+    ppu.mask=MASK_BG_ENABLE; ppu.v=0x3f05;
+    CHECK(playback_border_entry(&ppu)==0x20);            /* rendering: $3F00 */
+    ppu.mask=MASK_BG_ENABLE|MASK_GREYSCALE|0xa0;
+    CHECK(playback_border_entry(&ppu)==(0x20|0x140));    /* greyscale, red and blue emphasis */
+    ppu.mask=0;
+    CHECK(playback_border_entry(&ppu)==0x25);            /* rendering off: the entry v points at */
+    ppu.v=0x3f14;
+    CHECK(playback_border_entry(&ppu)==0x24);            /* $3F14 mirrors $3F04 */
+    ppu.v=0x2005;
+    CHECK(playback_border_entry(&ppu)==0x20);            /* v outside palette space */
+}
+
 int main(void) {
     if(!SDL_Init(SDL_INIT_AUDIO)) return 1;
+    border_entry();
     NES *nes=calloc(1,sizeof(*nes));
     uint8_t *prg=calloc(32768,1), *chr=calloc(8192,1);
     prg[0]=0x4c; prg[1]=0; prg[2]=0x80; // JMP $8000, a stable synthetic cartridge.
@@ -439,6 +458,11 @@ int main(void) {
         Uint64 timeout=SDL_GetTicks()+2000;
         while(frame.backdrop!=live && SDL_GetTicks()<timeout) next(p,&frame);
         CHECK(frame.backdrop==live);
+        /* The frame after the change draws its whole border in it. */
+        CHECK(next(p,&frame));
+        int border_off=0;
+        for(int line=0;line<242;line++) for(int side=0;side<2;side++) border_off+=frame.border[line][side]!=live;
+        CHECK(border_off==0);
         while(playback_read(p,&frame)) {}   /* the queue has room: the worker runs */
         unsigned loaded=playback_restart(p,load_image,&image);
         CHECK(image.ok);

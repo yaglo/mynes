@@ -1,6 +1,8 @@
 /* NIDL 751810601-120 spatial/tonal surrogate. See docs/fw900-model.md.
  * Gaussian equivalents fit one-on/one-off grille contrast, not a full MTF.
- * Coordinates and integration widths are in the 1920x1200 monitor raster. */
+ * Coordinates and integration widths are in the 1920x1200 monitor raster.
+ * The external scaler takes the console picture, the picture_w x picture_h
+ * rectangle at (picture_x, picture_row) of the decode window. */
 #include "fw900_data.glsl"
 
 float fw900_grid(const float grid[9], vec2 uv) {
@@ -17,19 +19,20 @@ float fw900_eotf(float voltage) {
     return mix(fw900_tone[i],fw900_tone[i+1],q-float(i));
 }
 vec3 fw900_pixel(int x, int source_y, bool native_raster) {
-    if (source_y < 0 || source_y >= int(source_h)) return vec3(0);
+    if (source_y < 0 || source_y >= int(picture_h)) return vec3(0);
     if (x < 0 || x >= 1920) return vec3(0);
     float sx;
     if (native_raster) sx = float(x);
     else {
         // External scaler: 1600x1200 4:3 picture, 160-pixel side bars.
         if (x < 160 || x >= 1760) return vec3(0);
-        sx = (float(x-160)+0.5)*float(signal_w)/1600.0-0.5;
+        sx = (float(x-160)+0.5)*float(picture_w)/1600.0-0.5;
     }
-    sx = clamp(sx,0.0,float(signal_w-1u));
-    uint x0=uint(sx), x1=min(x0+1u,signal_w-1u);
-    uint a=(uint(source_y)*signal_w+x0)*3u;
-    uint b=(uint(source_y)*signal_w+x1)*3u;
+    sx = clamp(sx,0.0,float(picture_w-1u));
+    uint x0=uint(sx), x1=min(x0+1u,picture_w-1u);
+    uint row=uint(source_y+picture_row)*width+uint(picture_x);
+    uint a=(row+x0)*3u;
+    uint b=(row+x1)*3u;
     vec3 v=mix(vec3(rgb_in[a],rgb_in[a+1u],rgb_in[a+2u]),
                vec3(rgb_in[b],rgb_in[b+1u],rgb_in[b+2u]),fract(sx));
     return vec3(fw900_eotf(v.r),fw900_eotf(v.g),fw900_eotf(v.b));
@@ -57,7 +60,7 @@ vec3 fw900_deposit(vec2 uv) {
     int xhi=int(floor(xy.x+0.5*width.x+4.0*sx+0.5));
     int ylo=max(0,int(ceil(xy.y-0.5*width.y-4.0*sy)));
     int yhi=min(1199,int(floor(xy.y+0.5*width.y+4.0*sy)));
-    bool native_raster=source_h==1200u && signal_w==1920u;
+    bool native_raster=picture_h==1200u && picture_w==1920u;
     vec3 light=vec3(0);
     // Combine the five identical scaler rows before fetching RGB. Each
     // monitor scanline still deposits its own area-integrated Gaussian.
@@ -80,9 +83,10 @@ vec3 fw900_render(uint pix) {
     uint d=pix*4u;
     float dwell=max(deflection_x[d+3u],0.0);
     if(dwell<=0.0) return vec3(0);
-    vec2 r=vec2(deflection_x[d],deflection_y[d])/vec2(signal_w,out_h);
-    vec2 g=vec2(deflection_x[d+1u],deflection_y[d+1u])/vec2(signal_w,out_h);
-    vec2 b=vec2(deflection_x[d+2u],deflection_y[d+2u])/vec2(signal_w,out_h);
+    vec2 scale=vec2(picture_w,picture_h), origin=vec2(float(picture_x),float(picture_row));
+    vec2 r=(vec2(deflection_x[d],deflection_y[d])-origin)/scale;
+    vec2 g=(vec2(deflection_x[d+1u],deflection_y[d+1u])-origin)/scale;
+    vec2 b=(vec2(deflection_x[d+2u],deflection_y[d+2u])-origin)/scale;
     vec3 light=fw900_deposit(g);
     // The calibrated preset has coincident guns. Preserve service convergence
     // controls without paying for three deposits in that common case.

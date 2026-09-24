@@ -205,7 +205,7 @@ class Rect:
 
 
 # Where the 256x240 picture sits on the receiver's 4:3 raster, as the
-# frontend places it (frontends/gpu/post_pipeline.c, raster_window): the
+# frontend places it (frontends/gpu/decode_window.h, decode_window_geometry): the
 # receiver scans the standard active line and field (BT.470 NTSC: a 63.556 us
 # line with 10.9 us of blanking after a 1.5 us front porch, 21 blanked lines
 # of the console's 262) locked to the console's sync, and the console's
@@ -216,6 +216,44 @@ ACTIVE_DOTS = (1e6 / 15734.264 - 10.9) / _DOT_US          # 282.73
 PICTURE_LEFT = 65 - (10.9 - 1.5) / _DOT_US                # 14.53
 ACTIVE_LINES = 262 - 21.0                                 # 241
 PICTURE_TOP = (262 - 245) - 18.0                          # -1: the top line is in blanking
+
+
+@dataclass(frozen=True)
+class Raster:
+    """A preset's raster on the face: its tv overscan, h_size, v_size, h_pos
+    and v_pos, as the deflection map applies them (deflection.comp.glsl).
+    The default is the raster filling the face, a set without overscan."""
+    overscan: float = 0.0
+    h_size: float = 1.0
+    v_size: float = 1.0
+    h_pos: float = 0.0
+    v_pos: float = 0.0
+
+    def face(self, r: float, vertical: bool = False) -> float:
+        """Face coordinate (0 to 1) of raster coordinate r (0 to 1 across the
+        active line, or the active field when ``vertical``). Barrel and the
+        other warps are left out; they move a crop by a few pixels."""
+        zoom = max(1.0 - 2.0 * self.overscan, 0.2) if self.overscan > 0.001 else 1.0
+        size = max(self.v_size if vertical else self.h_size, 0.01)
+        pos = self.v_pos if vertical else self.h_pos
+        return ((r - 0.5) * size + pos) / zoom + 0.5
+
+
+def preset_raster(tv: dict) -> Raster:
+    """The raster of a preset's "tv" section; missing values default, and a
+    size of 0.01 or less is 1 as in the frontend (post_pipeline.c)."""
+    def value(key: str, default: float) -> float:
+        v = tv.get(key, default)
+        return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else default
+    h_size, v_size = value("h_size", 1.0), value("v_size", 1.0)
+    return Raster(value("overscan", 0.0), h_size if h_size > 0.01 else 1.0, v_size if v_size > 0.01 else 1.0,
+                  value("h_pos", 0.0), value("v_pos", 0.0))
+
+
+def nes_point(size: Sequence[int], x: float, y: float, raster: Raster = Raster()) -> tuple[float, float]:
+    """Render pixel of NES picture point (x, y) on a face of ``size``."""
+    return (raster.face((PICTURE_LEFT + x) / ACTIVE_DOTS) * size[0],
+            raster.face((PICTURE_TOP + y) / ACTIVE_LINES, True) * size[1])
 
 
 def nes_scale(size: Sequence[int], override: str | None = None) -> tuple[float, float]:
@@ -262,18 +300,28 @@ def validate_nes_rect(crop: Sequence[float]) -> tuple[float, float, float, float
 
 
 def flicker_geometry(crop: Sequence[float], size: Sequence[int] = LENS_SIZE,
-                     scale: str | None = None, *, align: int = 1) -> Rect:
+                     scale: str | None = None, *, align: int = 1, raster: Raster = Raster()) -> Rect:
     """The crop in render pixels, 1:1. ``align`` rounds the size down to a
     multiple: 2 keeps the 2x2 average of the @1x variant covering every
     pixel, and 6 also puts the crop on whole device pixels at pixel ratios
-    1.5 and 3, where browsers lay out in steps of 1/64 CSS px."""
+    1.5 and 3, where browsers lay out in steps of 1/64 CSS px.
+
+    The size is the crop's on a face without overscan, the same for every
+    preset; ``raster`` (preset_raster) moves it so its centre stays on the
+    same point of the picture, which a preset with overscan shows larger."""
     x, y, w, h = validate_nes_rect(crop)
     sx, sy = nes_scale(size, scale)
     ox, oy = nes_origin(size, (sx, sy), scale)
     rw, rh = _round(w * sx), _round(h * sy)
     if align > 1:
         rw, rh = rw - rw % align, rh - rh % align
-    return Rect(_round(ox + x * sx), _round(oy + y * sy), rw, rh).clamp(size)
+    left, top = _round(ox + x * sx), _round(oy + y * sy)
+    if not scale and raster != Raster():
+        # The crop's centre on the plain face, and where the preset puts it.
+        cx, cy = nes_point(size, x + w / 2, y + h / 2)
+        px, py = nes_point(size, x + w / 2, y + h / 2, raster)
+        left, top = _round(left + px - cx), _round(top + py - cy)
+    return Rect(left, top, rw, rh).clamp(size)
 
 
 def third_bands(width: int, count: int = 3) -> list[tuple[int, int]]:

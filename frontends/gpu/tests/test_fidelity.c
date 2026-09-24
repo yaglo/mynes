@@ -18,6 +18,7 @@ extern int test_crt_load(SDL_GPUDevice *gpu);
 extern int test_osd(SDL_GPUDevice *gpu);
 extern int test_vhs_fidelity(SDL_GPUDevice *gpu);
 extern int test_encoder(SDL_GPUDevice *gpu);
+extern int test_border(SDL_GPUDevice *gpu);
 static int failures;
 #define CHECK(x) do { if (!(x)) { fprintf(stderr, "FAIL %d: %s\n", __LINE__, #x); failures++; } } while (0)
 
@@ -334,7 +335,7 @@ static void rf_temporal_continuity(SDL_GPUDevice *gpu) {
         double mean=0;
         for(int i=0;i<POINTS;i++) {
             int x=96+(i%64)*28,y=40+(i/64)*5;
-            samples[f][i]=rgb[(y*sp.samples_per_line+x)*3+1]; mean+=samples[f][i];
+            samples[f][i]=rgb[decode_window_rgb_index(&v.window,y,x)+1]; mean+=samples[f][i];
         }
         mean/=POINTS;
         for(int i=0;i<POINTS;i++) samples[f][i]-=(float)mean;
@@ -368,8 +369,8 @@ static void dac_equivalence(SDL_GPUDevice *gpu, int region) {
         region == SIGNAL_REGION_PAL ? (float *)sp.table_alt : NULL, SIG_TABLE_ENTRIES, SIG_TABLE_STRIDE));
     uint16_t indices[256*240];
     for (int i=0;i<256*240;i++) indices[i]=(uint16_t)((i/7)%512);
-    size_t count=(size_t)sp.samples_per_line*240;
-    float *wave=calloc(count,sizeof(float)), *cpu=calloc(count*3,sizeof(float)), *full=calloc(count*3,sizeof(float));
+    size_t count=(size_t)sp.samples_per_line*240, rgb_count=v.rgb_size/sizeof(float);
+    float *wave=calloc(count,sizeof(float)), *cpu=calloc(rgb_count,sizeof(float)), *full=calloc(rgb_count,sizeof(float));
     for (unsigned frame=0;frame<3;frame++) {
         waveform_generate(wave,indices,&sp,frame);
         int phase=signal_frame_phase(&sp,frame);
@@ -379,7 +380,7 @@ static void dac_equivalence(SDL_GPUDevice *gpu, int region) {
         CHECK(video_gpu_process(&v,gpu,wave,cpu));
         CHECK(video_gpu_process_full(&w,gpu,indices,phase,sp.phase_line_adv,0,full));
         float max_error=0;
-        for(size_t i=0;i<count*3;i++) {
+        for(size_t i=0;i<rgb_count;i++) {
             CHECK(isfinite(full[i]));
             max_error=fmaxf(max_error,fabsf(cpu[i]-full[i]));
         }
@@ -503,7 +504,7 @@ static void composite_edge_phase(SDL_GPUDevice *gpu) {
         int phase=signal_frame_phase(&sp,f);
         video_gpu_set_demod(&v,(phase+sp.demod_rotate)*6.28318530718f/12,6.28318530718f/12);
         CHECK(video_gpu_process_full(&v,gpu,codes,phase,sp.phase_line_adv,0,rgb));
-        float *edge=rgb+(120*sp.samples_per_line+128*sp.samples_per_pixel-24)*3;
+        float *edge=rgb+decode_window_rgb_index(&v.window,120,128*sp.samples_per_pixel-24);
         /* The references come after the receiver's loops have settled into
          * their two-frame steady state. */
         if(f>=8 && f<10) memcpy(edges[f-8],edge,sizeof(edges[0]));
@@ -543,9 +544,11 @@ static void rgb_source(SDL_GPUDevice *gpu) {
         float *rgb=malloc(v.rgb_size), *other=malloc(v.rgb_size);
         CHECK(video_gpu_process_full(&v,gpu,indices,0,sp.phase_line_adv,0,rgb));
         CHECK(video_gpu_process_full(&v,gpu,indices,8,sp.phase_line_adv,0,other));
+        /* Lines 64 to 127 carry codes 0 to 63; NTSC line 0 is in the
+         * vertical blanking. */
         for(int code=0;code<64;code++) for(int channel=0;channel<3;channel++) {
             double expected=((rgb_2c03[code]>>(8-4*channel))&15)/7.0;
-            int i=(code*sp.samples_per_line+128*sp.samples_per_pixel)*3+channel;
+            size_t i=decode_window_rgb_index(&v.window,64+code,128*sp.samples_per_pixel)+channel;
             CHECK(fabs(rgb[i]-expected)<.0001);
             CHECK(fabs(rgb[i]-other[i])<.000001);
         }
@@ -559,7 +562,7 @@ static void rgb_source(SDL_GPUDevice *gpu) {
         c.connection=(VideoConnectionType)connection; video_gpu_reinit_stages(&v,&c);
         CHECK(v.sig_chain.first_stage==v.stage_osd);
         CHECK(video_gpu_process_full(&v,gpu,indices,4,sp.phase_line_adv,0,other));
-        for(int i=0;i<v.signal_fmt.total_samples*3;i++) CHECK(fabsf(rgb[i]-other[i])<.00001f);
+        for(size_t i=0;i<v.rgb_size/sizeof(float);i++) CHECK(fabsf(rgb[i]-other[i])<.00001f);
         free(rgb);free(other);video_gpu_destroy(&v,gpu);
     }
 }
@@ -574,7 +577,7 @@ static void independent_guns(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoChain *c
     uint16_t a[W*H*4],b[W*H*4];
     for(int y=0;y<H;y++) for(int x=0;x<W;x++) {
         int i=(y*W+x)*4; dx[i]=dx[i+1]=dx[i+2]=500;dx[i+3]=1;
-        dy[i]=dy[i+1]=dy[i+2]=y+.5f;dy[i+3]=1;
+        dy[i]=dy[i+1]=dy[i+2]=(y+.5f)*240/H+v->window.picture_row;dy[i+3]=1;
     }
     CHECK(gpu_buffer_upload(gpu,v->buf_deflection_x,dx,W*H*16));
     CHECK(gpu_buffer_upload(gpu,v->buf_deflection_y,dy,W*H*16));
@@ -831,15 +834,21 @@ static void fw900_measurements(SDL_GPUDevice *gpu, VideoGPUChain *v) {
             if(scaler) px=x<8 ? 80 : 960;
             // Uniform fields average exactly one full vertical raster period.
             dx[i]=dx[i+1]=dx[i+2]=(px+.5f)/SW*SW;dx[i+3]=1;
-            dy[i]=dy[i+1]=dy[i+2]=(py+.5f)/SH*(test>=2 ? SH : H);dy[i+3]=1;
+            dy[i]=dy[i+1]=dy[i+2]=(py+.5f)/SH*source_h;dy[i+3]=1; // in source lines
         }
         CHECK(gpu_buffer_upload(gpu,input,rgb,SW*source_h*3*sizeof(float)));
         CHECK(gpu_buffer_upload(gpu,bx,dx,N*16));CHECK(gpu_buffer_upload(gpu,by,dy,N*16));
+        /* beam_profile's uniforms: the monitor's input fills a decode
+         * window of its own, SW samples by source_h rows. */
         struct {
-            uint32_t signal_w,out_w,out_h,rows;
+            uint32_t width,out_w,out_h,rows;
             float narrow,wide;uint32_t frame;float hum,bloom,gamma,r,g,b;
-            uint32_t monitor,source_h;
-        } p={SW,W,test>=2 ? SH : H,1,.2f,.7f,0,0,1.8f,2.4f,0,0,0,1,source_h};
+            uint32_t monitor,lines;
+            int32_t picture_x,picture_row;
+            uint32_t picture_w,picture_h;
+            float lines_per_row;
+        } p={SW,W,test>=2 ? SH : H,1,.2f,.7f,0,0,1.8f,2.4f,0,0,0,1,(uint32_t)source_h,0,0,SW,(uint32_t)source_h,
+             (float)source_h/(test>=2 ? SH : H)};
         SDL_GPUCommandBuffer *cmd=SDL_AcquireGPUCommandBuffer(gpu);
         SDL_GPUStorageBufferReadWriteBinding rw={.buffer=result};
         SDL_GPUComputePass *pass=SDL_BeginGPUComputePass(cmd,NULL,0,&rw,1);
@@ -887,7 +896,7 @@ static void beam_energy(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoChain *c) {
         for(int y=0;y<h;y++) for(int x=0;x<w;x++) {
             int i=(y*w+x)*4;
             dx[i]=dx[i+1]=dx[i+2]=500; dx[i+3]=1;
-            dy[i]=dy[i+1]=dy[i+2]=y+0.5f; dy[i+3]=1;
+            dy[i]=dy[i+1]=dy[i+2]=(y+0.5f)*240/h+v->window.picture_row; dy[i+3]=1;
         }
         CHECK(gpu_buffer_upload(gpu,v->buf_deflection_x,dx,w*h*16));
         CHECK(gpu_buffer_upload(gpu,v->buf_deflection_y,dy,w*h*16));
@@ -916,15 +925,15 @@ static void beam_height_response(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoChai
     float *rgb=calloc(1,v->rgb_size); uint16_t *out=malloc(W*H*8);
     for(int y=0;y<H;y++) for(int x=0;x<W;x++) {
         int i=(y*W+x)*4; dx[i]=dx[i+1]=dx[i+2]=500;dx[i+3]=1;
-        dy[i]=dy[i+1]=dy[i+2]=y+.5f;dy[i+3]=1;
+        dy[i]=dy[i+1]=dy[i+2]=(y+.5f)/16+v->window.picture_row;dy[i+3]=1;
     }
     CHECK(gpu_buffer_upload(gpu,v->buf_deflection_x,dx,W*H*16));
     CHECK(gpu_buffer_upload(gpu,v->buf_deflection_y,dy,W*H*16));
     const float drive[]={.1f,.25f,.5f,.75f,1,1.2f};double last=0;
     for(int k=0;k<6;k++) {
         float current=powf(drive[k],c->tv.gamma);
-        for(int x=0;x<v->signal_fmt.samples_per_line;x++) for(int ch=0;ch<3;ch++)
-            rgb[(LINE*v->signal_fmt.samples_per_line+x)*3+ch]=current;
+        for(int x=0;x<v->window.width;x++) for(int ch=0;ch<3;ch++)
+            rgb[((size_t)(LINE+v->window.picture_row)*v->window.width+x)*3+ch]=current;
         CHECK(gpu_buffer_upload(gpu,v->buf_rgb2,rgb,v->rgb_size));
         SDL_GPUCommandBuffer *cmd=SDL_AcquireGPUCommandBuffer(gpu);
         CHECK(dispatch_beam_profile_public(v,cmd));CHECK(SDL_SubmitGPUCommandBuffer(cmd));
@@ -944,6 +953,55 @@ static void beam_height_response(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoChai
     free(dx);free(dy);free(rgb);free(out);
 }
 
+/* Flyback blanking on a made-up trace: the receiver forces blanked samples
+ * to zero drive before the RGB amplifiers and cuts the beam off there, so
+ * neither a bright retrace nor the black floor lights them, and the sample
+ * the trace edge crosses carries its covered fraction. */
+static void flyback_blanking(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoChain *c) {
+    DecodeWindow saved=v->window;
+    v->window.trace_x0=100.25f; v->window.trace_x1=1900.75f;
+    v->window.trace_row0=10; v->window.trace_row1=200;
+    c->tv.black_floor=.05f; c->tv.gamma=2.2f; c->tv.noise_level=0; c->tv.apl_black_lift=0;
+    c->tv.phosphor_gamma_offset_r=c->tv.phosphor_gamma_offset_g=c->tv.phosphor_gamma_offset_b=0;
+    c->cable.shield_effectiveness=1;
+    size_t floats=v->rgb_size/sizeof(float);
+    int width=v->window.width;
+    float *rgb=malloc(v->rgb_size), *out=malloc(v->rgb_size);
+    for(size_t i=0;i<floats;i++) rgb[i]=.5f;
+    CHECK(gpu_buffer_upload(gpu,v->buf_rgb,rgb,v->rgb_size));
+    SDL_GPUCommandBuffer *cmd=SDL_AcquireGPUCommandBuffer(gpu);
+    CHECK(dispatch_gun_current_public(v,cmd)); CHECK(SDL_SubmitGPUCommandBuffer(cmd));
+    CHECK(gpu_buffer_download(gpu,v->buf_gun_current,out,v->rgb_size));
+    float full=powf(.5f,2.2f);
+    for(int row=0;row<v->window.lines;row++) for(int x=0;x<width;x++) {
+        float light=out[((size_t)row*width+x)*3];
+        bool on=row>=10 && row<200;
+        if(!on || x<100 || x>1901) CHECK(light==0);
+        else if(x==100 || x==1901) CHECK(fabsf(light-.25f*full)<1e-6f);
+        else CHECK(fabsf(light-full)<1e-6f);
+    }
+    /* A bright retrace around a black raster (the two edge samples included,
+     * as their covered parts are black): nothing reaches the amplifier
+     * output, through its taps, its derivative terms or the previous line. */
+    c->tv.velocity_mod=.5f; c->tv.asym_rise_fall=.5f; c->tv.vertical_smear=1;
+    video_gpu_reinit_stages(v,c);
+    for(int row=0;row<v->window.lines;row++) for(int x=0;x<width;x++) for(int ch=0;ch<3;ch++)
+        rgb[((size_t)row*width+x)*3+ch]=(row>=10 && row<200 && x>=100 && x<=1901) ? 0 : 5;
+    CHECK(gpu_buffer_upload(gpu,v->buf_rgb,rgb,v->rgb_size));
+    cmd=SDL_AcquireGPUCommandBuffer(gpu);
+    CHECK(dispatch_video_amp_public(v,cmd)); CHECK(SDL_SubmitGPUCommandBuffer(cmd));
+    CHECK(gpu_buffer_download(gpu,v->buf_rgb,out,v->rgb_size));
+    float peak=0;
+    for(size_t i=0;i<floats;i++) peak=fmaxf(peak,fabsf(out[i]));
+    printf("Flyback blanking: amplifier output under a 5x white retrace peaks at %g\n",peak);
+    CHECK(peak==0);
+    c->tv.velocity_mod=c->tv.asym_rise_fall=c->tv.vertical_smear=0;
+    c->tv.black_floor=0;
+    video_gpu_reinit_stages(v,c);
+    v->window=saved;
+    free(rgb);free(out);
+}
+
 /* A raised gun cutoff follows the raster spot; it is not room illumination. */
 static void black_floor_deposition(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoChain *c) {
     enum { W=8,H=1920 };
@@ -961,12 +1019,13 @@ static void black_floor_deposition(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoCh
     CHECK(SDL_SubmitGPUCommandBuffer(cmd));
     CHECK(gpu_buffer_download(gpu,v->buf_gun_current,current,v->rgb_size));
     float expected[]={powf(.1f,2.4f),powf(.1f,2.2f),powf(.1f,2.6f)};
-    for(int ch=0;ch<3;ch++) CHECK(fabsf(current[300*3+ch]-expected[ch])<1e-6f);
+    size_t probe=decode_window_rgb_index(&v->window,120,300);
+    for(int ch=0;ch<3;ch++) CHECK(fabsf(current[probe+ch]-expected[ch])<1e-6f);
     float *dx=calloc(W*H*4,sizeof(float)), *dy=calloc(W*H*4,sizeof(float));
     uint16_t *out=malloc(W*H*8);
     for(int y=0;y<H;y++) for(int x=0;x<W;x++) {
         int i=(y*W+x)*4; dx[i]=dx[i+1]=dx[i+2]=500; dx[i+3]=x>0 ? 1 : 0;
-        dy[i]=dy[i+1]=dy[i+2]=y+.5f; dy[i+3]=1;
+        dy[i]=dy[i+1]=dy[i+2]=(y+.5f)*240/H+v->window.picture_row; dy[i+3]=1;
     }
     CHECK(gpu_buffer_upload(gpu,v->buf_deflection_x,dx,W*H*16));
     CHECK(gpu_buffer_upload(gpu,v->buf_deflection_y,dy,W*H*16));
@@ -994,7 +1053,7 @@ static void black_floor_deposition(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoCh
         CHECK(dispatch_beam_profile_public(v,cmd));
         CHECK(SDL_SubmitGPUCommandBuffer(cmd));
         CHECK(gpu_buffer_download(gpu,v->buf_gun_current,current,v->rgb_size));
-        CHECK(fabsf(current[900]-(high ? powf(.25f,2.4f) : 0))<1e-6f);
+        CHECK(fabsf(current[probe]-(high ? powf(.25f,2.4f) : 0))<1e-6f);
         CHECK(gpu_buffer_download(gpu,v->buf_beam_rgba,out,W*H*8));
         float lo=1,hi=0;
         for(int y=H/4;y<3*H/4;y++) {
@@ -1008,6 +1067,42 @@ static void black_floor_deposition(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoCh
     c->tv.black_floor=0;
     c->tv.phosphor_gamma_offset_g=c->tv.phosphor_gamma_offset_b=0;
     free(rgb);free(current);free(dx);free(dy);free(out);
+}
+
+/* Below and above the picture the beam finds no picture line: the raster
+ * ends where the last line's spot does instead of repeating that line. A
+ * PAL set scans 19.5 lines above the picture and 27.5 below it. */
+static void beam_below_picture(SDL_GPUDevice *gpu) {
+    enum { W=8,H=1200 };
+    SignalPrecompute sp; VideoChain c; VideoGPUChain v;
+    signal_precompute_init(&sp,SIGNAL_REGION_PAL);
+    video_chain_init_preset(&c,VIDEO_CONN_COMPOSITE,VIDEO_COMB_NONE,SIGNAL_REGION_PAL);
+    memset(&c.tv,0,sizeof(c.tv)); c.tv.gamma=1; c.tv.h_size=c.tv.v_size=1;
+    c.console_psu_hum=0; c.cable.shield_effectiveness=1;
+    CHECK(video_gpu_init(&v,gpu,&c,"shaders/compute",sp.fir_y,sp.fir_y_n,sp.fir_c,sp.fir_c_n,sp.fir_q,sp.fir_q_n));
+    CHECK(video_gpu_set_beam_params(&v,gpu,W,H,5,.3f,.3f));
+    for(int i=0;i<v.sig_chain.num_stages;i++) chain_set_stage_enabled(&v.sig_chain,i,i==v.stage_deflection);
+    CHECK(chain_run(&v.sig_chain,gpu));
+    float *dy=malloc(W*H*16), *rgb=calloc(1,v.rgb_size);
+    uint16_t *out=malloc(W*H*8);
+    CHECK(gpu_buffer_download(gpu,v.buf_deflection_y,dy,W*H*16));
+    for(int line=0;line<240;line++) for(int x=0;x<v.window.width;x++) for(int ch=0;ch<3;ch++)
+        rgb[((size_t)(line+v.window.picture_row)*v.window.width+x)*3+ch]=1;
+    CHECK(gpu_buffer_upload(gpu,v.buf_rgb2,rgb,v.rgb_size));
+    SDL_GPUCommandBuffer *cmd=SDL_AcquireGPUCommandBuffer(gpu);
+    CHECK(dispatch_beam_profile_public(&v,cmd)); CHECK(SDL_SubmitGPUCommandBuffer(cmd));
+    CHECK(gpu_buffer_download(gpu,v.buf_beam_rgba,out,W*H*8));
+    /* The spot reaches at most four lines (beam_profile's radius). */
+    int dark=0,lit=0;
+    for(int y=0;y<H;y++) {
+        float line=dy[(y*W+W/2)*4+1]-v.window.picture_row;
+        float light=gpu_half_to_float(out[(y*W+W/2)*4+1]);
+        if(line>=244 || line<-4) { CHECK(light==0); dark++; }
+        if(line>=2 && line<238) { CHECK(light>.1f); lit++; }
+    }
+    printf("Beam past the picture: %d dark rows beyond the spot, %d lit rows inside\n",dark,lit);
+    CHECK(dark>50 && lit>900);
+    free(dy);free(rgb);free(out);video_gpu_destroy(&v,gpu);
 }
 
 static void separated_yc(SDL_GPUDevice *gpu) {
@@ -1031,7 +1126,7 @@ static void separated_yc(SDL_GPUDevice *gpu) {
         CHECK(v.sig_chain.stages[v.stage_yc_route].enabled);
         double false_color=0; float luma_min=1,luma_max=0;
         for(int y=10;y<230;y++) for(int x=64*sp.samples_per_pixel;x<192*sp.samples_per_pixel;x++) {
-            int i=(y*sp.samples_per_line+x)*3;
+            size_t i=decode_window_rgb_index(&v.window,y,x);
             false_color=fmax(false_color,fmax(fabsf(rgb[i+1]),fabsf(rgb[i+2])));
             luma_min=fminf(luma_min,rgb[i]);luma_max=fmaxf(luma_max,rgb[i]);
         }
@@ -1043,16 +1138,20 @@ static void separated_yc(SDL_GPUDevice *gpu) {
 static void gun_bandwidth(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoChain *c) {
     c->tv.r_bandwidth=1.5e6f; c->tv.g_bandwidth=4e6f; c->tv.b_bandwidth=7e6f;
     video_gpu_reinit_stages(v,c);
+    /* An impulse in the middle of a line inside the picture. */
     float *rgb=calloc(1,v->rgb_size), *out=malloc(v->rgb_size);
-    int x=v->signal_fmt.samples_per_line/2;
-    rgb[x*3]=rgb[x*3+1]=rgb[x*3+2]=1;
+    int width=v->window.width, x=width/2;
+    float *row=out+(size_t)(120+v->window.picture_row)*width*3;
+    rgb[(size_t)(120+v->window.picture_row)*width*3+x*3]=1;
+    rgb[(size_t)(120+v->window.picture_row)*width*3+x*3+1]=1;
+    rgb[(size_t)(120+v->window.picture_row)*width*3+x*3+2]=1;
     CHECK(gpu_buffer_upload(gpu,v->buf_rgb,rgb,v->rgb_size));
     SDL_GPUCommandBuffer *cmd=SDL_AcquireGPUCommandBuffer(gpu);
     CHECK(dispatch_video_amp_public(v,cmd)); CHECK(SDL_SubmitGPUCommandBuffer(cmd));
     CHECK(gpu_buffer_download(gpu,v->buf_rgb,out,v->rgb_size));
-    CHECK(out[x*3]<out[x*3+1] && out[x*3+1]<out[x*3+2]);
+    CHECK(row[x*3]<row[x*3+1] && row[x*3+1]<row[x*3+2]);
     for(int channel=0;channel<3;channel++) {
-        double energy=0; for(int i=0;i<v->signal_fmt.samples_per_line;i++) energy+=out[i*3+channel];
+        double energy=0; for(int i=0;i<width;i++) energy+=row[i*3+channel];
         CHECK(fabs(energy-1)<0.0001);
     }
     /* Recover the actual GPU amplifier frequency response from an impulse. */
@@ -1066,9 +1165,9 @@ static void gun_bandwidth(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoChain *c) {
     CHECK(gpu_buffer_download(gpu,v->buf_rgb,out,v->rgb_size));
     for(int channel=0;channel<3;channel++) {
         double re=0,im=0,dc=0;
-        for(int i=0;i<v->signal_fmt.samples_per_line;i++) {
+        for(int i=0;i<width;i++) {
             double phase=2*M_PI*10e6/signal_format_sample_rate_hz(&v->signal_fmt)*(i-x);
-            double voltage=out[i*3+channel];
+            double voltage=row[i*3+channel];
             re+=voltage*cos(phase);im+=voltage*sin(phase);dc+=voltage;
         }
         double db=20*log10(hypot(re,im)/dc);
@@ -1082,14 +1181,14 @@ static void gun_bandwidth(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoChain *c) {
 static void horizontal_beam_boundaries(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoChain *c) {
     /* Different flat fields on adjacent lines must remain flat, even when
      * the halo exceeds a line or the last workgroup is mostly inactive. */
-    SignalFormat saved=v->signal_fmt;
+    DecodeWindow saved=v->window;
     float saved_sigma=v->beam_h_blur_sigma, saved_growth=c->tv.beam_spot_growth;
     const int widths[]={1,17,255,257};
     float in[2*257*3], out[2*257*3];
-    v->signal_fmt.lines=2;
+    v->window.lines=2;
     for(int w=0;w<4;w++) for(int wide=0;wide<2;wide++) {
         int width=widths[w], count=width*2*3;
-        v->signal_fmt.samples_per_line=width;
+        v->window.width=width;
         v->beam_h_blur_sigma=wide ? 8 : .5f;
         c->tv.beam_spot_growth=wide ? .6f : 0;
         for(int y=0;y<2;y++) for(int x=0;x<width;x++) for(int gun=0;gun<3;gun++)
@@ -1101,15 +1200,18 @@ static void horizontal_beam_boundaries(SDL_GPUDevice *gpu, VideoGPUChain *v, Vid
         CHECK(gpu_buffer_download(gpu,v->buf_rgb2,out,count*sizeof(float)));
         for(int i=0;i<count;i++) CHECK(fabsf(out[i]-in[i])<2e-6f);
     }
-    v->signal_fmt=saved;v->beam_h_blur_sigma=saved_sigma;c->tv.beam_spot_growth=saved_growth;
+    v->window=saved;v->beam_h_blur_sigma=saved_sigma;c->tv.beam_spot_growth=saved_growth;
 }
 
 static void horizontal_beam_energy(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoChain *c) {
     c->tv.noise_level=0; c->tv.black_floor=0; c->cable.shield_effectiveness=1;
-    float *voltage=calloc(1,v->rgb_size), *light=malloc(v->rgb_size);
-    int width=v->signal_fmt.samples_per_line, center=width/2;
+    /* A single lit sample in the middle of a line inside the picture. */
+    float *voltage_buf=calloc(1,v->rgb_size), *light_buf=malloc(v->rgb_size);
+    int width=v->window.width, center=width/2;
+    size_t row=(size_t)(120+v->window.picture_row)*width*3;
+    float *voltage=voltage_buf+row, *light=light_buf+row;
     voltage[center*3]=voltage[center*3+1]=voltage[center*3+2]=.5f;
-    CHECK(gpu_buffer_upload(gpu,v->buf_rgb,voltage,v->rgb_size));
+    CHECK(gpu_buffer_upload(gpu,v->buf_rgb,voltage_buf,v->rgb_size));
     const float sigma[]={.5f,2.5f,8}; float last_peak=1;
     for(int k=0;k<3;k++) {
         v->beam_h_blur_sigma=sigma[k];
@@ -1117,7 +1219,7 @@ static void horizontal_beam_energy(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoCh
         CHECK(dispatch_gun_current_public(v,cmd));
         CHECK(dispatch_h_blur_rgb_public(v,cmd));
         CHECK(SDL_SubmitGPUCommandBuffer(cmd));
-        CHECK(gpu_buffer_download(gpu,v->buf_rgb2,light,v->rgb_size));
+        CHECK(gpu_buffer_download(gpu,v->buf_rgb2,light_buf,v->rgb_size));
         double sum=0;
         for(int x=0;x<width;x++) sum+=light[x*3];
         CHECK(fabs(sum-pow(.5,c->tv.gamma))<1e-5);
@@ -1136,12 +1238,12 @@ static void horizontal_beam_energy(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoCh
     double previous=0, green_moment=0;
     const float levels[]={.15f,.5f,1,1.2f};
     for(int k=0;k<4;k++) {
-        memset(voltage,0,v->rgb_size);
+        memset(voltage_buf,0,v->rgb_size);
         voltage[center*3]=levels[k];voltage[center*3+1]=.4f;
-        CHECK(gpu_buffer_upload(gpu,v->buf_rgb,voltage,v->rgb_size));
+        CHECK(gpu_buffer_upload(gpu,v->buf_rgb,voltage_buf,v->rgb_size));
         SDL_GPUCommandBuffer *cmd=SDL_AcquireGPUCommandBuffer(gpu);
         CHECK(dispatch_gun_current_public(v,cmd)); CHECK(dispatch_h_blur_rgb_public(v,cmd));
-        CHECK(SDL_SubmitGPUCommandBuffer(cmd)); CHECK(gpu_buffer_download(gpu,v->buf_rgb2,light,v->rgb_size));
+        CHECK(SDL_SubmitGPUCommandBuffer(cmd)); CHECK(gpu_buffer_download(gpu,v->buf_rgb2,light_buf,v->rgb_size));
         double energy[2]={0},moment[2]={0};
         for(int x=0;x<width;x++) for(int gun=0;gun<2;gun++) {
             energy[gun]+=light[x*3+gun];moment[gun]+=(x-center)*(x-center)*light[x*3+gun];
@@ -1152,7 +1254,7 @@ static void horizontal_beam_energy(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoCh
         green_moment=moment[1];
     }
     c->tv.beam_spot_growth=0;
-    free(voltage);free(light);
+    free(voltage_buf);free(light_buf);
 }
 
 /* Exercise the actual BPF + comb kernels: carrier rejection, conservation,
@@ -1355,14 +1457,16 @@ static void decoder_voltage_range(SDL_GPUDevice *gpu) {
     SDL_GPUCommandBuffer *cmd=SDL_AcquireGPUCommandBuffer(gpu);
     CHECK(dispatch_gun_current_public(&v,cmd)); CHECK(SDL_SubmitGPUCommandBuffer(cmd));
     CHECK(gpu_buffer_download(gpu,v.buf_gun_current,current,v.rgb_size));
+    /* Every line carries the same ramp; check one inside the picture. */
     for(int x=0;x<sp.samples_per_line;x++) for(int ch=0;ch<3;ch++) {
         float y=wave[65*sp.samples_per_pixel+x];
         float voltage=y*matrix[ch][0]+bias[ch];
-        CHECK(fabsf(rgb[x*3+ch]-voltage)<.00001f);
-        CHECK(fabsf(current[x*3+ch]-powf(fmaxf(voltage,0),2))<.00001f);
+        size_t i=decode_window_rgb_index(&v.window,120,x)+ch;
+        CHECK(fabsf(rgb[i]-voltage)<.00001f);
+        CHECK(fabsf(current[i]-powf(fmaxf(voltage,0),2))<.00001f);
     }
-    CHECK(rgb[(sp.samples_per_line-1)*3]>1.4f);
-    CHECK(rgb[2]<0);
+    CHECK(rgb[decode_window_rgb_index(&v.window,120,sp.samples_per_line-1)]>1.4f);
+    CHECK(rgb[decode_window_rgb_index(&v.window,120,0)+2]<0);
     free(wave);free(rgb);free(current);video_gpu_destroy(&v,gpu);
 }
 
@@ -1375,6 +1479,7 @@ int main(void) {
     failures += test_display_fidelity(gpu);
     failures += test_crt_load(gpu);
     failures += test_osd(gpu);
+    failures += test_border(gpu);
     source_phase(gpu);
     console_follower(gpu);
     comb_separation(gpu);
@@ -1392,6 +1497,7 @@ int main(void) {
     decoder_gain(gpu);
     decoder_voltage_range(gpu);
     separated_yc(gpu);
+    beam_below_picture(gpu);
     rgb_source(gpu);
     rf(gpu);
     rf_snow_level(gpu);
@@ -1420,6 +1526,7 @@ int main(void) {
     independent_guns(gpu,&v,&c);
     beam_height_response(gpu,&v,&c);
     black_floor_deposition(gpu,&v,&c);
+    flyback_blanking(gpu,&v,&c);
     CHECK(video_gpu_set_beam_params(&v,gpu,16,16,1,0.2f,0.7f));
     v.blend_r = v.blend_g = v.blend_b = 0.5f;
     temporal(gpu, &v, 0x3c003c00, 1.0f); /* first frame must ignore uninitialised history */

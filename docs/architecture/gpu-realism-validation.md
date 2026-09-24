@@ -352,7 +352,10 @@ under Y/C separation.
 
 ## Raster edge and fixed glass aperture
 
-The source bounds and beam spot define the raster perimeter. The former second
+The receiver's flyback blanking and the beam spot define the raster perimeter.
+The decoder covers the whole active raster, so the console's border is on the
+tube up to where the receiver blanks the retrace, and past that only the spot's
+reach lights anything. The former second
 UV-space fade (roughly ten display pixels wide at 1280 pixels) has been removed.
 The final optics pass clips emission and specular room reflection against the
 fixed curved glass aperture with one-pixel coverage antialiasing. Service size,

@@ -18,7 +18,13 @@ int test_crt_load(SDL_GPUDevice *gpu) {
      * dot of the picture as the raster window says. */
     float active_dots, picture_left, active_lines, picture_top;
     post_pipeline_raster_window(0, sp.samples_per_pixel, &active_dots, &picture_left, &active_lines, &picture_top);
-    #define LANDED(px) ((((px)+.5f)/256.f*active_dots-picture_left)*sp.samples_per_pixel)
+    #define LANDED(px) ((((px)+.5f)/256.f*active_dots-picture_left)*sp.samples_per_pixel+v.window.picture_x)
+    /* The load map's entry for a picture dot and line, and a line's mean. */
+    #define MAP(line,dot) (((line)+v.window.picture_row)*v.window.dots+(v.window.picture_dot-v.window.start_dot)+(dot))
+    #define MEAN(line) (v.window.dots*v.window.lines+(line)+v.window.picture_row)
+    /* The picture dot of a window float, or -1 in the border. */
+    #define PICTURE_DOT(i) ((int)((i)/3%(size_t)v.window.width)<v.window.picture_x ? -1 : \
+                            ((int)((i)/3%(size_t)v.window.width)-v.window.picture_x)/sp.samples_per_pixel)
     video_chain_init_preset(&c,VIDEO_CONN_COMPOSITE,VIDEO_COMB_NONE,0);
     memset(&c.tv,0,sizeof(c.tv)); c.tv.gamma=1; c.tv.h_size=c.tv.v_size=1;
     c.console_psu_hum=0;
@@ -28,13 +34,14 @@ int test_crt_load(SDL_GPUDevice *gpu) {
     chain_set_stage_enabled(&v.sig_chain,v.stage_crt_load,true);
     chain_set_stage_enabled(&v.sig_chain,v.stage_crt_supply,true);
     chain_set_stage_enabled(&v.sig_chain,v.stage_deflection,true);
-    size_t floats=v.rgb_size/sizeof(float), map_count=256*240+241;
+    size_t floats=v.rgb_size/sizeof(float);
+    size_t map_count=(size_t)v.window.dots*v.window.lines+v.window.lines+1;
     float *input=malloc(v.rgb_size), *output=malloc(v.rgb_size), *load=malloc(map_count*sizeof(float));
     float *landing=malloc(256*240*4*sizeof(float)), *focus=malloc(256*240*4*sizeof(float));
     float before[2]={0}, after[2]={0};
     for(int pattern=0;pattern<2;pattern++) {
         for(size_t i=0;i<floats;i++) {
-            int dot=(int)(i/3)%sp.samples_per_line/sp.samples_per_pixel;
+            int dot=PICTURE_DOT(i);
             input[i]=pattern && dot>=64 && dot<128 ? 1 : .25f;
         }
         c.tv.beam_current_load=.2f;
@@ -43,10 +50,10 @@ int test_crt_load(SDL_GPUDevice *gpu) {
         CHECK(chain_run(&v.sig_chain,gpu));
         CHECK(gpu_buffer_download(gpu,v.buf_rgb,output,v.rgb_size));
         CHECK(gpu_buffer_download(gpu,v.buf_crt_load,load,map_count*sizeof(float)));
-        before[pattern]=output[(120*sp.samples_per_line+32*sp.samples_per_pixel)*3];
-        after[pattern]=output[(120*sp.samples_per_line+140*sp.samples_per_pixel)*3];
-        CHECK(load[120*256+127]>load[120*256+32]);
-        CHECK(load[256*240+120] > .15f);
+        before[pattern]=output[decode_window_rgb_index(&v.window,120,32*sp.samples_per_pixel)];
+        after[pattern]=output[decode_window_rgb_index(&v.window,120,140*sp.samples_per_pixel)];
+        CHECK(load[MAP(120,127)]>load[MAP(120,32)]);
+        CHECK(load[MEAN(120)] > .15f);
         CHECK(gpu_buffer_download(gpu,v.buf_deflection_x,landing,256*240*4*sizeof(float)));
         CHECK(fabsf(landing[(120*256+192)*4]-LANDED(192))<.01f);
     }
@@ -61,13 +68,13 @@ int test_crt_load(SDL_GPUDevice *gpu) {
     float trails[3]={0};
     for(int patch=0;patch<3;patch++) {
         for(size_t i=0;i<floats;i++) {
-            int dot=(int)(i/3)%sp.samples_per_line/sp.samples_per_pixel;
+            int dot=PICTURE_DOT(i);
             input[i]=dot>=64 && dot<128 ? (patch==0 ? .5f : patch==1 ? 1 : 0) : .5f;
         }
         CHECK(gpu_buffer_upload(gpu,v.buf_rgb,input,v.rgb_size));
         CHECK(chain_run(&v.sig_chain,gpu));
         CHECK(gpu_buffer_download(gpu,v.buf_rgb,output,v.rgb_size));
-        trails[patch]=output[(120*sp.samples_per_line+140*sp.samples_per_pixel)*3];
+        trails[patch]=output[decode_window_rgb_index(&v.window,120,140*sp.samples_per_pixel)];
     }
     CHECK(trails[1]<trails[0]-.02f); // Dark wake after white.
     CHECK(trails[2]>trails[0]+.02f); // Bright wake after black.
@@ -80,7 +87,7 @@ int test_crt_load(SDL_GPUDevice *gpu) {
         CHECK(gpu_buffer_upload(gpu,v.buf_rgb,input,v.rgb_size));
         CHECK(chain_run(&v.sig_chain,gpu));
         CHECK(gpu_buffer_download(gpu,v.buf_crt_load,load,map_count*sizeof(float)));
-        float measured=load[120*256+255];
+        float measured=load[MAP(120,255)];
         if(white==1) nominal_load=measured;
         else CHECK(fabsf(measured/nominal_load-2)<.001f);
     }
@@ -88,7 +95,7 @@ int test_crt_load(SDL_GPUDevice *gpu) {
     // Optional export lets tools/circuits/measure_crt_recovery.py compare ngspice.
     c.tv.beam_current_load=0; c.tv.video_black_droop=0;
     for(size_t i=0;i<floats;i++) {
-        int dot=(int)(i/3)%sp.samples_per_line/sp.samples_per_pixel;
+        int dot=PICTURE_DOT(i);
         input[i]=dot>=64 && dot<128 ? 1 : 0;
     }
     CHECK(gpu_buffer_upload(gpu,v.buf_rgb,input,v.rgb_size));
@@ -102,8 +109,8 @@ int test_crt_load(SDL_GPUDevice *gpu) {
     for(int x=0;x<256;x++) {
         double t=(x+1)*dt,charge=x>=64 ? 1-exp(-(t-64*dt)/12e-6) : 0;
         if(x>=128) charge=(1-exp(-64*dt/12e-6))*exp(-(t-128*dt)/12e-6);
-        max_error=fmax(max_error,fabs(load[120*256+x]-charge));
-        if(csv) fprintf(csv,"%.12g,%.12g\n",t,load[120*256+x]);
+        max_error=fmax(max_error,fabs(load[MAP(120,x)]-charge));
+        if(csv) fprintf(csv,"%.12g,%.12g\n",t,load[MAP(120,x)]);
     }
     if(csv) fclose(csv);
     printf("CRT RC step maximum error: %.8g\n",max_error);CHECK(max_error<.00001);

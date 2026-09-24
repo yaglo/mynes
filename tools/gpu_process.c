@@ -190,7 +190,7 @@ int main(int argc, char **argv) {
            beam_w, beam_h, sig_n, sig_w, vgc.beam_h_blur_sigma);
 
     /* Process */
-    float *rgb_out = (float *)calloc(spl * num_lines * 3, sizeof(float));
+    float *rgb_out = (float *)calloc(vgc.rgb_size / sizeof(float), sizeof(float));
     printf("Processing...\n");
     if (!video_gpu_process(&vgc, gpu, waveform, rgb_out)) {
         fprintf(stderr, "video_gpu_process failed\n");

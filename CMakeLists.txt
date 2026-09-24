@@ -625,6 +625,46 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
         add_dependencies(mynes_gpu gpu_presets)
         add_dependencies(mynes_video gpu_presets)
 
+        # Research prototype: a libretro core (Mega Drive, Super Famicom)
+        # through the same signal, receiver and CRT chain, with the RGB
+        # encoder source in place of the 2C02 DAC. See frontends/retro/main.c.
+        add_executable(mynes_retro
+            frontends/retro/main.c
+            frontends/gpu/gpu_osd.c
+            frontends/gpu/gpu_render.c
+            frontends/gpu/frame_capture.c
+            frontends/gpu/recorder.c
+            frontends/gpu/frame_pq.c
+            frontends/gpu/gpu_output.c
+            frontends/gpu/preset_apply.c
+            frontends/gpu/gpu_compute.c
+            frontends/gpu/gpu_display.c
+            frontends/gpu/video_gpu.c
+            frontends/gpu/vhs_deck.c
+            frontends/gpu/vhs_gpu.c
+            frontends/gpu/chroma_pipeline.c
+            frontends/gpu/post_pipeline.c
+            frontends/gpu/signal_chain.c
+            frontends/gpu/audio_chain.c
+            frontends/gpu/audio_gpu.c
+            frontends/gpu/video_chain.c
+            frontends/gpu/chain_vis.c
+            frontends/gpu/debug_tap.c
+            frontends/gpu/debug_server.c
+            frontends/gpu/gpu_log.c
+            ${MYNES_SHARED_SOURCES}
+        )
+        target_include_directories(mynes_retro PRIVATE frontends/shared frontends/gpu)
+        target_link_libraries(mynes_retro PRIVATE nes_static ${MYNES_SDL3_TARGET} pthread)
+        if(MYNES_BUNDLED_SDL3)
+            target_compile_definitions(mynes_retro PRIVATE MYNES_BUNDLED_SDL3=1)
+        endif()
+        if(APPLE)
+            target_sources(mynes_retro PRIVATE frontends/gpu/gpu_output_macos.m)
+            target_link_libraries(mynes_retro PRIVATE "-framework AppKit" "-framework CoreGraphics")
+        endif()
+        add_dependencies(mynes_retro gpu_shaders gpu_presets)
+
         if(NES_BUILD_TESTS)
             add_executable(test_frame_capture frontends/gpu/tests/test_frame_capture.c
                 frontends/gpu/frame_capture.c)
@@ -768,8 +808,9 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
             add_test(NAME gpu_pipeline_test COMMAND test_pipeline)
             get_target_property(PIPELINE_TEST_SOURCES test_pipeline SOURCES)
             list(REMOVE_ITEM PIPELINE_TEST_SOURCES frontends/gpu/tests/test_pipeline.c)
-            add_executable(test_fidelity frontends/gpu/tests/test_fidelity.c frontends/gpu/tests/test_encoder.c frontends/gpu/tests/test_display_fidelity.c frontends/gpu/tests/test_vhs_fidelity.c frontends/gpu/tests/test_crt_load.c frontends/gpu/tests/test_osd.c frontends/gpu/gpu_osd.c frontends/shared/browser.c frontends/gpu/gpu_display.c ${PIPELINE_TEST_SOURCES})
+            add_executable(test_fidelity frontends/gpu/tests/test_fidelity.c frontends/gpu/tests/test_encoder.c frontends/gpu/tests/test_display_fidelity.c frontends/gpu/tests/test_vhs_fidelity.c frontends/gpu/tests/test_crt_load.c frontends/gpu/tests/test_osd.c frontends/gpu/tests/test_border.c frontends/gpu/gpu_osd.c frontends/shared/browser.c frontends/gpu/gpu_display.c ${PIPELINE_TEST_SOURCES})
             target_include_directories(test_fidelity PRIVATE frontends/gpu frontends/shared)
+            target_compile_definitions(test_fidelity PRIVATE MYNES_TEST_PRESET_DIR="${CMAKE_SOURCE_DIR}/presets")
             target_link_libraries(test_fidelity PRIVATE nes_static ${MYNES_SDL3_TARGET} m)
             add_dependencies(test_fidelity gpu_shaders)
             add_test(NAME gpu_fidelity_tests COMMAND test_fidelity)

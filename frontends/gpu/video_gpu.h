@@ -7,6 +7,7 @@
 #define VIDEO_GPU_H
 
 #include "video_chain.h"
+#include "decode_window.h"
 #include "gpu_compute.h"
 #include "signal_chain.h"
 #include "vhs_gpu.h"
@@ -37,6 +38,9 @@ typedef struct {
     float sync_level, burst_amp;
     uint32_t burst_sine;
     float backdrop[12], gray_backdrop[12];
+    /* 1: the DAC wrote each line's border waveforms after the picture's
+     * samples (dac_2c02.comp.glsl); 0: every line takes backdrop. */
+    uint32_t border_table, pad[3];
 } GpuRasterParams;
 
 /* One picture from a console whose video chip outputs RGB codes through a
@@ -64,12 +68,32 @@ typedef struct {
     /* --- Generic signal chain runner (owns ping-pong + aux buffers) --- */
     SignalChain sig_chain;
     SignalFormat raster_fmt; /* full lines upstream; signal_fmt remains active-picture format */
+    /* The rectangle of the raster decoded into RGB: buf_rgb, buf_rgb2 and
+     * buf_gun_current are window.width x window.lines interleaved RGB. */
+    DecodeWindow window;
     int stage_raster, stage_receiver, stage_receiver_pll;
     int stage_y_console, stage_y_cable, stage_y_ghost, stage_yc_route;
     bool source_separated;
     int signal_phase_base, signal_line_phase;
+    /* The carrier phase of the last frame the receiver decoded, for the
+     * colour oscillator's step to the next (receiver_pll.comp.glsl). */
+    int receiver_phase_base;
+    bool receiver_phase_known;
     SDL_GPUBuffer *buf_receiver, *buf_receiver_measurements;
+    /* The border the PPU draws around the picture: the backdrop's waveform
+     * and its hue-0 grey for the raster, and its 9-bit palette entry for an
+     * RGB PPU. One snapshot per frame, set by the frontend; until it does,
+     * the raster's border is blanking and an RGB PPU's is entry $0F. */
     float backdrop[12], gray_backdrop[12];
+    unsigned backdrop_entry;
+    /* The border per raster line, [line][0] left of the picture and
+     * [line][1] right of it (playback.h), set by video_gpu_set_border_lines.
+     * The GPU DAC reads the entries after the picture's codes and draws each
+     * line's border; without them the raster takes backdrop and
+     * gray_backdrop, and an RGB PPU backdrop_entry, on every line. */
+    uint16_t border_lines[242][2];
+    bool border_lines_set;
+    bool raster_border_table;
     unsigned elapsed_frames;
 
 
@@ -167,7 +191,7 @@ typedef struct {
 
     /* --- Buffer sizes (bytes) --- */
     Uint32 signal_size;             /* samples_per_line * 240 * sizeof(float) */
-    Uint32 rgb_size;                /* samples_per_line * 240 * 3 * sizeof(float) */
+    Uint32 rgb_size;                /* window.width * window.lines * 3 * sizeof(float) */
 
     /* --- Signal format (copied from chain) --- */
     SignalFormat signal_fmt;
@@ -240,7 +264,8 @@ bool video_gpu_upload_signal_table(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
  *
  * idx_fb: 256×240 uint16 palette+emphasis indices (from ppu.index_framebuffer)
  * phase_base, phase_line_adv, frame_field: dot crawl phase params
- * rgb_out: if non-NULL, downloads RGB result to CPU (for fallback display)
+ * rgb_out: if non-NULL, downloads the decode window's RGB (rgb_size bytes,
+ *          laid out as vgc->window says) to the CPU
  *
  * Returns true if the GPU chain produced output. */
 bool video_gpu_process_full(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
@@ -253,10 +278,37 @@ bool video_gpu_process_full(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
  * DAC. The raster then carries a standard -40 IRE sync and a 40 IRE sine
  * burst, as an encoder IC produces from the console's CSYNC. The rest of
  * the chain (console output pole, cable, receiver, CRT) is unchanged.
+ * Read the decoded RGB back with video_gpu_download_window_rgb.
  *
  * Returns true if the GPU chain produced output. */
-bool video_gpu_process_rgb(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
-                           const VideoRGBSource *src, float *rgb_out);
+bool video_gpu_process_rgb(VideoGPUChain *vgc, SDL_GPUDevice *gpu, const VideoRGBSource *src);
+
+/* The 2C02's border for the next frames, one 9-bit entry (palette index
+ * and emphasis) per raster line on each side of the picture: lines[r][0]
+ * for dots 49 to 64 and lines[r][1] from dot 321, across the line on lines
+ * 240 and 241. NULL gives every line backdrop_entry. Only the GPU DAC path
+ * (video_gpu_process_full) follows it. */
+void video_gpu_set_border_lines(VideoGPUChain *vgc, const uint16_t (*lines)[2]);
+
+/* The part of the decode window the tube scans, as decode_window.glsl's
+ * trace: x0, x1 in window samples and rows [row0, row1). A TV blanks its
+ * retrace, so this is the window's trace; a PC monitor behind a scaler
+ * (tv.monitor_model 1) takes the whole window, since the scaler digitises
+ * the console's output over its own capture window (fw900_profile.glsl)
+ * and no receiver blanks the lines around the active field. */
+void video_gpu_scanned_trace(const VideoGPUChain *v, float trace[4]);
+
+/* Download the last frame's decoded RGB: rgb_size bytes, the decode
+ * window's rows (vgc->window, decode_window.h), interleaved R, G, B floats.
+ * This is NOT the console picture alone: row r is raster line
+ * window.first_line + r, rows are window.width samples long, and the
+ * picture starts at (picture_x, picture_row). Index a picture sample with
+ * decode_window_rgb_index(&vgc->window, line, sample). Until the decoder
+ * covered the border the buffer held 240 rows of samples_per_line, and
+ * video_gpu_process_rgb took the buffer to fill as its last argument;
+ * that argument was removed so a caller written for the old layout fails
+ * to build instead of reading the border as picture. */
+bool video_gpu_download_window_rgb(VideoGPUChain *vgc, SDL_GPUDevice *gpu, float *window_rgb);
 
 /* Update the color decode matrix. Call when connection type, hue, saturation,
  * or color temperature changes. The matrix maps Y,I,Q -> R,G,B as floats
@@ -327,7 +379,7 @@ void video_gpu_set_dynamic_state(VideoGPUChain *vgc,
  * waveform: CPU-generated composite waveform (float32, spl * 240)
  *           where spl = signal_fmt.samples_per_line
  * rgb_out:  if non-NULL, the RGB result is downloaded here (blocking).
- *           Must hold spl * 240 * 3 floats.
+ *           Must hold rgb_size bytes, laid out as vgc->window says.
  *           If NULL, the result stays on GPU (for display pipeline use).
  *
  * Returns true on success. */

@@ -6,7 +6,10 @@ using namespace metal;
 struct Params
 {
     uint count;
-    uint samples_per_line;
+    uint width;
+    int picture_x;
+    int picture_row;
+    uint picture_w;
 };
 
 struct Overlay
@@ -21,22 +24,38 @@ struct Video
 
 constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
 
-kernel void main0(constant Params& _19 [[buffer(0)]], const device Overlay& _50 [[buffer(1)]], device Video& _73 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+kernel void main0(constant Params& _20 [[buffer(0)]], device Overlay& _90 [[buffer(1)]], device Video& _113 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
     uint i = gl_GlobalInvocationID.x;
-    if (i >= _19.count)
+    if (i >= _20.count)
     {
         return;
     }
-    uint y = i / _19.samples_per_line;
-    uint x = ((i % _19.samples_per_line) * 256u) / _19.samples_per_line;
-    uint p = _50.rgba[(y * 256u) + x];
+    int px = int(i % _20.width) - _20.picture_x;
+    int py = int(i / _20.width) - _20.picture_row;
+    bool _54 = px < 0;
+    bool _64;
+    if (!_54)
+    {
+        _64 = px >= int(_20.picture_w);
+    }
+    else
+    {
+        _64 = _54;
+    }
+    if ((_64 || (py < 0)) || (py >= 240))
+    {
+        return;
+    }
+    uint y = uint(py);
+    uint x = (uint(px) * 256u) / _20.picture_w;
+    uint p = _90.rgba[(y * 256u) + x];
     if ((p >> uint(24)) == 0u)
     {
         return;
     }
     float4 ui = unpack_unorm4x8_to_float(p);
-    _73.rgb[3u * i] = mix(_73.rgb[3u * i], ui.x, ui.w);
-    _73.rgb[(3u * i) + 1u] = mix(_73.rgb[(3u * i) + 1u], ui.y, ui.w);
-    _73.rgb[(3u * i) + 2u] = mix(_73.rgb[(3u * i) + 2u], ui.z, ui.w);
+    _113.rgb[3u * i] = mix(_113.rgb[3u * i], ui.x, ui.w);
+    _113.rgb[(3u * i) + 1u] = mix(_113.rgb[(3u * i) + 1u], ui.y, ui.w);
+    _113.rgb[(3u * i) + 2u] = mix(_113.rgb[(3u * i) + 2u], ui.z, ui.w);
 }

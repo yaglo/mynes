@@ -16,10 +16,12 @@
  *   dot position.
  *
  *   We sample this waveform at 8 samples per NES pixel (PPU dot), giving
- *   2048 samples per visible scanline. At 8 samples per pixel and 12
- *   samples per colorburst cycle, the ratio 8/12 = 2/3 cycles per pixel
- *   matches the real NTSC relationship. PAL uses 10 samples per pixel
- *   (10/12 = 5/6 cycles per pixel).
+ *   2048 samples across the console's 256-dot picture; the raster the
+ *   receiver sees is the whole 341-dot line (signal_format_full_line), and
+ *   the decoder covers the part of it the receiver scans (decode_window.h).
+ *   At 8 samples per pixel and 12 samples per colorburst cycle, the ratio
+ *   8/12 = 2/3 cycles per pixel matches the real NTSC relationship. PAL
+ *   uses 10 samples per pixel (10/12 = 5/6 cycles per pixel).
  *
  * Upload granularity:
  *   The CPU uploads the ENTIRE frame's waveform buffer at once (not
@@ -55,6 +57,12 @@
 /* NES visible screen dimensions (constant, hardware-defined). */
 #define SIGNAL_NES_WIDTH       256   /* visible PPU dots per scanline */
 #define SIGNAL_NES_HEIGHT      240   /* visible scanlines per frame */
+/* Raster dot where the 2C02's picture starts, counted from the leading edge
+ * of horizontal sync (raster_encode.comp.glsl): 25 dots of sync, the back
+ * porch with the burst at dots 29 to 43, the grey pulse at dot 49 and 15
+ * dots of border. raster_encode.comp.glsl and receiver_lock.comp.glsl carry
+ * the same figure. */
+#define SIGNAL_PICTURE_DOT     65
 
 /* Samples per NES pixel (PPU dot). 8 for NTSC, 10 for PAL.
  * The colorburst subcarrier has 12 samples per cycle in both regions:
@@ -70,7 +78,8 @@
 #define SIGNAL_NTSC_SUBCARRIER_HZ      3.579545e6f
 #define SIGNAL_PAL_SUBCARRIER_HZ       4.43361875e6f
 
-/* Samples per visible scanline (256 pixels × samples_per_pixel). */
+/* Samples across the console picture (256 pixels × samples_per_pixel), not
+ * a whole raster line. */
 #define SIGNAL_NTSC_SAMPLES_PER_LINE   (SIGNAL_NES_WIDTH * SIGNAL_NTSC_SAMPLES_PER_PIXEL)  /* 2048 */
 #define SIGNAL_PAL_SAMPLES_PER_LINE    (SIGNAL_NES_WIDTH * SIGNAL_PAL_SAMPLES_PER_PIXEL)   /* 2560 */
 
@@ -142,7 +151,7 @@
 typedef struct {
     int region;                 /* SIGNAL_REGION_NTSC or SIGNAL_REGION_PAL */
     int samples_per_pixel;      /* 8 (NTSC) or 10 (PAL) */
-    int samples_per_line;       /* 2048 (NTSC) or 2560 (PAL) */
+    int samples_per_line;       /* across the picture: 2048 (NTSC) or 2560 (PAL) */
     int lines;                  /* 240 (both regions) */
     int blocks_per_line;        /* ceil(samples_per_line / WORKGROUP_SIZE) */
     int total_samples;          /* samples_per_line × lines */

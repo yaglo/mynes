@@ -18,9 +18,10 @@
  *
  * Trivially parallel: one thread per sample.
  *
- * Input:  3 float buffers (Y, chroma 1, chroma 2) at signal resolution
- * Output: 3 float buffers (R, G, B) at signal resolution
- *         (interleaved as R,G,B,R,G,B,... for efficient texture upload)
+ * Input:  3 float buffers (Y, chroma 1, chroma 2) over the full raster
+ * Output: interleaved R,G,B over the decode window (decode_window.h): row r
+ *         is raster line (first_line + r) mod frame_lines, from raster
+ *         sample start_sample, width samples wide
  */
 
 #version 450
@@ -48,16 +49,18 @@ layout(set = 2, binding = 0) uniform Params {
      * causing color to trail brightness on horizontal transitions.
      * Typical: 2-6 samples at signal resolution. 0 = no delay. */
     int   chroma_delay;
-    uint samples_per_line;
-    uint active_width, active_offset;
+    uint samples_per_line;       /* raster line */
+    uint width, start_sample;    /* decode window stride; its first raster sample */
+    int  first_line;             /* raster line of window row 0, may be negative */
+    uint frame_lines;
 };
 
 void main() {
     uint tid = gl_GlobalInvocationID.x;
     if (tid >= count) return;
 
-    uint line = tid / active_width;
-    float position = clamp(float(active_offset + tid % active_width) + reference[line].w,
+    uint line = uint(first_line + int(tid / width) + int(frame_lines)) % frame_lines;
+    float position = clamp(float(start_sample + tid % width) + reference[line].w,
                            0.0, float(samples_per_line-2u));
     uint source = line * samples_per_line + uint(position);
     float fraction = fract(position);

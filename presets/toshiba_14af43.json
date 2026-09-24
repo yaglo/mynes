@@ -1,6 +1,6 @@
 {
     "name": "Toshiba 14AF43 (nominal)",
-    "description": "Toshiba 14AF43 of 2003 (Orion chassis): flat slot-mask tube A36AKJ13X05, 357 mm visible, pitch about 0.6 mm (E), three-line comb in the LA76600M with its heavy dot crawl, no velocity modulation, no colour-temperature menu (9300 K class, E), the service calibration puts red at 115% of white, 9% vertical overscan. Sound: AN5276 through 1000 uF into two 4 x 7 cm 8-ohm ovals, 2.5 W each. Pitch, white point and TV lines are estimates; the rest is from the service manual.",
+    "description": "Toshiba 14AF43 of 2003 (Orion chassis): flat slot-mask tube A36AKJ13X05, 357 mm visible, pitch about 0.6 mm (E), three-line comb in the LA76600M with its heavy dot crawl, no velocity modulation, no colour-temperature menu (9300 K class, E), the service calibration puts red at 115% of white, 9% vertical overscan, taken as 4.5% an edge on both axes. Sound: AN5276 through 1000 uF into two 4 x 7 cm 8-ohm ovals, 2.5 W each. Pitch, white point and TV lines are estimates; the rest is from the service manual.",
     "connection": "composite",
     "comb_type": "3line",
     "console_variant": 1,
@@ -101,7 +101,7 @@
         "skew_x": 0,
         "skew_y": 0,
         "scanline_wobble": 0,
-        "overscan": 0.022,
+        "overscan": 0.045,
         "hv_sag": 0.025,
         "focus_breathing": 0.02,
         "phosphor_gamut": 1,

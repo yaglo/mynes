@@ -17,6 +17,9 @@ struct Params
     float samples_per_pixel;
     float black_floor;
     float apl_bias;
+    int picture_x;
+    int picture_row;
+    float4 trace;
 };
 
 struct Voltage
@@ -46,39 +49,63 @@ static inline __attribute__((always_inline))
 float _noise(thread const uint& seed)
 {
     uint param = seed;
-    uint _42 = mix32(param);
-    return (float(_42 & 65535u) / 65535.0) - 0.5;
+    uint _91 = mix32(param);
+    return (float(_91 & 65535u) / 65535.0) - 0.5;
 }
 
-kernel void main0(constant Params& _63 [[buffer(0)]], device Voltage& _80 [[buffer(1)]], device Current& _201 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+static inline __attribute__((always_inline))
+float trace_gate(thread const float& x, thread const uint& row, thread const float4& trace)
+{
+    float r = float(row);
+    bool _34 = r < trace.z;
+    bool _43;
+    if (!_34)
+    {
+        _43 = r >= trace.w;
+    }
+    else
+    {
+        _43 = _34;
+    }
+    if (_43)
+    {
+        return 0.0;
+    }
+    return fast::clamp(fast::min(x + 0.5, trace.y) - fast::max(x - 0.5, trace.x), 0.0, 1.0);
+}
+
+kernel void main0(constant Params& _111 [[buffer(0)]], device Voltage& _126 [[buffer(1)]], device Current& _272 [[buffer(2)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
     uint i = gl_GlobalInvocationID.x;
-    if (i >= _63.count)
+    if (i >= _111.count)
     {
         return;
     }
-    float3 v = float3(_80.voltage[i * 3u], _80.voltage[(i * 3u) + 1u], _80.voltage[(i * 3u) + 2u]);
-    if (_63.noise_level > 0.0)
+    float3 v = float3(_126.voltage[i * 3u], _126.voltage[(i * 3u) + 1u], _126.voltage[(i * 3u) + 2u]);
+    if (_111.noise_level > 0.0)
     {
-        float sample_x = float(i % _63.samples_per_line) / fast::max(_63.samples_per_pixel * 0.5, 1.0);
-        uint param = _63.frame_seed ^ 2654435769u;
-        uint _129 = mix32(param);
-        uint param_1 = _129 ^ (i / _63.samples_per_line);
-        uint _136 = mix32(param_1);
-        uint row = _136;
-        uint x = uint(floor(sample_x));
+        float sample_x = float(int(i % _111.samples_per_line) - _111.picture_x) / fast::max(_111.samples_per_pixel * 0.5, 1.0);
+        uint param = _111.frame_seed ^ 2654435769u;
+        uint _175 = mix32(param);
+        uint param_1 = _175 ^ uint(int(i / _111.samples_per_line) - _111.picture_row);
+        uint _188 = mix32(param_1);
+        uint row = _188;
+        uint x = uint(int(floor(sample_x)));
         uint param_2 = x;
-        uint _145 = mix32(param_2);
-        uint param_3 = row ^ _145;
+        uint _198 = mix32(param_2);
+        uint param_3 = row ^ _198;
         uint param_4 = x + 1u;
-        uint _153 = mix32(param_4);
-        uint param_5 = row ^ _153;
+        uint _206 = mix32(param_4);
+        uint param_5 = row ^ _206;
         float n = mix(_noise(param_3), _noise(param_5), smoothstep(0.0, 1.0, fract(sample_x)));
-        v = fast::max(v + float3(_63.noise_level * n), float3(0.0));
+        v = fast::max(v + float3(_111.noise_level * n), float3(0.0));
     }
-    float3 drive = fast::max(fast::max(v, float3(fast::max(_63.black_floor, 0.0))) + float3(_63.apl_bias), float3(0.0));
-    float3 light = powr(drive, float3(_63.gamma_r, _63.gamma_g, _63.gamma_b));
-    _201.current[i * 3u] = light.x;
-    _201.current[(i * 3u) + 1u] = light.y;
-    _201.current[(i * 3u) + 2u] = light.z;
+    float3 drive = fast::max(fast::max(v, float3(fast::max(_111.black_floor, 0.0))) + float3(_111.apl_bias), float3(0.0));
+    float param_6 = float(i % _111.samples_per_line);
+    uint param_7 = i / _111.samples_per_line;
+    float4 param_8 = _111.trace;
+    float3 light = powr(drive, float3(_111.gamma_r, _111.gamma_g, _111.gamma_b)) * trace_gate(param_6, param_7, param_8);
+    _272.current[i * 3u] = light.x;
+    _272.current[(i * 3u) + 1u] = light.y;
+    _272.current[(i * 3u) + 2u] = light.z;
 }

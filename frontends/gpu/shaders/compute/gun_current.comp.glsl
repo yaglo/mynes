@@ -1,5 +1,8 @@
-/* Convert gun voltage to emitted current once, before spatial beam spread. */
+/* Convert gun voltage to emitted current once, before spatial beam spread.
+ * The beam is cut off during flyback: blanked samples emit nothing, whatever
+ * the black floor, the APL drift or the receiver noise. */
 #version 450
+#extension GL_GOOGLE_include_directive : require
 layout(local_size_x=256) in;
 layout(set=0,binding=0) readonly buffer Voltage { float voltage[]; };
 layout(set=1,binding=0) writeonly buffer Current { float current[]; };
@@ -10,7 +13,10 @@ layout(set=2,binding=0) uniform Params {
     float noise_level, samples_per_pixel;
     float black_floor;
     float apl_bias;
+    int picture_x, picture_row;   /* the console picture's place in the decode window */
+    vec4 trace;                   /* unblanked samples (xy) and rows (zw) */
 };
+#include "decode_window.glsl"
 uint mix32(uint seed) {
     seed ^= seed >> 16u; seed *= 0x7feb352du;
     seed ^= seed >> 15u; seed *= 0x846ca68bu; seed ^= seed >> 16u;
@@ -25,18 +31,20 @@ void main() {
     // Smooth at the video bandwidth, then let gun transfer and both spot
     // axes shape it. RF snow itself is generated earlier in the RF stage.
     if(noise_level > 0.0) {
-        // Nested mixing of frame, line and position. The old linear seed
-        // (line*7919 + frame*6271 + x*1999) made frame f+2 a copy of frame
-        // f shifted by 85 lines and 343 steps, so the grain repeated.
-        float sample_x=float(i % samples_per_line)/max(samples_per_pixel*0.5,1.0);
-        uint row=mix32(mix32(frame_seed ^ 0x9e3779b9u) ^ (i/samples_per_line));
-        uint x=uint(floor(sample_x));
+        // Seeded by picture sample and line, so the border continues the
+        // picture's pattern, and mixed per frame, line and position: the
+        // old linear seed (line*7919 + frame*6271 + x*1999) made frame f+2
+        // a copy of frame f shifted by 85 lines and 343 steps.
+        float sample_x=float(int(i % samples_per_line)-picture_x)/max(samples_per_pixel*0.5,1.0);
+        uint row=mix32(mix32(frame_seed ^ 0x9e3779b9u) ^ uint(int(i/samples_per_line)-picture_row));
+        uint x=uint(int(floor(sample_x)));
         float n=mix(noise(row ^ mix32(x)),noise(row ^ mix32(x+1u)),smoothstep(0.0,1.0,fract(sample_x)));
         v=max(v+vec3(noise_level*n),0.0);
     }
     // Residual gun drive must deposit light through the same spot as the
     // picture. Adding a luminous floor after deposition fills scanline gaps.
     vec3 drive=max(max(v,vec3(max(black_floor,0.0)))+apl_bias,vec3(0.0));
-    vec3 light=pow(drive,vec3(gamma_r,gamma_g,gamma_b));
+    vec3 light=pow(drive,vec3(gamma_r,gamma_g,gamma_b))
+              *trace_gate(float(i % samples_per_line),i/samples_per_line,trace);
     current[i*3u]=light.r; current[i*3u+1u]=light.g; current[i*3u+2u]=light.b;
 }

@@ -34,10 +34,20 @@ typedef struct {
     unsigned number;
     int phase;
     uint16_t backdrop;
+    /* The border the 2C02 drew on each raster line, as 9-bit entries with
+     * emphasis: [line][0] left of the picture (dots 49 to 64), [line][1]
+     * right of it (from dot 321, and across the whole line on lines 240 and
+     * 241). See playback.c, run_frame. */
+    uint16_t border[242][2];
     float audio_energy;
     uint64_t emulation_ticks;
     uint64_t start_ns, ready_ns, audio_ns;
 } PlaybackFrame;
+
+/* The 9-bit entry the 2C02 puts out as its border now: the backdrop at
+ * $3F00, or with rendering off and v in palette space the entry v points at,
+ * after greyscale, with the emphasis bits. */
+uint16_t playback_border_entry(const PPU *ppu);
 
 Playback *playback_create(NES *nes, SDL_GPUDevice *gpu, AudioGPUChain *audio,
                           SDL_AudioStream *stream, unsigned frame_limit, unsigned capture_from);

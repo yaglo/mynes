@@ -15,7 +15,24 @@ layout(set=2,binding=0) uniform Params {
     float sync_level, burst_amp;
     uint burst_sine;
     vec4 backdrop[3], gray_backdrop[3];
+    /* 1: each line's border waveforms follow the picture's samples in
+     * picture[] (dac_2c02.comp.glsl, border_table); 0: backdrop throughout. */
+    uint border_table;
 };
+/* Border voltage at carrier phase p of raster line `line`: left of the
+ * picture (with the hue-0 pulse at dot 49) or right of it. */
+float border_value(uint line, uint dot, uint x, uint start, int phase) {
+    if (border_table == 0u)
+        return dot == 49u ? gray_backdrop[phase/4][phase%4] : backdrop[phase/4][phase%4];
+    uint base = 240u * active_width + line * 36u;
+    uint part = dot == 49u ? 12u : (x < start ? 0u : 24u);
+    return picture[base + part + uint(phase)];
+}
+float border_mean(uint line, uint x, uint start) {
+    float y = 0.0;
+    for (int k = 0; k < 12; k++) y += border_table == 0u ? backdrop[k/4][k%4] : border_value(line, 50u, x, start, k);
+    return y / 12.0;
+}
 void main() {
     uint i=gl_GlobalInvocationID.x;
     if(i>=count) return;
@@ -45,7 +62,7 @@ void main() {
     // NTSC border voltage follows the backdrop. PAL blanks its border.
     if (region == 0u && line < 242u && dot >= 49u && dot < 332u) {
         int phase = int(mod(phase_base + float(line)*line_phase + float(x)-float(start), 12.0));
-        value = dot == 49u ? gray_backdrop[phase/4][phase%4] : backdrop[phase/4][phase%4];
+        value = border_value(line, dot, x, start, phase);
     }
     if(picture_line && x>=start && x<start+active_width) {
         bool pal_border = region == 1u && (x < start+2u*samples_per_dot || x >= start+active_width-2u*samples_per_dot);
@@ -62,8 +79,7 @@ void main() {
         }
         if (region == 0u && line < 242u && dot >= 50u && dot < 332u &&
             (!picture_line || x < start || x >= start+active_width)) {
-            y = 0.0;
-            for (int k=0;k<12;k++) y += backdrop[k/4][k%4]/12.0;
+            y = border_mean(line, x, start);
         }
         if (vertical_sync) y = value;
         raster_y[i]=y;

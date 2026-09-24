@@ -51,7 +51,45 @@ struct Playback {
      * the frames from capture_from on, for a recording. Both owned elsewhere
      * except capture, which this file opened. */
     FILE *capture, *capture_window, *trace;
+    uint16_t border[242][2];   /* the frame in progress's border, see run_frame */
 };
+
+uint16_t playback_border_entry(const PPU *ppu) {
+    unsigned addr = 0;
+    bool rendering = (ppu->mask & (MASK_BG_ENABLE | MASK_SPRITE_ENABLE)) != 0;
+    if (!rendering && (ppu->v & 0x3f00) == 0x3f00) {
+        addr = ppu->v & 0x1f;
+        if ((addr & 0x13) == 0x10) addr &= ~0x10u;   /* $3F10/14/18/1C mirror $3F00/04/08/0C */
+    }
+    uint16_t colour = ppu->palette[addr] & (ppu->mask & MASK_GREYSCALE ? 0x30 : 0x3f);
+    return colour | (uint16_t)((ppu->mask & 0xe0) << 1);
+}
+
+/* One frame, noting the border each raster line gets. Raster line r starts
+ * at PPU dot 277 of PPU line r - 1, so the left border of line r (dots 49
+ * to 64) is drawn in PPU line r - 1's dots 326 to 340 and the right border
+ * (from dot 321) in line r's dots 257 to 267; lines 240 and 241 are border
+ * across. When the PPU leaves line s the entry is taken for the left border
+ * of raster line s + 1 and the right border of line s, so a palette write in
+ * line s's horizontal blanking reaches its right border up to 70 dots early.
+ * Line 241 is drawn after the frame completes at its dot 1 and takes the
+ * entry then. */
+static void run_frame(NES *nes, uint16_t border[242][2]) {
+    PPU *ppu = &nes->ppu;
+    ppu->frame_complete = false;
+    int line = ppu->scanline;
+    while (!ppu->frame_complete) {
+        nes_step(nes);
+        if (ppu->scanline != line) {
+            uint16_t entry = playback_border_entry(ppu);
+            int next = line == ppu->prerender_line ? 0 : line + 1;
+            if (line < 242) border[line][1] = entry;
+            if (next < 242) border[next][0] = entry;
+            line = ppu->scanline;
+        }
+    }
+    border[241][1] = playback_border_entry(ppu);
+}
 
 /* Deterministic controller replay for offscreen visual reviews. Each row is
  * an emulated frame number and a hexadecimal controller mask, held until the
@@ -258,7 +296,7 @@ static int run(void *user) {
         }
         p->count = 0;
         Uint64 start_ns = SDL_GetTicksNS(), start = SDL_GetPerformanceCounter();
-        nes_run_frame(p->nes);
+        run_frame(p->nes, p->border);
         Uint64 duration = SDL_GetPerformanceCounter() - start;
         ++p->number;
         Uint64 audio_start=SDL_GetTicksNS();
@@ -284,6 +322,7 @@ static int run(void *user) {
         picture->number = p->number;
         picture->backdrop = (p->nes->ppu.palette[0] & (p->nes->ppu.mask & 1 ? 0x30 : 0x3f))
                          | ((p->nes->ppu.mask & 0xe0) << 1);
+        memcpy(picture->border, p->border, sizeof(picture->border));
         picture->audio_energy = p->energy;
         picture->emulation_ticks = duration;
         picture->start_ns=start_ns;

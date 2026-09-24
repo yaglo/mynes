@@ -101,6 +101,14 @@ class Context:
     def preset_file(self, preset: str) -> Path:
         return shots_mod.preset_file(preset, self.presets_dir)
 
+    def raster(self, preset: str) -> recipes.Raster:
+        """The preset's raster size and position, which place its crops."""
+        try:
+            tv = json.loads(self.preset_file(preset).read_text()).get("tv", {})
+        except (OSError, ValueError):
+            return recipes.Raster()
+        return recipes.preset_raster(tv if isinstance(tv, dict) else {})
+
     def state_path(self, shot: Shot) -> Path:
         return self.states_dir / shot.state
 
@@ -623,7 +631,8 @@ def encode_still(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dict 
         return None
     with _discard_on_failure(runner, outputs + [d / "still-hdr.yuv"]):
         frame = shot.thumbnail_frame
-        rect = recipes.flicker_geometry(shot.detail_crop, size, ctx.flicker_scale, align=CROP_ALIGN)
+        rect = recipes.flicker_geometry(shot.detail_crop, size, ctx.flicker_scale, align=CROP_ALIGN,
+                                        raster=ctx.raster(preset))
         runner.run(recipes.sdr_png_args(sdr.path, d / "still-sdr.png", frame, matrix=sdr.matrix, range_=sdr.range),
                    what=f"still-sdr {shot.id}/{preset}")
         runner.step("rewrite still-sdr.png with the sRGB chunk, cut crop-sdr.png "
@@ -763,7 +772,7 @@ def encode_flicker(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dic
         return None
     candidates = {q: webp.with_name(f"flicker.q{q}.webp") for q in recipes.FLICKER_QUALITIES}
     with _discard_on_failure(runner, [webp, png, hdr_png, jpg, d / "flicker-hdr.yuv", *candidates.values()]):
-        rect = recipes.flicker_geometry(shot.flicker_crop, size, ctx.flicker_scale)
+        rect = recipes.flicker_geometry(shot.flicker_crop, size, ctx.flicker_scale, raster=ctx.raster(preset))
         first = shot.flicker_first_frame
         if first + recipes.FLICKER_FRAMES > sdr.frames:
             raise PipelineError(f"flicker frames {first}..{first + recipes.FLICKER_FRAMES - 1} exceed the render")
@@ -902,7 +911,7 @@ def collect_clip(ctx: Context, runner: Runner, shot: Shot, preset: str) -> ClipI
         still_sdr = want(d.lens_size, "still-sdr.png")[1]
     crop = None
     if crop_only or ctx.with_crops:
-        crop = crop_entry(ctx, shot, {name: want(d.lens_size, name)[1] for name in SITE_CROP_FILES})
+        crop = crop_entry(ctx, shot, preset, {name: want(d.lens_size, name)[1] for name in SITE_CROP_FILES})
     if missing:
         if runner.dry_run:
             return ClipInstall(shot, preset, copies, {})
@@ -933,9 +942,10 @@ def collect_clip(ctx: Context, runner: Runner, shot: Shot, preset: str) -> ClipI
     return ClipInstall(shot, preset, copies, entry)
 
 
-def crop_entry(ctx: Context, shot: Shot, rels: dict[str, str]) -> dict:
+def crop_entry(ctx: Context, shot: Shot, preset: str, rels: dict[str, str]) -> dict:
     """The manifest's detail crop: its four files and where it sits in the still."""
-    rect = recipes.flicker_geometry(shot.detail_crop, ctx.defaults.lens_size, ctx.flicker_scale, align=CROP_ALIGN)
+    rect = recipes.flicker_geometry(shot.detail_crop, ctx.defaults.lens_size, ctx.flicker_scale, align=CROP_ALIGN,
+                                    raster=ctx.raster(preset))
     return {"sdr": rels["crop-sdr.png"], "sdr_1x": rels["crop-sdr@1x.png"], "hdr": rels["crop-hdr.avif"],
             "hdr_1x": rels["crop-hdr@1x.avif"], "x": rect.x, "y": rect.y, "width": rect.w, "height": rect.h}
 
