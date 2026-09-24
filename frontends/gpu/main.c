@@ -166,9 +166,18 @@ static bool calib_gpu_dac;
 static bool calibrate_white(unsigned frame) {
     static uint16_t white[256 * 240]; static bool ready;
     if (!ready) { for (int i = 0; i < 256 * 240; i++) white[i] = 0x30; ready = true; }
+    /* The white field sits in a black ($0F) border whatever the running
+     * game's backdrop, so the gain does not depend on the game. */
+    float backdrop[12], gray_backdrop[12];
+    memcpy(backdrop, video_gpu_chain.backdrop, sizeof(backdrop));
+    memcpy(gray_backdrop, video_gpu_chain.gray_backdrop, sizeof(gray_backdrop));
+    memcpy(video_gpu_chain.backdrop, sig_state.table[0x0f], 12 * sizeof(float));
+    memcpy(video_gpu_chain.gray_backdrop, sig_state.table[0x0f & 0x1f0], 12 * sizeof(float));
     for (int i = 0; i < 24; i++)
         video_gpu_process_full(&video_gpu_chain, gpu, white,
             sig_state.phase_base + signal_frame_phase(&sig_state, frame + i), sig_state.phase_line_adv, 0, NULL);
+    memcpy(video_gpu_chain.backdrop, backdrop, sizeof(backdrop));
+    memcpy(video_gpu_chain.gray_backdrop, gray_backdrop, sizeof(gray_backdrop));
     bool measured = false;
     int beam_w, beam_h;
     SDL_GPUTexture *beam = video_gpu_get_beam_texture(&video_gpu_chain);
@@ -2201,8 +2210,10 @@ int main(int argc, char **argv) {
         }
 
         /* The core exposes the backdrop at frame handoff. Raster-side palette
-         * writes are not observed here; this snapshot is used only outside the picture. */
-        unsigned backdrop = live ? picture.backdrop : 0x0f;
+         * writes are not observed here; this snapshot is used only outside the picture.
+         * A paused or covered game keeps showing its retained picture, border
+         * included; a static frame and the empty screen have a black one. */
+        unsigned backdrop = rom_loaded && !static_frame_buf ? picture.backdrop : 0x0f;
         memcpy(video_gpu_chain.backdrop, sig_state.table[backdrop], 12 * sizeof(float));
         memcpy(video_gpu_chain.gray_backdrop, sig_state.table[backdrop & 0x1f0], 12 * sizeof(float));
 
