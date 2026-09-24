@@ -75,7 +75,7 @@ def build_parser() -> argparse.ArgumentParser:
     install_opts.add_argument("--budget-mb", type=float, default=jobs_mod.DEFAULT_BUDGET_MB,
                               help="refuse when the site's assets/ would exceed this (default 900)")
     install_opts.add_argument("--with-crops", action="store_true",
-                              help="also install the detail crops (crop-sdr.png, crop-hdr.avif and @1x)")
+                              help="also install the detail crops (crop-sdr.png and crop-hdr.avif)")
     ins = sub.add_parser("install", parents=[install_opts], help="copy site files into the mynes-web checkout")
     ins.add_argument("site", type=Path)
     al = sub.add_parser("all", parents=[install_opts],
@@ -177,9 +177,7 @@ def cmd_check(ctx: jobs_mod.Context, args, runner: Runner) -> int:
     say(f"  avifenc: {runner_mod.tool('avifenc')}: {avifenc or 'MISSING'}")
     if not avifenc:
         errors.append("avifenc not found (brew install libavif): the HDR stills need it")
-    ok, reason = jobs_mod.gainmap_available()
-    say(f"  gain-map JPEGs: {'swift ' + runner_mod.tool('swift') if ok else 'skipped: ' + reason}")
-    for module, why in (("PIL", "Pillow verifies images and makes the SDR @1x crops (pip install Pillow)"),
+    for module, why in (("PIL", "Pillow verifies images and cuts the SDR crops (pip install Pillow)"),
                         ("numpy", "numpy handles the 16-bit HDR frames (pip install numpy)")):
         try:
             mod = __import__(module)

@@ -1,4 +1,4 @@
-"""When the poster, stills and crops, README media and flicker clip are
+"""When the poster, stills and crops, README animation and flicker clip are
 built again: their files are newer than the render either way, so each keeps
 a <name>.encode.json record of the shots.json and command-line parameters it
 was made with, and a change to one of those builds it again. Runs as a dry
@@ -84,7 +84,8 @@ class ParameterRecords(unittest.TestCase):
     # -- stills and detail crops -------------------------------------------------
     def still_record(self, ctx=None, shot=None):
         ctx, shot = ctx or self.ctx, shot or self.shot
-        return jobs_mod.still_params(ctx, shot, self.facts(LENS, False, ctx, shot), self.facts(LENS, True, ctx, shot))
+        return jobs_mod.still_params(ctx, shot, "p_a", self.facts(LENS, False, ctx, shot),
+                                     self.facts(LENS, True, ctx, shot))
 
     def test_stills_and_crops(self):
         d = self.ctx.size_dir(self.shot, "p_a", LENS)
@@ -97,30 +98,30 @@ class ParameterRecords(unittest.TestCase):
 
     def test_the_manifest_crop_is_the_recorded_crop(self):
         record = self.still_record()
-        entry = jobs_mod.crop_entry(self.ctx, self.shot, {n: n for n in jobs_mod.SITE_CROP_FILES})
+        entry = jobs_mod.crop_entry(self.ctx, self.shot, "p_a", {n: n for n in jobs_mod.SITE_CROP_FILES})
         self.assertEqual(record["crop"], [entry["x"], entry["y"], entry["width"], entry["height"]])
 
-    # -- README media -----------------------------------------------------------
-    README_FILES = ["readme.webp", "readme.png", "readme-hdr.png"]
+    # -- README animation -------------------------------------------------------
+    README_FILES = ["readme.webp"]
 
     def readme_record(self, shot=None):
         shot = shot or self.shot
-        return jobs_mod.readme_params(shot, self.facts(README, False, shot=shot), self.facts(README, True, shot=shot))
+        return jobs_mod.readme_params(shot, self.facts(README, False, shot=shot))
 
     def test_readme(self):
         d = self.ctx.size_dir(self.shot, "p_a", README)
         self.make(d, self.README_FILES, "readme.encode.json", self.readme_record())
         self.assertEqual(self.rebuilt(jobs_mod.encode_readme), [])
-        self.assertNotEqual(self.rebuilt(jobs_mod.encode_readme, shot=self.replaced(thumbnail_frame=9)), [])
+        # The animation starts at frame 0; only its length comes from shots.json.
+        self.assertEqual(self.rebuilt(jobs_mod.encode_readme, shot=self.replaced(thumbnail_frame=9)), [])
         self.assertNotEqual(self.rebuilt(jobs_mod.encode_readme, shot=self.replaced(readme_seconds=1.5)), [])
 
     # -- flicker clip -----------------------------------------------------------
-    FLICKER_FILES = ["flicker.webp", "flicker.png", "flicker-hdr.png"]
+    FLICKER_FILES = ["flicker.webp"]
 
     def flicker_record(self, ctx=None, shot=None):
         ctx, shot = ctx or self.ctx, shot or self.shot
-        return jobs_mod.flicker_params(ctx, shot, self.facts(LENS, False, ctx, shot),
-                                       self.facts(LENS, True, ctx, shot))
+        return jobs_mod.flicker_params(ctx, shot, "p_a", self.facts(LENS, False, ctx, shot))
 
     def test_flicker(self):
         d = self.ctx.size_dir(self.shot, "p_a", LENS)

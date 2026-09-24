@@ -46,11 +46,15 @@ static Console console_snes(void) {
 
 static int gcd(int a, int b) { while (b) { int t = a % b; a = b; b = t; } return a; }
 
+/* The encoder's pedestal (setup) for decode(); 0 unless a test sets it. */
+static float decode_setup;
+
 /* Run `frames` pictures through a fresh chain and return the decoded RGB
- * of the last one (rgb_size floats, caller frees), or NULL. */
+ * of the last one (rgb_size floats, caller frees), or NULL. *window_out
+ * says where the picture's samples are; *spl_out is its width in samples. */
 static float *decode(SDL_GPUDevice *gpu, const Console *con, VideoConnectionType conn,
                      const uint32_t *codes, int lines, float luma_bw_hz, float luma_trap,
-                     int frames, int *spl_out, int code_bits) {
+                     int frames, int *spl_out, DecodeWindow *window_out, int code_bits) {
     SignalPrecompute sp;
     signal_precompute_init(&sp, SIGNAL_REGION_NTSC);
     VideoChain chain;
@@ -68,7 +72,7 @@ static float *decode(SDL_GPUDevice *gpu, const Console *con, VideoConnectionType
         .spp_num = SIGNAL_NTSC_SAMPLES_PER_LINE / g, .spp_den = con->width / g,
         .ramp = con->ramp, .ramp_n = con->ramp_n,
         .phase_base = 0, .phase_line_adv = con->line_phase,
-        .chroma_bw_hz = 1.3e6f, .luma_bw_hz = luma_bw_hz, .luma_trap = luma_trap, .setup = 0,
+        .chroma_bw_hz = 1.3e6f, .luma_bw_hz = luma_bw_hz, .luma_trap = luma_trap, .setup = decode_setup,
         .code_bits = code_bits,
     };
     float *rgb = calloc(v.rgb_size / sizeof(float), sizeof(float));
@@ -78,10 +82,11 @@ static float *decode(SDL_GPUDevice *gpu, const Console *con, VideoConnectionType
         v.signal_frame_counter = (uint32_t)f;
         v.beam_frame_counter = (uint32_t)f;
         video_gpu_set_demod(&v, (float)src.phase_base * 2.0f * (float)M_PI / 12.0f, v.demod_dp);
-        ok = video_gpu_process_rgb(&v, gpu, &src, f == frames - 1 ? rgb : NULL);
+        ok = video_gpu_process_rgb(&v, gpu, &src) && (f + 1 < frames || video_gpu_download_window_rgb(&v, gpu, rgb));
         if (con->line_phase) src.phase_base = (src.phase_base + ((f & 1) ? 8 : 4)) % 12;
     }
     *spl_out = chain.signal_fmt.samples_per_line;
+    *window_out = v.window;
     video_gpu_destroy(&v, gpu);
     if (!ok) { free(rgb); return NULL; }
     return rgb;
@@ -101,7 +106,8 @@ static void encoder_identity(SDL_GPUDevice *gpu, const Console *con, VideoConnec
             codes[y * con->width + x] = (c[0] ? full : 0) | ((c[1] ? full : 0) << 6) | ((c[2] ? full : 0) << 12);
         }
     int spl = 0;
-    float *rgb = decode(gpu, con, conn, codes, lines, 5e6f, 0.0f, 12, &spl, 0);
+    DecodeWindow w;
+    float *rgb = decode(gpu, con, conn, codes, lines, 5e6f, 0.0f, 12, &spl, &w, 0);
     CHECK(rgb != NULL);
     float worst = 0;
     if (rgb) {
@@ -109,7 +115,7 @@ static void encoder_identity(SDL_GPUDevice *gpu, const Console *con, VideoConnec
             double acc[3] = {0}; int n = 0;
             for (int y = 8 + 40; y < 8 + lines - 40; y++)
                 for (int x = b * spl / 8 + spl / 32; x < (b + 1) * spl / 8 - spl / 32; x++) {
-                    const float *px = rgb + ((size_t)y * spl + x) * 3;
+                    const float *px = rgb + decode_window_rgb_index(&w, y, x);
                     acc[0] += px[0]; acc[1] += px[1]; acc[2] += px[2]; n++;
                 }
             for (int c = 0; c < 3; c++) {
@@ -138,13 +144,14 @@ static double stroke_chroma(SDL_GPUDevice *gpu, const Console *con, float luma_b
             codes[y * con->width + x] = x < con->width / 2 ? ((x & 3) == 0 ? white : 0)
                                                            : ((y & 3) == 0 ? white : 0);
     int spl = 0;
-    float *rgb = decode(gpu, con, VIDEO_CONN_COMPOSITE, codes, lines, luma_bw_hz, trap, 12, &spl, 0);
+    DecodeWindow w;
+    float *rgb = decode(gpu, con, VIDEO_CONN_COMPOSITE, codes, lines, luma_bw_hz, trap, 12, &spl, &w, 0);
     free(codes);
     if (!rgb) { failures++; return -1; }
     double chroma = 0, luma = 0; int n = 0;
     for (int y = 8 + 20; y < 8 + lines - 20; y++)
         for (int x = half * spl / 2 + spl / 16; x < (half + 1) * spl / 2 - spl / 16; x++) {
-            const float *px = rgb + ((size_t)y * spl + x) * 3;
+            const float *px = rgb + decode_window_rgb_index(&w, y, x);
             double yy = 0.299 * px[0] + 0.587 * px[1] + 0.114 * px[2];
             chroma += sqrt((px[0] - yy) * (px[0] - yy) + (px[2] - yy) * (px[2] - yy));
             luma += yy; n++;
@@ -171,7 +178,8 @@ static void encoder_linear(SDL_GPUDevice *gpu, VideoConnectionType conn, const c
                 : v | (v << 10) | (v << 20);
         }
     int spl = 0;
-    float *rgb = decode(gpu, &con, conn, codes, lines, 5e6f, 0.0f, 12, &spl, 10);
+    DecodeWindow w;
+    float *rgb = decode(gpu, &con, conn, codes, lines, 5e6f, 0.0f, 12, &spl, &w, 10);
     CHECK(rgb != NULL);
     if (rgb) {
         float worst = 0;
@@ -179,7 +187,7 @@ static void encoder_linear(SDL_GPUDevice *gpu, VideoConnectionType conn, const c
             double acc[3] = {0}; int n = 0;
             for (int y = 8 + 30; y < 8 + lines / 2 - 20; y++)
                 for (int x = b * spl / 8 + spl / 32; x < (b + 1) * spl / 8 - spl / 32; x++) {
-                    const float *px = rgb + ((size_t)y * spl + x) * 3;
+                    const float *px = rgb + decode_window_rgb_index(&w, y, x);
                     acc[0] += px[0]; acc[1] += px[1]; acc[2] += px[2]; n++;
                 }
             for (int c = 0; c < 3; c++) worst = fmaxf(worst, fabsf((float)(acc[c] / n) - (float)bar_rgb[b][c]));
@@ -187,7 +195,7 @@ static void encoder_linear(SDL_GPUDevice *gpu, VideoConnectionType conn, const c
         double grey[3] = {0}; int n = 0;
         for (int y = 8 + lines / 2 + 20; y < 8 + lines - 20; y++)
             for (int x = spl / 8; x < spl * 7 / 8; x++) {
-                const float *px = rgb + ((size_t)y * spl + x) * 3;
+                const float *px = rgb + decode_window_rgb_index(&w, y, x);
                 grey[0] += px[0]; grey[1] += px[1]; grey[2] += px[2]; n++;
             }
         float grey_err = 0;
@@ -200,7 +208,46 @@ static void encoder_linear(SDL_GPUDevice *gpu, VideoConnectionType conn, const c
     free(codes);
 }
 
+/* With a 7.5 IRE setup the encoder's pedestal spans the whole active line:
+ * the console's side border decodes to the black of a black bar, not 7.5
+ * IRE below it. */
+static void encoder_pedestal(SDL_GPUDevice *gpu) {
+    Console con = console_snes();
+    const int lines = 224;
+    uint32_t *codes = malloc((size_t)con.width * lines * sizeof(uint32_t));
+    uint32_t full = (uint32_t)(con.ramp_n - 1);
+    for (int y = 0; y < lines; y++)
+        for (int x = 0; x < con.width; x++) {
+            const int *c = bar_rgb[x * 8 / con.width];
+            codes[y * con.width + x] = (c[0] ? full : 0) | ((c[1] ? full : 0) << 6) | ((c[2] ? full : 0) << 12);
+        }
+    int spl = 0;
+    DecodeWindow w;
+    decode_setup = 0.075f;
+    float *rgb = decode(gpu, &con, VIDEO_CONN_COMPOSITE, codes, lines, 5e6f, 0.0f, 12, &spl, &w, 0);
+    decode_setup = 0;
+    CHECK(rgb != NULL);
+    if (rgb) {
+        double bar[3] = {0}, border[3] = {0};
+        int nb = 0, nd = 0;
+        for (int y = 60; y <= 180; y++) {
+            for (int x = 7 * spl / 8 + spl / 32; x < spl - spl / 32; x++, nb++)
+                for (int c = 0; c < 3; c++) bar[c] += rgb[decode_window_rgb_index(&w, y, x) + c];
+            /* Raster dots 55 to 60, clear of the picture and the dot-49 pulse. */
+            for (int x = (55 - 65) * w.spp; x < (61 - 65) * w.spp; x++, nd++)
+                for (int c = 0; c < 3; c++) border[c] += rgb[decode_window_rgb_index(&w, y, x) + c];
+        }
+        float worst = 0;
+        for (int c = 0; c < 3; c++) worst = fmaxf(worst, fabsf((float)(bar[c] / nb - border[c] / nd)));
+        printf("encoder, 7.5 IRE setup: border against the black bar %.4f\n", worst);
+        CHECK(worst < 0.01f);
+    }
+    free(rgb);
+    free(codes);
+}
+
 int test_encoder(SDL_GPUDevice *gpu) {
+    encoder_pedestal(gpu);
     Console md = console_md(), snes = console_snes();
     const struct { VideoConnectionType conn; const char *name; } conns[] = {
         {VIDEO_CONN_COMPOSITE, "composite"}, {VIDEO_CONN_SVIDEO, "S-Video"}, {VIDEO_CONN_RGB, "RGB"}};

@@ -84,6 +84,12 @@ static int test_all_presets_loadable(void) {
             printf("\n  FAIL: preset %s has null/empty description", p->name);
             return 0;
         }
+        /* The loader cuts a description at the field's size; a shipped one
+         * that fills it has been cut. */
+        if (strlen(p->description) >= sizeof(p->description) - 1) {
+            printf("\n  FAIL: preset %s: description cut at %zu bytes", p->name, sizeof(p->description) - 1);
+            return 0;
+        }
     }
     return 1;
 }
@@ -240,7 +246,10 @@ static int test_no_nan_or_inf(void) {
         CHECK_FINITE(p, p->brightness,               "brightness");
         CHECK_FINITE(p, p->contrast,                 "contrast");
         CHECK_FINITE(p, p->chroma_gain,              "chroma_gain");
-        CHECK_FINITE(p, p->audio_psu_hum_amplitude,  "audio_psu_hum_amplitude");
+        CHECK_FINITE(p, p->psu.adaptor_vac,          "psu.adaptor_vac");
+        CHECK_FINITE(p, p->psu.reservoir_uf,         "psu.reservoir_uf");
+        CHECK_FINITE(p, p->psu.load_ma,              "psu.load_ma");
+        CHECK_FINITE(p, p->psu.regulator_rejection_db, "psu.regulator_rejection_db");
         CHECK_FINITE(p, p->audio_noise_floor,        "audio_noise_floor");
         CHECK_FINITE(p, p->audio_saturation_drive,   "audio_saturation_drive");
         CHECK_FINITE(p, p->audio_cable_length_m,     "audio_cable_length_m");

@@ -3,7 +3,9 @@
  * =========================================
  *
  * Consumes:
- *   - signal-resolution RGB (already matrix-decoded and horizontally blurred)
+ *   - decode-window RGB (already matrix-decoded and horizontally blurred;
+ *     decode_window.h: width samples by lines rows, the console picture at
+ *     picture_x, picture_row)
  *   - display-resolution deflection maps (landing X/Y + dwell + sigma scale)
  *
  * Produces:
@@ -39,7 +41,7 @@ layout(set = 1, binding = 0) writeonly buffer RGBAOut {
 };
 
 layout(set = 2, binding = 0) uniform Params {
-    uint  signal_w;
+    uint  width;
     uint  out_w;
     uint  out_h;
     uint  rows_per_scanline;
@@ -49,13 +51,16 @@ layout(set = 2, binding = 0) uniform Params {
     float hum_bar_amplitude;
     float bloom_gamma;
     float gamma, gamma_r, gamma_g, gamma_b;
-    uint monitor_model, source_h;
+    uint monitor_model, lines;
+    int  picture_x, picture_row;
+    uint picture_w, picture_h;
+    float lines_per_row;      /* raster lines per output row */
 };
 
 float sample_rgb_channel_linear(float sx, int sy, uint channel) {
-    if (sy < 0 || sy >= 240) return 0.0;
+    if (sy < 0 || sy >= int(lines)) return 0.0;
 
-    int signal_w_i = max(int(signal_w), 1);
+    int signal_w_i = max(int(width), 1);
     float sx_max = float(signal_w_i - 1);
 
     /* Outside the landed raster we want the beam to taper to black,
@@ -68,7 +73,7 @@ float sample_rgb_channel_linear(float sx, int sy, uint channel) {
     int x1 = min(x0 + 1, signal_w_i - 1);
     float tx = sx_clamped - float(x0);
 
-    uint base = uint(sy) * signal_w;
+    uint base = uint(sy) * width;
     float a = rgb_in[(base + uint(x0)) * 3u + channel];
     float b = rgb_in[(base + uint(x1)) * 3u + channel];
     return mix(a, b, tx);
@@ -121,37 +126,29 @@ void main() {
         return;
     }
 
-    float rows_per_line = float(out_h) / 240.0;
-    uint out_h_clamped = max(out_h, 1u);
+    /* The deflection map lands each gun in decode-window lines; row r of
+     * the window spans r to r + 1. Beyond the decoded rows nothing is
+     * sampled, so the raster ends where the beam's spot does. */
+    float r_d = fract(r_vy) - 0.5;
+    float g_d = fract(g_vy) - 0.5;
+    float b_d = fract(b_vy) - 0.5;
 
-    float r_vy_clamped = clamp(r_vy, 0.0, float(out_h_clamped - 1u));
-    float g_vy_clamped = clamp(g_vy, 0.0, float(out_h_clamped - 1u));
-    float b_vy_clamped = clamp(b_vy, 0.0, float(out_h_clamped - 1u));
-
-    float r_linef = r_vy_clamped / rows_per_line;
-    float g_linef = g_vy_clamped / rows_per_line;
-    float b_linef = b_vy_clamped / rows_per_line;
-
-    float r_d = fract(r_linef) - 0.5;
-    float g_d = fract(g_linef) - 0.5;
-    float b_d = fract(b_linef) - 0.5;
-
-    uint r_sy = clamp(uint(floor(r_linef)), 0u, 239u);
-    uint g_sy = clamp(uint(floor(g_linef)), 0u, 239u);
-    uint b_sy = clamp(uint(floor(b_linef)), 0u, 239u);
+    int r_sy = int(floor(r_vy));
+    int g_sy = int(floor(g_vy));
+    int b_sy = int(floor(b_vy));
 
     float R = 0.0, G = 0.0, B = 0.0;
 
     int radius = min(4, int(ceil(3.0 * clamp(max(sigma_narrow,2.0*sigma_wide-sigma_narrow)*focus_scale,0.05,1.0)
-                               + 0.5/rows_per_line)));
+                               + 0.5*lines_per_row)));
     for (int soff = -radius; soff <= radius; soff++) {
         float lR = 0.0;
         float lG = 0.0;
         float lB = 0.0;
 
-        int r_line = int(r_sy) + soff;
-        int g_line = int(g_sy) + soff;
-        int b_line = int(b_sy) + soff;
+        int r_line = r_sy + soff;
+        int g_line = g_sy + soff;
+        int b_line = b_sy + soff;
 
         lR = sample_rgb_channel_linear(r_center, r_line, 0u);
         lG = sample_rgb_channel_linear(g_center, g_line, 1u);
@@ -164,7 +161,7 @@ void main() {
         vec3 bloom_t = min(pow(max(vec3(lR,lG,lB),vec3(0.0)),exponent),vec3(2.0));
         vec3 sv = clamp(mix(vec3(sigma_narrow),vec3(sigma_wide),bloom_t)
                         * focus_scale,0.05,1.0);
-        float pixel_width = 1.0 / rows_per_line;
+        float pixel_width = lines_per_row;
 
         float rd = r_d - float(soff);
         float gd = g_d - float(soff);
@@ -180,9 +177,8 @@ void main() {
     G *= dwell;
     B *= dwell;
 
-    uint sy = g_sy;
     if (hum_bar_amplitude > 0.0) {
-        float hum_phase = float(sy) / 240.0 * 6.283185 + float(frame_counter) * 0.006;
+        float hum_phase = float(g_sy - picture_row) / 240.0 * 6.283185 + float(frame_counter) * 0.006;
         float hum_wave = sin(hum_phase)
                        + 0.40 * sin(2.0 * hum_phase + 0.8)
                        + 0.15 * sin(3.0 * hum_phase + 1.5);

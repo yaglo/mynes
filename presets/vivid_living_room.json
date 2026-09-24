@@ -80,7 +80,7 @@
         "color_killer": 0.0,
         "hdr_gain": 1.2,
         "luma_peaking": 0.0,
-        "overscan": 0.018,
+        "overscan": 0.04,
         "keystone": 0,
         "rotation": 0,
         "skew_x": 0,
@@ -90,7 +90,7 @@
         "scanline_wobble": 0,
         "h_pos": 0.0,
         "v_pos": 0.0,
-        "h_size": 1.0,
+        "h_size": 1.0222,
         "v_size": 1.0,
         "luma_notch_depth": 0.95,
         "beam_edge_fade": 0.0,
@@ -118,15 +118,26 @@
         "mod_bandwidth": 0.0,
         "noise_floor_dbm": 0.0,
         "agc_attack_ms": 0.0,
-        "agc_release_ms": 0.0
+        "agc_release_ms": 0.0,
+        "sound_am_rejection_db": 45.0,
+        "icpm_deg": 0.0,
+        "detector": 0
     },
     "brightness": 0.0,
     "contrast": 0.95,
     "chroma_gain": 1.2,
-    "audio_psu_hum_amplitude": 0,
     "audio_noise_floor": 0,
-    "audio_saturation_drive": 1,
+    "audio_saturation_drive": 1.0,
     "audio_cable_length_m": 2.0,
     "comb_notch_depth": 0.0,
-    "console_phase_distortion_ns": 30
+    "console_phase_distortion_ns": 30,
+    "audio_pickup_mv": 0.0,
+    "audio_tv_input_kohm": 47.0,
+    "audio_rf_deemphasis": 0,
+    "psu": {
+        "adaptor_vac": 10.0,
+        "reservoir_uf": 2200.0,
+        "load_ma": 600.0,
+        "regulator_rejection_db": 73.0
+    }
 }

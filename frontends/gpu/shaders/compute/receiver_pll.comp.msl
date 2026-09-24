@@ -30,7 +30,7 @@ struct Params
     uint h_pll;
     uint h_vblank_lines;
     float clamp_gain;
-    uint reserved1;
+    float frame_step;
 };
 
 struct Measurement
@@ -46,7 +46,7 @@ float wrap(thread const float& p)
     return mod(p + 3.1415927410125732421875, 6.283185482025146484375) - 3.1415927410125732421875;
 }
 
-kernel void main0(device Reference& _26 [[buffer(2)]], constant Params& _32 [[buffer(0)]], const device Measurement& _87 [[buffer(1)]])
+kernel void main0(device Reference& _26 [[buffer(2)]], constant Params& _32 [[buffer(0)]], device Measurement& _100 [[buffer(1)]])
 {
     float4 state = _26.reference[_32.count];
     float4 _46;
@@ -60,45 +60,58 @@ kernel void main0(device Reference& _26 [[buffer(2)]], constant Params& _32 [[bu
     }
     float4 loop = _46;
     float advance = (float(_32.full_width % 12u) * 6.283185482025146484375) / 12.0;
-    bool acquire = true;
-    float _145;
-    float _217;
-    float _235;
-    float _267;
-    float4 _369;
+    float param = state.x + _32.frame_step;
+    state.x = wrap(param);
+    bool acquire = state.z <= 0.0;
+    float _169;
+    float _240;
+    float _262;
+    float _294;
+    float4 _404;
     for (uint line = 0u; line < _32.count; line++)
     {
-        float4 m = _87.measurement[line];
-        float param = state.x + advance;
-        state.x = wrap(param);
+        float4 m = _100.measurement[line];
+        float param_1 = state.x + advance;
+        state.x = wrap(param_1);
         bool sync = abs(m.w) < (8.0 * float(_32.samples_per_dot));
+        bool _127 = m.w > 400000.0;
+        bool _134;
+        if (_127)
+        {
+            _134 = m.w < 600000.0;
+        }
+        else
+        {
+            _134 = _127;
+        }
+        bool keyed = _134;
         float predicted = state.w;
         if (_32.h_pll != 0u)
         {
             bool vertical = m.z < 0.0;
-            bool _129;
+            bool _153;
             if (vertical)
             {
-                _129 = loop.z == 0.0;
+                _153 = loop.z == 0.0;
             }
             else
             {
-                _129 = vertical;
+                _153 = vertical;
             }
-            if (_129)
+            if (_153)
             {
                 loop.y = 0.0;
             }
             loop.z = float(vertical);
             if (loop.y < float(_32.h_vblank_lines))
             {
-                _145 = _32.h_vblank_gain;
+                _169 = _32.h_vblank_gain;
             }
             else
             {
-                _145 = 1.0;
+                _169 = 1.0;
             }
-            float g = _145;
+            float g = _169;
             loop.y = fast::min(loop.y + 1.0, 1000000.0);
             if (sync && (!vertical))
             {
@@ -115,66 +128,65 @@ kernel void main0(device Reference& _26 [[buffer(2)]], constant Params& _32 [[bu
         {
             if (_32.h_pll != 0u)
             {
-                _217 = predicted;
+                _240 = predicted;
             }
             else
             {
-                _217 = state.w;
+                _240 = state.w;
             }
-            _26.reference[line] = float4(state.x, m.y, 0.0, _217);
-            acquire = true;
+            _26.reference[line] = float4(state.x, m.y, 0.0, _240);
             continue;
         }
-        if (sync)
+        if (sync || keyed)
         {
-            if (_32.h_pll != 0u)
+            if ((_32.h_pll != 0u) || keyed)
             {
-                _235 = state.w;
+                _262 = state.w;
             }
             else
             {
-                _235 = mix(state.w, m.w, _32.h_response);
+                _262 = mix(state.w, m.w, _32.h_response);
             }
-            float horizontal = _235;
-            bool _253 = state.y == 0.0;
-            bool _259;
-            if (_253)
+            float horizontal = _262;
+            bool _280 = state.y == 0.0;
+            bool _286;
+            if (_280)
             {
-                _259 = state.z == 0.0;
+                _286 = state.z == 0.0;
             }
             else
             {
-                _259 = _253;
+                _286 = _280;
             }
-            bool _265;
-            if (_259)
+            bool _292;
+            if (_286)
             {
-                _265 = state.w == 0.0;
+                _292 = state.w == 0.0;
             }
             else
             {
-                _265 = _259;
+                _292 = _286;
             }
-            bool fresh = _265;
+            bool fresh = _292;
             if (fresh)
             {
-                _267 = m.y;
+                _294 = m.y;
             }
             else
             {
-                _267 = mix(state.y, m.y, _32.clamp_gain);
+                _294 = mix(state.y, m.y, _32.clamp_gain);
             }
-            state.y = _267;
-            bool _290;
+            state.y = _294;
+            bool _317;
             if (acquire)
             {
-                _290 = m.z > 0.00999999977648258209228515625;
+                _317 = m.z > 0.00999999977648258209228515625;
             }
             else
             {
-                _290 = acquire;
+                _317 = acquire;
             }
-            if (_290)
+            if (_317 && sync)
             {
                 state.x = m.xz.x;
                 state.z = m.xz.y;
@@ -186,30 +198,33 @@ kernel void main0(device Reference& _26 [[buffer(2)]], constant Params& _32 [[bu
             }
             else
             {
-                state.w = mix(state.w, m.w, 0.25);
+                if (sync)
+                {
+                    state.w = mix(state.w, m.w, 0.25);
+                }
                 if (m.z > 0.00999999977648258209228515625)
                 {
-                    float param_1 = m.x - state.x;
-                    float param_2 = state.x + (0.25 * wrap(param_1));
-                    state.x = wrap(param_2);
-                    state.z = mix(state.z, m.z, 0.25);
+                    float param_2 = m.x - state.x;
+                    float param_3 = state.x + (0.0500000007450580596923828125 * wrap(param_2));
+                    state.x = wrap(param_3);
+                    state.z = mix(state.z, m.z, 0.0500000007450580596923828125);
                 }
                 else
                 {
                     state.z *= 0.64999997615814208984375;
                 }
             }
-            bool _348 = _32.h_response > 0.0;
-            bool _355;
-            if (!_348)
+            bool _381 = _32.h_response > 0.0;
+            bool _388;
+            if (!_381)
             {
-                _355 = _32.h_pll != 0u;
+                _388 = _32.h_pll != 0u;
             }
             else
             {
-                _355 = _348;
+                _388 = _381;
             }
-            if (_355)
+            if (_388 || keyed)
             {
                 state.w = horizontal;
             }
@@ -220,13 +235,13 @@ kernel void main0(device Reference& _26 [[buffer(2)]], constant Params& _32 [[bu
         }
         if (_32.h_pll != 0u)
         {
-            _369 = float4(state.xyz, predicted);
+            _404 = float4(state.xyz, predicted);
         }
         else
         {
-            _369 = state;
+            _404 = state;
         }
-        _26.reference[line] = _369;
+        _26.reference[line] = _404;
     }
     _26.reference[_32.count] = state;
     if (_32.h_pll != 0u)

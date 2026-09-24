@@ -35,6 +35,7 @@ static const char *kernel_shader_names[CHAIN_KERNEL_COUNT] = {
     [CHAIN_KERNEL_H_BLUR_RGB] = "h_blur_rgb.comp.spv",
     [CHAIN_KERNEL_TEMPORAL_BLIT] = "temporal_blit.comp.spv",
     [CHAIN_KERNEL_AGC]           = "agc.comp.spv",
+    [CHAIN_KERNEL_AGC_LOOP]      = "agc_loop.comp.spv",
     [CHAIN_KERNEL_RASTER] = "raster_encode.comp.spv",
     [CHAIN_KERNEL_RECEIVER] = "receiver_lock.comp.spv",
     [CHAIN_KERNEL_RECEIVER_PLL] = "receiver_pll.comp.spv",
@@ -67,6 +68,7 @@ static const int kernel_workgroup_x[CHAIN_KERNEL_COUNT] = {
     [CHAIN_KERNEL_GUN_CURRENT] = 256,
     [CHAIN_KERNEL_TEMPORAL_BLIT] = 16,  /* 16×16 for 2D dispatch */
     [CHAIN_KERNEL_AGC]           = 256, /* one cooperative group per line */
+    [CHAIN_KERNEL_AGC_LOOP]      = 256, /* one group for the frame */
     [CHAIN_KERNEL_RASTER] = 256,
     [CHAIN_KERNEL_RECEIVER] = CHAIN_SCANLINE_WORKGROUP_SIZE,
     [CHAIN_KERNEL_RECEIVER_PLL] = 1,
@@ -99,12 +101,13 @@ static const int kernel_resources[CHAIN_KERNEL_COUNT][3] = {
     [CHAIN_KERNEL_GUN_CURRENT] = { 1, 1, 1 },
     [CHAIN_KERNEL_TEMPORAL_BLIT] = { 2, 1, 1 },  /* cur+prev, recursive history, and output texture */
     [CHAIN_KERNEL_RASTER] = { 2, 2, 1 },
-    [CHAIN_KERNEL_RECEIVER] = { 1, 1, 1 },
+    [CHAIN_KERNEL_RECEIVER] = { 2, 1, 1 },  /* raster + previous frame's loop state -> measurements */
     [CHAIN_KERNEL_RECEIVER_PLL] = { 1, 1, 1 },
     [CHAIN_KERNEL_CRT_LOAD] = { 0, 2, 1 },
     [CHAIN_KERNEL_RECEIVER_DEMOD] = { 2, 2, 1 },
     [CHAIN_KERNEL_YC_ROUTE] = { 2, 2, 1 },
-    [CHAIN_KERNEL_AGC]           = { 0, 2, 1 },  /* data + carry in-place */
+    [CHAIN_KERNEL_AGC]           = { 0, 2, 1 },  /* data in-place + per-line gains */
+    [CHAIN_KERNEL_AGC_LOOP]      = { 1, 1, 1 },  /* data -> per-line gains and the loop state */
 };
 
 /* Build a full path from directory + filename. */
@@ -485,9 +488,13 @@ void chain_stage_set_default_io(ChainStage *s) {
         break;
 
     case CHAIN_KERNEL_AGC:
-        /* Same shape as RC: in-place with carry. */
-        s->rw[0] = CBR_BUF_SRC; s->rw[1] = CBR_CARRY; s->rw_count = 2;
+        /* In-place, with the per-line gains the loop stage wrote. */
+        s->rw[0] = CBR_BUF_SRC; s->rw[1] = CBR_EXT0; s->rw_count = 2;
         s->ro_count = 0;
+        break;
+    case CHAIN_KERNEL_AGC_LOOP:
+        s->ro[0] = CBR_BUF_SRC; s->ro_count = 1;
+        s->rw[0] = CBR_EXT0; s->rw_count = 1;
         break;
 
     case CHAIN_KERNEL_RF:

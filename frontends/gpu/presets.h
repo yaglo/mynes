@@ -37,9 +37,16 @@ typedef enum {
  */
 
 typedef struct {
+    float adaptor_vac;              /* adaptor RMS output under the console's load; NES-002 about 10 V */
+    float reservoir_uf;             /* bridge reservoir; NES-001 2200 uF */
+    float load_ma;                  /* console draw on +5 V; about 600 mA */
+    float regulator_rejection_db;   /* 7805 ripple rejection at twice mains; 73 typical, 62 minimum */
+} ConsolePsuParams;
+
+typedef struct {
     /* ---- Identity ---- */
     char name[128];                 /* short name for UI display */
-    char description[512];          /* one-line description of the setup */
+    char description[1024];         /* description of the setup; the longest shipped one is 630 bytes */
 
     /* ---- Signal path topology ---- */
     VideoConnectionType connection;
@@ -79,14 +86,21 @@ typedef struct {
      * Zero in JSON → falls back to a per-mode default in video_gpu.c. */
     float comb_notch_depth;
 
+    /* ---- Console supply ----
+     * The adaptor, reservoir, regulator and load of the console's supply
+     * (NES-001: Electronix trace, tools/circuits/nes001_psu.cir). The
+     * ripple on +5 V, the hum it puts on the jack and the regulator's
+     * dropout all follow from these; nothing about hum is set directly.
+     * All zero = the nominal NES-001 supply (audio_format.h). */
+    ConsolePsuParams psu;
+
     /* ---- Audio-specific overrides ---- */
-    float audio_psu_hum_amplitude;  /* peak hum voltage (0-0.02) */
-    float audio_hum_frequency;     /* 0 = region mains frequency */
-    float audio_hum_harmonic_2;    /* relative to fundamental */
-    float audio_hum_harmonic_3;
-    float audio_noise_floor;        /* peak noise level (0-0.02) */
+    float audio_noise_floor;        /* diagnostic extra noise, peak (0 in shipped presets) */
     float audio_saturation_drive;   /* 1.0 = linear, 4.0 = heavy */
     float audio_cable_length_m;     /* audio cable length (may differ from video) */
+    float audio_pickup_mv;          /* mains pickup on the audio lead before shielding, mV peak; 0 = none */
+    float audio_tv_input_kohm;      /* the set's line input resistance; 0 = 47 k */
+    int   audio_rf_deemphasis;      /* 0 = auto (on for RF), 1 = on, 2 = off */
 } PhysicalPreset;
 
 #endif /* PRESETS_H */

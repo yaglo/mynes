@@ -16,12 +16,15 @@ typedef struct {
 
 bool audio_gpu_init(AudioGPUChain *agc, SDL_GPUDevice *gpu,
                     AudioChain *chain, const char *shader_dir);
+/* aux is the block's RF sound buzz from audio_chain_rf_buzz, or NULL. */
 bool audio_gpu_process(AudioGPUChain *agc, SDL_GPUDevice *gpu,
-                       AudioState *state, const float *input, float *output, int count);
+                       AudioState *state, const float *input, const float *aux,
+                       float *output, int count);
 /* Nonblocking playback interface. One bounded in-flight block. Poll with
  * null destinations to retire an obsolete block after CPU deadline fallback. */
 bool audio_gpu_begin(AudioGPUChain *agc, SDL_GPUDevice *gpu,
-                     const AudioChain *chain, const AudioState *state, const float *input, int count);
+                     const AudioChain *chain, const AudioState *state, const float *input,
+                     const float *aux, int count);
 int audio_gpu_poll(AudioGPUChain *agc, SDL_GPUDevice *gpu,
                    AudioState *state, float *output); /* 0 pending, 1 ready, -1 error */
 void audio_gpu_destroy(AudioGPUChain *agc, SDL_GPUDevice *gpu);

@@ -1,7 +1,48 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+#pragma clang diagnostic ignored "-Wmissing-braces"
+
 #include <metal_stdlib>
 #include <simd/simd.h>
 
 using namespace metal;
+
+template<typename T, size_t Num>
+struct spvUnsafeArray
+{
+    T elements[Num ? Num : 1];
+
+    thread T& operator [] (size_t pos) thread
+    {
+        return elements[pos];
+    }
+    constexpr const thread T& operator [] (size_t pos) const thread
+    {
+        return elements[pos];
+    }
+
+    device T& operator [] (size_t pos) device
+    {
+        return elements[pos];
+    }
+    constexpr const device T& operator [] (size_t pos) const device
+    {
+        return elements[pos];
+    }
+
+    constexpr const constant T& operator [] (size_t pos) const constant
+    {
+        return elements[pos];
+    }
+
+    threadgroup T& operator [] (size_t pos) threadgroup
+    {
+        return elements[pos];
+    }
+    constexpr const threadgroup T& operator [] (size_t pos) const threadgroup
+    {
+        return elements[pos];
+    }
+};
 
 struct CarrierIn
 {
@@ -13,7 +54,7 @@ struct Params
     uint count;
     uint samples_per_line;
     uint tap_count;
-    uint reserved;
+    uint detector;
 };
 
 struct Taps
@@ -28,9 +69,9 @@ struct VideoOut
 
 constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
 
-kernel void main0(const device CarrierIn& _49 [[buffer(1)]], constant Params& _57 [[buffer(0)]], const device Taps& _109 [[buffer(2)]], device VideoOut& _191 [[buffer(3)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]], uint3 gl_WorkGroupID [[threadgroup_position_in_grid]], uint3 gl_LocalInvocationID [[thread_position_in_threadgroup]])
+kernel void main0(device CarrierIn& _49 [[buffer(1)]], constant Params& _57 [[buffer(0)]], device Taps& _109 [[buffer(2)]], device VideoOut& _205 [[buffer(3)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]], uint3 gl_WorkGroupID [[threadgroup_position_in_grid]], uint3 gl_LocalInvocationID [[thread_position_in_threadgroup]])
 {
-    threadgroup float2 tile[352];
+    threadgroup spvUnsafeArray<float2, 352> tile;
     uint i = gl_GlobalInvocationID.x;
     int first = int(gl_WorkGroupID.x * 256u) - 48;
     for (uint k = gl_LocalInvocationID.x; k < 352u; k += 256u)
@@ -55,5 +96,15 @@ kernel void main0(const device CarrierIn& _49 [[buffer(1)]], constant Params& _5
         float2 difference = a - b;
         v += ((sum * h.x) + (float2(-difference.y, difference.x) * h.y));
     }
-    _191.video[i] = (0.78041827678680419921875 - length(v)) / 0.65541827678680419921875;
+    float _193;
+    if (_57.detector == 1u)
+    {
+        _193 = v.x;
+    }
+    else
+    {
+        _193 = length(v);
+    }
+    float detected = _193;
+    _205.video[i] = (0.78041827678680419921875 - detected) / 0.65541827678680419921875;
 }

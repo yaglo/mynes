@@ -98,8 +98,8 @@ with tempfile.TemporaryDirectory(prefix="mynes-editor-") as tmp:
             paths = list((Path(tmp)/"mynes/presets").glob("*.json"))
             assert len(paths)==1 and abs(json.loads(paths[0].read_text())["tv"]["saturation"]-.85)<1e-5
             edit(0.75)
-            edit(0.012, b"Mains hum")
-            edit(0.35, b"Second harmonic")
+            edit(1000, b"Reservoir (uF)")
+            edit(9.5, b"Adaptor (VAC)")
             edit(0.18, b"Horizontal streaks")
             edit(12, b"Slow decay (ms)")
             edit(.03, b"Slow decay energy")
@@ -110,8 +110,8 @@ with tempfile.TemporaryDirectory(prefix="mynes-editor-") as tmp:
             revision, active, dirty, entries = command(2, active, revision)
             assert not dirty and abs(json.loads(paths[0].read_text())["tv"]["saturation"]-.75)<1e-5
             saved = json.loads(paths[0].read_text())
-            assert abs(saved["audio_psu_hum_amplitude"]-.012)<1e-5
-            assert abs(saved["audio_hum_harmonic_2"]-.35)<1e-5
+            assert saved["psu"]["reservoir_uf"]==1000
+            assert abs(saved["psu"]["adaptor_vac"]-9.5)<1e-5
             assert abs(saved["tv"]["video_black_droop"]-.18)<1e-5
             assert saved["tv"]["persistence_tail_ms"]==12
             assert abs(saved["tv"]["persistence_tail_weight"]-.03)<1e-5

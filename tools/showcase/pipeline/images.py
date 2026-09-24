@@ -1,14 +1,12 @@
 """Pixel work done outside ffmpeg: Y'CbCr to 16-bit R'G'B' for HDR frames,
-1:1 crops, the exact 2x2 box average for the @1x variants, 16-bit PNG output
-and HDR light levels.
+1:1 crops, 16-bit PNG output and HDR light levels.
 
 Pillow has no 16-bit RGB mode (it opens a 48-bit PNG as 8-bit RGB), so the
 HDR side works on numpy arrays. ffmpeg hands over an HDR frame as the raw
 Y'CbCr planes its decoder produces, and yuv_to_rgb48 converts them here.
 swscale's YCbCr to rgb48 conversion maps limited-range white to 65280 where
-65535 is correct, which lowers every PQ code by 256/257. The SDR side uses Pillow's
-Image.reduce(2); box_average_2x2 computes the same rounded mean,
-(a + b + c + d + 2) // 4, on 16-bit values.
+65535 is correct, which lowers every PQ code by 256/257. Nothing here
+changes a picture's size: every file is cut 1:1 from a render.
 """
 from __future__ import annotations
 
@@ -105,15 +103,6 @@ def crop(rgb: np.ndarray, rect: Rect) -> np.ndarray:
     return rgb[rect.y:rect.y + rect.h, rect.x:rect.x + rect.w]
 
 
-def box_average_2x2(rgb: np.ndarray) -> np.ndarray:
-    """Each output pixel is the rounded mean of a 2x2 block, as Image.reduce(2)."""
-    h, w = rgb.shape[:2]
-    if h % 2 or w % 2:
-        raise ValueError(f"the 2x2 average needs even dimensions, got {w}x{h}")
-    blocks = rgb.astype(np.uint32).reshape(h // 2, 2, w // 2, 2, -1)
-    return ((blocks.sum(axis=(1, 3)) + 2) // 4).astype(rgb.dtype)
-
-
 def _chunk(tag: bytes, data: bytes) -> bytes:
     return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
 
@@ -178,17 +167,6 @@ def sdr_crop(src: Path | str, out: Path | str, rect: Rect) -> tuple[int, int]:
         part = im.convert("RGB").crop((rect.x, rect.y, rect.x + rect.w, rect.y + rect.h))
         part.save(out, optimize=True, pnginfo=srgb_info())
         return part.size
-
-
-def sdr_reduce(src: Path | str, out: Path | str) -> tuple[int, int]:
-    """The @1x variant: Image.reduce(2), the exact 2x2 box average."""
-    from PIL import Image
-    with Image.open(src) as im:
-        if im.width % 2 or im.height % 2:
-            raise ValueError(f"{src}: the 2x2 average needs even dimensions, got {im.width}x{im.height}")
-        small = im.convert("RGB").reduce(2)
-        small.save(out, optimize=True, pnginfo=srgb_info())
-        return small.size
 
 
 def png_chunk_types(path: Path | str) -> list[str]:

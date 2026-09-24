@@ -59,7 +59,7 @@
 
 /* Stage counts. */
 #define VIDEO_STAGE_COUNT  14
-#define AUDIO_STAGE_COUNT  9
+#define AUDIO_STAGE_COUNT  11
 
 /* ============================================================================
  * Mini bitmap font (4x6 pixels, printable ASCII 0x20 .. 0x7E)
@@ -194,15 +194,17 @@ static const char *video_stage_names[VIDEO_STAGE_COUNT] = {
 };
 
 static const char *audio_stage_names[AUDIO_STAGE_COUNT] = {
-    "Coupling Cap",     /*  1 */
-    "Feedback HP",      /*  2 */
-    "Amp BW LP",        /*  3 */
-    "Saturation",       /*  4 */
-    "PSU Hum",          /*  5 */
-    "Noise Floor",      /*  6 */
-    "Cable",            /*  7 */
-    "TV Input",         /*  8 */
-    "Speaker",          /*  9 */
+    "Coupling Cap",      /*  1 */
+    "Output pin LP",     /*  2 */
+    "Amp BW LP",         /*  3 */
+    "Rail / clip",       /*  4 */
+    "PSU / pickup hum",  /*  5 */
+    "Noise / FM hiss",   /*  6 */
+    "Cable / de-emph",   /*  7 */
+    "TV Input",          /*  8 */
+    "Speaker",           /*  9 */
+    "Speaker cap",       /* 10 */
+    "RF sound buzz",     /* 11 */
 };
 
 /* ============================================================================
@@ -322,6 +324,8 @@ static bool audio_stage_enabled(AudioChain *ac, int stage) {
     case 6:  return ac->cable.enabled;
     case 7:  return ac->tv_input_coupling.enabled;
     case 8:  return ac->speaker.enabled;
+    case 9:  return ac->speaker_coupling.enabled;
+    case 10: return ac->rf_sound.enabled;
     default: return false;
     }
 }

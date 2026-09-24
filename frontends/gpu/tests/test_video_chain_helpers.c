@@ -259,6 +259,25 @@ int main(void) {
     RFModulatorParams rf={.carrier_level_dbm=-20,.noise_floor_dbm=-70};
     float noise=video_rf_noise_rms(&rf);rf.noise_floor_dbm+=20;
     CHECK(fabsf(video_rf_noise_rms(&rf)/noise-10)<.00001f,"20 dB noise power change gives 10x amplitude");
+    /* The link budget: the FCC-cap modulator into a 7 dB tuner is 61.7 dB
+     * of carrier to noise in 4 MHz; each dB of loss takes a dB off it; an
+     * old carrier and noise pair keeps its ratio as an equivalent budget. */
+    {
+        const float fs=12*3579545.0f;
+        RFModulatorParams link={.modulator_dbmv=9.5f,.link_loss_db=0,.tuner_nf_db=7};
+        video_rf_link_budget(&link,fs);
+        CHECK(fabsf(link.cnr_db-61.7f)<.1f,"direct link at the FCC cap: 61.7 dB in 4 MHz");
+        CHECK(fabsf(link.carrier_level_dbm-(9.5f-48.75f))<1e-4f,"dBmV to dBm across 75 ohm");
+        link.link_loss_db=21.4f; video_rf_link_budget(&link,fs);
+        CHECK(fabsf(link.cnr_db-40.3f)<.1f,"21.4 dB of loss: 40.3 dB");
+        link.tuner_nf_db=10; video_rf_link_budget(&link,fs);
+        CHECK(fabsf(link.cnr_db-37.3f)<.1f,"3 dB more noise figure: 3 dB less CNR");
+        RFModulatorParams old={.carrier_level_dbm=-20,.noise_floor_dbm=-50};
+        float before=video_rf_noise_rms(&old);
+        video_rf_link_budget(&old,fs);
+        CHECK(old.modulator_dbmv==9.5f && fabsf(old.cnr_db-40.3f)<.1f,"old pair becomes the budget that gives its CNR");
+        CHECK(fabsf(video_rf_noise_rms(&old)/before-1)<1e-3f,"and the same injected noise");
+    }
     test_colour_response();
     test_comb_shader_mode();
     test_chroma_aux_layout();

@@ -1,13 +1,21 @@
-/* Complex equivalent IF, followed by a negative-AM envelope detector.
+/* Complex equivalent IF, followed by the set's video detector.
  * Centred FIR has a common removed group delay. It reads a separate buffer:
- * in-place filtering would race neighbouring invocations. */
+ * in-place filtering would race neighbouring invocations.
+ *
+ * The carrier sits at zero frequency of this complex baseband, so a PLL
+ * vision IF locked to it (a synchronous detector, every one-chip VIF since
+ * the late 1970s) recovers the in-phase component v.x and rejects the
+ * quadrature that the Nyquist slope makes of the vestigial sideband; a
+ * diode envelope detector (older sets) takes length(v) and carries that
+ * quadrature into the picture as a level error on chroma and edges. The
+ * loop's own phase noise is invisible and not carried. */
 #version 450
 layout(local_size_x = 256) in;
 layout(set = 0, binding = 0) readonly buffer CarrierIn { vec2 carrier[]; };
 layout(set = 0, binding = 1) readonly buffer Taps { vec2 taps[]; };
 layout(set = 1, binding = 0) writeonly buffer VideoOut { float video[]; };
 layout(set = 2, binding = 0) uniform Params {
-    uint count, samples_per_line, tap_count, reserved;
+    uint count, samples_per_line, tap_count, detector;
 };
 shared vec2 tile[352]; // 256 outputs + the 97-tap filter halo
 void main() {
@@ -29,5 +37,6 @@ void main() {
         v+=h.x*sum+h.y*vec2(-difference.y,difference.x);
     }
     const float gain=.875/(1.0+264.0/788.0),bias=.125+gain;
-    video[i]=(bias-length(v))/gain;
+    float detected=detector==1u ? v.x : length(v);
+    video[i]=(bias-detected)/gain;
 }

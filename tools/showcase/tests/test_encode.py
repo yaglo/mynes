@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from fractions import Fraction
 from pathlib import Path
 
@@ -148,6 +149,17 @@ def decode_hdr(path: Path, size, *, frame: int = 0) -> "np.ndarray":
     return rgb.astype(np.int64)
 
 
+def decode_avif(path: Path, size) -> "np.ndarray":
+    """A 10-bit full-range HDR AVIF as 16-bit PQ R'G'B' codes: ffmpeg's
+    yuv444p16le widened back to the 10 bits it holds, then images.yuv_to_rgb48,
+    so a Y' of 1023 with neutral chroma is 65535."""
+    out = subprocess.run([tool("ffmpeg"), "-v", "error", "-i", str(path), "-frames:v", "1", "-f", "rawvideo",
+                          "-pix_fmt", "yuv444p16le", "-"], capture_output=True, check=True).stdout
+    w, h = size
+    yuv = np.frombuffer(out, "<u2").reshape(3, h, w) >> 6
+    return images.yuv_to_rgb48(yuv, 10, "bt2020", full_range=True).astype(np.int64)
+
+
 def side_data(path: Path) -> dict:
     out = subprocess.run([tool("ffprobe"), "-v", "error", "-select_streams", "v:0", "-show_frames",
                           "-read_intervals", "%+#1", "-of", "json", str(path)], capture_output=True, check=True)
@@ -198,6 +210,8 @@ class EncodePipeline(unittest.TestCase):
         cls.sidecars = {}
         for r in jobs_mod.render_plan(cls.ctx, cls.shot, "p_sony"):
             for hdr in (False, True):
+                if not r.frames(hdr):
+                    continue  # record_jobs skips a pass nothing reads
                 path = cls.ctx.render_path(cls.shot, "p_sony", r.size, hdr)
                 cls.sidecars[(r.size, hdr)] = write_render(path, r.size, hdr, r.frames(hdr))
         full = cls.ctx.render_path(cls.shot, "p_sony", LENS, False)
@@ -231,7 +245,7 @@ class EncodePipeline(unittest.TestCase):
                 for r in jobs_mod.render_plan(self.ctx, self.shot, "p_sony")}
         self.assertEqual(plan[(256, 192)], (60, 60, ("stage",)))
         self.assertEqual(plan[LENS], (60, 60, ("still", "lens", "flicker", "feature")))
-        self.assertEqual(plan[README], (60, 1, ("readme",)))  # readme-hdr.png reads frame 0 only
+        self.assertEqual(plan[README], (60, 0, ("readme",)))  # the README's WebPs are SDR: no HDR pass
         # Without a lens clip, the full size stops after the frames read from each pass.
         ctx = jobs_mod.Context(shot_list=self.shot_list, out=self.out)
         ctx.shot_list = shots.load(self.shot_list.path, self.presets_dir)
@@ -266,10 +280,9 @@ class EncodePipeline(unittest.TestCase):
         got = jobs_mod.collect_clip(ctx, runner, shot, "p_jvc")
         rect = recipes.flicker_geometry(shot.flicker_crop, LENS, align=jobs_mod.CROP_ALIGN)
         self.assertEqual(got.entry, {"crop": {
-            "sdr": "assets/hero/synth/p_jvc/512x384/crop-sdr.png", "sdr_1x": "assets/hero/synth/p_jvc/512x384/crop-sdr@1x.png",
-            "hdr": "assets/hero/synth/p_jvc/512x384/crop-hdr.avif", "hdr_1x": "assets/hero/synth/p_jvc/512x384/crop-hdr@1x.avif",
+            "sdr": "assets/hero/synth/p_jvc/512x384/crop-sdr.png", "hdr": "assets/hero/synth/p_jvc/512x384/crop-hdr.avif",
             "x": rect.x, "y": rect.y, "width": rect.w, "height": rect.h}})
-        self.assertEqual([rel for _src, rel in got.copies], [got.entry["crop"][k] for k in ("sdr", "sdr_1x", "hdr", "hdr_1x")])
+        self.assertEqual([rel for _src, rel in got.copies], [got.entry["crop"][k] for k in ("sdr", "hdr")])
 
     def test_renders_are_what_the_recorder_writes(self):
         info = probe_video(self.ctx.render_path(self.shot, "p_sony", LENS, True))
@@ -451,44 +464,50 @@ class EncodePipeline(unittest.TestCase):
             sdr = np.asarray(im).astype(np.int64)
         self.assertLess(np.abs(sdr - self.source(LENS, False)).max(), 12)
         self.assertLess(np.abs(sdr - self.source(LENS, False)).mean(), 1.5)
-        hdr = decode_hdr(d / "still-hdr.png", LENS)
+        # The 16-bit PNG avifenc read is gone once the AVIF checks out; the
+        # AVIF itself holds the conversion: 10-bit codes, lossy at -q 90.
+        self.assertFalse((d / "still-hdr.png").exists())
+        hdr = decode_avif(d / "still-hdr.avif", LENS)
         source = self.source(LENS, True)
-        self.assertLess(np.abs(hdr - source).mean(), 40)  # 10-bit steps and ProRes
-        self.assertLess(abs((hdr - source).mean()), 4)     # no bias: the range expansion is exact
+        self.assertLess(np.abs(hdr - source).mean(), 80)  # 10-bit steps, ProRes and AV1
+        self.assertLess(abs((hdr - source).mean()), 8)     # no bias: the range expansion is exact
         highlight = images.pq_to_nits(hdr[highlight_patch(LENS, inset=4)].astype(np.uint16)).mean()
         self.assertAlmostEqual(highlight, HIGHLIGHT_NITS, delta=HIGHLIGHT_NITS * 0.01)
-        peak = hdr[peak_patch(LENS)]  # Y' 940 is PQ 1.0; ProRes leaves one-code noise around it
-        self.assertEqual((np.median(peak), peak.max()), (65535, 65535))
+        peak = hdr[peak_patch(LENS)]  # Y' 940 is PQ 1.0, a full-range 1023 in the AVIF
+        self.assertEqual(np.median(peak), 65535)
         info = probe_video(d / "still-hdr.avif")
         self.assertEqual((info.width, info.height, info.pix_fmt), (*LENS, "yuv444p10le"))
         self.assertEqual((info.colour["color_primaries"], info.colour["color_transfer"],
                           info.colour["color_space"], info.colour["color_range"]),
                          ("bt2020", "smpte2084", "bt2020nc", "pc"))
         light = next(s for s in info.stream.get("side_data_list", []) if "light" in s["side_data_type"].lower())
-        self.assertEqual((light["max_content"], light["max_average"]),
-                         images.light_levels(hdr.astype(np.uint16)))
-        self.assertEqual(light["max_content"], PEAK_NITS)
+        self.assertEqual(light["max_content"], PEAK_NITS)  # measured on the 16-bit frame before the AVIF
+        self.assertAlmostEqual(light["max_average"], images.light_levels(hdr.astype(np.uint16))[1],
+                               delta=light["max_average"] * 0.02 + 1)
 
-    def test_detail_crops_are_1_to_1_with_exact_1x_averages(self):
+    def test_detail_crops_are_1_to_1(self):
         d = self.d(LENS)
         rect = recipes.flicker_geometry([78, 73, 100, 93.75], LENS, align=jobs_mod.CROP_ALIGN)
         self.assertEqual(rect, recipes.Rect(168, 115, 180, 144))  # on the raster, rounded down to multiples of 6
-        with Image.open(d / "still-sdr.png") as still, Image.open(d / "crop-sdr.png") as crop, \
-                Image.open(d / "crop-sdr@1x.png") as small:
+        with Image.open(d / "still-sdr.png") as still, Image.open(d / "crop-sdr.png") as crop:
             self.assertEqual(np.asarray(crop).tolist(), np.asarray(still.crop(rect.box)).tolist())
-            self.assertEqual(np.asarray(small).tolist(), np.asarray(crop.reduce(2)).tolist())
-        for name in ("still-sdr.png", "crop-sdr.png", "crop-sdr@1x.png"):  # sRGB chunk, no ICC profile
+        self.assertFalse(any(d.glob("*@1x*")))  # no reduced copies: a 1x display shows the crop 1:1 too
+        for name in ("still-sdr.png", "crop-sdr.png"):  # sRGB chunk, no ICC profile
             kinds = images.png_chunk_types(d / name)
             self.assertIn("sRGB", kinds, name)
             self.assertNotIn("iCCP", kinds, name)
-        still = decode_hdr(d / "still-hdr.png", LENS)
-        crop = decode_hdr(d / "crop-hdr.png", (rect.w, rect.h))
-        small = decode_hdr(d / "crop-hdr@1x.png", (rect.w // 2, rect.h // 2))
-        self.assertTrue(np.array_equal(crop, still[rect.y:rect.y + rect.h, rect.x:rect.x + rect.w]))
-        self.assertTrue(np.array_equal(small, images.box_average_2x2(crop.astype(np.uint16))))
-        for name, size in (("crop-hdr.avif", (rect.w, rect.h)), ("crop-hdr@1x.avif", (rect.w // 2, rect.h // 2))):
-            info = probe_video(d / name)
-            self.assertEqual((info.width, info.height, info.colour["color_transfer"]), (*size, "smpte2084"))
+        self.assertFalse((d / "crop-hdr.png").exists())
+        info = probe_video(d / "crop-hdr.avif")
+        self.assertEqual((info.width, info.height, info.colour["color_transfer"]), (rect.w, rect.h, "smpte2084"))
+        # The HDR crop is the still's pixels at the same place: two lossy AVIFs
+        # of the same frame agree far better there than one pixel off.
+        still = decode_avif(d / "still-hdr.avif", LENS)
+        crop = decode_avif(d / "crop-hdr.avif", (rect.w, rect.h))
+        def error(dx, dy):
+            return np.abs(crop - still[rect.y + dy:rect.y + dy + rect.h, rect.x + dx:rect.x + dx + rect.w]).mean()
+        here = error(0, 0)
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            self.assertLess(here, error(dx, dy) / 2, (dx, dy))
 
     # -- README media ----------------------------------------------------------
     def test_readme_media(self):
@@ -499,48 +518,32 @@ class EncodePipeline(unittest.TestCase):
         durations = animation_durations(self.d(README) / "readme.webp")
         self.assertEqual(set(durations), {33, 34})  # 30 fps in whole milliseconds
         self.assertEqual(sum(durations), 1000)
-        self.assertEqual(image_info(self.d(README) / "readme.png"), (1, README))
+        for name in ("readme.png", "readme-hdr.png", "readme-hdr.jpg"):
+            self.assertFalse((self.d(README) / name).exists(), name)
         flicker = report["flicker_webp"]
         rect = recipes.flicker_geometry([78, 73, 100, 93.75], LENS)
         self.assertEqual(flicker["crop_px"], [rect.x, rect.y, rect.w, rect.h])
         self.assertEqual(flicker["quality"], "lossless")
         self.assertEqual(image_info(self.d(LENS) / "flicker.webp"), (8, (rect.w, rect.h)))
         self.assertEqual(animation_durations(self.d(LENS) / "flicker.webp"), [125] * 8)  # an even 8 fps
-        with Image.open(self.d(LENS) / "flicker.png") as png, Image.open(self.d(LENS) / "still-sdr.png") as still:
-            self.assertEqual(np.asarray(png).tolist(), np.asarray(still.crop(rect.box)).tolist())
-        with Image.open(self.d(LENS) / "flicker.webp") as anim:  # lossless: frame 0 is the PNG exactly
+        # Lossless: frame 0 is the still's crop exactly (the flicker crop starts at the still frame).
+        with Image.open(self.d(LENS) / "flicker.webp") as anim, Image.open(self.d(LENS) / "still-sdr.png") as still:
             anim.seek(0)
-            self.assertEqual(np.asarray(anim.convert("RGB")).tolist(),
-                             np.asarray(Image.open(self.d(LENS) / "flicker.png").convert("RGB")).tolist())
+            self.assertEqual(np.asarray(anim.convert("RGB")).tolist(), np.asarray(still.crop(rect.box)).tolist())
+        for name in ("flicker.png", "flicker-hdr.png", "flicker-hdr.jpg"):
+            self.assertFalse((self.d(LENS) / name).exists(), name)
 
-    def test_lossy_flicker_fallback(self):
-        """The flicker WebP falls back to lossy quality when lossless is over 5 MB."""
-        rect = recipes.flicker_geometry([78, 73, 100, 93.75], LENS)
-        out = Path(self.tmp) / "flicker-q90.webp"
-        Runner(quiet=True).run(recipes.flicker_webp_args(self.ctx.render_path(self.shot, "p_sony", LENS, False), out,
-                                                         rect, 0, quality=90))
-        self.assertEqual(runner_mod.verify_animation(out, frames=8, size=(rect.w, rect.h), fps=recipes.FLICKER_FPS), 8)
-        with Image.open(out) as anim, Image.open(self.d(LENS) / "flicker.png") as png:
-            got = np.asarray(anim.convert("RGB")).astype(np.int64)
-            self.assertLess(np.abs(got - np.asarray(png).astype(np.int64)).mean(), 4)
-
-    def test_gainmap_jpegs(self):
-        ok, reason = jobs_mod.gainmap_available()
-        report = json.loads((self.ctx.clip_dir(self.shot, "p_sony") / "readme.json").read_text())
-        if not ok:
-            self.assertIsNone(report["readme_gainmap"])
-            self.skipTest(reason)
-        for jpg, png, size in ((self.d(README) / "readme-hdr.jpg", self.d(README) / "readme.png", README),
-                               (self.d(LENS) / "flicker-hdr.jpg", self.d(LENS) / "flicker.png",
-                                tuple(report["flicker_webp"]["crop_px"][2:]))):
-            frames, got = image_info(jpg)
-            self.assertEqual((frames, got), (2, size))  # the base image and the gain map (MPO)
-            self.assertIn(b"urn:iso:std:iso:ts:21496:-1", jpg.read_bytes())
-            # The base image is the SDR render, so a viewer without HDR shows the SDR picture.
-            with Image.open(jpg) as base, Image.open(png) as sdr:
-                base.seek(0)
-                error = np.abs(np.asarray(base.convert("RGB")).astype(np.int64) - np.asarray(sdr.convert("RGB")))
-            self.assertLess(error.mean(), 3, jpg.name)
+    def test_flicker_over_its_limit_fails(self):
+        """The flicker crop is lossless or nothing: over the limit the job
+        fails and leaves no file, instead of writing a lossy 4:2:0 one."""
+        d = self.d(LENS)
+        self.backup(d / "flicker.webp", self.ctx.clip_dir(self.shot, "p_sony") / "readme.json")
+        runner = Runner(quiet=True, force=True)
+        with mock.patch.dict(recipes.LIMITS, {"flicker_webp": 1}):
+            with self.assertRaisesRegex(PipelineError, r"lossless flicker crop is .* MB, over the 0 MB limit"):
+                jobs_mod.encode_flicker(self.ctx, runner, self.shot, "p_sony")
+        self.assertFalse((d / "flicker.webp").exists())
+        self.assertEqual([a for a in runner.ran if "libwebp_anim" in a and "-quality" in a], [])
 
     # -- features ------------------------------------------------------------
     def test_features(self):
@@ -649,11 +652,11 @@ class EncodePipeline(unittest.TestCase):
         self.assertEqual(json.loads((site / "assets" / "hero" / "manifest.json").read_text()), merged)
         runner2, said = self.listening_runner()
         merged2 = jobs_mod.install(self.install_ctx(site, with_crops=True), runner2, self.shot_list.select())
-        self.assertTrue((hero / "512x384" / "crop-hdr@1x.avif").exists())
+        self.assertTrue((hero / "512x384" / "crop-hdr.avif").exists())
+        self.assertFalse(any((hero / "512x384").glob("*@1x*")))
         rect = recipes.flicker_geometry(self.shot.flicker_crop, LENS, align=jobs_mod.CROP_ALIGN)
         self.assertEqual(merged2["clips"]["synth"]["p_sony"]["crop"], {
-            "sdr": "assets/hero/synth/p_sony/512x384/crop-sdr.png", "sdr_1x": "assets/hero/synth/p_sony/512x384/crop-sdr@1x.png",
-            "hdr": "assets/hero/synth/p_sony/512x384/crop-hdr.avif", "hdr_1x": "assets/hero/synth/p_sony/512x384/crop-hdr@1x.avif",
+            "sdr": "assets/hero/synth/p_sony/512x384/crop-sdr.png", "hdr": "assets/hero/synth/p_sony/512x384/crop-hdr.avif",
             "x": rect.x, "y": rect.y, "width": rect.w, "height": rect.h})
         self.assertEqual(json.loads((site / "assets" / "hero" / "manifest.json").read_text()), merged2)
         self.assertEqual(runner2.ran, [])  # no commands

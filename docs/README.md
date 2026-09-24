@@ -27,6 +27,8 @@ hardware research notes and the blog series moved to the project site:
   Super Famicom research and the `mynes_retro` prototype
 - [Fidelity to-do](architecture/fidelity-todo.md): open work from the model-limits review,
   by rank and work package, with what only measurement can settle
+- [Hardware measurement plan](architecture/measurement-plan.md): what to measure on the
+  NES-001, the PVM-14L2 and the Mac panel, with what, and where each number goes
 - [Interactive pipeline diagram](gpu-pipeline-interactive.html)
 
 ## Measurements
@@ -35,6 +37,8 @@ hardware research notes and the blog series moved to the project site:
   [gpu-benchmark-results.json](gpu-benchmark-results.json)
 - [Presentation validation](architecture/gpu-realism-validation.md)
 - [Reproducible captures](../tools/review/README.md)
+- [Circuit decks and their sweeps](../tools/circuits/README.md), with the preset
+  audio recorder in `tools/audio`
 
 ## Working on the code
 

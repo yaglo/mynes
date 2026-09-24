@@ -201,7 +201,7 @@ int main(int argc, char **argv) {
            beam_w, beam_h, sig_n, sig_w, vgc.beam_h_blur_sigma);
 
     /* Process */
-    float *rgb_out = (float *)calloc((size_t)fmt->total_samples * 3, sizeof(float));
+    float *rgb_out = (float *)calloc(vgc.rgb_size / sizeof(float), sizeof(float));
     if (!rgb_out) { fprintf(stderr, "Out of memory\n"); return 1; }
     printf("Processing...\n");
     if (!video_gpu_process(&vgc, gpu, waveform, rgb_out)) {

@@ -291,7 +291,9 @@ typedef struct {
     uint32_t frame_seed, full_line_samples;
     float sample_rate, hum_phase, hum_hz;
 } GpuRFParams;
-typedef struct { uint32_t count, samples_per_line, tap_count, reserved; } GpuRFIFParams;
+/* detector: 0 envelope (a diode on the IF, pre-1978 sets), 1 synchronous
+ * (a PLL VIF such as the M52342SP; the in-phase component). */
+typedef struct { uint32_t count, samples_per_line, tap_count, detector; } GpuRFIFParams;
 /* VHS deck, shared by vhs_tape (V1) and vhs_playback (V2). Units are IRE
  * referenced to the input sync, Hz and 12 fsc samples; see vhs_deck.c. */
 typedef struct {
@@ -305,16 +307,30 @@ typedef struct {
     float sharp_d, reserved0, reserved1, reserved2;
 } GpuVHSParams;
 
+/* Sync separator and keyed measurements (matches receiver_lock.comp.glsl).
+ * key_start and key_width place the TV's burst key, which gates its burst
+ * detector's black reference and its luminance clamp: samples from the
+ * trailing edge of sync to the key's start, and the key's length. trap_*
+ * are the chrominance trap in front of the luminance clamp, a biquad notch
+ * at the subcarrier in transposed direct form II (b1 = a1, b2 = b0). */
+typedef struct {
+    uint32_t count, full_width, samples_per_dot, region;
+    float key_start, key_width, trap_b0, trap_a1;
+    float trap_a2, pad0, pad1, pad2;
+} GpuReceiverLockParams;
+
 /* Horizontal AFC is independent of the colour-burst PLL. Zero response
  * selects the legacy loop, including its frame acquisition behaviour.
  * h_pll selects a second-order loop (proportional h_kp, integral h_ki per
  * line) whose detector gain is h_vblank_gain for h_vblank_lines from
  * vertical sync; it keeps its state across frames. clamp_gain is the
- * keyed black clamp's charge per line, 1 - exp(-1 / clamp lines). */
+ * keyed black clamp's charge per line, 1 - exp(-1 / clamp lines).
+ * frame_step is the colour oscillator's phase over the time since the
+ * last decoded frame beyond count lines of full_width samples (radians). */
 typedef struct {
     uint32_t count, full_width, samples_per_dot, region;
     float h_response, h_kp, h_ki, h_vblank_gain;
-    uint32_t h_pll, h_vblank_lines; float clamp_gain; uint32_t reserved1;
+    uint32_t h_pll, h_vblank_lines; float clamp_gain, frame_step;
 } GpuReceiverPLLParams;
 
 /* Comb filter Y/C separator parameters (matches comb_filter.comp.glsl). */
@@ -336,6 +352,13 @@ typedef struct {
     float    release_coeff;     /* gain increase speed (0.02=slow) */
     float    min_gain;          /* minimum gain floor (0.5) */
     float    max_gain;          /* maximum gain ceiling (2.0) */
+    /* The keyed top-sync loop (agc_loop.comp): attack_coeff is the charge
+     * per line as a fraction of the tip's excess, release_coeff the
+     * discharge in dB per line, attack_slew_db the charge limit per line
+     * and noise_peak the sigmas the peak detector rides above the tip. */
+    float    attack_slew_db;
+    float    noise_peak;
+    float    pad0, pad1;
 } GpuAGCParams;
 
 /* Modulator / demodulator parameters. modulator.comp.glsl reads the first

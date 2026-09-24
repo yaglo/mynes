@@ -2,9 +2,11 @@
 #include <stdio.h>
 #include <string.h>
 
-#define BLOCK_BYTES (sizeof(AudioState) + AUDIO_BLOCK_CAPACITY * sizeof(float))
-_Static_assert(sizeof(AudioState) == 64, "audio shader state layout");
-_Static_assert(sizeof(AudioParams) == 192, "audio shader uniform layout");
+/* The input block carries the state, the samples and the block's aux
+ * signal (RF sound buzz); the output the state and the samples. */
+#define BLOCK_BYTES (sizeof(AudioState) + 2 * AUDIO_BLOCK_CAPACITY * sizeof(float))
+_Static_assert(sizeof(AudioState) == 72, "audio shader state layout");
+_Static_assert(sizeof(AudioParams) == 224, "audio shader uniform layout");
 
 bool audio_gpu_init(AudioGPUChain *a, SDL_GPUDevice *gpu,
                     AudioChain *chain, const char *shader_dir) {
@@ -29,23 +31,27 @@ fail:
 }
 
 bool audio_gpu_begin(AudioGPUChain *a, SDL_GPUDevice *gpu,
-                     const AudioChain *chain, const AudioState *state, const float *input, int count) {
+                     const AudioChain *chain, const AudioState *state, const float *input,
+                     const float *aux, int count) {
     if (a->pending || count <= 0 || count > AUDIO_BLOCK_CAPACITY || !state || !input) return false;
     Uint32 bytes = sizeof(*state) + count * sizeof(float);
+    Uint32 in_bytes = bytes + (aux ? count * sizeof(float) : 0);
     void *mapped = SDL_MapGPUTransferBuffer(gpu, a->upload, false);
     if (!mapped) return false;
     memcpy(mapped, state, sizeof(*state));
     memcpy((char *)mapped + sizeof(*state), input, count * sizeof(float));
+    if (aux) memcpy((char *)mapped + bytes, aux, count * sizeof(float));
     SDL_UnmapGPUTransferBuffer(gpu, a->upload);
     SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(gpu);
     if (!cmd) return false;
     SDL_GPUCopyPass *copy = SDL_BeginGPUCopyPass(cmd);
     SDL_GPUTransferBufferLocation upload = { .transfer_buffer = a->upload };
-    SDL_GPUBufferRegion in = { .buffer = a->input, .size = bytes };
+    SDL_GPUBufferRegion in = { .buffer = a->input, .size = in_bytes };
     SDL_UploadToGPUBuffer(copy, &upload, &in, false);
     SDL_EndGPUCopyPass(copy);
     AudioParams params;
     audio_chain_params(chain, count, &params);
+    if (!aux) params.flags &= ~32u;
     GpuDispatchDesc desc = { .pipeline = &a->pipeline,
         .readonly_buffers = {a->input}, .num_readonly_buffers = 1,
         .readwrite_buffers = {a->output}, .num_readwrite_buffers = 1,
@@ -78,9 +84,10 @@ int audio_gpu_poll(AudioGPUChain *a, SDL_GPUDevice *gpu, AudioState *state, floa
 
 /* Blocking helper is retained only for offline regression comparisons. */
 bool audio_gpu_process(AudioGPUChain *a, SDL_GPUDevice *gpu,
-                       AudioState *state, const float *input, float *output, int count) {
+                       AudioState *state, const float *input, const float *aux,
+                       float *output, int count) {
     if (count == 0) return true;
-    if (!output || !audio_gpu_begin(a, gpu, a->chain, state, input, count)) return false;
+    if (!output || !audio_gpu_begin(a, gpu, a->chain, state, input, aux, count)) return false;
     if (!SDL_WaitForGPUFences(gpu, true, &a->pending, 1)) return false;
     return audio_gpu_poll(a, gpu, state, output) == 1;
 }

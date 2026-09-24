@@ -210,32 +210,67 @@ anywhere from 3 us early to 4 us late (dots 8 to 46), where the earlier
 separator searched only 1.3 us around the nominal edge and lost lock on
 VCR lines. It then slices the raw samples within a dot of that edge, with
 the tip and black windows placed relative to the edge instead of the line
-start: the tip over 8 dots of the pulse's interior, the slice halfway to the
-front porch capped at half the NES sync depth, and black over two whole
-subcarrier cycles 21 to 24 dots behind the edge. With the sync where the
-NES puts it these are the earlier fixed windows, so clean composite and RF
-pictures keep their level and position (within 1e-3 linear RMS on the
-Contra boss frame through the PVM, Toshiba and RF presets; RF differs only
-in which noise crossings each line picks, with the same edge jitter).
+start: the tip over 8 dots of the pulse's interior and the slice halfway to the
+front porch capped at half the NES sync depth. With the sync where the NES
+puts it these are the earlier fixed windows, so clean composite and RF
+pictures keep their position (RF differs only in which noise crossings
+each line picks, with the same edge jitter).
+
+Black is what the set's luminance clamp sees during its burst key. On the
+TDA8362 the clamp sits behind the chrominance trap, a notch at the
+subcarrier with a quality factor of 2, and the sandcastle's burst key
+starts 5.4 us after the start of sync and lasts 3.5 us. Sony's CXA2061S
+clamps its inputs at the same burst timing, and the CXA2019AQ's gate is
+3.8 us wide. The receiver runs that trap from inside the sync tip and
+averages its output over the key, whose ends follow the measured edge
+continuously. The key's delay and width are TV settings
+(`clamp_key_delay_us` and `clamp_key_width_us`, menu items under Y/C
+separation, saved with the preset) with the TDA8362's figures as defaults.
+
+On the NES the key spans the whole burst and ends a dot before the 2C02's
+grey pulse at dot 49. The trap takes the burst's carrier but not its DC.
+The 2C02's square burst swings from -164 to +212 of 788 around blanking,
+so it sits 24/788 of white above it, and the set clamps 0.024 of white
+above the console's blanking (0.027 on PAL, whose 12.5-cycle burst ends
+on a high half cycle). The console's black therefore decodes 2.4% of white
+below the set's, which darkens every NES picture a little and crushes the
+darkest greys. An encoder IC's sine burst has no DC, so its black stays at
+the set's. The earlier receiver averaged two whole cycles between the
+burst and the pulse, 21 to 24 dots behind the edge. That read the console's
+blanking exactly on a clean signal with a black backdrop, but it is not
+where a set keys, and it sat against the pulse, which the console's and the
+cable's filters spread into it. A bright backdrop lifted the clamp: Super
+Mario Bros.' title, whose pulse is nearly white, renders at the same mean
+level through the PVM and Toshiba presets before and after this change
+(within 0.2%), while games with a black backdrop now come out darker by the
+burst's DC.
 
 The black measurement charges a keyed clamp with a time constant in lines
 (`clamp_lines`, a menu item under Y/C separation, saved with the preset).
 Its default is the receiver's earlier fixed 0.35 per line, 2.3 lines; no
-measured value for a named TV has been found. The clamp now holds through
-vertical retrace instead of taking the first line after it outright, which
-moves the top rows of an AC-coupled picture by a few 1e-4. The clamp time
-constant decides how much tape noise becomes whole-line flicker: through
-the whole chain on a flat grey field with the deck's defaults, the whole-row
-share of the decoded luma's temporal variance is 17.8% at 2.3 lines, 6.4% at
-8 and 2.8% at 64.
+measured value for a named TV has been found. The clamp holds through
+vertical retrace instead of taking the first line after it outright. The
+clamp time constant decides how much tape noise becomes whole-line flicker:
+through the whole chain on a flat grey field with the deck's defaults, the
+whole-row share of the decoded luma's temporal variance is 6.9% at 2.3
+lines, 3.8% at 8 and 2.6% at 64. The burst key averages six times as many
+samples as the two-cycle window did, which read 17.8%, 6.4% and 2.8%.
 
 The 30 Hz head-alternating brightness the review measured (1.2% on flat
-grey with the interchange skews) is gone with this receiver at the default
-clamp: head A and head B fields decode within 0.006%, and every band of
-rows within 0.034%. A black window placed a dot earlier, 20 dots behind the
-edge, doubles the whole-row share (the deck's burst tail still reaches it);
-one placed later runs into the NES border, which carries the backdrop
-colour.
+grey with the interchange skews) came back once the test raster carried
+the grey pulse the app draws. The deck spreads that pulse about a dot ahead
+of itself, partly as colour-band ringing whose phase follows the 2C02's
+frame phase and each head's timing. The two-cycle window ended where the
+pulse begins, and head A's fields decoded 0.84% darker than head B's (0.35%
+apart with no skew at all). Behind the trap and over the burst key, head A
+and head B fields decode within 0.011%, and every band of rows within
+0.018%. In the app the pulse carries the backdrop's grey, so a bright
+backdrop made it far worse: on Super Mario Bros.' title screen through the
+VHS preset, the flat sky's mean brightness varied by 7.3% from frame to
+frame (the whole picture by 5.2%), and the sky sat 20% darker in linear
+light than the clamp now puts it. With the burst key the sky varies by
+0.56%, the tape's noise, and the even and odd fields differ by 0.10% with a
+standard error of 0.71% over 120 frames.
 
 ### Left out
 
@@ -352,7 +387,10 @@ under Y/C separation.
 
 ## Raster edge and fixed glass aperture
 
-The source bounds and beam spot define the raster perimeter. The former second
+The receiver's flyback blanking and the beam spot define the raster perimeter.
+The decoder covers the whole active raster, so the console's border is on the
+tube up to where the receiver blanks the retrace, and past that only the spot's
+reach lights anything. The former second
 UV-space fade (roughly ten display pixels wide at 1280 pixels) has been removed.
 The final optics pass clips emission and specular room reflection against the
 fixed curved glass aperture with one-pixel coverage antialiasing. Service size,

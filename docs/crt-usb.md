@@ -32,6 +32,19 @@ Only emulated PPU frames are sent: Mac menus, shaders, ROM browser and overlays
 are not part of the CRT output. Pausing or entering the ROM browser stops new
 PPU submissions; the FPGA retains its last picture. Use O to change ROMs.
 
+## Audio
+
+When the box's FPGA image has an audio path, opening the USB stream reports the
+rate the box consumes (47,941 Hz NTSC, 51,957 Hz PAL, derived from its video
+clock). The APU and the Mac's audio device then run at that rate, and every
+APU sample also goes to the box: mono, carried inside the next video packet so
+it costs no extra USB round trips, and paced by the queue level the box reports
+so the box can never overflow (fast-forward drops audio on the host instead).
+The box plays it through its I2S DAC in step with the picture; the Mac keeps
+playing the same audio. Older images without audio are detected at open and
+audio stays on the Mac alone. Shutdown statistics include packets that carried
+audio, the box's queue level, underruns and any host-side drops.
+
 ## Transport and limits
 
 Frames are packed into 69,120 bytes with CRC32 and sequence checks. A background

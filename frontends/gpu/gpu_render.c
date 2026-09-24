@@ -2,6 +2,7 @@
  * gpu_render.c -- GPU texture management, rendering, and color conversion
  */
 #include "gpu_render.h"
+#include "split_view.h"
 #include "frame_capture.h"
 #include "gpu_half.h"
 #include <stdio.h>
@@ -174,9 +175,10 @@ void gpu_render_update_dynamic_state(GPURenderCtx *ctx) {
     ctx->apl_slow_state += (target - ctx->apl_slow_state) * apl_k;
 
     /* §5.2 thermal-mask tracker — ~15 second EMA per channel. */
-    if (ctx->raw_ppu_rgb) {
+    if (ctx->frame_rgb_valid || ctx->raw_ppu_rgb) {
         float fr, fg, fb;
-        gpu_render_compute_rgb_averages(ctx->raw_ppu_rgb, &fr, &fg, &fb);
+        if (ctx->frame_rgb_valid) { fr = ctx->frame_rgb[0]; fg = ctx->frame_rgb[1]; fb = ctx->frame_rgb[2]; }
+        else gpu_render_compute_rgb_averages(ctx->raw_ppu_rgb, &fr, &fg, &fb);
         const float thermal_k = 1.0f / (60.0f * 15.0f);
         ctx->thermal_r_state += (fr - ctx->thermal_r_state) * thermal_k;
         ctx->thermal_g_state += (fg - ctx->thermal_g_state) * thermal_k;
@@ -598,26 +600,30 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
         can_capture = true; raw_capture = true;
     }
 
-    /* Split view: overwrite right half of swapchain with raw PPU palette.
-     * This gives an A/B comparison against the CRT-processed left half. */
-    if (ctx->split_mode && ctx->raw_tex) {
+    /* Split view: overwrite the picture's right half with the raw PPU
+     * palette, where the displayed picture has that half (split_view.h):
+     * through the preset's raster on the beam, as decoded on the RGB crop
+     * shown without a beam, or across the palette picture. An A/B
+     * comparison against the CRT-processed left half. */
+    if (ctx->split_mode && ctx->raw_tex && chain) {
+        const TVDisplayParams *tv = &chain->tv;
+        DecodeWindow w;
+        decode_window_raster(&w, chain->signal_fmt.region, chain->signal_fmt.samples_per_pixel,
+                             chain->signal_fmt.dots_per_line, SIGNAL_PICTURE_DOT);
+        SplitPlace place = ctx->display_content == GPU_DISPLAY_TRACE ? split_place_trace(&w)
+                         : ctx->display_content == GPU_DISPLAY_PICTURE ? split_place_picture()
+                         : split_place_face(&w, tv->overscan, tv->h_size, tv->v_size, tv->h_pos, tv->v_pos);
         SDL_GPUBlitInfo split = {0};
         split.source.texture = ctx->raw_tex;
-        /* Source: right half of 256x240 PPU framebuffer. */
-        split.source.x = 128;
-        split.source.y = 0;
-        split.source.w = 128;
-        split.source.h = 240;
-        /* Destination: right half of swapchain viewport (use 4:3 pillarbox
-         * bounds matching the main render so it aligns visually). */
         split.destination.texture = swapchain_tex;
-        split.destination.x = (Uint32)(vp_x + vp_w * 0.5f);
-        split.destination.y = (Uint32)vp_y;
-        split.destination.w = (Uint32)(vp_w * 0.5f);
-        split.destination.h = (Uint32)vp_h;
-        split.load_op = SDL_GPU_LOADOP_LOAD;  /* don't clear, preserve left half */
-        split.filter = SDL_GPU_FILTER_NEAREST;
-        SDL_BlitGPUTexture(cmd, &split);
+        if (split_axis(vp_x + place.u0 * vp_w, vp_x + place.u1 * vp_w, 128, 256, vp_x, vp_x + vp_w,
+                       &split.source.x, &split.source.w, &split.destination.x, &split.destination.w) &&
+            split_axis(vp_y + place.v0 * vp_h, vp_y + place.v1 * vp_h, place.line0, place.line1, vp_y, vp_y + vp_h,
+                       &split.source.y, &split.source.h, &split.destination.y, &split.destination.h)) {
+            split.load_op = SDL_GPU_LOADOP_LOAD;  /* don't clear, preserve left half */
+            split.filter = SDL_GPU_FILTER_NEAREST;
+            SDL_BlitGPUTexture(cmd, &split);
+        }
     }
 
     if (ctx->presentation_mode == GPU_PRESENT_60HZ && !ctx->scheduled_present && !ctx->vsync_paced) {

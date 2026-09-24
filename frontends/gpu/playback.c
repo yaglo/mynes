@@ -38,6 +38,11 @@ struct Playback {
      * captured picture rather than from power-on. */
     unsigned replay_offset;
     float input[AUDIO_BLOCK_CAPACITY], output[AUDIO_BLOCK_CAPACITY];
+    /* On RF the set's sound detector hears the picture: the frame's
+     * per-line level makes the block's buzz, added by either backend. */
+    float aux[AUDIO_BLOCK_CAPACITY];
+    bool aux_valid;
+    AudioVideoFrame frame_load;
     int count, fade;
     float energy;
     AudioState state;
@@ -46,7 +51,45 @@ struct Playback {
      * the frames from capture_from on, for a recording. Both owned elsewhere
      * except capture, which this file opened. */
     FILE *capture, *capture_window, *trace;
+    uint16_t border[242][2];   /* the frame in progress's border, see run_frame */
 };
+
+uint16_t playback_border_entry(const PPU *ppu) {
+    unsigned addr = 0;
+    bool rendering = (ppu->mask & (MASK_BG_ENABLE | MASK_SPRITE_ENABLE)) != 0;
+    if (!rendering && (ppu->v & 0x3f00) == 0x3f00) {
+        addr = ppu->v & 0x1f;
+        if ((addr & 0x13) == 0x10) addr &= ~0x10u;   /* $3F10/14/18/1C mirror $3F00/04/08/0C */
+    }
+    uint16_t colour = ppu->palette[addr] & (ppu->mask & MASK_GREYSCALE ? 0x30 : 0x3f);
+    return colour | (uint16_t)((ppu->mask & 0xe0) << 1);
+}
+
+/* One frame, noting the border each raster line gets. Raster line r starts
+ * at PPU dot 277 of PPU line r - 1, so the left border of line r (dots 49
+ * to 64) is drawn in PPU line r - 1's dots 326 to 340 and the right border
+ * (from dot 321) in line r's dots 257 to 267; lines 240 and 241 are border
+ * across. When the PPU leaves line s the entry is taken for the left border
+ * of raster line s + 1 and the right border of line s, so a palette write in
+ * line s's horizontal blanking reaches its right border up to 70 dots early.
+ * Line 241 is drawn after the frame completes at its dot 1 and takes the
+ * entry then. */
+static void run_frame(NES *nes, uint16_t border[242][2]) {
+    PPU *ppu = &nes->ppu;
+    ppu->frame_complete = false;
+    int line = ppu->scanline;
+    while (!ppu->frame_complete) {
+        nes_step(nes);
+        if (ppu->scanline != line) {
+            uint16_t entry = playback_border_entry(ppu);
+            int next = line == ppu->prerender_line ? 0 : line + 1;
+            if (line < 242) border[line][1] = entry;
+            if (next < 242) border[next][0] = entry;
+            line = ppu->scanline;
+        }
+    }
+    border[241][1] = playback_border_entry(ppu);
+}
 
 /* Deterministic controller replay for offscreen visual reviews. Each row is
  * an emulated frame number and a hexadecimal controller mask, held until the
@@ -112,8 +155,9 @@ static void submit_audio(Playback *p, const PlaybackControls *c, Uint64 deadline
     /* An expired GPU block never enters the stream. Reuse its buffers only
      * after the fence signals; CPU fallback starts with the same input state. */
     if (p->audio && p->audio->pending) audio_gpu_poll(p->audio, p->gpu, NULL, NULL);
+    const float *aux = p->aux_valid ? p->aux : NULL;
     if (c->gpu_audio && !fast && p->audio && !p->audio->pending) {
-        if (audio_gpu_begin(p->audio, p->gpu, &c->audio, &p->state, p->input, p->count)) {
+        if (audio_gpu_begin(p->audio, p->gpu, &c->audio, &p->state, p->input, aux, p->count)) {
             Uint64 latest = SDL_GetTicksNS() + 3000000;
             if (deadline > 2000000 && deadline - 2000000 < latest) latest = deadline - 2000000;
             do {
@@ -124,7 +168,7 @@ static void submit_audio(Playback *p, const PlaybackControls *c, Uint64 deadline
             } while (true);
         }
     }
-    if (!processed) audio_chain_process(&c->audio, &p->state, p->input, p->output, p->count);
+    if (!processed) audio_chain_process_aux(&c->audio, &p->state, p->input, aux, p->output, p->count);
     if (p->stream && !fast) {
         int queued = SDL_GetAudioStreamQueued(p->stream) / (int)sizeof(float);
         if (audio_sync_stale(queued, p->count)) {
@@ -252,10 +296,15 @@ static int run(void *user) {
         }
         p->count = 0;
         Uint64 start_ns = SDL_GetTicksNS(), start = SDL_GetPerformanceCounter();
-        nes_run_frame(p->nes);
+        run_frame(p->nes, p->border);
         Uint64 duration = SDL_GetPerformanceCounter() - start;
         ++p->number;
         Uint64 audio_start=SDL_GetTicksNS();
+        p->aux_valid = c.audio.rf_sound.enabled && p->count > 0;
+        if (p->aux_valid) {
+            audio_video_frame_from_codes(&p->frame_load, p->nes->ppu.index_framebuffer, c.region);
+            audio_chain_rf_buzz(&c.audio, &p->frame_load, p->aux, p->count);
+        }
         submit_audio(p, &c, deadline);
         Uint64 ready_ns=SDL_GetTicksNS();
         SDL_LockMutex(p->mutex);
@@ -273,6 +322,7 @@ static int run(void *user) {
         picture->number = p->number;
         picture->backdrop = (p->nes->ppu.palette[0] & (p->nes->ppu.mask & 1 ? 0x30 : 0x3f))
                          | ((p->nes->ppu.mask & 0xe0) << 1);
+        memcpy(picture->border, p->border, sizeof(picture->border));
         picture->audio_energy = p->energy;
         picture->emulation_ticks = duration;
         picture->start_ns=start_ns;
