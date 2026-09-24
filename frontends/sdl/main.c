@@ -2724,6 +2724,13 @@ int main(int argc, char *argv[]) {
             const char *slash = strrchr(palette_path, '/');
             const char *name = slash ? slash + 1 : palette_path;
 
+            /* palette_init may have filled the table from the palettes
+             * directory; the one asked for by name takes the last slot. */
+            if (palette_count >= MAX_PALETTES) {
+                palette_count = MAX_PALETTES - 1;
+                fprintf(stderr, "Palette table full; %s replaces %s\n",
+                        name, palettes[palette_count].name);
+            }
             PaletteEntry *pe = &palettes[palette_count];
             strncpy(pe->name, name, sizeof(pe->name) - 1);
             memcpy(pe->colors, custom_colors, sizeof(pe->colors));
