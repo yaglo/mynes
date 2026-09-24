@@ -42,6 +42,7 @@
 #include "signal_precompute.h"
 #include "video_chain.h"
 #include "video_gpu.h"
+#include "decode_window.h"
 #include "audio_chain.h"
 #include "gpu_render.h"
 #include "gpu_display.h"
@@ -397,7 +398,7 @@ static bool calibrate_white(SDL_GPUDevice *gpu, const VideoRGBSource *picture) {
     src.spp_num = SIGNAL_NTSC_SAMPLES_PER_LINE / gcd(SIGNAL_NTSC_SAMPLES_PER_LINE, 320);
     src.spp_den = 320 / gcd(SIGNAL_NTSC_SAMPLES_PER_LINE, 320);
     for (int i = 0; i < 24; i++)
-        if (!video_gpu_process_rgb(&video_gpu_chain, gpu, &src, NULL)) return false;
+        if (!video_gpu_process_rgb(&video_gpu_chain, gpu, &src)) return false;
     bool measured = false;
     int beam_w, beam_h;
     SDL_GPUTexture *beam = video_gpu_get_beam_texture(&video_gpu_chain);
@@ -753,8 +754,10 @@ int main(int argc, char **argv) {
         video_gpu_set_dynamic_state(&video_gpu_chain, render_ctx.hv_sag_state, render_ctx.apl_slow_state, 0.0f);
         float *rgb_out = NULL;
         if (calibrate && frame >= 30) rgb_out = calloc(video_gpu_chain.rgb_size / sizeof(float), sizeof(float));
-        if (!video_gpu_process_rgb(&video_gpu_chain, gpu, &src, rgb_out)) {
+        if (!video_gpu_process_rgb(&video_gpu_chain, gpu, &src) ||
+            (rgb_out && !video_gpu_download_window_rgb(&video_gpu_chain, gpu, rgb_out))) {
             fprintf(stderr, "GPU chain failed on frame %u: %s\n", frame, SDL_GetError());
+            free(rgb_out);
             running = false;
             break;
         }
@@ -765,7 +768,7 @@ int main(int argc, char **argv) {
                 double chroma = 0, luma = 0; int n = 0;
                 for (int y = top + 20; y < top + lines - 20; y++)
                     for (int x = half * spl / 2 + spl / 16; x < (half + 1) * spl / 2 - spl / 16; x++) {
-                        const float *px = rgb_out + ((size_t)y * spl + x) * 3;
+                        const float *px = rgb_out + decode_window_rgb_index(&video_gpu_chain.window, y, x);
                         double yy = 0.299 * px[0] + 0.587 * px[1] + 0.114 * px[2];
                         chroma += sqrt((px[0] - yy) * (px[0] - yy) + (px[2] - yy) * (px[2] - yy));
                         luma += yy; n++;
@@ -783,7 +786,7 @@ int main(int argc, char **argv) {
                 double acc[3] = {0}; int n = 0;
                 for (int y = top + 40; y < top + lines - 40; y++)
                     for (int x = b * spl / 8 + spl / 32; x < (b + 1) * spl / 8 - spl / 32; x++) {
-                        const float *px = rgb_out + ((size_t)y * spl + x) * 3;
+                        const float *px = rgb_out + decode_window_rgb_index(&video_gpu_chain.window, y, x);
                         acc[0] += px[0]; acc[1] += px[1]; acc[2] += px[2]; n++;
                     }
                 printf("%-8s R=%.3f G=%.3f B=%.3f\n", names[b], acc[0] / n, acc[1] / n, acc[2] / n);
