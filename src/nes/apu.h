@@ -362,11 +362,14 @@ static inline int apu_noise_volume(const APU_Noise *n) {
  * Pulse Period Update
  * ============================================================================ */
 
-/* Only the reload period changes here: a running timer divider keeps
+/* The sweep unit computes its target continuously, so the channel mutes
+ * whenever an add would overflow $7FF, even with sweep disabled or a zero
+ * shift. Only the reload period changes here: a running timer divider keeps
  * counting and picks up the new period at its next reload. */
 static inline void apu_update_pulse_period(APU_Pulse *p) {
-    p->timer_reload &= 0x7FF;
-    p->sweep_mute = (p->timer_reload < 8);
+    int period = p->timer_reload &= 0x7FF;
+    p->sweep_mute = period < 8 ||
+        (!p->sweep_negate && period + (period >> p->sweep_shift) > 0x7FF);
 }
 
 /* ============================================================================
@@ -1155,6 +1158,7 @@ static inline void apu_write(APU *apu, uint16_t addr, uint8_t val) {
         apu->pulse[0].sweep_negate = (val & 0x08) != 0;
         apu->pulse[0].sweep_shift = val & 0x07;
         apu->pulse[0].sweep_reload = true;
+        apu_update_pulse_period(&apu->pulse[0]);
         break;
     case 0x4002:
         apu->pulse[0].reg[2] = val;
@@ -1186,6 +1190,7 @@ static inline void apu_write(APU *apu, uint16_t addr, uint8_t val) {
         apu->pulse[1].sweep_negate = (val & 0x08) != 0;
         apu->pulse[1].sweep_shift = val & 0x07;
         apu->pulse[1].sweep_reload = true;
+        apu_update_pulse_period(&apu->pulse[1]);
         break;
     case 0x4006:
         apu->pulse[1].reg[2] = val;

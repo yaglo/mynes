@@ -49,6 +49,26 @@ int main(void) {
     a.pulse[0].timer=5;
     apu_write(&a,0x4002,0x40); apu_write(&a,0x4003,0x01);
     CHECK(a.pulse[0].timer==5 && a.pulse[0].timer_reload==0x140);
+    /* The sweep target mutes the channel when it would pass $7FF, even with
+     * the sweep unit disabled or a zero shift; negate never overflows. */
+    apu_write(&a,0x4001,0x00);           /* disabled, shift 0: target 2*p */
+    apu_write(&a,0x4002,0xFF); apu_write(&a,0x4003,0x03);   /* $3FF */
+    CHECK(!a.pulse[0].sweep_mute);
+    apu_write(&a,0x4002,0x00); apu_write(&a,0x4003,0x04);   /* $400 */
+    CHECK(a.pulse[0].sweep_mute);
+    apu_write(&a,0x4001,0x08); CHECK(!a.pulse[0].sweep_mute);      /* negate */
+    apu_write(&a,0x4001,0x01); CHECK(!a.pulse[0].sweep_mute);      /* $600 */
+    apu_write(&a,0x4002,0x56); apu_write(&a,0x4003,0x05);   /* $556 */
+    CHECK(a.pulse[0].sweep_mute);                           /* +$2AB */
+    apu_write(&a,0x4002,0x07); apu_write(&a,0x4003,0x00);   /* period < 8 */
+    CHECK(a.pulse[0].sweep_mute);
+    apu_write(&a,0x4005,0x87); apu_write(&a,0x4006,0xF0); apu_write(&a,0x4007,0x07);
+    CHECK(!a.pulse[1].sweep_mute);                          /* $7F0 + $F */
+    apu_write(&a,0x4005,0x86); CHECK(a.pulse[1].sweep_mute);       /* + $1F */
+    a.pulse[1].enabled=true; a.pulse[1].length_counter=1;
+    a.pulse[1].reg[0]=0xBF; a.pulse[1].sequence_step=1;
+    CHECK(apu_pulse_output(&a.pulse[1])==0);
+    apu_write(&a,0x4005,0x87); CHECK(apu_pulse_output(&a.pulse[1])==15);
     printf("APU region/triangle tests: %s\n",failures?"FAIL":"PASS");
     return failures?1:0;
 }
