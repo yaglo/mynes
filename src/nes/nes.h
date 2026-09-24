@@ -51,7 +51,6 @@ struct NES {
     uint8_t controller[2];      /* Current button state */
     uint8_t controller_shift[2]; /* Shift register for serial read */
     uint8_t controller_strobe;  /* Strobe state (bit 0) */
-    bool controller_strobed;    /* Latched on a put cycle since strobe went high */
 
     /* DMA Controller State */
     struct {
@@ -261,9 +260,6 @@ static inline void nes_cpu_write(CPU *cpu, uint16_t addr, uint8_t val) {
              * happens to fall between two put cycles never strobes at
              * all (AccuracyCoin Controller Strobing test 4). */
             nes->controller_strobe = val & 1;
-            if (!(val & 1)) {
-                nes->controller_strobed = false;
-            }
         }
         else {
             /* APU registers ($4000-$4013, $4015, $4017) */
@@ -471,14 +467,9 @@ static inline void nes_step(NES *nes) {
      * APU "put" cycle. A 1-cycle strobe pulse that falls between two put
      * cycles never strobes at all — AccuracyCoin Controller Strobing test 4
      * relies on this. */
-    if (nes->apu.put_cycle) {
-        if (nes->controller_strobe) {
-            nes->controller_strobed = true;
-            nes->controller_shift[0] = nes->controller[0];
-            nes->controller_shift[1] = nes->controller[1];
-        } else {
-            nes->controller_strobed = false;
-        }
+    if (nes->apu.put_cycle && nes->controller_strobe) {
+        nes->controller_shift[0] = nes->controller[0];
+        nes->controller_shift[1] = nes->controller[1];
     }
 
     /* IRQ line — level-sensitive, reflects current state of all sources.

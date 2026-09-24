@@ -467,7 +467,7 @@ void playback_reset_console(Playback *p) {
     nes->oam_dma_pending=false;
     nes->prev_nmi=nes->nmi_edge_detected=false;
     nes->irq_inhibit_cycles=0;
-    nes->controller_strobe=nes->controller_strobed=0;
+    nes->controller_strobe=0;
     if(nes->mapper_loaded) {
         mapper_reset(&nes->mapper);
         nes->mapper.irq_pending=false;
