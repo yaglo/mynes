@@ -355,7 +355,7 @@ if(NES_BUILD_TESTS)
     # dependencies are added at the end of this file, once the frontend and
     # GPU tests further down have been defined too.
     add_custom_target(alltests
-        COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure)
+        COMMAND ${CMAKE_CTEST_COMMAND} -C $<CONFIG> --output-on-failure)
 endif()
 
 # =============================================================================
