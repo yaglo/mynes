@@ -2263,8 +2263,21 @@ int main(int argc, char **argv) {
 
         /* --- Video output --- */
         Uint64 t_gpu0 = SDL_GetPerformanceCounter(), t_gpu1 = t_gpu0;
-        render_ctx.frame_brightness =
-            gpu_render_compute_frame_brightness(display_ppu.framebuffer);
+        /* The beam's load: the picture and the border over the whole
+         * active raster, as the GPU's rail sees it. The 2C07 blanks its
+         * border. */
+        {
+            DecodeWindow raster;
+            decode_window_raster(&raster, sig_state.region, sig_state.samples_per_pixel, 341, SIGNAL_PICTURE_DOT);
+            const uint8_t (*pal)[3] = display_ppu.color_palette ? display_ppu.color_palette : ppu_palette_2c02;
+            uint8_t border[3] = {0, 0, 0};
+            if (sig_state.region != SIGNAL_REGION_PAL) memcpy(border, pal[backdrop & 0x3f], 3);
+            float means[4];
+            decode_window_raster_mean(&raster, display_ppu.framebuffer, border, means);
+            render_ctx.frame_brightness = means[3];
+            memcpy(render_ctx.frame_rgb, means, sizeof(render_ctx.frame_rgb));
+            render_ctx.frame_rgb_valid = true;
+        }
         render_ctx.raw_ppu_rgb = display_ppu.framebuffer;
         gpu_render_update_dynamic_state(&render_ctx);
 

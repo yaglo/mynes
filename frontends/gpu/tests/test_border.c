@@ -539,6 +539,33 @@ static void split_geometry(SDL_GPUDevice *gpu) {
     CHECK(!split_axis(100, 612, 128, 256, 700, 1000, &src, &src_n, &dst, &dst_n));
 }
 
+/* The beam's load over the active raster: the picture's lines inside the
+ * active field and the border the 2C02 draws inside the active line, over
+ * the active line times the active field. NTSC: 239 picture lines (line 0
+ * is in the vertical blanking), 14.53 + 11 border dots beside each, and the
+ * two backdrop lines below from the line's start to dot 332. */
+static void raster_mean(void) {
+    static unsigned char black[256 * 240 * 3], white[256 * 240 * 3];
+    memset(white, 255, sizeof(white));
+    const unsigned char none[3] = {0, 0, 0}, full[3] = {255, 255, 255};
+    DecodeWindow n, p;
+    decode_window_raster(&n, SIGNAL_REGION_NTSC, 8, 341, SIGNAL_PICTURE_DOT);
+    decode_window_raster(&p, SIGNAL_REGION_PAL, 10, 341, SIGNAL_PICTURE_DOT);
+    double area = (double)n.active_dots * n.active_lines;
+    double side = n.picture_left + (332 - 321);
+    double border = (239 * side + 2 * (332 - (SIGNAL_PICTURE_DOT - n.picture_left))) / area;
+    float m[4];
+    decode_window_raster_mean(&n, white, none, m);
+    CHECK(fabs(m[0] - 239 * 256 / area) < 1e-5 && fabs(m[3] - m[0]) < 1e-5);
+    printf("Raster load, NTSC: a white picture is %.4f of the raster,", m[0]);
+    decode_window_raster_mean(&n, black, full, m);
+    CHECK(fabs(m[1] - border) < 1e-5);
+    printf(" a white border %.4f;", m[1]);
+    decode_window_raster_mean(&p, white, none, m);
+    CHECK(fabs(m[2] - 240 * 256 / ((double)p.active_dots * p.active_lines)) < 1e-5);
+    printf(" PAL picture %.4f\n", m[2]);
+}
+
 /* An isolated line carries the light of a line of a uniform field whatever
  * the output row's pitch in raster lines: each row integrates the spot over
  * the lines it covers on the face, 287 active PAL lines, or an NTSC field
@@ -666,6 +693,7 @@ static void household_overscan(SDL_GPUDevice *gpu) {
 
 int test_border(SDL_GPUDevice *gpu) {
     window_arithmetic();
+    raster_mean();
     household_overscan(gpu);
     backdrop_decodes(gpu, VIDEO_CONN_COMPOSITE, VIDEO_COMB_NONE, "composite");
     backdrop_decodes(gpu, VIDEO_CONN_SVIDEO, VIDEO_COMB_NONE, "S-Video");

@@ -68,6 +68,11 @@ typedef struct {
     bool            owns_display_tex;    /* false when using external beam texture */
     int             display_content;     /* GPU_DISPLAY_*: what display_tex holds, for the split view */
     float           frame_brightness;    /* instantaneous avg luma of current PPU frame */
+    /* Mean R, G, B drive of the current frame over the raster the beam
+     * scans, border included (decode_window_raster_mean); when not valid
+     * the thermal tracker averages raw_ppu_rgb, the picture alone. */
+    float           frame_rgb[3];
+    bool            frame_rgb_valid;
     float           hv_sag_state;        /* smoothed HV sag level (0-1), updated per frame */
     float           apl_slow_state;      /* §4.9 APL black-level tracker, tau ≈ 120ms */
     /* §5.2 thermal-mask approximation: long-timescale per-channel EMA

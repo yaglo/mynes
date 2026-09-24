@@ -175,9 +175,10 @@ void gpu_render_update_dynamic_state(GPURenderCtx *ctx) {
     ctx->apl_slow_state += (target - ctx->apl_slow_state) * apl_k;
 
     /* §5.2 thermal-mask tracker — ~15 second EMA per channel. */
-    if (ctx->raw_ppu_rgb) {
+    if (ctx->frame_rgb_valid || ctx->raw_ppu_rgb) {
         float fr, fg, fb;
-        gpu_render_compute_rgb_averages(ctx->raw_ppu_rgb, &fr, &fg, &fb);
+        if (ctx->frame_rgb_valid) { fr = ctx->frame_rgb[0]; fg = ctx->frame_rgb[1]; fb = ctx->frame_rgb[2]; }
+        else gpu_render_compute_rgb_averages(ctx->raw_ppu_rgb, &fr, &fg, &fb);
         const float thermal_k = 1.0f / (60.0f * 15.0f);
         ctx->thermal_r_state += (fr - ctx->thermal_r_state) * thermal_k;
         ctx->thermal_g_state += (fg - ctx->thermal_g_state) * thermal_k;
