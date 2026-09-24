@@ -219,6 +219,8 @@ typedef struct {
  * state unchanged; model is set to VHS_MODEL_FM. */
 /* 0.35 of the back-porch error per line: -1 / ln(0.65) lines. */
 #define VIDEO_CLAMP_LINES_DEFAULT 2.3214f
+#define VIDEO_CLAMP_KEY_DELAY_US_DEFAULT 5.4f
+#define VIDEO_CLAMP_KEY_WIDTH_US_DEFAULT 3.5f
 
 static inline void vhs_params_defaults(VHSParams *v) {
     int enabled = v->enabled;
@@ -305,6 +307,10 @@ typedef struct {
      * VIDEO_CLAMP_LINES_DEFAULT, the receiver's earlier fixed 0.35 per
      * line; no measured value exists. */
     float clamp_lines;
+    /* The burst key that gates the luminance black clamp: its delay from
+     * the start of sync and its width, in us. 0 takes the defaults below,
+     * the TDA8362's typical sandcastle figures. */
+    float clamp_key_delay_us, clamp_key_width_us;
     /* Fraction of residual carrier rejected in the Y FIR. 0.95 adds
      * 26 dB rejection at the carrier; 0 disables the horizontal trap.
      * Controls cross-luma, not cross-color in the separate chroma path.

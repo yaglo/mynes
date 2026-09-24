@@ -307,6 +307,18 @@ typedef struct {
     float sharp_d, reserved0, reserved1, reserved2;
 } GpuVHSParams;
 
+/* Sync separator and keyed measurements (matches receiver_lock.comp.glsl).
+ * key_start and key_width place the TV's burst key, which gates its burst
+ * detector's black reference and its luminance clamp: samples from the
+ * trailing edge of sync to the key's start, and the key's length. trap_*
+ * are the chrominance trap in front of the luminance clamp, a biquad notch
+ * at the subcarrier in transposed direct form II (b1 = a1, b2 = b0). */
+typedef struct {
+    uint32_t count, full_width, samples_per_dot, region;
+    float key_start, key_width, trap_b0, trap_a1;
+    float trap_a2, pad0, pad1, pad2;
+} GpuReceiverLockParams;
+
 /* Horizontal AFC is independent of the colour-burst PLL. Zero response
  * selects the legacy loop, including its frame acquisition behaviour.
  * h_pll selects a second-order loop (proportional h_kp, integral h_ki per

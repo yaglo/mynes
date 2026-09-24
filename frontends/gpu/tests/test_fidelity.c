@@ -620,8 +620,10 @@ static void receiver(SDL_GPUDevice *gpu) {
         CHECK(raster[(vsync+3)*width+100*spp]==0);
         CHECK(raster[243*width+100*spp]==0);
         if(region) CHECK(raster[70*spp]==0 && raster[width+65*spp]==0);
-        uint32_t rp[]={lines,width,spp,(uint32_t)region};
-        int lock=chain_add_stage(&sc,"Receiver test",CHAIN_KERNEL_RECEIVER,rp,sizeof(rp),
+        TVDisplayParams tv={0};
+        GpuReceiverLockParams rp=video_receiver_lock_params(lines,width,spp,(uint32_t)region,
+                                                            signal_region_sample_rate_hz(region),&tv);
+        int lock=chain_add_stage(&sc,"Receiver test",CHAIN_KERNEL_RECEIVER,&rp,sizeof(rp),
                                  gpu_workgroup_count(lines,CHAIN_SCANLINE_WORKGROUP_SIZE),1);
         ChainStage *l=&sc.stages[lock]; l->io_typed=true;
         l->ro_count=2;l->ro[0]=CBR_BUF_SRC;l->ro[1]=CBR_AUX1;l->rw_count=1;l->rw[0]=CBR_AUX0;
@@ -638,10 +640,33 @@ static void receiver(SDL_GPUDevice *gpu) {
         CHECK(all_ref[vsync*4+2]==-1);
         CHECK(all_ref[(lines-1)*4+2]>.3f);
         free(all_ref);
+        /* Black is the set's luminance clamp: the signal through a notch at
+         * the subcarrier (Q 2) averaged over the burst key, 5.4 us after
+         * the start of sync for 3.5 us. Here in double precision from the
+         * trap's analog prototype, on the edge the raster puts at dot 25.
+         * The key spans the whole 2C02 burst, whose square wave sits 24/788
+         * of white above blanking: the set clamps that far above the
+         * console's blanking, less the part of the key the burst misses. */
+        double fs=signal_region_sample_rate_hz(region), wc=2*M_PI/12, q=2, kk=tan(wc/2);
+        double nb0=(1+kk*kk)/(1+kk/q+kk*kk), na1=2*(kk*kk-1)/(1+kk/q+kk*kk), na2=(1-kk/q+kk*kk)/(1+kk/q+kk*kk);
+        double k0=5.4e-6*fs, k1=k0+3.5e-6*fs;    /* sync starts at sample 0 */
         for(int line=0;line<2;line++) {
             float expected=(3+line*signal_region_line_phase(region))*6.28318530718f/12;
             CHECK(fabsf(remainderf(ref[line*4]-expected,6.28318530718f))<1e-4f);
-            CHECK(fabsf(ref[line*4+1]-0.125f)<1e-5f);
+            const float *r=raster+(size_t)line*width;
+            double v0=r[17*spp], s1=v0*(1-nb0), s2=s1, sum=0;
+            for(int x=17*(int)spp;x<(int)ceil(k1);x++) {
+                double y=nb0*r[x]+s1;
+                s1=na1*(r[x]-y)+s2; s2=nb0*r[x]-na2*y;
+                sum+=y*fmax(0,fmin(fmin(x+1.0,k1)-fmax((double)x,k0),1));
+            }
+            double black=sum/(k1-k0), plain=0;
+            CHECK(fabs(ref[line*4+1]-black)<2e-5);
+            for(int x=(int)floor(k0);x<(int)ceil(k1);x++) plain+=r[x]*fmax(0,fmin(fmin(x+1.0,k1)-fmax((double)x,k0),1));
+            plain/=k1-k0;
+            CHECK(fabs(black-plain)<5e-4 && plain-0.125>0.02);
+            if(line==0) printf("Receiver clamp (%s): black %.5f above the raster's blanking, the key's plain mean %.5f\n",
+                               region ? "PAL" : "NTSC",black-0.125,plain-0.125);
             CHECK(ref[line*4+2]>0.3f);
         }
         /* Snow: white Gaussian noise of 0.14 per sample is what a 15 dB

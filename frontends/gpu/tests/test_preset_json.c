@@ -199,6 +199,8 @@ static void make_distinctive_preset(PhysicalPreset *p)
     p->tv.h_pll_damping = 0.8f;
     p->tv.h_pll_vblank_gain = 2.0f;
     p->tv.clamp_lines = 40;
+    p->tv.clamp_key_delay_us = 5.1f;
+    p->tv.clamp_key_width_us = 3.8f;
 
     p->tv.persistence_ms  = 1.7f;
 
@@ -408,6 +410,8 @@ static int compare_presets(const PhysicalPreset *a, const PhysicalPreset *b,
     ASSERT_NEAR(b->tv.h_pll_damping,a->tv.h_pll_damping,FLOAT_TOL,"tv.h_pll_damping");
     ASSERT_NEAR(b->tv.h_pll_vblank_gain,a->tv.h_pll_vblank_gain,FLOAT_TOL,"tv.h_pll_vblank_gain");
     ASSERT_NEAR(b->tv.clamp_lines,a->tv.clamp_lines,FLOAT_TOL,"tv.clamp_lines");
+    ASSERT_NEAR(b->tv.clamp_key_delay_us,a->tv.clamp_key_delay_us,FLOAT_TOL,"tv.clamp_key_delay_us");
+    ASSERT_NEAR(b->tv.clamp_key_width_us,a->tv.clamp_key_width_us,FLOAT_TOL,"tv.clamp_key_width_us");
 
     ASSERT_NEAR(b->tv.persistence_ms,     a->tv.persistence_ms,     FLOAT_TOL, "tv.persistence_ms");
 

@@ -139,6 +139,38 @@ static GpuAGCParams agc_params_from(const VideoGPUChain *v) {
     return p;
 }
 
+/* The TV's burst key and the chrominance trap in front of its luminance
+ * clamp. The key is timed from the start of sync, as a sandcastle
+ * generator times it from the line oscillator; the separator measures the
+ * trailing edge, so the key starts the sync's 25 dots (both the 2C02's and
+ * an encoder raster's) earlier than the delay says. The trap is the
+ * TDA8362's: a notch at the subcarrier with a quality factor of 2, here a
+ * bilinear biquad prewarped to the subcarrier at 12 samples per cycle. */
+GpuReceiverLockParams video_receiver_lock_params(uint32_t lines, uint32_t full_width, uint32_t samples_per_dot,
+                                                 uint32_t region, double sample_rate_hz, const TVDisplayParams *tv) {
+    GpuReceiverLockParams p = {0};
+    p.count = lines;
+    p.full_width = full_width;
+    p.samples_per_dot = samples_per_dot;
+    p.region = region;
+    double us = sample_rate_hz * 1e-6;
+    double delay = tv->clamp_key_delay_us > 0 ? tv->clamp_key_delay_us : VIDEO_CLAMP_KEY_DELAY_US_DEFAULT;
+    double width = tv->clamp_key_width_us > 0 ? tv->clamp_key_width_us : VIDEO_CLAMP_KEY_WIDTH_US_DEFAULT;
+    p.key_start = (float)fmax(0, delay * us - 25.0 * samples_per_dot);
+    p.key_width = (float)fmax(1, width * us);
+    const double q = 2, k = tan(M_PI / 12), norm = 1 / (1 + k / q + k * k);
+    p.trap_b0 = (float)((1 + k * k) * norm);
+    p.trap_a1 = (float)(2 * (k * k - 1) * norm);
+    p.trap_a2 = (float)((1 - k / q + k * k) * norm);
+    return p;
+}
+static GpuReceiverLockParams receiver_lock_params(const VideoGPUChain *v) {
+    const SignalFormat *fmt = &v->raster_fmt;
+    return video_receiver_lock_params((uint32_t)fmt->lines, (uint32_t)fmt->samples_per_line,
+                                      (uint32_t)fmt->samples_per_pixel, (uint32_t)fmt->region,
+                                      signal_format_sample_rate_hz(&v->signal_fmt), &v->chain->tv);
+}
+
 static GpuReceiverPLLParams receiver_pll_params(const VideoGPUChain *v) {
     GpuReceiverPLLParams p = {0};
     p.count = (uint32_t)v->raster_fmt.lines;
@@ -560,10 +592,9 @@ bool video_gpu_init(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
         !vhs_gpu_configure(&vgc->vhs, &vgc->sig_chain, gpu, &chain->vhs, fsample)) goto fail;
     vhs_gpu_set_enabled(&vgc->vhs, &vgc->sig_chain, vhs_active(chain));
 
-    uint32_t receiver_params[] = {(uint32_t)fmt->lines, (uint32_t)fmt->samples_per_line,
-        (uint32_t)fmt->samples_per_pixel, (uint32_t)fmt->region};
+    GpuReceiverLockParams receiver_params = receiver_lock_params(vgc);
     vgc->stage_receiver = chain_add_stage(&vgc->sig_chain, "Sync / burst detector",
-        CHAIN_KERNEL_RECEIVER, receiver_params, sizeof(receiver_params), gpu_workgroup_count((uint32_t)fmt->lines, CHAIN_SCANLINE_WORKGROUP_SIZE), 1);
+        CHAIN_KERNEL_RECEIVER, &receiver_params, sizeof(receiver_params), gpu_workgroup_count((uint32_t)fmt->lines, CHAIN_SCANLINE_WORKGROUP_SIZE), 1);
     if (vgc->stage_receiver < 0) goto fail;
     ChainStage *receiver = &vgc->sig_chain.stages[vgc->stage_receiver];
     receiver->io_typed=true;
@@ -1013,6 +1044,9 @@ fail:
 void video_gpu_update_rc_params(VideoGPUChain *vgc)
 {
     const VideoChain *chain = vgc->chain;
+    GpuReceiverLockParams lock_params = receiver_lock_params(vgc);
+    if (vgc->stage_receiver >= 0)
+        chain_update_params(&vgc->sig_chain, vgc->stage_receiver, &lock_params, sizeof(lock_params));
     GpuReceiverPLLParams pll_params = receiver_pll_params(vgc);
     if (vgc->stage_receiver_pll >= 0)
         chain_update_params(&vgc->sig_chain, vgc->stage_receiver_pll, &pll_params, sizeof(pll_params));

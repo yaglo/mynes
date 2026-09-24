@@ -26,16 +26,25 @@
  * NES puts it this is the slice of fixed windows at dots 8-16 and 46-49;
  * the windows follow the sync when a VCR moves it.
  *
- * Black: the mean of 2 whole subcarrier cycles (24 samples) from 21 to 24
- * dots after the trailing edge, between the NES burst's end (19 dots after
- * the edge) and its border (24 dots after, where a standard back porch
- * ends too). Over whole cycles a band-limited burst's tail leaves only the
- * fraction of a cycle its slope covers, which alternates with the
- * carrier's 120 degrees per line; the VHS deck's tail reaches 20 dots
- * after the edge, where a window would double the whole-line noise.
- * receiver_pll integrates the measurement over lines with the TV's clamp
- * time constant. A vertical pulse is reported with z = -1, a line without
- * a sync edge with w = 1e6, a line gated from the flywheel with w = 5e5. */
+ * Black: what the set's luminance clamp sees during its burst key. The
+ * clamp sits behind the chrominance trap (TDA8362: trap at the subcarrier,
+ * then Y delay, then the luminance clamp) and is keyed by the sandcastle's
+ * burst key, 5.4 us after the start of sync and 3.5 us wide on the
+ * TDA8362 (Sony's CXA2061S clamps at the same burst timing, the CXA2019AQ
+ * gate is 3.8 us), so the measurement is the trapped signal's mean over
+ * the key. On the NES that key spans the whole burst and ends a dot short
+ * of the 2C02's grey pulse at dot 49. The trap takes the burst's carrier
+ * but not its DC: the 2C02's square burst sits 24/788 of white above
+ * blanking, so a set clamps the console's black about 2.4% of white below
+ * its own. A VCR spreads the grey pulse ahead of itself by a dot, partly
+ * as colour-band ringing whose phase follows the 2C02's frame phase and
+ * each head's timing; the trap and the key's length keep it out, where a
+ * short window next to the pulse keyed a different black on each head.
+ * The trap runs from inside the sync tip, settled on its level, and the
+ * key's ends follow the measured edge continuously. receiver_pll
+ * integrates the measurement over lines with the TV's clamp time
+ * constant. A vertical pulse is reported with z = -1, a line without a
+ * sync edge with w = 1e6, a line gated from the flywheel with w = 5e5. */
 #version 450
 layout(local_size_x=32) in;
 layout(set=0,binding=0) readonly buffer Raster { float raster[]; };
@@ -43,10 +52,11 @@ layout(set=0,binding=1) readonly buffer Reference { vec4 reference[]; };
 layout(set=1,binding=0) writeonly buffer Measurement { vec4 measurement[]; };
 layout(set=2,binding=0) uniform Params {
     uint count, full_width, samples_per_dot, region;
+    float key_start, key_width, trap_b0, trap_a1;
+    float trap_a2, pad0, pad1, pad2;
 };
 const float TAU=6.28318530718;
 const int CYCLE=12;               // samples per subcarrier cycle
-const int BLACK_START_DOTS=21;
 const float NES_SYNC=264.0/788.0;
 const float KEYED=500000.0;
 
@@ -103,11 +113,23 @@ float plausible_crossing(uint base, int from, int to, int spp, float level) {
     }
     return -1e9;
 }
+/* The trapped signal's mean over the key, which runs from key_start to
+ * key_start + key_width samples after the edge (a step at sample e reports
+ * an edge at e - 0.5; sample x covers [x, x + 1)). */
 float keyed_black(uint base, float edge, int spp) {
-    int start=int(round(edge+0.5))+BLACK_START_DOTS*spp;
-    float black=0.0;
-    for(int x=0;x<2*CYCLE;x++) black+=raster[base+uint(start+x)];
-    return black/float(2*CYCLE);
+    float k0=edge+0.5+key_start, k1=k0+key_width;
+    int x0=max(int(floor(edge))-8*spp,0), x1=min(int(ceil(k1)),int(full_width));
+    float v0=raster[base+uint(x0)];
+    float s1=v0*(1.0-trap_b0), s2=s1;     // settled on the tip: output = input
+    float sum=0.0;
+    for(int x=x0;x<x1;x++) {
+        float v=raster[base+uint(x)];
+        float y=trap_b0*v+s1;
+        s1=trap_a1*(v-y)+s2;
+        s2=trap_b0*v-trap_a2*y;
+        sum+=y*clamp(min(float(x+1),k1)-max(float(x),k0),0.0,1.0);
+    }
+    return sum/key_width;
 }
 void main() {
     uint line=gl_GlobalInvocationID.x;

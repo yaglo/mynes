@@ -310,6 +310,13 @@ void video_gpu_scanned_trace(const VideoGPUChain *v, float trace[4]);
  * to build instead of reading the border as picture. */
 bool video_gpu_download_window_rgb(VideoGPUChain *vgc, SDL_GPUDevice *gpu, float *window_rgb);
 
+/* The sync separator's parameters: the TV's burst key (tv's
+ * clamp_key_delay_us and clamp_key_width_us, 0 for the defaults) in
+ * samples after the trailing edge of sync, and the chrominance trap in
+ * front of its luminance clamp. */
+GpuReceiverLockParams video_receiver_lock_params(uint32_t lines, uint32_t full_width, uint32_t samples_per_dot,
+                                                 uint32_t region, double sample_rate_hz, const TVDisplayParams *tv);
+
 /* Update the color decode matrix. Call when connection type, hue, saturation,
  * or color temperature changes. The matrix maps Y,I,Q -> R,G,B as floats
  * in [0,1] (not 0-255 -- the GPU works in float throughout).

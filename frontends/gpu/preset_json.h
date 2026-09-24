@@ -361,6 +361,8 @@ static inline bool preset_json_save(const PhysicalPreset *p, const char *path)
     fprintf(f, "        \"h_pll_damping\": %.6f,\n",        p->tv.h_pll_damping);
     fprintf(f, "        \"h_pll_vblank_gain\": %.6f,\n",    p->tv.h_pll_vblank_gain);
     fprintf(f, "        \"clamp_lines\": %.6f,\n",          p->tv.clamp_lines);
+    fprintf(f, "        \"clamp_key_delay_us\": %.6f,\n",   p->tv.clamp_key_delay_us);
+    fprintf(f, "        \"clamp_key_width_us\": %.6f,\n",   p->tv.clamp_key_width_us);
     fprintf(f, "        \"aperture_max_db\": %.6f,\n",         p->tv.aperture_max_db);
     fprintf(f, "        \"luma_notch_depth\": %.6f,\n",     p->tv.luma_notch_depth);
     /* Overscan / bezel crop. */
@@ -709,6 +711,8 @@ static inline void preset_json__assign(PhysicalPreset *p, PresetJsonSection sect
         else MATCH_FLOAT(PJSON_SEC_TV, "h_pll_damping",        p->tv.h_pll_damping)
         else MATCH_FLOAT(PJSON_SEC_TV, "h_pll_vblank_gain",    p->tv.h_pll_vblank_gain)
         else MATCH_FLOAT(PJSON_SEC_TV, "clamp_lines",          p->tv.clamp_lines)
+        else MATCH_FLOAT(PJSON_SEC_TV, "clamp_key_delay_us",   p->tv.clamp_key_delay_us)
+        else MATCH_FLOAT(PJSON_SEC_TV, "clamp_key_width_us",   p->tv.clamp_key_width_us)
         else MATCH_FLOAT(PJSON_SEC_TV, "aperture_max_db",         p->tv.aperture_max_db)
         else MATCH_FLOAT(PJSON_SEC_TV, "luma_notch_depth",     p->tv.luma_notch_depth)
         /* Overscan / bezel crop. */
