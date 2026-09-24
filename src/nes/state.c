@@ -16,8 +16,11 @@
  * zero) before any check could catch it, so these always come from the
  * live instance on load and are zeroed in the saved image (which also keeps
  * two saves of the same machine state byte-identical). The header already
- * ties the file to the live cartridge, so nothing is lost. The list must
- * be kept in step with nes.h, cpu_gen.h, ppu.h, apu.h and mapper.h. */
+ * ties the file to the live cartridge, so nothing is lost. The APU's
+ * output filter and analog character are here for another reason: they
+ * are the user's settings, not the console's, so a load keeps the ones in
+ * use as a reset does. The list must be kept in step with nes.h,
+ * cpu_gen.h, ppu.h, apu.h and mapper.h. */
 typedef struct {
     size_t offset;
     size_t size;
@@ -42,9 +45,12 @@ static const StateField state_live_fields[] = {
     STATE_FIELD(ppu.cart_address),
     STATE_FIELD(ppu.cart_bus_read),
     STATE_FIELD(ppu.user_data),
-    /* APU: sample sink */
+    /* APU: sample sink, and the output filter and analog character, which
+     * are user settings rather than console state (apu_reset keeps them) */
     STATE_FIELD(apu.audio_callback),
     STATE_FIELD(apu.audio_user_data),
+    STATE_FIELD(apu.filter_config),
+    STATE_FIELD(apu.analog),
     /* Mapper: ROM buffers, their geometry and the back-pointer to its console */
     STATE_FIELD(mapper.number),
     STATE_FIELD(mapper.prg_rom),
@@ -61,7 +67,8 @@ static const StateField state_live_fields[] = {
 
 /* Scratch for the live field bytes while the image is copied over the
  * instance; sized for every entry above with room to spare. */
-#define STATE_LIVE_BYTES_MAX (STATE_LIVE_FIELD_COUNT * 2 * sizeof(void *))
+#define STATE_LIVE_BYTES_MAX (STATE_LIVE_FIELD_COUNT * 2 * sizeof(void *) + \
+                              sizeof(APUFilterConfig) + sizeof(APUAnalog))
 
 /* The image CRC only proves the body is what some build wrote, not that
  * it came from a running machine, and the emulator indexes fixed-size
@@ -239,5 +246,8 @@ bool nes_state_load(NES *nes, const void *buf, size_t size,
         used += state_live_fields[i].size;
     }
     state_clamp_indices(nes);
+    /* The image's DAC tables were built for its own analog settings. */
+    apu_build_dac_tables(&nes->apu);
+    nes->apu.dirty = true;
     return true;
 }

@@ -126,6 +126,19 @@ int main(void) {
     Snapshot fresh = snapshot(&other);
     CHECK(same(&fresh, &reference));
 
+    /* The output filter and analog character are user settings: a load
+     * keeps the ones in use, and the DAC tables follow them. */
+    boot(&other, &rom);
+    other.apu.filter_config.lp_alpha = 0.5;
+    other.apu.analog.dac_nonlinearity = 1.0f;
+    other.apu.analog.output_gain = 2.0f;
+    apu_build_dac_tables(&other.apu);
+    float curved_dac = other.apu.pulse_dac[30];
+    CHECK(nes_state_load(&other, state, size, error, sizeof(error)));
+    CHECK(other.apu.filter_config.lp_alpha == 0.5);
+    CHECK(other.apu.analog.dac_nonlinearity == 1.0f && other.apu.analog.output_gain == 2.0f);
+    CHECK(other.apu.pulse_dac[30] == curved_dac && curved_dac != nes.apu.pulse_dac[30]);
+
     /* Corruption and mismatches are refused without touching the machine. */
     memcpy(again, state, size);
     again[0] = 'X';
