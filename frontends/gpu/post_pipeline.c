@@ -360,13 +360,15 @@ static bool crt_load_rebind(struct SignalChainFwd *chain, struct ChainStageFwd *
     struct {
         uint32_t width, spp; float gamma, strength, dot_seconds; uint32_t mode; float elapsed; uint32_t frame_lines;
         float black_droop, recovery_us; uint32_t dots, lines, dots_per_line, pad[3];
+        float trace[4];   /* the unblanked raster (decode_window.glsl) */
     } p = {
         (uint32_t)w->width, (uint32_t)w->spp,
         tv->gamma > 0 ? tv->gamma : 2.4f, tv->beam_current_load,
         v->signal_fmt.samples_per_pixel / signal_region_sample_rate_hz(v->signal_fmt.region),
         s == &v->sig_chain.stages[v->stage_crt_supply], fmaxf(1,v->elapsed_frames), (uint32_t)w->frame_lines,
         tv->video_black_droop, tv->video_recovery_us > 0 ? tv->video_recovery_us : 18,
-        (uint32_t)w->dots, (uint32_t)w->lines, (uint32_t)w->dots_per_line, {0,0,0}
+        (uint32_t)w->dots, (uint32_t)w->lines, (uint32_t)w->dots_per_line, {0,0,0},
+        {w->trace_x0, w->trace_x1, (float)w->trace_row0, (float)w->trace_row1}
     };
     s->rw_count=2; s->rw[0]=CBR_EXT0; s->rw[1]=CBR_EXT1;
     s->external[0]=v->buf_rgb; s->external[1]=v->buf_crt_load;

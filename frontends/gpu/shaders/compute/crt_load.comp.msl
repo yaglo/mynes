@@ -1,3 +1,5 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+
 #include <metal_stdlib>
 #include <simd/simd.h>
 
@@ -18,6 +20,7 @@ struct Params
     uint dots;
     uint lines;
     uint dots_per_line;
+    float4 trace;
 };
 
 struct Load
@@ -32,65 +35,90 @@ struct RGB
 
 constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(32u, 1u, 1u);
 
-kernel void main0(constant Params& _20 [[buffer(0)]], device Load& _48 [[buffer(2)]], device RGB& _214 [[buffer(1)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+static inline __attribute__((always_inline))
+float trace_gate(thread const float& x, thread const uint& row, thread const float4& trace)
+{
+    float r = float(row);
+    bool _26 = r < trace.z;
+    bool _35;
+    if (!_26)
+    {
+        _35 = r >= trace.w;
+    }
+    else
+    {
+        _35 = _26;
+    }
+    if (_35)
+    {
+        return 0.0;
+    }
+    return fast::clamp(fast::min(x + 0.5, trace.y) - fast::max(x - 0.5, trace.x), 0.0, 1.0);
+}
+
+kernel void main0(constant Params& _68 [[buffer(0)]], device Load& _93 [[buffer(2)]], device RGB& _273 [[buffer(1)]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
     uint line = gl_GlobalInvocationID.x;
-    uint line_means = _20.dots * _20.lines;
-    if (_20.mode == 1u)
+    uint line_means = _68.dots * _68.lines;
+    if (_68.mode == 1u)
     {
         if (line != 0u)
         {
             return;
         }
-        float state = _48.load_map[line_means + _20.lines];
-        float line_seconds = _20.dot_seconds * float(_20.dots_per_line);
-        float blank_lines = float(_20.frame_lines - _20.lines);
+        float state = _93.load_map[line_means + _68.lines];
+        float line_seconds = _68.dot_seconds * float(_68.dots_per_line);
+        float blank_lines = float(_68.frame_lines - _68.lines);
         state *= exp(((-line_seconds) * blank_lines) / 0.00200000009499490261077880859375);
-        for (uint row = 0u; row < _20.lines; row++)
+        for (uint row = 0u; row < _68.lines; row++)
         {
-            float target = _48.load_map[line_means + row] * (256.0 / float(_20.dots_per_line));
+            float target = _93.load_map[line_means + row] * (256.0 / float(_68.dots_per_line));
             float tau = (target > state) ? 0.001000000047497451305389404296875 : 0.00200000009499490261077880859375;
-            state = mix(target, state, exp(((-line_seconds) * fast::max(_20.elapsed_frames, 1.0)) / tau));
-            _48.load_map[line_means + row] = state;
+            state = mix(target, state, exp(((-line_seconds) * fast::max(_68.elapsed_frames, 1.0)) / tau));
+            _93.load_map[line_means + row] = state;
         }
-        _48.load_map[line_means + _20.lines] = state;
+        _93.load_map[line_means + _68.lines] = state;
         return;
     }
-    if (line >= _20.lines)
+    if (line >= _68.lines)
     {
         return;
     }
     float rail = 0.0;
     float total = 0.0;
     float bias0 = 0.0;
-    float response = 1.0 - exp((-_20.dot_seconds) / 1.2000000424450263381004333496094e-05);
-    float bias_response = 1.0 - exp((-_20.dot_seconds) / (fast::max(_20.recovery_us, 1.0) * 9.9999999747524270787835121154785e-07));
-    for (uint pixel = 0u; pixel < _20.dots; pixel++)
+    float response = 1.0 - exp((-_68.dot_seconds) / 1.2000000424450263381004333496094e-05);
+    float bias_response = 1.0 - exp((-_68.dot_seconds) / (fast::max(_68.recovery_us, 1.0) * 9.9999999747524270787835121154785e-07));
+    for (uint pixel = 0u; pixel < _68.dots; pixel++)
     {
         float current = 0.0;
         float voltage = 0.0;
-        for (uint s = 0u; s < _20.spp; s++)
+        for (uint s = 0u; s < _68.spp; s++)
         {
-            uint i = (((line * _20.width) + (pixel * _20.spp)) + s) * 3u;
-            float3 drive = fast::max(float3(_214.rgb[i], _214.rgb[i + 1u], _214.rgb[i + 2u]), float3(0.0));
-            voltage += dot(drive, float3(0.2989999949932098388671875, 0.58700001239776611328125, 0.114000000059604644775390625));
-            float3 emitted = fast::max(drive - float3(_20.black_droop * bias0), float3(0.0)) * fast::max(1.0 - (_20.strength * rail), 0.100000001490116119384765625);
-            current += dot(powr(emitted, float3(_20.gamma)), float3(0.3333333432674407958984375));
+            uint i = (((line * _68.width) + (pixel * _68.spp)) + s) * 3u;
+            float param = float((pixel * _68.spp) + s);
+            uint param_1 = line;
+            float4 param_2 = _68.trace;
+            float gate = trace_gate(param, param_1, param_2);
+            float3 drive = fast::max(float3(_273.rgb[i], _273.rgb[i + 1u], _273.rgb[i + 2u]), float3(0.0));
+            voltage += (gate * dot(drive, float3(0.2989999949932098388671875, 0.58700001239776611328125, 0.114000000059604644775390625)));
+            float3 emitted = fast::max(drive - float3(_68.black_droop * bias0), float3(0.0)) * fast::max(1.0 - (_68.strength * rail), 0.100000001490116119384765625);
+            current += (gate * dot(powr(emitted, float3(_68.gamma)), float3(0.3333333432674407958984375)));
         }
-        current /= float(_20.spp);
-        voltage /= float(_20.spp);
+        current /= float(_68.spp);
+        voltage /= float(_68.spp);
         total += current;
         rail = mix(rail, current, response);
         bias0 = mix(bias0, voltage, bias_response);
-        _48.load_map[(line * _20.dots) + pixel] = rail;
-        float gain = fast::max(1.0 - (_20.strength * rail), 0.100000001490116119384765625);
-        for (uint s_1 = 0u; s_1 < _20.spp; s_1++)
+        _93.load_map[(line * _68.dots) + pixel] = rail;
+        float gain = fast::max(1.0 - (_68.strength * rail), 0.100000001490116119384765625);
+        for (uint s_1 = 0u; s_1 < _68.spp; s_1++)
         {
-            uint i_1 = (((line * _20.width) + (pixel * _20.spp)) + s_1) * 3u;
-            _214.rgb[i_1] = fast::max(0.0, _214.rgb[i_1] - (_20.black_droop * bias0)) * gain;
-            _214.rgb[i_1 + 1u] = fast::max(0.0, _214.rgb[i_1 + 1u] - (_20.black_droop * bias0)) * gain;
-            _214.rgb[i_1 + 2u] = fast::max(0.0, _214.rgb[i_1 + 2u] - (_20.black_droop * bias0)) * gain;
+            uint i_1 = (((line * _68.width) + (pixel * _68.spp)) + s_1) * 3u;
+            _273.rgb[i_1] = fast::max(0.0, _273.rgb[i_1] - (_68.black_droop * bias0)) * gain;
+            _273.rgb[i_1 + 1u] = fast::max(0.0, _273.rgb[i_1 + 1u] - (_68.black_droop * bias0)) * gain;
+            _273.rgb[i_1 + 2u] = fast::max(0.0, _273.rgb[i_1 + 2u] - (_68.black_droop * bias0)) * gain;
         }
     }
-    _48.load_map[line_means + line] = total / 256.0;
+    _93.load_map[line_means + line] = total / 256.0;
 }

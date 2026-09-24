@@ -1466,12 +1466,14 @@ bool dispatch_gun_current_public(VideoGPUChain *v, SDL_GPUCommandBuffer *cmd) {
     const DecodeWindow *w=&v->window;
     /* Noise is seeded by picture sample and line, so the border extends the
      * picture's pattern rather than moving it. */
-    struct { uint32_t count; float r,g,b; uint32_t width,seed; float noise,spp,black_floor,apl_bias; int32_t picture_x,picture_row; }
+    struct { uint32_t count; float r,g,b; uint32_t width,seed; float noise,spp,black_floor,apl_bias; int32_t picture_x,picture_row;
+             float trace[4]; }
         p={(uint32_t)decode_window_samples(w), gamma+tv->phosphor_gamma_offset_r,
            gamma+tv->phosphor_gamma_offset_g,gamma+tv->phosphor_gamma_offset_b,
            (uint32_t)w->width,v->beam_frame_counter,
            tv->noise_level+pickup,(float)w->spp,tv->black_floor,
-           tv->apl_black_lift*(v->apl_smoothed-0.5f)*0.15f,w->picture_x,w->picture_row};
+           tv->apl_black_lift*(v->apl_smoothed-0.5f)*0.15f,w->picture_x,w->picture_row,
+           {w->trace_x0,w->trace_x1,(float)w->trace_row0,(float)w->trace_row1}};
     GpuDispatchDesc d={.pipeline=&v->sig_chain.pipelines[CHAIN_KERNEL_GUN_CURRENT],
         .readonly_buffers={v->buf_rgb},.num_readonly_buffers=1,
         .readwrite_buffers={v->buf_gun_current},.num_readwrite_buffers=1,
@@ -1852,6 +1854,7 @@ static bool dispatch_video_amp(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd)
         float    asym_rise_fall;
         float    vertical_smear;
         float    _pad1;
+        float    trace[4];        /* the unblanked raster (decode_window.glsl) */
     } amp_params;
 
     memset(&amp_params, 0, sizeof(amp_params));
@@ -1863,6 +1866,10 @@ static bool dispatch_video_amp(VideoGPUChain *vgc, SDL_GPUCommandBuffer *cmd)
     amp_params.velocity_mod    = tv ? tv->velocity_mod   : 0.0f;
     amp_params.asym_rise_fall  = tv ? tv->asym_rise_fall : 0.0f;
     amp_params.vertical_smear  = tv ? tv->vertical_smear : 0.0f;
+    amp_params.trace[0] = w->trace_x0;
+    amp_params.trace[1] = w->trace_x1;
+    amp_params.trace[2] = (float)w->trace_row0;
+    amp_params.trace[3] = (float)w->trace_row1;
 
     SDL_GPUStorageBufferReadWriteBinding rw[1] = {0};
     rw[0].buffer = vgc->buf_rgb2;  /* output */

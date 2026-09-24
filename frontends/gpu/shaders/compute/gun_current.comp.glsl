@@ -1,5 +1,8 @@
-/* Convert gun voltage to emitted current once, before spatial beam spread. */
+/* Convert gun voltage to emitted current once, before spatial beam spread.
+ * The beam is cut off during flyback: blanked samples emit nothing, whatever
+ * the black floor, the APL drift or the receiver noise. */
 #version 450
+#extension GL_GOOGLE_include_directive : require
 layout(local_size_x=256) in;
 layout(set=0,binding=0) readonly buffer Voltage { float voltage[]; };
 layout(set=1,binding=0) writeonly buffer Current { float current[]; };
@@ -11,7 +14,9 @@ layout(set=2,binding=0) uniform Params {
     float black_floor;
     float apl_bias;
     int picture_x, picture_row;   /* the console picture's place in the decode window */
+    vec4 trace;                   /* unblanked samples (xy) and rows (zw) */
 };
+#include "decode_window.glsl"
 float noise(uint seed) {
     seed ^= seed >> 16u; seed *= 0x7feb352du;
     seed ^= seed >> 15u; seed *= 0x846ca68bu; seed ^= seed >> 16u;
@@ -36,6 +41,7 @@ void main() {
     // Residual gun drive must deposit light through the same spot as the
     // picture. Adding a luminous floor after deposition fills scanline gaps.
     vec3 drive=max(max(v,vec3(max(black_floor,0.0)))+apl_bias,vec3(0.0));
-    vec3 light=pow(drive,vec3(gamma_r,gamma_g,gamma_b));
+    vec3 light=pow(drive,vec3(gamma_r,gamma_g,gamma_b))
+              *trace_gate(float(i % samples_per_line),i/samples_per_line,trace);
     current[i*3u]=light.r; current[i*3u+1u]=light.g; current[i*3u+2u]=light.b;
 }

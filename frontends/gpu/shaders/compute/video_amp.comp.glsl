@@ -19,10 +19,17 @@
  *
  * Per-scanline boundary clamping prevents color bleeding across lines.
  *
- * Dispatch: one thread per pixel (total_pixels threads).
+ * The receiver's flyback blanking forces the drive to blanking before the
+ * output amplifiers: every sample the amplifier reads is weighted by the
+ * part of it the unblanked raster covers (decode_window.glsl), so the
+ * retrace reads as zero drive and the amplifier band-limits the step at the
+ * raster's edge like any other.
+ *
+ * Dispatch: one thread per decode-window sample (total_pixels threads).
  */
 
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
 layout(local_size_x = 256) in;
 
@@ -35,8 +42,8 @@ layout(set = 1, binding = 0) writeonly buffer RGBOut {
 };
 
 layout(set = 2, binding = 0) uniform Params {
-    uint  total_pixels;       /* samples_per_line * 240 */
-    uint  samples_per_line;   /* 2048 NTSC */
+    uint  total_pixels;       /* decode window: width * lines */
+    uint  samples_per_line;   /* decode window width */
     uint  tap_count;          /* number of FIR taps (odd, max 31) */
     vec4 taps[32];           /* FIR coefficients (padded to vec4 alignment) */
     /* §4.1 Velocity modulation: offset sample position by local
@@ -52,7 +59,14 @@ layout(set = 2, binding = 0) uniform Params {
      * amplifier parasitic capacitance. Tiny amount of the previous
      * line's value bleeds into this line's start. 0 = none. */
     float vertical_smear;
+    vec4  trace;              /* unblanked samples (xy) and rows (zw) */
 };
+
+#include "decode_window.glsl"
+
+float drive(int idx, int line_start, uint row, uint channel) {
+    return rgb_in[uint(idx) * 3u + channel] * trace_gate(float(idx - line_start), row, trace);
+}
 
 void main() {
     uint tid = gl_GlobalInvocationID.x;
@@ -65,6 +79,7 @@ void main() {
     /* Per-scanline boundary clamping. */
     int line_start = (base / spl) * spl;
     int line_end   = line_start + spl;
+    uint row = uint(base / spl);
 
     /* Apply FIR independently to each channel. */
     float sum_r = 0.0, sum_g = 0.0, sum_b = 0.0;
@@ -75,11 +90,12 @@ void main() {
         if (idx >= line_end)  idx = 2 * line_end - idx - 2;
         idx = clamp(idx, line_start, line_end - 1);
 
-        uint src = uint(idx) * 3;
         vec3 h = taps[k].rgb;
-        sum_r += h.r * rgb_in[src + 0];
-        sum_g += h.g * rgb_in[src + 1];
-        sum_b += h.b * rgb_in[src + 2];
+        float gate = trace_gate(float(idx - line_start), row, trace);
+        uint src = uint(idx) * 3;
+        sum_r += h.r * (rgb_in[src + 0] * gate);
+        sum_g += h.g * (rgb_in[src + 1] * gate);
+        sum_b += h.b * (rgb_in[src + 2] * gate);
     }
 
     /* §4.1 Velocity modulation + §5.7 asymmetric rise/fall — both
@@ -88,12 +104,12 @@ void main() {
     if (velocity_mod > 0.001 || asym_rise_fall > 0.001) {
         int ip = clamp(base - 1, line_start, line_end - 1);
         int in_ = clamp(base + 1, line_start, line_end - 1);
-        float lp = rgb_in[ip * 3 + 0] * 0.299
-                 + rgb_in[ip * 3 + 1] * 0.587
-                 + rgb_in[ip * 3 + 2] * 0.114;
-        float ln = rgb_in[in_ * 3 + 0] * 0.299
-                 + rgb_in[in_ * 3 + 1] * 0.587
-                 + rgb_in[in_ * 3 + 2] * 0.114;
+        float lp = drive(ip, line_start, row, 0u) * 0.299
+                 + drive(ip, line_start, row, 1u) * 0.587
+                 + drive(ip, line_start, row, 2u) * 0.114;
+        float ln = drive(in_, line_start, row, 0u) * 0.299
+                 + drive(in_, line_start, row, 1u) * 0.587
+                 + drive(in_, line_start, row, 2u) * 0.114;
         float dL = (ln - lp) * 0.5;
         /* Legacy "velocity modulation" approximation: this offsets
          * voltage with a derivative. It does not model scan velocity,
@@ -116,9 +132,10 @@ void main() {
      * constant blend of the previous line's same column. */
     if (vertical_smear > 0.001 && line_start >= spl) {
         int prev_col = line_start - spl + (base - line_start);
-        sum_r = mix(sum_r, rgb_in[prev_col * 3 + 0], vertical_smear * 0.1);
-        sum_g = mix(sum_g, rgb_in[prev_col * 3 + 1], vertical_smear * 0.1);
-        sum_b = mix(sum_b, rgb_in[prev_col * 3 + 2], vertical_smear * 0.1);
+        int prev_start = line_start - spl;
+        sum_r = mix(sum_r, drive(prev_col, prev_start, row - 1u, 0u), vertical_smear * 0.1);
+        sum_g = mix(sum_g, drive(prev_col, prev_start, row - 1u, 1u), vertical_smear * 0.1);
+        sum_b = mix(sum_b, drive(prev_col, prev_start, row - 1u, 2u), vertical_smear * 0.1);
     }
 
     uint dst = tid * 3;

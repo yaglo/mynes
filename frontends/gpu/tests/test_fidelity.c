@@ -497,9 +497,11 @@ static void rgb_source(SDL_GPUDevice *gpu) {
         float *rgb=malloc(v.rgb_size), *other=malloc(v.rgb_size);
         CHECK(video_gpu_process_full(&v,gpu,indices,0,sp.phase_line_adv,0,rgb));
         CHECK(video_gpu_process_full(&v,gpu,indices,8,sp.phase_line_adv,0,other));
+        /* Lines 64 to 127 carry codes 0 to 63; NTSC line 0 is in the
+         * vertical blanking. */
         for(int code=0;code<64;code++) for(int channel=0;channel<3;channel++) {
             double expected=((rgb_2c03[code]>>(8-4*channel))&15)/7.0;
-            size_t i=decode_window_rgb_index(&v.window,code,128*sp.samples_per_pixel)+channel;
+            size_t i=decode_window_rgb_index(&v.window,64+code,128*sp.samples_per_pixel)+channel;
             CHECK(fabs(rgb[i]-expected)<.0001);
             CHECK(fabs(rgb[i]-other[i])<.000001);
         }
@@ -904,6 +906,55 @@ static void beam_height_response(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoChai
     free(dx);free(dy);free(rgb);free(out);
 }
 
+/* Flyback blanking on a made-up trace: the receiver forces blanked samples
+ * to zero drive before the RGB amplifiers and cuts the beam off there, so
+ * neither a bright retrace nor the black floor lights them, and the sample
+ * the trace edge crosses carries its covered fraction. */
+static void flyback_blanking(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoChain *c) {
+    DecodeWindow saved=v->window;
+    v->window.trace_x0=100.25f; v->window.trace_x1=1900.75f;
+    v->window.trace_row0=10; v->window.trace_row1=200;
+    c->tv.black_floor=.05f; c->tv.gamma=2.2f; c->tv.noise_level=0; c->tv.apl_black_lift=0;
+    c->tv.phosphor_gamma_offset_r=c->tv.phosphor_gamma_offset_g=c->tv.phosphor_gamma_offset_b=0;
+    c->cable.shield_effectiveness=1;
+    size_t floats=v->rgb_size/sizeof(float);
+    int width=v->window.width;
+    float *rgb=malloc(v->rgb_size), *out=malloc(v->rgb_size);
+    for(size_t i=0;i<floats;i++) rgb[i]=.5f;
+    CHECK(gpu_buffer_upload(gpu,v->buf_rgb,rgb,v->rgb_size));
+    SDL_GPUCommandBuffer *cmd=SDL_AcquireGPUCommandBuffer(gpu);
+    CHECK(dispatch_gun_current_public(v,cmd)); CHECK(SDL_SubmitGPUCommandBuffer(cmd));
+    CHECK(gpu_buffer_download(gpu,v->buf_gun_current,out,v->rgb_size));
+    float full=powf(.5f,2.2f);
+    for(int row=0;row<v->window.lines;row++) for(int x=0;x<width;x++) {
+        float light=out[((size_t)row*width+x)*3];
+        bool on=row>=10 && row<200;
+        if(!on || x<100 || x>1901) CHECK(light==0);
+        else if(x==100 || x==1901) CHECK(fabsf(light-.25f*full)<1e-6f);
+        else CHECK(fabsf(light-full)<1e-6f);
+    }
+    /* A bright retrace around a black raster (the two edge samples included,
+     * as their covered parts are black): nothing reaches the amplifier
+     * output, through its taps, its derivative terms or the previous line. */
+    c->tv.velocity_mod=.5f; c->tv.asym_rise_fall=.5f; c->tv.vertical_smear=1;
+    video_gpu_reinit_stages(v,c);
+    for(int row=0;row<v->window.lines;row++) for(int x=0;x<width;x++) for(int ch=0;ch<3;ch++)
+        rgb[((size_t)row*width+x)*3+ch]=(row>=10 && row<200 && x>=100 && x<=1901) ? 0 : 5;
+    CHECK(gpu_buffer_upload(gpu,v->buf_rgb,rgb,v->rgb_size));
+    cmd=SDL_AcquireGPUCommandBuffer(gpu);
+    CHECK(dispatch_video_amp_public(v,cmd)); CHECK(SDL_SubmitGPUCommandBuffer(cmd));
+    CHECK(gpu_buffer_download(gpu,v->buf_rgb,out,v->rgb_size));
+    float peak=0;
+    for(size_t i=0;i<floats;i++) peak=fmaxf(peak,fabsf(out[i]));
+    printf("Flyback blanking: amplifier output under a 5x white retrace peaks at %g\n",peak);
+    CHECK(peak==0);
+    c->tv.velocity_mod=c->tv.asym_rise_fall=c->tv.vertical_smear=0;
+    c->tv.black_floor=0;
+    video_gpu_reinit_stages(v,c);
+    v->window=saved;
+    free(rgb);free(out);
+}
+
 /* A raised gun cutoff follows the raster spot; it is not room illumination. */
 static void black_floor_deposition(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoChain *c) {
     enum { W=8,H=1920 };
@@ -921,7 +972,8 @@ static void black_floor_deposition(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoCh
     CHECK(SDL_SubmitGPUCommandBuffer(cmd));
     CHECK(gpu_buffer_download(gpu,v->buf_gun_current,current,v->rgb_size));
     float expected[]={powf(.1f,2.4f),powf(.1f,2.2f),powf(.1f,2.6f)};
-    for(int ch=0;ch<3;ch++) CHECK(fabsf(current[300*3+ch]-expected[ch])<1e-6f);
+    size_t probe=decode_window_rgb_index(&v->window,120,300);
+    for(int ch=0;ch<3;ch++) CHECK(fabsf(current[probe+ch]-expected[ch])<1e-6f);
     float *dx=calloc(W*H*4,sizeof(float)), *dy=calloc(W*H*4,sizeof(float));
     uint16_t *out=malloc(W*H*8);
     for(int y=0;y<H;y++) for(int x=0;x<W;x++) {
@@ -954,7 +1006,7 @@ static void black_floor_deposition(SDL_GPUDevice *gpu, VideoGPUChain *v, VideoCh
         CHECK(dispatch_beam_profile_public(v,cmd));
         CHECK(SDL_SubmitGPUCommandBuffer(cmd));
         CHECK(gpu_buffer_download(gpu,v->buf_gun_current,current,v->rgb_size));
-        CHECK(fabsf(current[900]-(high ? powf(.25f,2.4f) : 0))<1e-6f);
+        CHECK(fabsf(current[probe]-(high ? powf(.25f,2.4f) : 0))<1e-6f);
         CHECK(gpu_buffer_download(gpu,v->buf_beam_rgba,out,W*H*8));
         float lo=1,hi=0;
         for(int y=H/4;y<3*H/4;y++) {
@@ -1425,6 +1477,7 @@ int main(void) {
     independent_guns(gpu,&v,&c);
     beam_height_response(gpu,&v,&c);
     black_floor_deposition(gpu,&v,&c);
+    flyback_blanking(gpu,&v,&c);
     CHECK(video_gpu_set_beam_params(&v,gpu,16,16,1,0.2f,0.7f));
     v.blend_r = v.blend_g = v.blend_b = 0.5f;
     temporal(gpu, &v, 0x3c003c00, 1.0f); /* first frame must ignore uninitialised history */
