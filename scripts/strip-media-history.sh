@@ -43,6 +43,12 @@ if [[ "${1:-}" != "--yes" ]]; then
     exit 1
 fi
 
+# Every path below is relative to the top of the repository, and git ls-tree
+# and filter-repo read them from the current directory: run from scripts/,
+# the guard would look for scripts/docs/images, find nothing and let the
+# rewrite delete the real docs/images.
+cd "$(git rev-parse --show-toplevel)"
+
 if ! git filter-repo --version >/dev/null 2>&1; then
     echo "git-filter-repo is not installed: pip install git-filter-repo" >&2
     exit 1
