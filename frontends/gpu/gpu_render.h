@@ -14,6 +14,11 @@
 #include "frame_capture.h"
 #include "video_chain.h"
 
+/* What the display texture holds: the beam's light on the tube face, the
+ * receiver's unblanked raster as decoded (no beam), or the 256x240 palette
+ * picture. */
+enum { GPU_DISPLAY_BEAM, GPU_DISPLAY_TRACE, GPU_DISPLAY_PICTURE };
+
 typedef struct {
     SDL_GPUDevice  *gpu;
     SDL_Window     *window;
@@ -61,6 +66,7 @@ typedef struct {
     float           effective_mask_triads;
     bool            hdr_enabled;         /* RGBA16F textures + HDR swapchain */
     bool            owns_display_tex;    /* false when using external beam texture */
+    int             display_content;     /* GPU_DISPLAY_*: what display_tex holds, for the split view */
     float           frame_brightness;    /* instantaneous avg luma of current PPU frame */
     float           hv_sag_state;        /* smoothed HV sag level (0-1), updated per frame */
     float           apl_slow_state;      /* §4.9 APL black-level tracker, tau ≈ 120ms */

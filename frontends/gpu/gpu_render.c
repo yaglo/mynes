@@ -2,7 +2,7 @@
  * gpu_render.c -- GPU texture management, rendering, and color conversion
  */
 #include "gpu_render.h"
-#include "decode_window.h"
+#include "split_view.h"
 #include "frame_capture.h"
 #include "gpu_half.h"
 #include <stdio.h>
@@ -515,31 +515,6 @@ static bool build_display_params(GPURenderCtx *ctx, const VideoChain *chain, Uin
     return true;
 }
 
-/* One axis of the split view: source units [s0, s1) land on the viewport at
- * [f0, f1) pixels. Trim whole source units that fall outside [lo, hi), the
- * part of the tube the viewport shows. False when nothing is left. */
-static bool split_axis(float f0, float f1, int s0, int s1, float lo, float hi,
-                       Uint32 *src, Uint32 *src_n, Uint32 *dst, Uint32 *dst_n) {
-    float per = (f1 - f0) / (float)(s1 - s0);
-    if (!(per > 0.0f)) return false;
-    int a = s0, b = s1;
-    if (f0 < lo) a = s0 + (int)ceilf((lo - f0) / per);
-    if (f1 > hi) b = s1 - (int)ceilf((f1 - hi) / per);
-    if (b <= a) return false;
-    float d0 = f0 + (float)(a - s0) * per;
-    *src = (Uint32)a; *src_n = (Uint32)(b - a);
-    *dst = (Uint32)lroundf(d0); *dst_n = (Uint32)lroundf((float)(b - a) * per);
-    return *dst_n > 0;
-}
-
-/* The face position of raster coordinate r (0 to 1 across the active line
- * or field): the inverse of the deflection map's overscan, size and
- * position. Barrel, keystone, rotation and skew are left out. */
-static float split_face(float r, float size, float pos, float overscan) {
-    float zoom = overscan > 0.001f ? fmaxf(1.0f - overscan * 2.0f, 0.2f) : 1.0f;
-    return ((r - 0.5f) * size + pos) / zoom + 0.5f;
-}
-
 void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
     ctx->capture_accepted = false;
     ctx->submit_ns=ctx->capture_ns=0;
@@ -625,27 +600,24 @@ void gpu_render_frame(GPURenderCtx *ctx, const VideoChain *chain) {
     }
 
     /* Split view: overwrite the picture's right half with the raw PPU
-     * palette, where the tube draws that half: from picture dot 128 on the
-     * receiver's active raster, over the lines it unblanks, through the
-     * preset's overscan, size and position. An A/B comparison against the
-     * CRT-processed left half. */
+     * palette, where the displayed picture has that half (split_view.h):
+     * through the preset's raster on the beam, as decoded on the RGB crop
+     * shown without a beam, or across the palette picture. An A/B
+     * comparison against the CRT-processed left half. */
     if (ctx->split_mode && ctx->raw_tex && chain) {
         const TVDisplayParams *tv = &chain->tv;
-        float active_dots, picture_left, active_lines, picture_top;
-        decode_window_geometry(chain->signal_fmt.region, chain->signal_fmt.samples_per_pixel, SIGNAL_PICTURE_DOT,
-                               &active_dots, &picture_left, &active_lines, &picture_top);
-        int line0 = (int)fmaxf(0.0f, ceilf(-picture_top)), line1 = (int)fminf(240.0f, active_lines - picture_top);
-        float hs = tv->h_size > 0.01f ? tv->h_size : 1.0f, vs = tv->v_size > 0.01f ? tv->v_size : 1.0f;
-        float u0 = split_face((128.0f + picture_left) / active_dots, hs, tv->h_pos, tv->overscan);
-        float u1 = split_face((256.0f + picture_left) / active_dots, hs, tv->h_pos, tv->overscan);
-        float v0 = split_face(((float)line0 + picture_top) / active_lines, vs, tv->v_pos, tv->overscan);
-        float v1 = split_face(((float)line1 + picture_top) / active_lines, vs, tv->v_pos, tv->overscan);
+        DecodeWindow w;
+        decode_window_raster(&w, chain->signal_fmt.region, chain->signal_fmt.samples_per_pixel,
+                             chain->signal_fmt.dots_per_line, SIGNAL_PICTURE_DOT);
+        SplitPlace place = ctx->display_content == GPU_DISPLAY_TRACE ? split_place_trace(&w)
+                         : ctx->display_content == GPU_DISPLAY_PICTURE ? split_place_picture()
+                         : split_place_face(&w, tv->overscan, tv->h_size, tv->v_size, tv->h_pos, tv->v_pos);
         SDL_GPUBlitInfo split = {0};
         split.source.texture = ctx->raw_tex;
         split.destination.texture = swapchain_tex;
-        if (split_axis(vp_x + u0 * vp_w, vp_x + u1 * vp_w, 128, 256, vp_x, vp_x + vp_w,
+        if (split_axis(vp_x + place.u0 * vp_w, vp_x + place.u1 * vp_w, 128, 256, vp_x, vp_x + vp_w,
                        &split.source.x, &split.source.w, &split.destination.x, &split.destination.w) &&
-            split_axis(vp_y + v0 * vp_h, vp_y + v1 * vp_h, line0, line1, vp_y, vp_y + vp_h,
+            split_axis(vp_y + place.v0 * vp_h, vp_y + place.v1 * vp_h, place.line0, place.line1, vp_y, vp_y + vp_h,
                        &split.source.y, &split.source.h, &split.destination.y, &split.destination.h)) {
             split.load_op = SDL_GPU_LOADOP_LOAD;  /* don't clear, preserve left half */
             split.filter = SDL_GPU_FILTER_NEAREST;

@@ -136,6 +136,15 @@ static inline void decode_window_picture(DecodeWindow *w, int region, int spp) {
     decode_window_place(w);
 }
 
+/* The whole samples and rows of the window the receiver leaves unblanked:
+ * samples [x0, x1) and rows [row0, row1). The RGB shown without a beam. */
+static inline void decode_window_trace_crop(const DecodeWindow *w, int *x0, int *x1, int *row0, int *row1) {
+    *x0 = (int)ceilf(w->trace_x0);
+    *x1 = (int)floorf(w->trace_x1);
+    *row0 = w->trace_row0;
+    *row1 = w->trace_row1;
+}
+
 static inline size_t decode_window_samples(const DecodeWindow *w) {
     return (size_t)w->width * (size_t)w->lines;
 }

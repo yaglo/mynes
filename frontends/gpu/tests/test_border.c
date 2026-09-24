@@ -6,6 +6,7 @@
 #include "signal_precompute.h"
 #include "gpu_half.h"
 #include "preset_json.h"
+#include "split_view.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -471,6 +472,73 @@ static void field_top_hue(SDL_GPUDevice *gpu) {
     free(rgb); video_gpu_destroy(&v, gpu);
 }
 
+/* The split view's raw half lands where the displayed picture has picture
+ * dot 128 and the unblanked lines. On the beam that is through the preset's
+ * raster: the deflection map at the face position split_place_face gives
+ * lands on dot 128 and on the first unblanked line, with overscan, sizes and
+ * positions set. Without a beam the RGB crop of the unblanked raster is
+ * shown as decoded, both regions. split_axis trims whole source dots at the
+ * viewport's edge. */
+static void split_geometry(SDL_GPUDevice *gpu) {
+    enum { W = 1024, H = 768 };
+    SignalPrecompute sp; VideoChain c; VideoGPUChain v;
+    CHECK(chain(gpu, &v, &c, &sp, SIGNAL_REGION_NTSC, VIDEO_CONN_COMPOSITE, VIDEO_COMB_NONE));
+    c.tv.overscan = .04f; c.tv.h_size = 1.0222f; c.tv.v_size = 1.05f; c.tv.h_pos = .02f; c.tv.v_pos = -.015f;
+    CHECK(video_gpu_set_beam_params(&v, gpu, W, H, 4, .3f, .5f));
+    static uint16_t codes[256 * 240];
+    for (int i = 0; i < 256 * 240; i++) codes[i] = 0x0f;
+    set_backdrop(&v, &sp, 0x0f);
+    CHECK(frames(gpu, &v, &sp, codes, 0, 1, NULL));
+    float *dx = malloc(W * H * 16), *dy = malloc(W * H * 16);
+    CHECK(gpu_buffer_download(gpu, v.buf_deflection_x, dx, W * H * 16));
+    CHECK(gpu_buffer_download(gpu, v.buf_deflection_y, dy, W * H * 16));
+    const DecodeWindow *w = &v.window;
+    SplitPlace face = split_place_face(w, c.tv.overscan, c.tv.h_size, c.tv.v_size, c.tv.h_pos, c.tv.v_pos);
+    /* The first unblanked line is above the glass here, so the rows are
+     * checked at line 120 of the half's linear span. Output pixel centres
+     * are at (i + 0.5) / W: the landing is interpolated to the position. */
+    float v120 = face.v0 + (120 - face.line0) * (face.v1 - face.v0) / (face.line1 - face.line0);
+    float fx = face.u0 * W - .5f, fy = v120 * H - .5f;
+    int ix = (int)floorf(fx), iy = (int)floorf(fy);
+    CHECK(ix >= 0 && ix + 1 < W && iy >= 0 && iy + 1 < H);
+    if (ix >= 0 && ix + 1 < W && iy >= 0 && iy + 1 < H) {
+        float x = dx[(H / 2 * W + ix) * 4 + 1] + (fx - ix) * (dx[(H / 2 * W + ix + 1) * 4 + 1] - dx[(H / 2 * W + ix) * 4 + 1]);
+        float y = dy[(iy * W + W / 2) * 4 + 1] + (fy - iy) * (dy[((iy + 1) * W + W / 2) * 4 + 1] - dy[(iy * W + W / 2) * 4 + 1]);
+        float dot = (x - w->picture_x) / w->spp, line = y - w->picture_row;
+        printf("Split on the beam: face %.4f, %.4f lands on dot %.3f, line %.3f (128, 120)\n", face.u0, v120, dot, line);
+        CHECK(fabsf(dot - 128) < .01f && fabsf(line - 120) < .01f);
+    }
+    CHECK(face.line0 == 1 && face.line1 == 240 && face.v0 < 0);
+    free(dx); free(dy); video_gpu_destroy(&v, gpu);
+    /* The crop without a beam, NTSC and PAL. */
+    for (int region = 0; region < 2; region++) {
+        DecodeWindow d;
+        decode_window_raster(&d, region, region ? 10 : 8, 341, SIGNAL_PICTURE_DOT);
+        int x0, x1, row0, row1;
+        decode_window_trace_crop(&d, &x0, &x1, &row0, &row1);
+        CHECK(x0 >= d.trace_x0 && x0 - d.trace_x0 < 1 && d.trace_x1 - x1 < 1 && x1 <= d.trace_x1);
+        CHECK(row0 == d.trace_row0 && row1 == d.trace_row1);
+        SplitPlace t = split_place_trace(&d);
+        /* Crop sample picture_x + 128 spp, and the first picture line inside the crop. */
+        CHECK(fabsf(t.u0 * (x1 - x0) + x0 - (d.picture_x + 128 * d.spp)) < 1e-3f);
+        CHECK(fabsf(t.u1 * (x1 - x0) + x0 - (d.picture_x + 256 * d.spp)) < 1e-3f);
+        CHECK(t.line0 == (region ? 0 : 1) && t.line1 == 240);
+        CHECK(fabsf(t.v0 * (row1 - row0) + row0 - (d.picture_row + t.line0)) < 1e-3f);
+        CHECK(t.u0 > .45f && t.u1 < 1 && t.v0 >= 0 && t.v1 <= 1);
+        printf("Split on the %s crop (%dx%d): u %.4f..%.4f, v %.4f..%.4f\n", region ? "PAL" : "NTSC",
+               x1 - x0, row1 - row0, t.u0, t.u1, t.v0, t.v1);
+    }
+    /* Trimming at the viewport's edge. */
+    uint32_t src, src_n, dst, dst_n;
+    CHECK(split_axis(100, 612, 128, 256, 0, 1000, &src, &src_n, &dst, &dst_n));
+    CHECK(src == 128 && src_n == 128 && dst == 100 && dst_n == 512);
+    CHECK(split_axis(100, 612, 128, 256, 0, 500, &src, &src_n, &dst, &dst_n));
+    CHECK(src == 128 && src_n == 100 && dst == 100 && dst_n == 400);   /* the 28 dots past 500 go */
+    CHECK(split_axis(-10, 502, 128, 256, 0, 1000, &src, &src_n, &dst, &dst_n));
+    CHECK(src == 131 && src_n == 125 && dst == 2 && dst_n == 500);
+    CHECK(!split_axis(100, 612, 128, 256, 700, 1000, &src, &src_n, &dst, &dst_n));
+}
+
 /* An isolated line carries the light of a line of a uniform field whatever
  * the output row's pitch in raster lines: each row integrates the spot over
  * the lines it covers on the face, 287 active PAL lines, or an NTSC field
@@ -611,5 +679,6 @@ int test_border(SDL_GPUDevice *gpu) {
     line_energy(gpu);
     scaler_sees_first_line(gpu);
     field_top_hue(gpu);
+    split_geometry(gpu);
     return failures;
 }

@@ -187,6 +187,7 @@ static bool calibrate_white(unsigned frame) {
     if (beam && video_gpu_get_beam_size(&video_gpu_chain, &beam_w, &beam_h)) {
         render_ctx.display_tex = beam; render_ctx.display_tex_w = beam_w; render_ctx.display_tex_h = beam_h;
         render_ctx.owns_display_tex = false;
+        render_ctx.display_content = GPU_DISPLAY_BEAM;
         measured = gpu_render_measure_white(&render_ctx, &video_chain);
         if (measured)
             LOGV("White: peak %.2f, average %.2f at gain 1; Auto gain %.2f\n", render_ctx.white_peak_measured,
@@ -2411,12 +2412,14 @@ int main(int argc, char **argv) {
                     render_ctx.display_tex_w = beam_w;
                     render_ctx.display_tex_h = beam_h;
                     render_ctx.owns_display_tex = false;
+                    render_ctx.display_content = GPU_DISPLAY_BEAM;
                 } else {
                     /* No beam: show the part of the decoded raster the
                      * receiver unblanks, border included, retrace cut off. */
                     const DecodeWindow *dw = &video_gpu_chain.window;
-                    int x0 = (int)ceilf(dw->trace_x0), x1 = (int)floorf(dw->trace_x1);
-                    int cols = x1 - x0, rows = dw->trace_row1 - dw->trace_row0;
+                    int x0, x1, row0, row1;
+                    decode_window_trace_crop(dw, &x0, &x1, &row0, &row1);
+                    int cols = x1 - x0, rows = row1 - row0;
                     static float *crop; static size_t crop_floats;
                     size_t need = (size_t)cols * rows * 3;
                     if (need > crop_floats) {
@@ -2427,9 +2430,10 @@ int main(int argc, char **argv) {
                     if (crop && cols > 0 && rows > 0) {
                         for (int r = 0; r < rows; r++)
                             memcpy(crop + (size_t)r * cols * 3,
-                                   gpu_rgb_out + ((size_t)(dw->trace_row0 + r) * dw->width + x0) * 3,
+                                   gpu_rgb_out + ((size_t)(row0 + r) * dw->width + x0) * 3,
                                    (size_t)cols * 3 * sizeof(float));
                         gpu_render_ensure_texture(&render_ctx, cols, rows);
+                        render_ctx.display_content = GPU_DISPLAY_TRACE;
                         uint8_t *rgba = gpu_render_float_rgb_to_rgba8(crop, cols * rows);
                         gpu_render_upload_rgba(&render_ctx, rgba, cols, rows);
                     }
@@ -2438,17 +2442,20 @@ int main(int argc, char **argv) {
                 /* GPU dispatch failed: keep host UI usable on the raw fallback. */
                 if(osd_visible) gpu_osd_blend_rgb(display_ppu.framebuffer,osd_pixels);
                 gpu_render_ensure_texture(&render_ctx, 256, 240);
+                render_ctx.display_content = GPU_DISPLAY_PICTURE;
                 gpu_render_upload_rgba(&render_ctx,
                     gpu_render_ppu_to_rgba8(display_ppu.framebuffer), 256, 240);
             }
         } else if (composite_enabled) {
             /* GPU video is unavailable. */
             gpu_render_ensure_texture(&render_ctx, 256, 240);
+            render_ctx.display_content = GPU_DISPLAY_PICTURE;
             gpu_render_upload_rgba(&render_ctx,
                 gpu_render_ppu_to_rgba8(display_ppu.framebuffer), 256, 240);
         } else {
             /* Raw RGB path: palette LUT output, no composite. */
             gpu_render_ensure_texture(&render_ctx, 256, 240);
+            render_ctx.display_content = GPU_DISPLAY_PICTURE;
             gpu_render_upload_rgba(&render_ctx,
                 gpu_render_ppu_to_rgba8(display_ppu.framebuffer), 256, 240);
         }
