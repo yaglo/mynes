@@ -143,6 +143,10 @@ static inline int nes_rom_parse_header(ROM *rom, const uint8_t *header) {
 
     rom->prg_size = prg_banks * INES_PRG_BANK_SIZE;
     rom->chr_size = chr_banks * INES_CHR_BANK_SIZE;
+    /* Every mapper reduces PRG addresses modulo the ROM size and needs the
+     * vectors at $FFFA-$FFFF, so a cartridge without PRG ROM cannot run. */
+    if (rom->prg_size == 0)
+        return ROM_ERR_HEADER;
     /* Bit 0: mirroring. Bit 3: the cartridge carries 2 KB of VRAM for four
      * separate nametables, which replaces the bit 0 layout. */
     rom->mirroring = (flags6 & 0x08) ? 4 : (flags6 & 0x01);

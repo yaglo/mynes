@@ -327,6 +327,27 @@ static int test_four_screen(void) {
     return pass;
 }
 
+/* Every mapper reduces PRG addresses modulo the PRG size, so a header
+ * declaring no PRG ROM must be refused rather than divide by zero. */
+static int test_prg_size_zero(void) {
+    static uint8_t data[INES_HEADER_SIZE + INES_CHR_BANK_SIZE];
+    memcpy(data, "NES\x1A\x00\x01", 6);
+    int pass = 1;
+    for (int nes2 = 0; nes2 < 2; ++nes2) {
+        data[7] = nes2 ? 0x08 : 0x00;
+        ROM rom;
+        int result = nes_rom_load_data(&rom, data, sizeof(data));
+        if (result != ROM_ERR_HEADER) {
+            printf("TEST prg_size_zero: FAIL (%s: result %d)\n", nes2 ? "NES 2.0" : "iNES", result);
+            if (result == ROM_OK) nes_rom_free(&rom);
+            pass = 0;
+        }
+    }
+    if (pass)
+        printf("TEST prg_size_zero: PASS (header without PRG ROM rejected)\n");
+    return pass;
+}
+
 int test_battery_flag(void) {
     const char *path = "/tmp/test_battery.nes";
     create_test_rom(path, 1, 1, 0x02, 0x00);  /* Battery flag set (bit 1) */
@@ -427,6 +448,7 @@ int main(void) {
     total++; passed += test_mapper_gate();
     total++; passed += test_nes2_mapper();
     total++; passed += test_four_screen();
+    total++; passed += test_prg_size_zero();
     total++; passed += test_battery_flag();
     total++; passed += test_rom_free();
 
