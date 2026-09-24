@@ -596,13 +596,17 @@ static inline void apu_clock_frame_counter(APU *apu) {
  * changes per second, so ~95% of the 1.79M/sec CPU cycles can skip
  * the mixer entirely and reuse a cached sample. */
 
+/* The pulse and noise timers run whether or not the channel sounds: a
+ * disabled channel, an empty length counter or a period below 8 mutes the
+ * output (apu_pulse_output, apu_noise_output), not the divider, so a note
+ * started after a silent period change is not held up by the old count.
+ * A step taken while muted cannot change the mix and does not dirty it;
+ * whatever unmutes the channel does. */
 static inline bool apu_clock_pulse_timer(APU_Pulse *p) {
-    if (!p->enabled || p->length_counter == 0 || p->timer_reload < 8)
-        return false;
     if (--p->timer <= 0) {
         p->timer = (p->timer_reload + 1) * 2;
         p->sequence_step = (p->sequence_step + 1) & 7;
-        return true;  /* duty waveform advanced → output may have flipped */
+        return p->enabled && p->length_counter != 0 && !p->sweep_mute;
     }
     return false;
 }
@@ -619,8 +623,6 @@ static inline bool apu_clock_triangle_timer(APU_Triangle *t) {
 }
 
 static inline bool apu_clock_noise_timer(APU_Noise *n, bool pal) {
-    if (!n->enabled || n->length_counter == 0)
-        return false;
     if (--n->timer <= 0) {
         n->timer = (pal ? apu_noise_period_table_pal : apu_noise_period_table)[n->reg2 & 0x0F];
         int feedback_bit = (n->reg2 & 0x80) ? ((n->lfsr >> 6) & 1)
@@ -628,7 +630,7 @@ static inline bool apu_clock_noise_timer(APU_Noise *n, bool pal) {
         int bit0 = n->lfsr & 1;
         int feedback = (bit0 ^ feedback_bit) & 1;
         n->lfsr = (n->lfsr >> 1) | (feedback << 14);
-        return true;  /* LFSR shifted */
+        return n->enabled && n->length_counter != 0;
     }
     return false;
 }

@@ -74,6 +74,30 @@ int main(void) {
     apu_reset(&a);
     CHECK(a.filter_config.lp_alpha==0.5 && a.analog.saturation==0.25f &&
           a.analog.output_gain==2.0f);
+    /* The pulse divider runs while the channel is silent: a period set
+     * during the silence is loaded by the time the next note starts, so
+     * its first step comes within one new period, not the old count. */
+    {
+        APU b; apu_init(&b); apu_reset(&b);
+        apu_write(&b,0x4015,0x01); apu_write(&b,0x4000,0x9F);
+        apu_write(&b,0x4002,0xFF); apu_write(&b,0x4003,0x1F);   /* $7FF, length 2 */
+        int cycles=0;
+        do { apu_step(&b); cycles++; }
+        while (b.pulse[0].length_counter && cycles<100000);
+        CHECK(b.pulse[0].length_counter==0 && b.pulse[0].timer>100);
+        apu_write(&b,0x4015,0x00);
+        apu_write(&b,0x4002,0x10); apu_write(&b,0x4003,0x00);   /* $010, silent */
+        for (int i=0;i<5000;i++) apu_step(&b);
+        apu_write(&b,0x4015,0x01); apu_write(&b,0x4003,0x08);
+        int step=b.pulse[0].sequence_step, wait=0;
+        while (b.pulse[0].sequence_step==step && wait<5000) { apu_step(&b); wait++; }
+        CHECK(wait<=(0x10+1)*2);
+        /* The noise LFSR keeps shifting while the channel is off. */
+        uint16_t lfsr=b.noise.lfsr;
+        CHECK(!b.noise.enabled);
+        for (int i=0;i<100;i++) apu_step(&b);
+        CHECK(b.noise.lfsr!=lfsr && apu_noise_output(&b.noise)==0);
+    }
     printf("APU region/triangle tests: %s\n",failures?"FAIL":"PASS");
     return failures?1:0;
 }
