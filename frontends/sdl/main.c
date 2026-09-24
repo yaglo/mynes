@@ -155,6 +155,8 @@ typedef struct {
     int    last_fill;      /* for rate-of-change damping */
 } AudioRateCtrl;
 static AudioRateCtrl audio_ctrl;
+/* Nominal APU rate: 44.1 kHz on the Mac, or whatever the CRT box consumes. */
+static int apu_base_rate = APU_SAMPLE_RATE;
 
 typedef struct {
     float buffer[AUDIO_BUF_SIZE];
@@ -204,10 +206,27 @@ static void sdl_audio_callback(void *userdata, Uint8 *stream, int len) {
     }
 }
 
+#ifdef MYNES_CRT_CAPTURE
+/* The same samples go to the CRT box in 400-frame packets; the box plays
+ * them locked to its own video clock, so they stay in step with the picture. */
+static int16_t crt_audio_chunk[CRT_AUDIO_FRAMES];
+static unsigned crt_audio_fill;
+#endif
+
 /* APU callback — pushes one sample into the ring buffer */
 static void apu_sample_callback(void *user_data, float sample) {
     (void)user_data;
     audio_ring_push(sample);
+#ifdef MYNES_CRT_CAPTURE
+    if (crt_usb) {
+        float v = sample * 32767.0f;
+        crt_audio_chunk[crt_audio_fill++] = (int16_t)(v > 32767.0f ? 32767.0f : v < -32768.0f ? -32768.0f : v);
+        if (crt_audio_fill == CRT_AUDIO_FRAMES) {
+            crt_audio_fill = 0;
+            crt_live_submit_audio(crt_usb, crt_audio_chunk, CRT_AUDIO_FRAMES);
+        }
+    }
+#endif
 }
 
 /* ============================================================================
@@ -1154,7 +1173,7 @@ static const APUPreset apu_presets[] = {
 static void apu_apply_preset(const APUPreset *p) {
     apu_filter_config_from_corners(&nes.apu.filter_config,
                                     p->hp1_hz, p->hp2_hz, p->lp_hz,
-                                    (double)APU_SAMPLE_RATE);
+                                    (double)apu_base_rate);
     nes.apu.analog.filter            = nes.apu.filter_config;
     nes.apu.analog.dac_nonlinearity  = p->dac_nonlinearity;
     nes.apu.analog.saturation        = p->saturation;
@@ -2577,7 +2596,7 @@ static void audio_adjust_rate(void) {
 
     /* Overfull → lower rate → fewer samples emitted per second.
      * Underfull → higher rate → more samples emitted. */
-    nes.apu.sample_rate = APU_SAMPLE_RATE - adjust;
+    nes.apu.sample_rate = apu_base_rate - adjust;
     audio_ctrl.last_fill = fill;
 }
 
@@ -2826,12 +2845,30 @@ int main(int argc, char *argv[]) {
         SDL_SetTextureBlendMode(osd_texture, SDL_BLENDMODE_BLEND);
     }
 
+#ifdef MYNES_CRT_CAPTURE
+    /* Open the box before audio so the APU and the Mac's audio device can run
+     * at the rate the box consumes; otherwise audio stays on the Mac alone. */
+    if (crt_usb_requested) {
+        char error[256];
+        crt_usb = crt_live_open(error, sizeof(error));
+        if (!crt_usb) {
+            fprintf(stderr, "CRT USB: %s\n", error);
+            if (crt_capture_file) fclose(crt_capture_file);
+            return 1;
+        }
+        if (crt_live_audio_rate(crt_usb)) {
+            apu_base_rate = (int)crt_live_audio_rate(crt_usb);
+            printf("CRT USB: audio to the box at %d Hz\n", apu_base_rate);
+        }
+    }
+#endif
+
     /* Initialize audio */
     audio_ring_init();
 
     SDL_AudioSpec want, have;
     memset(&want, 0, sizeof(want));
-    want.freq = 44100;
+    want.freq = apu_base_rate;
     want.format = AUDIO_F32SYS;
     want.channels = 1;
     want.samples = 512;   /* smaller buffer → lower latency */
@@ -2856,6 +2893,7 @@ int main(int argc, char *argv[]) {
     }
 
     apu_set_audio_callback(&nes.apu, apu_sample_callback, NULL);
+    nes.apu.sample_rate = apu_base_rate;
 
     /* Set region — auto-detect from ROM header, or override with --pal.
      * Without a ROM the browser runs with NTSC defaults. */
@@ -2890,17 +2928,6 @@ int main(int argc, char *argv[]) {
     }
 #endif
 
-#ifdef MYNES_CRT_CAPTURE
-    if (crt_usb_requested) {
-        char error[256];
-        crt_usb = crt_live_open(error, sizeof(error));
-        if (!crt_usb) {
-            fprintf(stderr, "CRT USB: %s\n", error);
-            if (crt_capture_file) fclose(crt_capture_file);
-            return 1;
-        }
-    }
-#endif
 
     /* Match the display refresh rate / vsync policy to the NES region's
      * native frame rate. PAL on a 60 Hz display is the most visible
@@ -3131,6 +3158,12 @@ int main(int argc, char *argv[]) {
         crt_live_stats(crt_usb, &sent, &replaced);
         fprintf(stderr, "CRT USB: %llu verified frames, %llu replaced pending frames\n",
                 (unsigned long long)sent, (unsigned long long)replaced);
+        if (crt_live_audio_rate(crt_usb)) {
+            uint64_t packets; unsigned level, underruns; size_t dropped;
+            crt_live_audio_stats(crt_usb, &packets, &level, &underruns, &dropped);
+            fprintf(stderr, "CRT USB: %llu audio packets, box queue %u frames, %u underruns, %zu host-dropped frames\n",
+                    (unsigned long long)packets, level, underruns, dropped);
+        }
         crt_live_close(crt_usb);
     }
 #endif

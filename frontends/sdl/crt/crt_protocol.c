@@ -31,14 +31,37 @@ void crt_header(uint8_t *out, uint32_t sequence, const uint8_t *payload) {
     crt_put32(out+20,crt_crc32(payload,CRT_PAYLOAD));
     crt_put32(out+24,crt_crc32(out,24));
 }
-
-int crt_ack_valid(const uint8_t *ack, size_t length, uint32_t sequence, uint32_t crc) {
-    if (length != 32 && length != CRT_ACK) return 0;
-    int video = !memcmp(ack, "ACK2", 4);
-    return (!memcmp(ack, "ACK1", 4) || video) &&
-        crt_le32(ack+4) == sequence && crt_le32(ack+8) == crc &&
-        crt_le32(ack+12) == sequence+1 && !crt_le32(ack+16) &&
-        crt_le32(ack+20) == CRT_PAYLOAD && crt_le32(ack+24) == 1 &&
-        crt_le32(ack+28) == (video ? 1u : 0u) &&
-        (length == 32 || !crt_le32(ack+36));
+void crt_audio_header(uint8_t *out, uint32_t sequence, uint32_t rate_hz, const uint8_t *payload, uint32_t frames) {
+    memset(out,0,32); memcpy(out,"CRT1",4);
+    out[4]=1; out[5]=2; out[6]=1; out[7]=1;
+    crt_put32(out+8,sequence); crt_put32(out+12,4u*frames); crt_put32(out+16,rate_hz);
+    crt_put32(out+20,crt_crc32(payload,4u*frames));
+    crt_put32(out+24,crt_crc32(out,24));
+}
+crt_status crt_status_decode(uint32_t w) {
+    crt_status s;
+    s.sdram_passed=w&1u; s.sdram_failed=(w>>1)&1u; s.missed_line=(w>>2)&1u;
+    s.audio_playing=(w>>3)&1u; s.audio_level=(w>>4)&0x1fffu; s.audio_underruns=(w>>17)&0xffu;
+    s.audio_rate_id=(w>>25)&3u; s.audio_muted=(w>>27)&1u;
+    return s;
+}
+uint32_t crt_audio_rate_hz(unsigned rate_id) {
+    return rate_id==1?CRT_AUDIO_RATE_NTSC:rate_id==2?CRT_AUDIO_RATE_PAL:0u;
+}
+int crt_ack_check(const uint8_t *ack, size_t length, uint32_t sequence, uint32_t payload_crc,
+                  uint32_t accepted, uint32_t payload_length, crt_status *status) {
+    if(length!=32 && length!=CRT_ACK) return 0;
+    int video=!memcmp(ack,"ACK2",4);
+    if(memcmp(ack,"ACK1",4) && !video) return 0;
+    if(crt_le32(ack+4)!=sequence || crt_le32(ack+8)!=payload_crc || crt_le32(ack+12)!=accepted ||
+       crt_le32(ack+16)!=0 || crt_le32(ack+20)!=payload_length || crt_le32(ack+24)!=1) return 0;
+    if(length==CRT_ACK && crt_le32(ack+36)) return 0;
+    crt_status s=crt_status_decode(video?crt_le32(ack+28):0u);
+    if(status) *status=s;
+    if(video && (!s.sdram_passed || s.sdram_failed || s.missed_line)) return 0;
+    if(!video && crt_le32(ack+28)) return 0;
+    return 1;
+}
+int crt_ack_valid(const uint8_t *ack, size_t length, uint32_t sequence, uint32_t payload_crc) {
+    return crt_ack_check(ack,length,sequence,payload_crc,sequence+1,CRT_PAYLOAD,NULL);
 }
