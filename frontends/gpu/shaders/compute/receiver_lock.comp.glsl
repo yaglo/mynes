@@ -1,5 +1,31 @@
-/* Measure sync trailing edge, gated porch and burst after the analog path.
- * The search window rejects sub-black picture codes and isolated noise. */
+/* Sync separator, keyed black level and burst measurement after the
+ * analog path, one thread per line.
+ *
+ * Coarse pass: the composite averaged over one subcarrier cycle (12
+ * samples), which keeps the burst and most noise out, sliced halfway
+ * between its lowest value over the first 50 dots (the tip) and the front
+ * porch before the line's own sync (capped at half the NES sync depth in
+ * case picture sits there). The first rising crossing over dots 8 to 46,
+ * about 3 us early to 4 us late against the nominal edge at dot 25, finds
+ * the sync however far a VCR has moved the line.
+ *
+ * Fine pass: the tip is the mean of 8 dots of the pulse's interior, 9 to
+ * 17 dots before the coarse edge (the lowest average alone reads low under
+ * noise), black is keyed behind it, and the raw samples within a dot of
+ * the coarse edge are sliced halfway between the two. With the sync where
+ * the NES puts it this is the slice of fixed windows at dots 8-16 and
+ * 46-49; the windows follow the sync when a VCR moves it.
+ *
+ * Black: the mean of 2 whole subcarrier cycles (24 samples) from 21 to 24
+ * dots after the trailing edge, between the NES burst's end (19 dots after
+ * the edge) and its border (24 dots after, where a standard back porch
+ * ends too). Over whole cycles a band-limited burst's tail leaves only the
+ * fraction of a cycle its slope covers, which alternates with the
+ * carrier's 120 degrees per line; the VHS deck's tail reaches 20 dots
+ * after the edge, where a window would double the whole-line noise.
+ * receiver_pll integrates the measurement over lines with the TV's clamp
+ * time constant. A vertical pulse is reported with z = -1, a line without
+ * a sync edge with w = 1e6. */
 #version 450
 layout(local_size_x=32) in;
 layout(set=0,binding=0) readonly buffer Raster { float raster[]; };
@@ -8,46 +34,80 @@ layout(set=2,binding=0) uniform Params {
     uint count, full_width, samples_per_dot, region;
 };
 const float TAU=6.28318530718;
+const int CYCLE=12;               // samples per subcarrier cycle
+const int BLACK_START_DOTS=21;
+const float NES_SYNC=264.0/788.0;
+
+/* First rising crossing of level over x in [from, to) of the one-cycle
+ * average centred on x (samples x-6 to x+5), sub-sample by linear
+ * interpolation. A step at sample e crosses at e - 0.5, as the raw
+ * crossing below does. Returns -1e9 if none. */
+float crossing_cycle(uint base, int from, int to, float level) {
+    float s=0.0;
+    for(int k=from-7;k<from+5;k++) s+=raster[base+uint(k)];
+    float a=s/float(CYCLE);
+    for(int x=from;x<to;x++) {
+        s+=raster[base+uint(x+5)]-raster[base+uint(x-7)];
+        float b=s/float(CYCLE);
+        if(a<level && b>=level) return float(x)-1.5+(level-a)/max(b-a,1e-6);
+        a=b;
+    }
+    return -1e9;
+}
+/* The same on the raw samples: a step at sample e crosses at e - 0.5. */
+float crossing_raw(uint base, int from, int to, float level) {
+    for(int x=from;x<to;x++) {
+        float a=raster[base+uint(x-1)], b=raster[base+uint(x)];
+        if(a<level && b>=level) return float(x)-1.0+(level-a)/max(b-a,1e-6);
+    }
+    return -1e9;
+}
+float keyed_black(uint base, float edge, int spp) {
+    int start=int(round(edge+0.5))+BLACK_START_DOTS*spp;
+    float black=0.0;
+    for(int x=0;x<2*CYCLE;x++) black+=raster[base+uint(start+x)];
+    return black/float(2*CYCLE);
+}
 void main() {
     uint line=gl_GlobalInvocationID.x;
     if(line>=count) return;
-    uint base=line*full_width, spp=samples_per_dot;
-    float black=0.0, tip=0.0;
-    for(uint x=334u*spp;x<338u*spp;x++) black+=raster[base+x];
-    black/=float(4u*spp);
-    for(uint x=8u*spp;x<16u*spp;x++) tip+=raster[base+x];
-    tip/=float(8u*spp);
-    // Slice halfway up the sync pulse, measured from its tip. A late line
-    // (VCR playback runs up to 1.7 us off) puts picture or border into the
-    // front porch window; no sync is deeper than the NES's 264 mV, so the
-    // slice never rises above half of that.
-    float threshold=tip+0.5*min(black-tip,264.0/788.0);
-    bool vertical=tip<black-0.08;
-    for(uint dot=80u;dot<=300u;dot+=20u) vertical=vertical && raster[base+dot*spp]<threshold;
-    if(vertical) { measurement[line]=vec4(0,black,-1,0); return; }
-    float offset=0.0;
-    bool found=false;
-    if(tip<black-0.08) for(uint x=18u*spp;x<32u*spp;x++) {
-        float a=raster[base+x-1u], b=raster[base+x];
-        if(a<threshold && b>=threshold) {
-            offset=float(x)-1.0+(threshold-a)/max(b-a,1e-6)-(25.0*float(spp)-0.5);
-            found=true; break;
-        }
-    }
-    if(!found) { measurement[line]=vec4(0,black,0,1000000); return; }
+    uint base=line*full_width;
+    int spp=int(samples_per_dot);
+    float porch=0.0;
+    for(int x=334*spp;x<338*spp;x++) porch+=raster[base+uint(x)];
+    porch/=float(4*spp);
+    float s=0.0;
+    for(int k=0;k<CYCLE;k++) s+=raster[base+uint(k)];
+    float tip=s;
+    for(int x=CYCLE;x<50*spp;x++) { s+=raster[base+uint(x)]-raster[base+uint(x-CYCLE)]; tip=min(tip,s); }
+    tip/=float(CYCLE);
+    float threshold=tip+0.5*min(porch-tip,NES_SYNC);
+    bool vertical=tip<porch-0.08;
+    for(int dot=80;dot<=300;dot+=20) vertical=vertical && raster[base+uint(dot*spp)]<threshold;
+    if(vertical) { measurement[line]=vec4(0,porch,-1,0); return; }
+    if(tip>=porch-0.08) { measurement[line]=vec4(0,porch,0,1000000); return; }
+    float coarse=crossing_cycle(base,8*spp,46*spp,threshold);
+    if(coarse<-1e8) { measurement[line]=vec4(0,porch,0,1000000); return; }
+    int c0=int(coarse);
+    int t0=max(c0-17*spp,0), t1=max(c0-9*spp,t0+1);
+    float pulse=0.0;
+    for(int x=t0;x<t1;x++) pulse+=raster[base+uint(x)];
+    pulse/=float(t1-t0);
+    float black=keyed_black(base,coarse,spp);
+    float edge=crossing_raw(base,max(8*spp,c0-spp),min(46*spp,c0+spp+1),pulse+0.5*min(porch-pulse,NES_SYNC));
+    if(edge<-1e8) edge=coarse;
+    black=keyed_black(base,edge,spp);
+    float offset=edge-(25.0*float(spp)-0.5);
     int shift=int(round(offset));
-    black=0.0;
-    for(uint x=46u*spp;x<49u*spp;x++) black+=raster[base+uint(int(x)+shift)];
-    black/=float(3u*spp);
-    uint start=uint(int(31u*spp)+shift);
-    uint n=(11u*spp/12u)*12u;
-    float c=0.0,s=0.0;
+    uint bstart=uint(int(31*spp)+shift);
+    uint n=uint(11*spp/CYCLE)*uint(CYCLE);
+    float c=0.0,sn=0.0;
     for(uint x=0u;x<n;x++) {
-        float p=float(int(start+x)-int(65u*spp))*TAU/12.0;
-        float v=raster[base+start+x]-black;
-        c+=v*cos(p); s+=v*sin(p);
+        float p=float(int(bstart+x)-int(65*spp))*TAU/12.0;
+        float v=raster[base+bstart+x]-black;
+        c+=v*cos(p); sn+=v*sin(p);
     }
-    float amplitude=2.0*length(vec2(c,s))/float(n);
+    float amplitude=2.0*length(vec2(c,sn))/float(n);
     float burst_axis=(region==1u) ? (((line&1u)==1u) ? 1.5 : 4.5) : 5.5;
-    measurement[line]=vec4(atan(-s,c)-burst_axis*TAU/12.0,black,amplitude,offset);
+    measurement[line]=vec4(atan(-sn,c)-burst_axis*TAU/12.0,black,amplitude,offset);
 }

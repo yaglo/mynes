@@ -56,8 +56,14 @@ bool vhs_gpu_configure(VHSGpu *g, SignalChain *sc, SDL_GPUDevice *gpu, const VHS
     return gpu_buffer_upload(gpu, g->coeff, g->deck->coeffs, sizeof(g->deck->coeffs));
 }
 
-bool vhs_gpu_frame(VHSGpu *g, SignalChain *sc, SDL_GPUDevice *gpu, SDL_GPUCommandBuffer *cmd, uint32_t frame) {
+bool vhs_gpu_frame(VHSGpu *g, SignalChain *sc, SDL_GPUDevice *gpu, SDL_GPUCommandBuffer *cmd, uint32_t frame,
+                   float sync_depth) {
     if (!vhs_gpu_enabled(g, sc)) return true;
+    /* The record AGC is keyed to sync: its steady state holds the sync tip
+     * at -40 IRE whatever the source's level. The configured gain is the
+     * one for the 2C02's sync, so a 2C02 source keeps it exactly. */
+    const float nes_sync = 264.0f / 788.0f;
+    if (sync_depth > 0) g->deck->gpu.in_gain = (float)(40.0 / (264.0 / 788.0)) * (nes_sync / sync_depth);
     uint8_t *mapped = SDL_MapGPUTransferBuffer(gpu, g->transfer, true);
     if (!mapped) return false;
     VHSLineEntry *table = (VHSLineEntry *)mapped;

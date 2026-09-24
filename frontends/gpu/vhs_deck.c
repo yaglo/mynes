@@ -14,8 +14,8 @@
 #define WALLACE_DB (54.6e-6 / 5.8)     /* spacing loss, dB per um per Hz at 5.8 m/s */
 #define SAG_DB 1.5                     /* RF envelope sag before the switch (DH) */
 #define SAG_LINES 3.0
-#define BURST_NOISE_DEG 2.1            /* burst phase measurement noise per line (DH) */
 #define APC_DAMPING 0.7
+#define DH_VARYING_NS 52.53            /* quadrature sum of the DH varying-timing bands */
 #define RECUR_P 0.31                   /* dropout found again on the next track (DH) */
 #define RECUR_TRACKS 4
 #define DROP_RATE_6DB 32.8             /* dropouts per second reaching -6 dB (DH) */
@@ -124,7 +124,7 @@ typedef struct { int first, count; bool real_input; double fs; } Slot;
  * envelope; the colour-under band-pass runs at 3 fsc. */
 static Slot slot_of(const VHSDeck *d, int s) {
     const float *h = d->coeffs + 4 * s;
-    bool complex_input = s == VHS_F_RF_REC || s == VHS_F_RF_PB || s == VHS_F_CPB;
+    bool complex_input = s == VHS_F_RF_REC || s == VHS_F_RF_PB || s == VHS_F_CPB || s == VHS_F_NOISE;
     return (Slot){(int)h[2], (int)h[3], !complex_input, s == VHS_F_CPB ? d->fs / 4 : d->fs};
 }
 
@@ -275,26 +275,36 @@ static double bow(const VHSDeck *d, int head, double s) {
     return (harmonics(BOW_COS[head], BOW_SIN[head], 1, 10, t) - chord) * d->p.bow_scale;
 }
 
+/* Complex draws (re, im per coefficient) of one field's persisting part. */
 static const double *slow_draws(VHSDeck *d, int64_t field) {
     int slot = (int)(((field % VHS_SLOW_RING) + VHS_SLOW_RING) % VHS_SLOW_RING);
     if (d->slow_tag[slot] != field) {
-        for (int j = 0; j < 2 * VHS_HARMONICS; j++)
+        for (int j = 0; j < 4 * VHS_HARMONICS; j++)
             d->slow_g[slot][j] = gauss(key((uint32_t)d->p.deck_seed, field, S_SLOW, (uint64_t)j));
         d->slow_tag[slot] = field;
     }
     return d->slow_g[slot];
 }
 
+/* Harmonic coefficients of the varying part for one field: a fresh draw
+ * plus the persisting part, the real part of a damped resonance (one
+ * complex pole per field) driven by complex draws over VHS_SLOW_TERMS
+ * fields and normalised to unit variance over the terms it sums. Each
+ * coefficient has RMS sig[m], so each harmonic's time-domain RMS is
+ * sig[m]. */
 void vhs_deck_varying(VHSDeck *d, int64_t field, double coeff[2 * VHS_HARMONICS]) {
-    double sf = fmin(1, fmax(0, d->p.tbe_slow_fraction)), w = sqrt(1 - d->rho * d->rho);
-    double slow[2 * VHS_HARMONICS] = {0}, weight = w;
-    for (int i = 0; i < VHS_SLOW_TERMS; i++, weight *= d->rho) {
+    double sf = fmin(1, fmax(0, d->p.tbe_slow_fraction));
+    double slow[2 * VHS_HARMONICS] = {0}, wr = 1, wi = 0;   /* pole^i */
+    for (int i = 0; i < VHS_SLOW_TERMS; i++) {
         const double *g = slow_draws(d, field - i);
-        for (int j = 0; j < 2 * VHS_HARMONICS; j++) slow[j] += weight * g[j];
+        for (int j = 0; j < 2 * VHS_HARMONICS; j++) slow[j] += wr * g[2 * j] - wi * g[2 * j + 1];
+        double nr = d->slow_decay * (wr * d->slow_cos - wi * d->slow_sin);
+        double ni = d->slow_decay * (wr * d->slow_sin + wi * d->slow_cos);
+        wr = nr; wi = ni;
     }
     for (int j = 0; j < 2 * VHS_HARMONICS; j++) {
         double fresh = gauss(key((uint32_t)d->p.deck_seed, field, S_FRESH, (uint64_t)j));
-        coeff[j] = (sqrt(1 - sf) * fresh + sqrt(sf) * slow[j]) * d->sig[j / 2 + 1] / sqrt(2.0);
+        coeff[j] = (sqrt(1 - sf) * fresh + sqrt(sf) * slow[j] * d->slow_norm) * d->sig[j / 2 + 1];
     }
 }
 
@@ -395,8 +405,13 @@ void vhs_deck_configure(VHSDeck *d, const VHSParams *p, double fs) {
     d->fs = fs;
     VHSParams *v = &d->p;
     if (v->fm_white_hz <= v->fm_sync_hz + 1e4f) { v->fm_sync_hz = 3.4e6f; v->fm_white_hz = 4.4e6f; }
-    if (v->tbe_slow_tau_ms <= 0) v->tbe_slow_tau_ms = 400;
+    if (v->tbe_slow_tau_ms <= 0) v->tbe_slow_tau_ms = 2000;
+    if (v->tbe_slow_period_ms < 0) v->tbe_slow_period_ms = 0;
+    /* The APC is a sampled loop: one burst measurement per line. Its
+     * per-line recurrence is stable only up to about 2.6 kHz, so the
+     * natural frequency stays at or below 2 kHz. */
     if (v->apc_loop_hz <= 0) v->apc_loop_hz = 1000;
+    v->apc_loop_hz = fminf(2000, fmaxf(50, v->apc_loop_hz));
     for (int i = 0; i < VHS_SLOW_RING; i++) d->slow_tag[i] = INT64_MIN;
 
     const double fs3 = fs / 4, w = 2 * M_PI;
@@ -418,16 +433,29 @@ void vhs_deck_configure(VHSDeck *d, const VHSParams *p, double fs) {
     store(c, &next, VHS_F_CREC, &f, true);
     f = butter_lp(2, w * 0.4e6); f = bilinear(&f, fs, 0.4e6);
     store(c, &next, VHS_F_MOD, &f, true);
-    /* Record FM high-pass (IEC fig. 22) and the head/tape response, a
-     * single pole placed for the measured slope at 3.9 MHz. */
+    /* Record FM high-pass (IEC fig. 22) and the head/tape response. Spacing
+     * loss falls exponentially with frequency, a straight line in dB. Three
+     * real poles a factor 1.65 apart, placed together so their slope at
+     * 3.9 MHz is the measured tilt, follow that line within 1 dB over
+     * 1.4-6 MHz for every tilt up to 4.4 dB/MHz (fitted offline; one pole
+     * misses by 1.6 dB and cannot exceed 2.2 dB/MHz, two equal poles are a
+     * double pole the partial fractions cannot hold). */
     f = butter_hp(3, w * 1.6e6); f = bilinear(&f, fs, 1.6e6);
     double tilt = fabs(v->tape_tilt_db_per_mhz) * 1e-6, f0 = 3.9e6;
     if (tilt > 1e-9) {
-        double fp2 = 20 / log(10.0) * f0 / tilt - f0 * f0;
-        double fp = sqrt(fmax(fp2, 1e10));
-        g = single_pole(w * fp); g = bilinear(&g, fs, f0);
-        g.k /= cabs(zpk_response(&g, f0, fs));
-        zpk_cascade(&f, &g);
+        const double stagger[3] = {1 / 1.65, 1, 1.65}, per_db = 20 / log(10.0);
+        double lo = 1e4, hi = 1e9;
+        for (int it = 0; it < 200; it++) {
+            double fp = sqrt(lo * hi), slope = 0;
+            for (int k = 0; k < 3; k++) slope += per_db * f0 / (f0 * f0 + fp * fp * stagger[k] * stagger[k]);
+            if (slope > tilt) lo = fp; else hi = fp;
+        }
+        double fp = sqrt(lo * hi);
+        for (int k = 0; k < 3; k++) {
+            g = single_pole(w * fp * stagger[k]); g = bilinear(&g, fs, f0);
+            g.k /= cabs(zpk_response(&g, f0, fs));
+            zpk_cascade(&f, &g);
+        }
     }
     store(c, &next, VHS_F_RF_REC, &f, false);
     f = butter_hp(2, w * 1.4e6); f = bilinear(&f, fs, 1.4e6);
@@ -439,6 +467,21 @@ void vhs_deck_configure(VHSDeck *d, const VHSParams *p, double fs) {
     f = butter_lp(2, w * 0.5e6); f = bilinear(&f, fs3, 0.5e6);
     store(c, &next, VHS_F_CPB, &f, false);
     store_one_pole(c, &next, VHS_F_CANC, exp(-w * fmax(1e4, v->canceller_split_hz) / fs));
+    /* Playback RF noise is real, so its analytic form has no negative
+     * frequencies: the white complex draws pass a fourth-order Butterworth
+     * low-pass of 7 MHz rotated to +7.5 MHz (0.5 to 14.5 MHz at -3 dB),
+     * which keeps the density on the positive side out to where the
+     * playback RF low-pass sets the noise bandwidth (a lost carrier then
+     * demodulates to the noise's zero-crossing rate, above white) and
+     * takes the image at -1.4 to -6 MHz down by 9 to 23 dB before the
+     * playback RF filters. */
+    f = butter_lp(4, w * 7.0e6); f = bilinear(&f, fs, 7.0e6);
+    {
+        cplx rot = cexp(2 * M_PI * I * 7.5e6 / fs);
+        for (int i = 0; i < f.nz; i++) f.z[i] *= rot;
+        for (int i = 0; i < f.np; i++) f.p[i] *= rot;
+    }
+    store(c, &next, VHS_F_NOISE, &f, false);
 
     /* DOC click: the playback luma filter's impulse response. */
     double taps[VHS_CLICK_TAPS];
@@ -510,14 +553,34 @@ void vhs_deck_configure(VHSDeck *d, const VHSParams *p, double fs) {
         .click_scale = (float)(fs * 140 / (2 * M_PI * (v->fm_white_hz - v->fm_sync_hz))),
         .sharp_d = (float)sharp_d};
 
-    /* Transport. Per-harmonic RMS of the varying part from the DH bands. */
+    /* Transport. Per-harmonic RMS of the varying part: the DH bands (45.4,
+     * 23.3, 10.9, 6.4 and 4.1 ns in 0-70, 70-140, 140-300, 300-600 and
+     * 600-1500 Hz) inverted through the analysis that produced them (240
+     * lines per field, per-field linear detrend, Hann periodogram), so the
+     * same analysis of the table returns the bands; the detrend takes 40%
+     * of the first harmonic's power, which is why sig[1] exceeds its band.
+     * Harmonics 1 and 2, 3-4, 5-9 and 10-22 share a band each. The bands'
+     * quadrature sum, 52.5 ns, is what tbe_varying_ns scales. */
+    static const double SIG[5] = {62.48, 14.26, 7.63, 2.853, 1.179};
     for (int m = 1; m <= VHS_HARMONICS; m++)
-        d->sig[m] = m == 1 ? 45.4 : m == 2 ? 23.3 : m <= 4 ? 10.9 / sqrt(2.0) :
-                    m <= 9 ? 6.4 / sqrt(5.0) : 4.1 / sqrt(13.0);
-    double total = 0;
-    for (int m = 1; m <= VHS_HARMONICS; m++) total += d->sig[m] * d->sig[m];
-    for (int m = 1; m <= VHS_HARMONICS; m++) d->sig[m] *= fmax(0, v->tbe_varying_ns) / sqrt(total);
-    d->rho = exp(-field_seconds(d) * 1000 / v->tbe_slow_tau_ms);
+        d->sig[m] = (m == 1 ? SIG[0] : m == 2 ? SIG[1] : m <= 4 ? SIG[2] : m <= 9 ? SIG[3] : SIG[4]) *
+                    fmax(0, v->tbe_varying_ns) / DH_VARYING_NS;
+    /* Persisting part: a damped resonance, decay tbe_slow_tau_ms and period
+     * tbe_slow_period_ms, so its field correlation is e^(-lag/L) cos(2 pi
+     * lag/P). DH lags 1/2/3/12/16/24: 0.41/0.35/0.42/0.35/0.22/0.05; with
+     * L 120 and P 104 fields and a 0.4 share: 0.40/0.40/0.39/0.27/0.20/0.04.
+     * An exponential alone cannot hold 0.35 to lag 12 and fall to 0.05 by
+     * lag 24. */
+    double field_ms = field_seconds(d) * 1000, angle = v->tbe_slow_period_ms > 0 ? 2 * M_PI * field_ms / v->tbe_slow_period_ms : 0;
+    d->slow_decay = exp(-field_ms / v->tbe_slow_tau_ms);
+    d->slow_cos = cos(angle); d->slow_sin = sin(angle);
+    double d2 = d->slow_decay * d->slow_decay;
+    d->slow_norm = 1 / sqrt(d2 < 1 - 1e-12 ? (1 - pow(d2, VHS_SLOW_TERMS)) / (1 - d2) : (double)VHS_SLOW_TERMS);
+    /* APC burst phase noise per line: the colour-under noise on the burst
+     * (recorded 6 dB hot, so half the input noise per component) averaged
+     * over the 10-cycle burst gate, 30 samples at 3 fsc. The mean of the
+     * band-passed noise over the gate has variance sigma_in^2 / samples. */
+    d->burst_noise_deg = 0.5 * d->gpu.chroma_noise_sigma / (d->gpu.burst_target * sqrt(30.0)) * 180 / M_PI;
     d->ramp = -(v->skew_ba_ns + v->skew_ab_ns) / (2.0 * VHS_LINES);
     d->offset[0] = v->skew_ba_ns;
     d->offset[1] = v->skew_ba_ns + d->ramp * VHS_LINES + v->skew_ab_ns;
@@ -548,14 +611,15 @@ int vhs_deck_frame(VHSDeck *d, uint32_t frame_u, VHSLineEntry table[VHS_TABLE_LI
         tau[i] = tau_at(d, field_coeff(cache, 3, field), field, s, n, true);
     }
     /* Colour APC/AFC: second-order loop on the colour-under phase of the
-     * timing, driven by a burst phase measurement with 2.1 deg of noise.
-     * Started one frame earlier so it needs no state. */
+     * timing, driven by a burst phase measurement whose noise comes from
+     * the modelled chroma noise. Started one frame earlier so it needs no
+     * state. */
     double wn = 2 * M_PI * d->p.apc_loop_hz / line_rate, kp = 2 * APC_DAMPING * wn, ki = wn * wn;
     double deg = 360 * d->gpu.colour_under_hz * 1e-9, th = tau[0] * deg, per = 0, residual[2 * VHS_LINES];
     for (int i = 0; i < 2 * VHS_LINES; i++) {
         double in = tau[i] * deg;
         int64_t g = frame - 1 + i / VHS_LINES;
-        double meas = in + BURST_NOISE_DEG * gauss(key(seed, g, S_BURST, (uint64_t)(i % VHS_LINES)));
+        double meas = in + d->burst_noise_deg * gauss(key(seed, g, S_BURST, (uint64_t)(i % VHS_LINES)));
         residual[i] = in - th;
         double e = meas - th;
         per += ki * e; th += kp * e + per;
@@ -574,8 +638,11 @@ int vhs_deck_frame(VHSDeck *d, uint32_t frame_u, VHSLineEntry table[VHS_TABLE_LI
         e->noise = (float)(field & 1 ? noise_b : 1);
         e->head = (float)(field & 1);
         e->chroma_phase = (float)(residual[k < 2 * VHS_LINES ? k : 2 * VHS_LINES - 1] * M_PI / 180);
-        if (n == sw && sw_x > 0) {
-            /* Old head to the switch point, new head after it. */
+        if (n == sw) {
+            /* Old head to the switch point, new head after it. At a
+             * whole-number switch line the switch is at x 0: the line
+             * starts on the new head and the line before ends on the old
+             * head's last timing, RF level and noise. */
             int64_t fold = g, fnew = g + 1;
             const double *c_old = field_coeff(cache, 3, fold), *c_new = field_coeff(cache, 3, fnew);
             e->x_switch = (float)sw_x;
@@ -584,6 +651,11 @@ int vhs_deck_frame(VHSDeck *d, uint32_t frame_u, VHSLineEntry table[VHS_TABLE_LI
             e->rf_db_old = (float)-SAG_DB;
             e->noise_new = (float)(fnew & 1 ? noise_b : 1);
             e->rf_phase_jump = (float)((2 * uniform(key(seed, fnew, S_JUMP, 0)) - 1) * M_PI);
+            if (sw_x <= 0) {
+                e->tau = e->tau_old;
+                e->rf_db = e->rf_db_old;
+                e->noise = (float)(fold & 1 ? noise_b : 1);
+            }
         }
     }
 

@@ -46,6 +46,7 @@ enum {
     VHS_F_CPB,     /* playback colour-under band-pass: 2nd-order 0.5 MHz, 3 fsc */
     VHS_F_DE,      /* de-emphasis, exact inverse of VHS_F_PRE */
     VHS_F_CANC,    /* noise canceller split, first order */
+    VHS_F_NOISE,   /* analytic shaping of the playback RF noise: 4th-order 7 MHz low-pass at +7.5 MHz */
     VHS_FILTERS
 };
 #define VHS_FILTER_SLOTS 16
@@ -71,10 +72,12 @@ typedef struct {
     float valid_from, valid_to, reserved0, reserved1;
 } VHSDefect;
 
-/* Field-coefficient cache for the transport model. */
+/* Field-coefficient cache for the transport model. The persisting part of
+ * the varying timing is a damped resonance summed over VHS_SLOW_TERMS
+ * fields of complex draws; the ring holds their draws. */
 #define VHS_HARMONICS 22
-#define VHS_SLOW_TERMS 96
-#define VHS_SLOW_RING 128
+#define VHS_SLOW_TERMS 128
+#define VHS_SLOW_RING 160
 
 typedef struct {
     VHSParams p;
@@ -84,9 +87,11 @@ typedef struct {
     double luma_delay_ns, chroma_delay_ns;   /* path delays found by the design */
     double path_samples;                     /* fixed input-to-output delay removed from tau */
     /* transport */
-    double sig[VHS_HARMONICS + 1], rho, ramp, centre, offset[2], switch_line;
+    double sig[VHS_HARMONICS + 1], ramp, centre, offset[2], switch_line;
+    double slow_decay, slow_cos, slow_sin, slow_norm; /* per-field pole of the persisting part */
+    double burst_noise_deg;                  /* APC burst phase noise per line from the chroma noise */
     int64_t slow_tag[VHS_SLOW_RING];
-    double slow_g[VHS_SLOW_RING][2 * VHS_HARMONICS];
+    double slow_g[VHS_SLOW_RING][4 * VHS_HARMONICS];
 } VHSDeck;
 
 /* Design every filter and the static GPU parameters for sample rate fs. */

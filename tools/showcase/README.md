@@ -417,6 +417,19 @@ the core's own save-state call. Build it against the core the way
 `run_rom` is built (`build/CMakeFiles/run_rom.dir/link.txt` has the flags)
 and run it with the ROM and the output path.
 
+The boss palette fades in over the first second after the state loads,
+so the shot's `record_after` is 180: the clip, and the still and poster
+taken from its first frame, start on the lit boss. The player in that
+state falls as soon as the forced walk ends, respawns about 135 frames
+after the load and, standing still, dies again at 290.
+`boot/contra-replay.c`, built the same way, plays the state headless and
+tries random schedules of firing, aiming, running and jumping until one
+keeps the player alive to 10 frames past the end of the clip; it wrote
+`replays/contra.replay`
+(`contra-replay ROM states/contra.s1 replays/contra.replay 180 360`). The
+search is deterministic, so a state built the same way gives the same
+replay.
+
 ## Tests
 
 ```sh

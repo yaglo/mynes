@@ -490,6 +490,45 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
         endif()
         message(STATUS "SDL3 found - building GPU frontend")
 
+        # A picture or a video through a preset's whole chain, from the RGB
+        # encoder source with linear 10-bit guns, recorded like
+        # mynes_gpu --record. See frontends/video/main.c.
+        add_executable(mynes_video
+            frontends/video/main.c
+            frontends/gpu/gpu_osd.c
+            frontends/gpu/gpu_render.c
+            frontends/gpu/frame_capture.c
+            frontends/gpu/recorder.c
+            frontends/gpu/frame_pq.c
+            frontends/gpu/gpu_output.c
+            frontends/gpu/preset_apply.c
+            frontends/gpu/gpu_compute.c
+            frontends/gpu/gpu_display.c
+            frontends/gpu/video_gpu.c
+            frontends/gpu/vhs_deck.c
+            frontends/gpu/vhs_gpu.c
+            frontends/gpu/chroma_pipeline.c
+            frontends/gpu/post_pipeline.c
+            frontends/gpu/signal_chain.c
+            frontends/gpu/audio_chain.c
+            frontends/gpu/audio_gpu.c
+            frontends/gpu/video_chain.c
+            frontends/gpu/chain_vis.c
+            frontends/gpu/debug_tap.c
+            frontends/gpu/debug_server.c
+            frontends/gpu/gpu_log.c
+            ${MYNES_SHARED_SOURCES}
+        )
+        target_include_directories(mynes_video PRIVATE frontends/shared frontends/gpu)
+        target_link_libraries(mynes_video PRIVATE nes_static ${MYNES_SDL3_TARGET} pthread)
+        if(MYNES_BUNDLED_SDL3)
+            target_compile_definitions(mynes_video PRIVATE MYNES_BUNDLED_SDL3=1)
+        endif()
+        if(APPLE)
+            target_sources(mynes_video PRIVATE frontends/gpu/gpu_output_macos.m)
+            target_link_libraries(mynes_video PRIVATE "-framework AppKit" "-framework CoreGraphics")
+        endif()
+
         # GPU shaders: GLSL -> SPIR-V -> MSL into build/shaders/{compute,render}.
         # compile_shaders.sh needs glslc (shaderc), spirv-cross and python3, and
         # also repairs the Metal buffer indices in the MSL it writes. Every
@@ -574,6 +613,7 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
         endif()
         add_custom_target(gpu_shaders DEPENDS ${SHADER_STAMP})
         add_dependencies(mynes_gpu gpu_shaders)
+        add_dependencies(mynes_video gpu_shaders)
         # Keep presets and palettes with the executable, independent of the
         # launch directory (release trees and the app bundle use the same layout).
         add_custom_target(gpu_presets
@@ -583,6 +623,7 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
                 ${CMAKE_SOURCE_DIR}/palettes ${CMAKE_BINARY_DIR}/palettes
             COMMENT "Copying GPU preset library and palettes")
         add_dependencies(mynes_gpu gpu_presets)
+        add_dependencies(mynes_video gpu_presets)
 
         if(NES_BUILD_TESTS)
             add_executable(test_frame_capture frontends/gpu/tests/test_frame_capture.c
@@ -732,6 +773,13 @@ if(NES_BUILD_FRONTENDS AND NES_BUILD_GPU_FRONTEND)
             target_link_libraries(test_fidelity PRIVATE nes_static ${MYNES_SDL3_TARGET} m)
             add_dependencies(test_fidelity gpu_shaders)
             add_test(NAME gpu_fidelity_tests COMMAND test_fidelity)
+            if(MYNES_PYTHON3)
+                # mynes_video end to end; skipped (77) without ffmpeg.
+                add_test(NAME gpu_video_tool_test
+                    COMMAND ${MYNES_PYTHON3} ${CMAKE_SOURCE_DIR}/frontends/gpu/tests/test_video_tool.py
+                            $<TARGET_FILE:mynes_video>)
+                set_tests_properties(gpu_video_tool_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
+            endif()
 
             # build/shaders must hold exactly the committed shader set, whichever
             # way it was populated, because the frontend loads by file name.

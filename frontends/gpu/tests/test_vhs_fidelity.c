@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "video_gpu.h"
+#include "waveform_gen.h"
 
 #define FS (12 * 315e6 / 88)
 #define N_RASTER (VHS_LINES * VHS_SPL)
@@ -76,7 +77,7 @@ static void rig_run(Rig *r, SDL_GPUDevice *gpu, const float *raster, uint32_t fr
     static float buf[N_RASTER];
     CHECK(chain_upload_input(&r->sc, gpu, raster, N_RASTER * sizeof(float)));
     SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(gpu);
-    CHECK(vhs_gpu_frame(&r->g, &r->sc, gpu, cmd, frame));
+    CHECK(vhs_gpu_frame(&r->g, &r->sc, gpu, cmd, frame, 264.0f / 788.0f));
     CHECK(SDL_SubmitGPUCommandBuffer(cmd));
     if (table) CHECK(gpu_buffer_upload(gpu, r->g.lines, table, VHS_TABLE_LINES * sizeof(VHSLineEntry)));
     if (defects) {
@@ -472,6 +473,160 @@ static void line_pll(SDL_GPUDevice *gpu) {
     chain_destroy(&sc, gpu);
 }
 
+/* Mean shift (ns) of the bar edges of one line against a reference line,
+ * over edges between x0 and x1, and their spread. */
+static double edge_shift(const double *out, int line, int ref, int x0, int x1, double *spread) {
+    double lo = 1e9, hi = -1e9, sum = 0; int n = 0;
+    for (int x = x0; x < x1; x++) {
+        const double *y = out + ref * VHS_SPL;
+        if (!(y[x] < 59.7 && y[x + 1] >= 59.7)) continue;
+        double pr = x + (59.7 - y[x]) / (y[x + 1] - y[x]), best = 1e9;
+        const double *z = out + line * VHS_SPL;
+        for (int u = x - 120; u < x + 120; u++)
+            if (z[u] < 59.7 && z[u + 1] >= 59.7) { double pz = u + (59.7 - z[u]) / (z[u + 1] - z[u]); if (fabs(pz - pr) < fabs(best)) best = pz - pr; }
+        if (best > 1e8) continue;
+        double d = best / FS * 1e9;
+        lo = fmin(lo, d); hi = fmax(hi, d); sum += d; n++;
+    }
+    if (spread) *spread = n ? hi - lo : 0;
+    return n ? sum / n : 0;
+}
+
+/* The head switch in the kernels: with a 1 us step at both switches and
+ * nothing else moving, the line before the switch keeps the old head's
+ * timing (no shear across it), the switch line steps at x_switch, and a
+ * whole-number switch position steps at the start of its line. */
+static void head_switch(SDL_GPUDevice *gpu) {
+    static float raster[N_RASTER]; static double out[N_RASTER]; static uint8_t pic[256 * 240];
+    picture_bars(pic, 0x0f, 0x30); nes_raster(pic, raster);
+    for (int whole = 0; whole < 2; whole++) {
+        VHSParams p = deck_params(); static_transport(&p); clean_tape(&p);
+        p.skew_ba_ns = p.skew_ab_ns = 1000; p.switch_lines_before_vsync = whole ? 6.0f : 6.5f;
+        Rig r; CHECK(rig_init(&r, gpu, &p));
+        rig_run(&r, gpu, raster, 10, NULL, NULL, 0, 0, out);
+        double s237, s238a, s238b, s239, sp237, sp238a, sp238b, sp239;
+        s237 = edge_shift(out, 237, 230, 600, 2500, &sp237);
+        s239 = edge_shift(out, 239, 230, 600, 2500, &sp239);
+        if (whole) {
+            s238a = edge_shift(out, 238, 230, 600, 2500, &sp238a); s238b = s238a; sp238b = sp238a;
+        } else {
+            s238a = edge_shift(out, 238, 230, 600, 1300, &sp238a);
+            s238b = edge_shift(out, 238, 230, 1450, 2500, &sp238b);
+        }
+        printf("VHS head switch at %.1f H: line 237 %+.0f ns, 238 %+.0f / %+.0f (spread %.0f), 239 %+.0f (spread %.0f)\n",
+               p.switch_lines_before_vsync, s237, s238a, s238b, fmax(sp238a, sp238b), s239, sp239);
+        /* The ramp that keeps the timing bounded is 3.8 ns per line. */
+        CHECK(fabs(s237) < 40 && sp237 < 30);
+        CHECK(fabs(s238a) < 40 && sp238a < 30);
+        CHECK(fabs(s238b - (whole ? 0 : 1000)) < 40 && sp238b < 30);
+        CHECK(fabs(s239 - 1000) < 40 && sp239 < 30);
+        rig_free(&r, gpu);
+    }
+}
+
+/* The whole chain on a flat grey field: the TV's black level must not
+ * follow the tape's timing. With the deck's noise off and the interchange
+ * head-switch skews on, both heads' fields must decode to the same
+ * luminance, overall and in every band of rows. With the noise on, the
+ * keyed clamp must not turn line noise into whole-line offsets: the share
+ * of the decoded field's temporal variance that sits in whole rows stays
+ * small. */
+typedef struct { double head_diff, band_diff, row_share; } ChainGrey;
+static ChainGrey chain_grey(SDL_GPUDevice *gpu, const VHSParams *deck, float clamp_lines) {
+    enum { FRAMES = 12, SETTLE = 4, X0 = 200, X1 = 1900, XSTEP = 4, Y0 = 8, Y1 = 232, BANDS = 8 };
+    SignalPrecompute sp; VideoChain c; VideoGPUChain v;
+    ChainGrey r = {0, 0, 0};
+    signal_precompute_init(&sp, SIGNAL_REGION_NTSC);
+    video_chain_init_preset(&c, VIDEO_CONN_COMPOSITE, VIDEO_COMB_NONE, SIGNAL_REGION_NTSC);
+    c.tv.noise_level = 0; c.console_psu_hum = 0;
+    c.vhs = *deck;
+    c.tv.h_pll_hz = 250; c.tv.h_pll_damping = 0.7f; c.tv.h_pll_vblank_gain = 2.5f;
+    c.tv.clamp_lines = clamp_lines;
+    CHECK(video_gpu_init(&v, gpu, &c, "shaders/compute", sp.fir_y, sp.fir_y_n, sp.fir_c, sp.fir_c_n, sp.fir_q, sp.fir_q_n));
+    CHECK(video_gpu_upload_signal_table(&v, gpu, (float *)sp.table, NULL, SIG_TABLE_ENTRIES, SIG_TABLE_STRIDE));
+    CHECK(vhs_gpu_enabled(&v.vhs, &v.sig_chain) == (deck->enabled != 0));
+    static uint16_t codes[256 * 240];
+    for (int i = 0; i < 256 * 240; i++) codes[i] = 0x10;
+    float *rgb = malloc(v.rgb_size);    /* Y, I, Q per active sample */
+    const int W = (X1 - X0) / XSTEP, H = Y1 - Y0;
+    float *kept = malloc((size_t)(FRAMES - SETTLE) * W * H * sizeof(float));
+    double mean[FRAMES], band[FRAMES][BANDS];
+    for (int f = 0; f < FRAMES; f++) {
+        int phase = signal_frame_phase(&sp, (unsigned)f);
+        video_gpu_set_demod(&v, (phase + sp.demod_rotate) * 6.28318530718f / 12, 6.28318530718f / 12);
+        CHECK(video_gpu_process_full(&v, gpu, codes, phase, sp.phase_line_adv, 0, rgb));
+        mean[f] = 0;
+        for (int b = 0; b < BANDS; b++) band[f][b] = 0;
+        for (int y = Y0; y < Y1; y++) for (int x = X0; x < X1; x += XSTEP) {
+            float g = rgb[((size_t)y * sp.samples_per_line + x) * 3];    /* decoded Y */
+            mean[f] += g; band[f][(y - Y0) * BANDS / H] += g;
+            if (f >= SETTLE) kept[((size_t)(f - SETTLE) * H + (y - Y0)) * W + (x - X0) / XSTEP] = g;
+        }
+        mean[f] /= (double)W * H;
+        for (int b = 0; b < BANDS; b++) band[f][b] /= (double)W * H / BANDS;
+        if (getenv("VHS_CHAIN_DIAG")) {
+            static float ref[(262 + 2) * 4];
+            gpu_buffer_download(gpu, v.buf_receiver, ref, sizeof(ref));
+            fprintf(stderr, "chain frame %d: mean %.5f bands %.4f %.4f %.4f %.4f; rgb[100,900] %.4f %.4f %.4f; ref line 100: phase %.3f black %.4f burst %.4f offset %.2f; line 240: %.3f %.4f %.4f %.2f\n",
+                    f, mean[f], band[f][0], band[f][3], band[f][5], band[f][7],
+                    rgb[((size_t)100 * sp.samples_per_line + 900) * 3], rgb[((size_t)100 * sp.samples_per_line + 900) * 3 + 1], rgb[((size_t)100 * sp.samples_per_line + 900) * 3 + 2],
+                    ref[100 * 4], ref[100 * 4 + 1], ref[100 * 4 + 2], ref[100 * 4 + 3], ref[240 * 4], ref[240 * 4 + 1], ref[240 * 4 + 2], ref[240 * 4 + 3]);
+        }
+    }
+    double even = 0, odd = 0, beven[BANDS] = {0}, bodd[BANDS] = {0};
+    for (int f = SETTLE; f < FRAMES; f++) {
+        if (f & 1) { odd += mean[f] / ((FRAMES - SETTLE) / 2); for (int b = 0; b < BANDS; b++) bodd[b] += band[f][b] / ((FRAMES - SETTLE) / 2); }
+        else { even += mean[f] / ((FRAMES - SETTLE) / 2); for (int b = 0; b < BANDS; b++) beven[b] += band[f][b] / ((FRAMES - SETTLE) / 2); }
+    }
+    r.head_diff = (even - odd) / (0.5 * (even + odd));
+    for (int b = 0; b < BANDS; b++) r.band_diff = fmax(r.band_diff, fabs(beven[b] - bodd[b]) / (0.5 * (even + odd)));
+    /* Temporal variance per pixel and per row mean over the kept frames. */
+    const int N = FRAMES - SETTLE;
+    double total = 0, rows = 0;
+    for (int y = 0; y < H; y++) {
+        double rm[FRAMES] = {0};
+        for (int x = 0; x < W; x++) {
+            double m = 0, q = 0;
+            for (int f = 0; f < N; f++) { double g = kept[((size_t)f * H + y) * W + x]; m += g / N; rm[f] += g / W; }
+            for (int f = 0; f < N; f++) { double d = kept[((size_t)f * H + y) * W + x] - m; q += d * d / (N - 1); }
+            total += q / ((double)W * H);
+        }
+        double m = 0, q = 0;
+        for (int f = 0; f < N; f++) m += rm[f] / N;
+        for (int f = 0; f < N; f++) q += (rm[f] - m) * (rm[f] - m) / (N - 1);
+        rows += q / H;
+    }
+    r.row_share = total > 0 ? rows / total : 0;
+    free(kept); free(rgb);
+    video_gpu_destroy(&v, gpu);
+    return r;
+}
+
+static void chain_black_level(SDL_GPUDevice *gpu) {
+    VHSParams p = deck_params(); clean_tape(&p);
+    p.dropout_scale = 0; p.line_jitter_ns = 0; p.tbe_varying_ns = 0;
+    p.skew_ba_ns = 1700; p.skew_ab_ns = -80;    /* interchange steps: the worst case */
+    ChainGrey timing = chain_grey(gpu, &p, VIDEO_CLAMP_LINES_DEFAULT);
+    printf("VHS chain, timing only: head A minus head B luminance %+.4f%%, largest band %.4f%%\n",
+           100 * timing.head_diff, 100 * timing.band_diff);
+    CHECK(fabs(timing.head_diff) < 0.0005);
+    CHECK(timing.band_diff < 0.002);
+    /* With tape noise, the whole-row share of the decoded field's temporal
+     * variance follows the TV's clamp time constant: the clamp turns the
+     * porch noise it measures into whole-line offsets. */
+    const float clamps[3] = {VIDEO_CLAMP_LINES_DEFAULT, 8, 64};
+    double share[3];
+    for (int k = 0; k < 3; k++) {
+        VHSParams q = deck_params();
+        ChainGrey noisy = chain_grey(gpu, &q, clamps[k]);
+        share[k] = noisy.row_share;
+        if (k == 0) CHECK(fabs(noisy.head_diff) < 0.002);
+    }
+    printf("VHS chain, defaults: whole-row share of the temporal variance %.1f%% / %.1f%% / %.1f%% with a %.1f / 8 / 64 line clamp\n",
+           100 * share[0], 100 * share[1], 100 * share[2], VIDEO_CLAMP_LINES_DEFAULT);
+    CHECK(share[0] > share[1] && share[1] > share[2] && share[2] < 0.05);
+}
+
 int test_vhs_fidelity(SDL_GPUDevice *gpu) {
     failures = 0;
     levels(gpu);
@@ -481,5 +636,7 @@ int test_vhs_fidelity(SDL_GPUDevice *gpu) {
     emphasis_clip(gpu);
     dropouts(gpu);
     line_pll(gpu);
+    head_switch(gpu);
+    chain_black_level(gpu);
     return failures;
 }

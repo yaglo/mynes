@@ -50,7 +50,7 @@ static int gcd(int a, int b) { while (b) { int t = a % b; a = b; b = t; } return
  * of the last one (rgb_size floats, caller frees), or NULL. */
 static float *decode(SDL_GPUDevice *gpu, const Console *con, VideoConnectionType conn,
                      const uint32_t *codes, int lines, float luma_bw_hz, float luma_trap,
-                     int frames, int *spl_out) {
+                     int frames, int *spl_out, int code_bits) {
     SignalPrecompute sp;
     signal_precompute_init(&sp, SIGNAL_REGION_NTSC);
     VideoChain chain;
@@ -69,6 +69,7 @@ static float *decode(SDL_GPUDevice *gpu, const Console *con, VideoConnectionType
         .ramp = con->ramp, .ramp_n = con->ramp_n,
         .phase_base = 0, .phase_line_adv = con->line_phase,
         .chroma_bw_hz = 1.3e6f, .luma_bw_hz = luma_bw_hz, .luma_trap = luma_trap, .setup = 0,
+        .code_bits = code_bits,
     };
     float *rgb = calloc(v.rgb_size / sizeof(float), sizeof(float));
     bool ok = rgb != NULL;
@@ -100,7 +101,7 @@ static void encoder_identity(SDL_GPUDevice *gpu, const Console *con, VideoConnec
             codes[y * con->width + x] = (c[0] ? full : 0) | ((c[1] ? full : 0) << 6) | ((c[2] ? full : 0) << 12);
         }
     int spl = 0;
-    float *rgb = decode(gpu, con, conn, codes, lines, 5e6f, 0.0f, 12, &spl);
+    float *rgb = decode(gpu, con, conn, codes, lines, 5e6f, 0.0f, 12, &spl, 0);
     CHECK(rgb != NULL);
     float worst = 0;
     if (rgb) {
@@ -137,7 +138,7 @@ static double stroke_chroma(SDL_GPUDevice *gpu, const Console *con, float luma_b
             codes[y * con->width + x] = x < con->width / 2 ? ((x & 3) == 0 ? white : 0)
                                                            : ((y & 3) == 0 ? white : 0);
     int spl = 0;
-    float *rgb = decode(gpu, con, VIDEO_CONN_COMPOSITE, codes, lines, luma_bw_hz, trap, 12, &spl);
+    float *rgb = decode(gpu, con, VIDEO_CONN_COMPOSITE, codes, lines, luma_bw_hz, trap, 12, &spl, 0);
     free(codes);
     if (!rgb) { failures++; return -1; }
     double chroma = 0, luma = 0; int n = 0;
@@ -153,6 +154,52 @@ static double stroke_chroma(SDL_GPUDevice *gpu, const Console *con, float luma_b
     return chroma / n;
 }
 
+/* A picture or video enters as linear 10-bit gun voltages instead of a
+ * console's DAC codes: the same bars at code 1023, and a grey at code 512
+ * in the lower half, decode to the sent voltages. */
+static void encoder_linear(SDL_GPUDevice *gpu, VideoConnectionType conn, const char *conn_name) {
+    Console con = console_snes();
+    con.width = 1024;
+    const int lines = 224;
+    uint32_t *codes = malloc((size_t)con.width * lines * sizeof(uint32_t));
+    for (int y = 0; y < lines; y++)
+        for (int x = 0; x < con.width; x++) {
+            const int *c = bar_rgb[x * 8 / con.width];
+            uint32_t v = y < lines / 2 ? 1023u : 512u;
+            codes[y * con.width + x] = y < lines / 2
+                ? (c[0] ? v : 0) | ((c[1] ? v : 0) << 10) | ((c[2] ? v : 0) << 20)
+                : v | (v << 10) | (v << 20);
+        }
+    int spl = 0;
+    float *rgb = decode(gpu, &con, conn, codes, lines, 5e6f, 0.0f, 12, &spl, 10);
+    CHECK(rgb != NULL);
+    if (rgb) {
+        float worst = 0;
+        for (int b = 0; b < 8; b++) {
+            double acc[3] = {0}; int n = 0;
+            for (int y = 8 + 30; y < 8 + lines / 2 - 20; y++)
+                for (int x = b * spl / 8 + spl / 32; x < (b + 1) * spl / 8 - spl / 32; x++) {
+                    const float *px = rgb + ((size_t)y * spl + x) * 3;
+                    acc[0] += px[0]; acc[1] += px[1]; acc[2] += px[2]; n++;
+                }
+            for (int c = 0; c < 3; c++) worst = fmaxf(worst, fabsf((float)(acc[c] / n) - (float)bar_rgb[b][c]));
+        }
+        double grey[3] = {0}; int n = 0;
+        for (int y = 8 + lines / 2 + 20; y < 8 + lines - 20; y++)
+            for (int x = spl / 8; x < spl * 7 / 8; x++) {
+                const float *px = rgb + ((size_t)y * spl + x) * 3;
+                grey[0] += px[0]; grey[1] += px[1]; grey[2] += px[2]; n++;
+            }
+        float grey_err = 0;
+        for (int c = 0; c < 3; c++) grey_err = fmaxf(grey_err, fabsf((float)(grey[c] / n) - 512.0f / 1023.0f));
+        printf("encoder, 10-bit linear input, %s: worst bar error %.4f, grey error %.4f\n", conn_name, worst, grey_err);
+        CHECK(worst < 0.01f);
+        CHECK(grey_err < 0.005f);
+    }
+    free(rgb);
+    free(codes);
+}
+
 int test_encoder(SDL_GPUDevice *gpu) {
     Console md = console_md(), snes = console_snes();
     const struct { VideoConnectionType conn; const char *name; } conns[] = {
@@ -160,6 +207,7 @@ int test_encoder(SDL_GPUDevice *gpu) {
     for (unsigned i = 0; i < sizeof(conns) / sizeof(conns[0]); i++) {
         encoder_identity(gpu, &md, conns[i].conn, conns[i].name);
         encoder_identity(gpu, &snes, conns[i].conn, conns[i].name);
+        encoder_linear(gpu, conns[i].conn, conns[i].name);
     }
     double luma_v = 0, luma_h = 0;
     double open_v = stroke_chroma(gpu, &snes, 5e6f, 0.0f, 0, &luma_v);

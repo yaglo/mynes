@@ -29,7 +29,7 @@ struct Params
     float h_vblank_gain;
     uint h_pll;
     uint h_vblank_lines;
-    uint reserved0;
+    float clamp_gain;
     uint reserved1;
 };
 
@@ -64,7 +64,7 @@ kernel void main0(device Reference& _26 [[buffer(2)]], constant Params& _32 [[bu
     float _145;
     float _217;
     float _235;
-    float4 _331;
+    float4 _333;
     for (uint line = 0u; line < _32.count; line++)
     {
         float4 m = _87.measurement[line];
@@ -151,7 +151,7 @@ kernel void main0(device Reference& _26 [[buffer(2)]], constant Params& _32 [[bu
             }
             else
             {
-                state.y = mix(state.y, m.y, 0.3499999940395355224609375);
+                state.y = mix(state.y, m.y, _32.clamp_gain);
                 state.w = mix(state.w, m.w, 0.25);
                 if (m.z > 0.00999999977648258209228515625)
                 {
@@ -165,17 +165,17 @@ kernel void main0(device Reference& _26 [[buffer(2)]], constant Params& _32 [[bu
                     state.z *= 0.64999997615814208984375;
                 }
             }
-            bool _310 = _32.h_response > 0.0;
-            bool _317;
-            if (!_310)
+            bool _312 = _32.h_response > 0.0;
+            bool _319;
+            if (!_312)
             {
-                _317 = _32.h_pll != 0u;
+                _319 = _32.h_pll != 0u;
             }
             else
             {
-                _317 = _310;
+                _319 = _312;
             }
-            if (_317)
+            if (_319)
             {
                 state.w = horizontal;
             }
@@ -186,13 +186,13 @@ kernel void main0(device Reference& _26 [[buffer(2)]], constant Params& _32 [[bu
         }
         if (_32.h_pll != 0u)
         {
-            _331 = float4(state.xyz, predicted);
+            _333 = float4(state.xyz, predicted);
         }
         else
         {
-            _331 = state;
+            _333 = state;
         }
-        _26.reference[line] = _331;
+        _26.reference[line] = _333;
     }
     _26.reference[_32.count] = state;
     if (_32.h_pll != 0u)

@@ -16,10 +16,11 @@ display shows one render pixel per device pixel and nothing is scaled.
 Flicker warning: the detail crop below alternates NTSC phases at 8 frames per
 second.
 
-<img src="docs/images/flicker-super-mario-bros-sony-pvm-14l2.webp" width="750" alt="Detail crop of Super Mario Bros. on the Sony PVM-14L2 preset, 8 consecutive frames">
+<img src="docs/images/flicker-super-mario-bros-sony-pvm-14l2.webp" width="679" alt="Detail crop of Super Mario Bros. on the Sony PVM-14L2 preset, 8 consecutive frames">
 
-The crop is 1500×1125 render pixels, cut 1:1 from 3840×2880 frames, 8
-consecutive frames with the alternating NTSC phases kept separate. The
+The crop is 1358×1120 render pixels, 100 NES pixels of the hill, Mario and
+the bricks, cut 1:1 from 3840×2880 frames: 8 consecutive frames with the
+alternating NTSC phases kept separate. The
 [Gallery](https://yaglo.github.io/mynes-web/gallery/) of the
 [project site](https://yaglo.github.io/mynes-web/) shows every television
 preset with 1:1 crops and 3840×2880 full frames, and the home page switches
@@ -152,6 +153,8 @@ the GPU tests. `gpu_fidelity_tests` needs a hardware GPU and runs outside CI.
 - [CPU DSL design](docs/dsl-design.md) and [reference](docs/dsl-reference.md)
 - [GPU pipeline design](docs/gpu-pipeline-design.md) and [reference](docs/gpu-pipeline-reference.md)
 - [Controls and menus](docs/gpu-controls.md), [Signal Studio](tools/visualiser/README.md)
+- [Pictures and videos through the chain](docs/video-tool.md): `mynes_video`
+  records a photo or a video through any NTSC preset, VHS included
 - [Showcase pipeline](tools/showcase/README.md): the site's clips, stills and
   crops, recorded at every size they are shown at
 - [Debugging workflows](docs/debugging/common-workflows.md), [commands](docs/dev/commands.md)

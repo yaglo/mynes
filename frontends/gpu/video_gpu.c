@@ -97,19 +97,32 @@ static GpuReceiverPLLParams receiver_pll_params(const VideoGPUChain *v) {
     p.region = (uint32_t)v->raster_fmt.region;
     const TVDisplayParams *tv = &v->chain->tv;
     if (tv->h_pll_hz > 0) {
-        /* Second-order loop per line: Kp = 2 zeta wn, Ki = wn^2. */
+        /* Second-order loop per line: Kp = 2 zeta wn, Ki = wn^2. The loop
+         * samples one sync edge per line, and its recurrence z^2 + (Kp g +
+         * Ki g - 2) z + (1 - Kp g) is stable only while Kp g < 2 and
+         * 4 - 2 Kp g - Ki g > 0. The natural frequency is held to 1 kHz
+         * and the V-blank gain to the value that keeps Kp g at or below
+         * 1.5 with a margin of 1 on the second bound, so no setting runs
+         * away during the 21 fast lines. */
         double line_rate = signal_format_sample_rate_hz(&v->signal_fmt) / p.full_width;
-        double wn = 2 * M_PI * tv->h_pll_hz / line_rate;
+        double wn = 2 * M_PI * fmin(tv->h_pll_hz, 1000) / line_rate;
         double zeta = tv->h_pll_damping > 0 ? tv->h_pll_damping : 0.7;
+        double kp = 2 * zeta * wn, ki = wn * wn;
+        double g = tv->h_pll_vblank_gain > 0 ? tv->h_pll_vblank_gain : 1.0;
+        g = fmin(g, fmin(1.5 / kp, 3 / (2 * kp + ki)));
         p.h_pll = 1;
-        p.h_kp = (float)(2 * zeta * wn);
-        p.h_ki = (float)(wn * wn);
-        p.h_vblank_gain = tv->h_pll_vblank_gain > 0 ? tv->h_pll_vblank_gain : 1.0f;
+        p.h_kp = (float)kp;
+        p.h_ki = (float)ki;
+        p.h_vblank_gain = (float)fmax(g, 1.0);
         p.h_vblank_lines = 21;
     } else if (tv->h_afc_tau_ms > 0) {
         float line_ms = 1000.0f * p.full_width / signal_format_sample_rate_hz(&v->signal_fmt);
         p.h_response = -expm1f(-line_ms / tv->h_afc_tau_ms);
     }
+    /* Keyed clamp: the back-porch measurement charges the clamp by this
+     * fraction each line. */
+    double clamp_lines = tv->clamp_lines > 0 ? tv->clamp_lines : VIDEO_CLAMP_LINES_DEFAULT;
+    p.clamp_gain = (float)-expm1(-1 / clamp_lines);
     return p;
 }
 static bool vhs_active(const VideoChain *c) {
@@ -1541,7 +1554,8 @@ bool video_gpu_process(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
 
     /* ---- 1. Upload waveform (copy pass in shared cmd) ---- */
     if (!chain_upload_input_cmd(&vgc->sig_chain, gpu, master_cmd, waveform, upload_bytes) ||
-        !vhs_gpu_frame(&vgc->vhs, &vgc->sig_chain, gpu, master_cmd, vgc->signal_frame_counter - 1)) {
+        !vhs_gpu_frame(&vgc->vhs, &vgc->sig_chain, gpu, master_cmd, vgc->signal_frame_counter - 1,
+                       -vgc->raster_sync_level)) {
         SDL_SubmitGPUCommandBuffer(master_cmd);
         fprintf(stderr, "video_gpu_process: waveform upload failed\n");
         return false;
@@ -2251,7 +2265,8 @@ bool video_gpu_process_full(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     vgc->demod_line_phase = phase_line_adv * 2.0f * (float)M_PI / 12.0f;
     update_demod_params(vgc);
     vgc->sig_chain.current_buf = 0;
-    if (!vhs_gpu_frame(&vgc->vhs, &vgc->sig_chain, gpu, cmd, vgc->signal_frame_counter - 1) ||
+    if (!vhs_gpu_frame(&vgc->vhs, &vgc->sig_chain, gpu, cmd, vgc->signal_frame_counter - 1,
+                       -vgc->raster_sync_level) ||
         !chain_run_cmd(&vgc->sig_chain, cmd)) {
         vgc->deflection_cache_valid = false;
         SDL_CancelGPUCommandBuffer(cmd);
@@ -2270,10 +2285,12 @@ bool video_gpu_process_full(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
 
 bool video_gpu_process_rgb(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
                            const VideoRGBSource *src, float *rgb_out) {
-    if (!vgc || !src || !src->pixels || !src->ramp || !vgc->pipe_encoder.pipeline) return false;
+    const bool linear = src && src->code_bits == 10;
+    if (!vgc || !src || !src->pixels || (!linear && !src->ramp) || !vgc->pipe_encoder.pipeline) return false;
     if (src->width <= 0 || src->width > 1024 || src->lines <= 0 || src->lines > 240 ||
         src->top_line < 0 || src->top_line + src->lines > 240 ||
-        src->spp_num <= 0 || src->spp_den <= 0 || src->ramp_n <= 0 || src->ramp_n > 64)
+        src->spp_num <= 0 || src->spp_den <= 0 ||
+        (src->code_bits != 0 && src->code_bits != 10) || (!linear && (src->ramp_n <= 0 || src->ramp_n > 64)))
         return false;
     const SignalFormat *fmt = &vgc->signal_fmt;
     vgc->source_separated = vgc->chain->connection == VIDEO_CONN_SVIDEO;
@@ -2294,7 +2311,7 @@ bool video_gpu_process_rgb(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
 
     /* The DAC ramp changes with the console, not the frame. */
     float ramp[64] = {0};
-    memcpy(ramp, src->ramp, (size_t)src->ramp_n * sizeof(float));
+    if (!linear) memcpy(ramp, src->ramp, (size_t)src->ramp_n * sizeof(float));
     if (!vgc->ramp_uploaded || memcmp(ramp, vgc->ramp_cache, sizeof(ramp)) != 0) {
         if (!gpu_buffer_upload(gpu, vgc->buf_ramp, ramp, sizeof(ramp))) return false;
         memcpy(vgc->ramp_cache, ramp, sizeof(ramp));
@@ -2337,14 +2354,15 @@ bool video_gpu_process_rgb(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
         uint32_t width, lines, samples_per_line, spp_num;
         uint32_t spp_den, top_line, source_mode, taps;
         float phase_base, phase_line_adv, chroma_cut, setup;
-        float luma_cut, trap_cut, trap_depth, pad0;
+        float luma_cut, trap_cut, trap_depth;
+        uint32_t code_bits;
         float rgb_rows[3][4];
     } params = {
         (uint32_t)src->width, (uint32_t)src->lines, (uint32_t)fmt->samples_per_line, (uint32_t)src->spp_num,
         (uint32_t)src->spp_den, (uint32_t)src->top_line,
         source_rgb ? 2u : (vgc->source_separated ? 1u : 0u), taps,
         (float)((src->phase_base % 12 + 12) % 12), (float)((src->phase_line_adv % 12 + 12) % 12),
-        cut, src->setup, luma_cut, trap_cut, trap_depth, 0.0f, {{0}}};
+        cut, src->setup, luma_cut, trap_cut, trap_depth, linear ? 10u : 0u, {{0}}};
     if (source_rgb) {
         for (int c = 0; c < 3; c++) {
             memcpy(params.rgb_rows[c], vgc->color_matrix[c], 3 * sizeof(float));
@@ -2375,7 +2393,8 @@ bool video_gpu_process_rgb(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
     vgc->demod_line_phase = src->phase_line_adv * 2.0f * (float)M_PI / 12.0f;
     update_demod_params(vgc);
     vgc->sig_chain.current_buf = 0;
-    if (!vhs_gpu_frame(&vgc->vhs, &vgc->sig_chain, gpu, cmd, vgc->signal_frame_counter - 1) ||
+    if (!vhs_gpu_frame(&vgc->vhs, &vgc->sig_chain, gpu, cmd, vgc->signal_frame_counter - 1,
+                       -vgc->raster_sync_level) ||
         !chain_run_cmd(&vgc->sig_chain, cmd)) {
         vgc->deflection_cache_valid = false;
         SDL_CancelGPUCommandBuffer(cmd);

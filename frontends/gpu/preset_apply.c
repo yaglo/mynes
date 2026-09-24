@@ -159,6 +159,9 @@ static void preset_apply_cpu_state_ex(PresetCtx *ctx, const PhysicalPreset *p,
         rf->agc_attack_ms=-signal_region_frame_ms(new_region)/logf(.9f);
         rf->agc_release_ms=-signal_region_frame_ms(new_region)/logf(.98f);
     }
+    /* Presets saved before the keyed clamp had a time constant carry no
+     * value; show the generic one rather than a zero. */
+    if (tv->clamp_lines <= 0) tv->clamp_lines = VIDEO_CLAMP_LINES_DEFAULT;
     /* A vhs block without "model": 2 described the earlier filtered-noise
      * stage; its keys mean nothing to the FM deck. Enabled ones fall back
      * to the SP consumer deck (and the TV loop it was measured with). */
@@ -1272,9 +1275,10 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_comb[n++] = MI_FLOAT("Temporal blend",     &ctx->video_gpu_chain->temporal_blend, 0.05f, 0.0f, 0.5f, gpu_cb_update_beam_params, "%.2f");
     menu_comb[n++] = MI_FLOAT("Motion threshold",   &vc->tv.motion_threshold, 0.01f, 0.0f, 0.30f, gpu_cb_update_beam_params, "%.2f");
     menu_comb[n++] = MI_FLOAT("H AFC (ms, 0=auto)", &vc->tv.h_afc_tau_ms, 0.1f, 0.0f, 10.0f, gpu_cb_update_rc_params, "%.2f");
-    menu_comb[n++] = MI_FLOAT("H PLL Hz (0=AFC)", &vc->tv.h_pll_hz, 10, 0, 2000, gpu_cb_update_rc_params, "%.0f");
+    menu_comb[n++] = MI_FLOAT("H PLL Hz (0=AFC)", &vc->tv.h_pll_hz, 10, 0, 1000, gpu_cb_update_rc_params, "%.0f");
     menu_comb[n++] = MI_FLOAT("H PLL damping", &vc->tv.h_pll_damping, .05f, .1f, 2, gpu_cb_update_rc_params, "%.2f");
-    menu_comb[n++] = MI_FLOAT("H PLL V-blank gain", &vc->tv.h_pll_vblank_gain, .1f, 1, 5, gpu_cb_update_rc_params, "%.1f");
+    menu_comb[n++] = MI_FLOAT("H PLL V-blank gain", &vc->tv.h_pll_vblank_gain, .1f, 1, 3, gpu_cb_update_rc_params, "%.1f");
+    menu_comb[n++] = MI_FLOAT("Black clamp lines", &vc->tv.clamp_lines, .5f, 1, 500, gpu_cb_update_rc_params, "%.1f");
     const int menu_comb_count=n;
 
     /* ================================================================
@@ -1520,7 +1524,7 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_vhs[n++]=MI_FLOAT("FM sync tip Hz", &vc->vhs.fm_sync_hz, 50000,3000000,4000000,gpu_cb_redesign_firs,"%.0f");
     menu_vhs[n++]=MI_FLOAT("FM white Hz", &vc->vhs.fm_white_hz, 50000,4000000,5400000,gpu_cb_redesign_firs,"%.0f");
     menu_vhs[n++]=MI_FLOAT("RF C/N0 dB Hz", &vc->vhs.rf_cnr_dbhz, .5f,80,110,gpu_cb_redesign_firs,"%.1f");
-    menu_vhs[n++]=MI_FLOAT("Tape tilt dB/MHz", &vc->vhs.tape_tilt_db_per_mhz, .1f,-6,0,gpu_cb_redesign_firs,"%.1f");
+    menu_vhs[n++]=MI_FLOAT("Tape tilt dB/MHz", &vc->vhs.tape_tilt_db_per_mhz, .1f,-4.4f,0,gpu_cb_redesign_firs,"%.1f");
     menu_vhs[n++]=MI_FLOAT("Modulation noise Hz", &vc->vhs.mod_noise_hz, 100,0,10000,gpu_cb_redesign_firs,"%.0f");
     menu_vhs[n++]=MI_FLOAT("Head B noise dB", &vc->vhs.head_b_noise_db, .1f,-3,3,gpu_cb_redesign_firs,"%.1f");
     menu_vhs[n++]=MI_FLOAT("Chroma noise IRE", &vc->vhs.chroma_noise_ire, .05f,0,5,gpu_cb_redesign_firs,"%.2f");
@@ -1531,12 +1535,13 @@ void preset_ctx_init(PresetCtx *ctx) {
     menu_vhs[n++]=MI_FLOAT("Canceller limit IRE", &vc->vhs.canceller_limit_ire, .5f,0,15,gpu_cb_redesign_firs,"%.1f");
     menu_vhs[n++]=MI_FLOAT("Sharpness", &vc->vhs.sharpness, .05f,0,1,gpu_cb_redesign_firs,"%.2f");
     menu_vhs[n++]=MI_FLOAT("Detail limit IRE", &vc->vhs.detail_limit_ire, 1,0,50,gpu_cb_redesign_firs,"%.0f");
-    menu_vhs[n++]=MI_FLOAT("Colour APC loop Hz", &vc->vhs.apc_loop_hz, 50,100,5000,gpu_cb_redesign_firs,"%.0f");
+    menu_vhs[n++]=MI_FLOAT("Colour APC loop Hz", &vc->vhs.apc_loop_hz, 50,100,2000,gpu_cb_redesign_firs,"%.0f");
     menu_vhs[n++]=MI_FLOAT("Y/C delay ns", &vc->vhs.yc_delay_ns, 10,-500,500,gpu_cb_redesign_firs,"%.0f");
     menu_vhs[n++]=MI_FLOAT("Head bow scale", &vc->vhs.bow_scale, .1f,0,5,gpu_cb_redesign_firs,"%.1f");
     menu_vhs[n++]=MI_FLOAT("Field timing error ns", &vc->vhs.tbe_varying_ns, 2,0,500,gpu_cb_redesign_firs,"%.0f");
     menu_vhs[n++]=MI_FLOAT("Timing slow share", &vc->vhs.tbe_slow_fraction, .05f,0,1,gpu_cb_redesign_firs,"%.2f");
     menu_vhs[n++]=MI_FLOAT("Timing slow ms", &vc->vhs.tbe_slow_tau_ms, 20,20,5000,gpu_cb_redesign_firs,"%.0f");
+    menu_vhs[n++]=MI_FLOAT("Timing slow period ms", &vc->vhs.tbe_slow_period_ms, 20,0,5000,gpu_cb_redesign_firs,"%.0f");
     menu_vhs[n++]=MI_FLOAT("Line jitter ns", &vc->vhs.line_jitter_ns, 1,0,100,gpu_cb_redesign_firs,"%.0f");
     menu_vhs[n++]=MI_FLOAT("Switch lines before V", &vc->vhs.switch_lines_before_vsync, .5f,0,20,gpu_cb_redesign_firs,"%.1f");
     menu_vhs[n++]=MI_FLOAT("Skew B to A ns", &vc->vhs.skew_ba_ns, 20,-5000,5000,gpu_cb_redesign_firs,"%.0f");

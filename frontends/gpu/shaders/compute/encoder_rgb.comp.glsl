@@ -32,7 +32,9 @@
  * signal chain models the encoder's Y bandwidth.
  *
  * Input:  width × lines packed codes (bits 0-5 red, 6-11 green, 12-17 blue)
- *         + 64-entry ramp of gun voltages (0 = black, 1 = white)
+ *         + 64-entry ramp of gun voltages (0 = black, 1 = white); or, with
+ *         code_bits 10, linear 10-bit gun voltages (bits 0-9 red, 10-19
+ *         green, 20-29 blue) from a picture or video, the ramp unused
  * Output: samples_per_line × 240 composite floats (blank 0, white 1)
  *         + the same in luma only (Y/C sources), or interleaved RGB gun
  *         voltages when source_mode == 2 (an RGB SCART connection).
@@ -66,7 +68,7 @@ layout(set = 2, binding = 0) uniform Params {
     float luma_cut;          /* luma low-pass cutoff, cycles per sample; 0 = none */
     float trap_cut;          /* luma trap half-width, cycles per sample */
     float trap_depth;        /* luma trap depth at the subcarrier, 0 = no trap */
-    float pad0;
+    uint  code_bits;         /* 0: codes index the ramp; 10: linear 10-bit guns */
     vec4  rgb_row_r, rgb_row_g, rgb_row_b; /* monitor gains and bias for RGB input */
 };
 
@@ -79,6 +81,8 @@ float sinc_w(float cut, float x) {
 vec3 gun_at(uint pic_line, int px) {
     px = clamp(px, 0, int(width) - 1);
     uint code = pixels[pic_line * width + uint(px)];
+    if (code_bits == 10u)
+        return vec3(float(code & 1023u), float((code >> 10u) & 1023u), float((code >> 20u) & 1023u)) / 1023.0;
     return vec3(ramp[code & 63u], ramp[(code >> 6u) & 63u], ramp[(code >> 12u) & 63u]);
 }
 

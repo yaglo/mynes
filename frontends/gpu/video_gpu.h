@@ -43,7 +43,8 @@ typedef struct {
  * DAC into an encoder IC (Mega Drive, Super Famicom). See
  * video_gpu_process_rgb. */
 typedef struct {
-    const uint32_t *pixels;   /* width × lines codes: bits 0-5 R, 6-11 G, 12-17 B */
+    const uint32_t *pixels;   /* width × lines codes: bits 0-5 R, 6-11 G, 12-17 B,
+                               * or with code_bits 10, bits 0-9 R, 10-19 G, 20-29 B */
     int width, lines;         /* console pixels per line and picture lines */
     int top_line;             /* raster picture line (0..239) of the first console line */
     int spp_num, spp_den;     /* samples per pixel = spp_num / spp_den */
@@ -55,6 +56,8 @@ typedef struct {
     float luma_bw_hz;         /* encoder luma band (-3 dB); 0 = unfiltered */
     float luma_trap;          /* luma trap depth at the subcarrier, 0 to 1; 0 = none */
     float setup;              /* black pedestal as a fraction of white */
+    int code_bits;            /* 0: codes index ramp; 10: linear 10-bit gun voltages
+                               * (code / 1023), ramp unused, for a video or picture */
 } VideoRGBSource;
 
 typedef struct {

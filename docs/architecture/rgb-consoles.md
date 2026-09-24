@@ -84,7 +84,9 @@ Consequences:
 ## Encoder model in the prototype
 
 `encoder_rgb.comp.glsl` per output sample: pixel code → ramp → gun
-voltages; Y = 0.299 R + 0.587 G + 0.114 B; U = 0.492 (B-Y), V = 0.877 (R-Y);
+voltages (or, with `code_bits` 10, linear 10-bit gun voltages without a
+ramp, which `mynes_video` uses for pictures and videos; see
+[video-tool.md](../video-tool.md)); Y = 0.299 R + 0.587 G + 0.114 B; U = 0.492 (B-Y), V = 0.877 (R-Y);
 U and V through a Hamming-windowed sinc low-pass at the encoder's chroma
 band (1.3 MHz default; the CXA1145's external LC and the CXA1645's built-in
 filter are not measured); composite = Y + U cos(a - 138°) + V cos(a - 48°)

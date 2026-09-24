@@ -188,9 +188,10 @@ typedef struct {
     float apc_loop_hz;            /* colour APC/AFC loop natural frequency */
     float yc_delay_ns;            /* residual luma delay added to the deck's Y delay line */
     float bow_scale;              /* multiplier on the measured per-head timing bows */
-    float tbe_varying_ns;         /* field-varying timing error, RMS over the harmonics */
+    float tbe_varying_ns;         /* field-varying timing error, RMS as the DH band analysis reports it */
     float tbe_slow_fraction;      /* share of the varying power that persists */
-    float tbe_slow_tau_ms;        /* decorrelation time of the persisting part */
+    float tbe_slow_tau_ms;        /* decay time of the persisting part */
+    float tbe_slow_period_ms;     /* period of the persisting part's slow oscillation; 0 = none */
     float line_jitter_ns;         /* white per-line timing jitter, RMS */
     float switch_lines_before_vsync; /* head switch position before vertical sync */
     float skew_ba_ns, skew_ab_ns; /* timing step at the B to A and A to B switches */
@@ -199,6 +200,9 @@ typedef struct {
 
 /* SP consumer deck defaults (vhs_params_defaults) leave the block enabled
  * state unchanged; model is set to VHS_MODEL_FM. */
+/* 0.35 of the back-porch error per line: -1 / ln(0.65) lines. */
+#define VIDEO_CLAMP_LINES_DEFAULT 2.3214f
+
 static inline void vhs_params_defaults(VHSParams *v) {
     int enabled = v->enabled;
     *v = (VHSParams){
@@ -212,10 +216,10 @@ static inline void vhs_params_defaults(VHSParams *v) {
         .canceller_split_hz = 5e5f, .canceller_limit_ire = 3,
         .sharpness = 0.2f, .detail_limit_ire = 0,
         .apc_loop_hz = 1000, .yc_delay_ns = 0,
-        .bow_scale = 1.0f, .tbe_varying_ns = 48,
-        .tbe_slow_fraction = 0.4f, .tbe_slow_tau_ms = 400,
+        .bow_scale = 1.0f, .tbe_varying_ns = 52.5f,
+        .tbe_slow_fraction = 0.4f, .tbe_slow_tau_ms = 2000, .tbe_slow_period_ms = 1733,
         .line_jitter_ns = 5, .switch_lines_before_vsync = 6.5f,
-        .skew_ba_ns = 1700, .skew_ab_ns = -80, .deck_seed = 1};
+        .skew_ba_ns = 810, .skew_ab_ns = 810, .deck_seed = 1};
 }
 
 static inline float video_rf_noise_rms(const RFModulatorParams *rf) {
@@ -253,6 +257,11 @@ typedef struct {
      * natural frequency, damping, and detector gain during the 21 lines
      * from vertical sync (TDA2579 V-blank fast mode). */
     float h_pll_hz, h_pll_damping, h_pll_vblank_gain;
+    /* Keyed black clamp time constant in lines: the back-porch level
+     * charges the clamp with 1 - exp(-1 / clamp_lines) per line. 0 takes
+     * VIDEO_CLAMP_LINES_DEFAULT, the receiver's earlier fixed 0.35 per
+     * line; no measured value exists. */
+    float clamp_lines;
     /* Fraction of residual carrier rejected in the Y FIR. 0.95 adds
      * 26 dB rejection at the carrier; 0 disables the horizontal trap.
      * Controls cross-luma, not cross-color in the separate chroma path.
