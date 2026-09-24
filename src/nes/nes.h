@@ -667,8 +667,19 @@ static inline void nes_init(NES *nes) {
 }
 
 static inline void nes_reset(NES *nes) {
-    /* Reset CPU - trigger reset sequence in microcode */
+    /* Reset CPU - trigger reset sequence in microcode. reset_pending is only
+     * polled at uPC 0, so restart the microcode there; otherwise a CPU stuck
+     * in KIL/JAM (or mid-DMA) never services the reset. */
+    nes->cpu.uPC = 0;
     nes->cpu.reset_pending = true;
+    nes->cpu.rdy = true;
+    nes->cpu.irq_pending = nes->cpu.nmi_pending = false;
+    nes->cpu.irq_sampled = nes->cpu.nmi_sampled = 0;
+    nes->cpu.irq_armed = nes->cpu.nmi_armed = 0;
+    memset(&nes->dma, 0, sizeof(nes->dma));
+    nes->oam_dma_pending = false;
+    nes->prev_nmi = nes->nmi_edge_detected = false;
+    nes->irq_inhibit_cycles = 0;
 
     /* Reset PPU */
     ppu_reset(&nes->ppu);

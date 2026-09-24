@@ -532,6 +532,30 @@ int test_four_screen_nametables(void) {
     return pass;
 }
 
+int test_reset_from_kil(void) {
+    setup();
+
+    /* INC $10, KIL */
+    uint8_t prog[] = { 0xE6, 0x10, 0x02 };
+    write_program(0x8000, prog, sizeof(prog));
+    set_reset_vector(0x8000);
+
+    nes_reset(&nes);
+    run_cycles(50);
+    bool pass = nes.ram[0x10] == 1 && nes.cpu.PC == 0x8003;
+
+    /* Reset must escape the jam and drop any DMA the CPU was stuck behind. */
+    nes.oam_dma_pending = true;
+    nes_reset(&nes);
+    run_cycles(50);
+    pass &= !nes.cpu.reset_pending && !nes.oam_dma_pending && !nes.dma.oam_active;
+    pass &= nes.ram[0x10] == 1 && nes.cpu.PC == 0x8003;
+
+    printf("TEST reset_from_kil: %s (PC=%04X ram[10]=%02X)\n",
+           pass ? "PASS" : "FAIL", nes.cpu.PC, nes.ram[0x10]);
+    return pass;
+}
+
 /* ============================================================================
  * Main
  * ============================================================================ */
@@ -557,6 +581,7 @@ int main(void) {
     total++; passed += test_vblank_flag_read();
     total++; passed += test_trace_callback_toggle();
     total++; passed += test_four_screen_nametables();
+    total++; passed += test_reset_from_kil();
 
     printf("\n=== Results: %d/%d tests passed ===\n", passed, total);
 
