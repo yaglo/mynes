@@ -189,7 +189,7 @@ In `out/<shot>/<preset>/<WxH>/`:
 
 `out/<shot>/<preset>/readme.json` records the WebP qualities and sizes and
 the crop in render and NES pixels. In the README, embed `readme.webp` or
-`readme.png` with `width="800"` and the flicker crop with `width="750"`, so
+`readme.png` with `width="800"` and the flicker crop at half its width (`width="679"` for 1358), so
 a 2x display shows render pixels 1:1. libwebp stores a run of identical
 frames as one longer frame, so a still stretch of picture gives an animation
 with fewer frames and the same length.
@@ -200,7 +200,11 @@ SVT-AV1 at preset 10 and x264 at `veryfast`. Use it for previews. Each stage
 and lens file has `<name>.encode.json` beside it with the command that made
 it, and `encode` makes the file again when that command differs from the one
 it would run, so a plain `encode` after `--fast` replaces the previews;
-`install` warns about any file still made with `--fast`. A job whose output
+`install` warns about any file still made with `--fast`. Posters, stills,
+README media and flicker crops keep `poster.encode.json`, `still.encode.json`,
+`readme.encode.json` and `flicker.encode.json` with the frame, crop and
+quality settings they were made with, and `encode` makes them again when a
+setting in `shots.json` or `--flicker-scale` changes. A job whose output
 fails its checks deletes what it wrote, so the next run builds it again and
 `install` cannot copy it.
 

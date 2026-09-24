@@ -22,8 +22,8 @@ REPLAYS_DIR = SHOWCASE_DIR / "replays"
 DEFAULT_PRESETS = ["sony_pvm_14l2", "jvc_d_series_2000", "toshiba_14af43", "stass_favourite", "vhs_sp_consumer",
                    "bedroom_rf_1990", "famicom_kitchen"]
 SECONDS_BY_KIND = {"hero": 6, "feature": 15}
-# 100 NES pixels by 93.75 lines is 1500x1125 on a 3840x2880 render (15 x 12
-# render pixels per NES pixel), centred on the 256x240 frame.
+# 100 NES pixels by 93.75 lines is 1358x1120 on a 3840x2880 render (about
+# 13.58 x 11.95 render pixels per NES pixel), centred on the 256x240 frame.
 DEFAULT_FLICKER_CROP = [78, 73, 100, 93.75]
 MAX_REPLAY_ROWS = 128
 FEATURE_TYPES = ("five-televisions", "side-by-side")
