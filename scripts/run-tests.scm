@@ -70,7 +70,8 @@
                (string-append "tests/nes-test-roms/" path ".nes")))
    '("apu_reset/4015_cleared" "apu_reset/4017_timing" "apu_reset/4017_written"
      "apu_reset/irq_flag_cleared" "apu_reset/len_ctrs_enabled"
-     "apu_reset/works_immediately" "cpu_reset/ram_after_reset"))
+     "apu_reset/works_immediately" "cpu_reset/ram_after_reset"
+     "cpu_reset/registers"))
   (print-summary))
 
 ;;; Helpers. Stock CHICKEN 5 has no SRFI 1 without the srfi-1 egg, so the

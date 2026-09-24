@@ -101,7 +101,8 @@ echo ""
 # === Blargg Reset Tests (test_runner presses reset on request) ===
 echo "=== Blargg Reset Tests ==="
 for rom in tests/nes-test-roms/apu_reset/*.nes \
-           tests/nes-test-roms/cpu_reset/ram_after_reset.nes; do
+           tests/nes-test-roms/cpu_reset/ram_after_reset.nes \
+           tests/nes-test-roms/cpu_reset/registers.nes; do
     run_blargg "$rom"
 done 2>/dev/null
 echo ""
