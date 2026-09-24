@@ -7,6 +7,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 /* Bounded append. Paths are joined this way rather than with one snprintf
  * so that GCC's format-truncation analysis has nothing to guess about. */
@@ -123,6 +127,24 @@ void *mynes_state_read(const MynesSaves *s, int slot, size_t *size) {
     return data;
 }
 
+#ifndef _WIN32
+/* A rename is durable only once the directory holding it is on disk. */
+static void sync_parent_dir(const char *path) {
+    char dir[MYNES_PATH_MAX];
+    snprintf(dir, sizeof(dir), "%s", path);
+    char *slash = strrchr(dir, '/');
+    if (!slash) snprintf(dir, sizeof(dir), ".");
+    else if (slash == dir) dir[1] = '\0';
+    else *slash = '\0';
+    int fd = open(dir, O_RDONLY);
+    if (fd < 0) return;
+    /* Some filesystems refuse to sync a directory; the file itself is
+     * already in place by now, so that is not a failed write. */
+    (void)fsync(fd);
+    close(fd);
+}
+#endif
+
 bool mynes_write_file_atomic(const char *path, const void *data, size_t size) {
     char tmp[MYNES_PATH_MAX];
     if (snprintf(tmp, sizeof(tmp), "%s.tmp", path) >= (int)sizeof(tmp)) {
@@ -135,11 +157,20 @@ bool mynes_write_file_atomic(const char *path, const void *data, size_t size) {
         return false;
     }
     bool ok = fwrite(data, 1, size, f) == size && fflush(f) == 0;
+#ifndef _WIN32
+    /* Otherwise the rename can reach the disk before the data, and a crash
+     * leaves an empty file where the previous one used to be. */
+    ok = ok && fsync(fileno(f)) == 0;
+#endif
     ok = (fclose(f) == 0) && ok;
+    if (!ok) fprintf(stderr, "Cannot write %s: %s\n", tmp, strerror(errno));
     if (ok && rename(tmp, path) != 0) {
         fprintf(stderr, "Cannot replace %s: %s\n", path, strerror(errno));
         ok = false;
     }
+#ifndef _WIN32
+    if (ok) sync_parent_dir(path);
+#endif
     if (!ok) remove(tmp);
     return ok;
 }
