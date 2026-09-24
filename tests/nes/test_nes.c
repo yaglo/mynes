@@ -556,6 +556,33 @@ int test_reset_from_kil(void) {
     return pass;
 }
 
+int test_controller_strobe_held(void) {
+    setup();
+
+    /* Strobe high, spin while the buttons change, strobe low, read A. */
+    uint8_t prog[] = {
+        0xA9, 0x01, 0x8D, 0x16, 0x40,  /* LDA #$01, STA $4016 */
+        0xA2, 0x20, 0xCA, 0xD0, 0xFD,  /* LDX #$20, loop: DEX, BNE loop */
+        0xA9, 0x00, 0x8D, 0x16, 0x40,  /* LDA #$00, STA $4016 */
+        0xAD, 0x16, 0x40, 0x85, 0x00,  /* LDA $4016, STA $00 */
+        0x4C, 0x14, 0x80               /* JMP * */
+    };
+    write_program(0x8000, prog, sizeof(prog));
+    set_reset_vector(0x8000);
+
+    nes_reset(&nes);
+    run_cycles(20);                     /* strobe is high, A released */
+    nes_set_controller(&nes, 0, BTN_A);
+    run_cycles(300);
+
+    /* While strobe is high the shift register keeps reloading, so the press
+     * made after the strobe went high is what gets read. */
+    bool pass = (nes.ram[0] & 1) == 1;
+    printf("TEST controller_strobe_held: %s (A=%d)\n", pass ? "PASS" : "FAIL",
+           nes.ram[0] & 1);
+    return pass;
+}
+
 /* ============================================================================
  * Main
  * ============================================================================ */
@@ -582,6 +609,7 @@ int main(void) {
     total++; passed += test_trace_callback_toggle();
     total++; passed += test_four_screen_nametables();
     total++; passed += test_reset_from_kil();
+    total++; passed += test_controller_strobe_held();
 
     printf("\n=== Results: %d/%d tests passed ===\n", passed, total);
 

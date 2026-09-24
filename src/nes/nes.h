@@ -51,7 +51,7 @@ struct NES {
     uint8_t controller[2];      /* Current button state */
     uint8_t controller_shift[2]; /* Shift register for serial read */
     uint8_t controller_strobe;  /* Strobe state (bit 0) */
-    bool controller_strobed;    /* Latched once per APU put cycle while strobe is high */
+    bool controller_strobed;    /* Latched on a put cycle since strobe went high */
 
     /* DMA Controller State */
     struct {
@@ -473,11 +473,9 @@ static inline void nes_step(NES *nes) {
      * relies on this. */
     if (nes->apu.put_cycle) {
         if (nes->controller_strobe) {
-            if (!nes->controller_strobed) {
-                nes->controller_strobed = true;
-                nes->controller_shift[0] = nes->controller[0];
-                nes->controller_shift[1] = nes->controller[1];
-            }
+            nes->controller_strobed = true;
+            nes->controller_shift[0] = nes->controller[0];
+            nes->controller_shift[1] = nes->controller[1];
         } else {
             nes->controller_strobed = false;
         }
