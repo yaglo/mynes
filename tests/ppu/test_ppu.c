@@ -582,6 +582,35 @@ static int test_pixel_palette_priority(void) {
     return pass;
 }
 
+static bool row_is(int y, unsigned color) {
+    for (int x = 0; x < PPU_WIDTH; x++) {
+        int i = y * PPU_WIDTH + x;
+        if (ppu.index_framebuffer[i] != color ||
+            memcmp(&ppu.framebuffer[i * 3], ppu_palette_2c02[color], 3) != 0)
+            return false;
+    }
+    return true;
+}
+
+static int test_forced_blank_backdrop(void) {
+    test_ppu_init();
+    memset(ppu.framebuffer, 0xFF, sizeof(ppu.framebuffer));
+    memset(ppu.index_framebuffer, 0xFF, sizeof(ppu.index_framebuffer));
+    ppu.mask = 0;
+    ppu.palette[0] = 0x0F;
+    ppu.palette[5] = 0x21;
+    /* Outside palette space the backdrop is $3F00... */
+    ppu.v = 0x2000;
+    run_to(1, 0);
+    bool pass = row_is(0, 0x0F);
+    /* ...inside it, the entry v points at. */
+    ppu.v = 0x3F05;
+    run_to(2, 0);
+    pass &= row_is(1, 0x21);
+    printf("TEST forced_blank_backdrop: %s\n", pass ? "PASS" : "FAIL");
+    return pass;
+}
+
 int main(void) {
     printf("=== NES PPU Tests ===\n\n");
 
@@ -610,6 +639,7 @@ int main(void) {
     total++; passed += test_sprite_clock_order();
     total++; passed += test_nametable_mirroring_all_addresses();
     total++; passed += test_pixel_palette_priority();
+    total++; passed += test_forced_blank_backdrop();
 
     printf("\n=== Results: %d/%d tests passed ===\n", passed, total);
 
