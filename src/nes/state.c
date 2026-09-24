@@ -63,6 +63,32 @@ static const StateField state_live_fields[] = {
  * instance; sized for every entry above with room to spare. */
 #define STATE_LIVE_BYTES_MAX (STATE_LIVE_FIELD_COUNT * 2 * sizeof(void *))
 
+/* The image CRC only proves the body is what some build wrote, not that
+ * it came from a running machine, and the emulator indexes fixed-size
+ * arrays with some fields without masking them again (the PPU's
+ * secondary OAM cursor, Namco 108's register select). Fold each such field
+ * back into the range its array allows, the way the hardware counter
+ * would wrap, so a crafted state cannot reach outside the NES struct. */
+static void state_clamp_indices(NES *nes) {
+    PPU *ppu = &nes->ppu;
+    ppu->secondary_addr &= 0x1F;
+    ppu->oam_corruption_row &= 0x1F;
+    if (ppu->sprite_count > 8) ppu->sprite_count = 8;
+    if (ppu->sprites_on_line > 8) ppu->sprites_on_line = 8;
+
+    for (int i = 0; i < 2; i++)
+        nes->apu.pulse[i].sequence_step &= 7;
+    nes->apu.triangle.sequence_step &= 31;
+
+    Mapper *m = &nes->mapper;
+    /* MMC3 keeps its mode bits beside the register number and masks on
+     * use; Namco 108 stores the bare number and indexes with it. */
+    if (m->number == 206)
+        m->mmc3_bank_select &= 0x07;
+    if (m->number == 69)
+        m->ext.fme7.command &= 0x0F;
+}
+
 static void state_error(char *error, size_t error_size, const char *fmt, ...) {
     if (!error || !error_size) return;
     va_list args;
@@ -200,5 +226,6 @@ bool nes_state_load(NES *nes, const void *buf, size_t size,
                state_live_fields[i].size);
         used += state_live_fields[i].size;
     }
+    state_clamp_indices(nes);
     return true;
 }

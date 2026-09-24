@@ -196,6 +196,18 @@ int main(void) {
     replay = snapshot(&nes);
     CHECK(same(&replay, &reference));
 
+    /* Index fields the emulator uses unmasked are folded back into their
+     * arrays' range, so a crafted body with a valid CRC stays in bounds. */
+    memcpy(again, state, size);
+    uint8_t bogus_index = 0xff;
+    memcpy(again + sizeof(header) + offsetof(NES, ppu.secondary_addr), &bogus_index, 1);
+    memcpy(again + sizeof(header) + offsetof(NES, ppu.sprites_on_line), &bogus_index, 1);
+    memcpy(&header, again, sizeof(header));
+    header.image_crc = nes_crc32(0, again + sizeof(header), sizeof(NES));
+    memcpy(again, &header, sizeof(header));
+    CHECK(nes_state_load(&nes, again, size, error, sizeof(error)));
+    CHECK(nes.ppu.secondary_addr == 0x1f && nes.ppu.sprites_on_line == 8);
+
     /* A valid state still loads after the refusals. */
     CHECK(nes_state_load(&nes, state, size, error, sizeof(error)));
     restored = snapshot(&nes);
