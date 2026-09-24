@@ -434,6 +434,16 @@ void gpu_display_resize(GPUDisplay *d, SDL_GPUDevice *gpu, int win_w, int win_h)
     /* Skip if size hasn't changed. */
     if (new_w == d->halation_w && new_h == d->halation_h) return;
 
+    /* Keep the old targets, which still match halation_w/h, unless both new
+     * ones exist; the next resize retries. */
+    SDL_GPUTexture *tex_a = create_halation_fbo(gpu, new_w, new_h);
+    SDL_GPUTexture *tex_b = create_halation_fbo(gpu, new_w, new_h);
+    if (!tex_a || !tex_b) {
+        if (tex_a) SDL_ReleaseGPUTexture(gpu, tex_a);
+        if (tex_b) SDL_ReleaseGPUTexture(gpu, tex_b);
+        return;
+    }
+
     /* Wait for GPU to be idle before releasing textures that may be in flight. */
     SDL_WaitForGPUIdle(gpu);
 
@@ -442,8 +452,8 @@ void gpu_display_resize(GPUDisplay *d, SDL_GPUDevice *gpu, int win_w, int win_h)
 
     d->halation_w = new_w;
     d->halation_h = new_h;
-    d->tex_halation_a = create_halation_fbo(gpu, new_w, new_h);
-    d->tex_halation_b = create_halation_fbo(gpu, new_w, new_h);
+    d->tex_halation_a = tex_a;
+    d->tex_halation_b = tex_b;
 
     LOGV("gpu_display: resized halation FBOs to %dx%d\n", new_w, new_h);
 }
