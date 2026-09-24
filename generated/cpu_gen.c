@@ -5132,6 +5132,10 @@ bool cpu_next_is_write(CPU *cpu) {
     case 493: return true;
     case 494: return true;
     case 495: return true;
+    case 522: return true;
+    case 525: return true;
+    case 528: return true;
+    case 533: return true;
     case 536: return true;
     case 537: return true;
     case 541: return true;

@@ -533,11 +533,31 @@ int test_indexed_page_cross_reads(void) {
     return ok;
 }
 
-/* A DMA that halts the CPU repeats the read the CPU was about to make, at
- * the address cpu_get_next_read_addr() reports. Step every instruction
- * cycle by cycle and check that address against the first read the cycle
- * then makes, with indexes that cross pages and without. */
-int test_next_read_addr(void) {
+/* One CPU cycle as the DMA logic sees it before the cycle runs, and the
+ * bus accesses the cycle then made. */
+typedef struct {
+    int op;
+    uint8_t xy;
+    uint16_t upc;
+    bool predicted_write;
+    uint16_t peek;
+    int reads, writes;
+    uint16_t first_read;
+} BusCycle;
+
+static int write_count;
+
+static void logged_write(CPU *cpu, uint16_t addr, uint8_t val) {
+    (void)cpu;
+    write_count++;
+    memory[addr] = val;
+}
+
+/* Step every opcode cycle by cycle, with indexes that cross pages and
+ * without, and hand each cycle to check(). Returns 0 if any check fails
+ * or an instruction runs past 20 cycles; *cycles_out counts the cycles. */
+static int for_each_bus_cycle(const char *name, int (*check)(const BusCycle *),
+                              int *cycles_out) {
     static const struct { uint8_t xy, p; } setups[] = {
         { 0x00, 0x24 },  /* no page cross, branches on clear flags taken */
         { 0x20, 0x24 },  /* abs,X/abs,Y/(zp),Y cross; (zp,X) pointer moves */
@@ -545,14 +565,14 @@ int test_next_read_addr(void) {
         { 0x0F, 0xE7 },  /* (zp,X) pointer high byte wraps within page 0 */
     };
     CPU cpu;
-    int ok = 1, checked = 0;
+    int ok = 1, total = 0;
 
     for (int op = 0; op < 256; op++) {
         if (cpu_entry[op] == cpu_entry[0x02]) continue;  /* STP jams */
         for (size_t s = 0; s < sizeof(setups) / sizeof(setups[0]); s++) {
             cpu_init(&cpu);
             cpu.mem_read = logged_read;
-            cpu.mem_write = mem_write;
+            cpu.mem_write = logged_write;
             memset(memory, 0, sizeof(memory));
             /* Operand $10F0: abs $10F0, zp $F0, JMP ($10F0), branch -16
              * from $0202 into page 1. (zp),Y reads its pointer from
@@ -575,29 +595,56 @@ int test_next_read_addr(void) {
             int cycles = 0;
             do {
                 if (++cycles > 20) {
-                    printf("TEST next_read_addr: FAIL op %02X did not finish in 20 cycles\n",
-                           op);
+                    printf("TEST %s: FAIL op %02X did not finish in 20 cycles\n", name, op);
                     ok = 0;
                     break;
                 }
-                uint16_t upc = cpu.uPC;
-                bool write = cpu_next_is_write(&cpu);
-                uint16_t peek = cpu_get_next_read_addr(&cpu);
-                read_count = 0;
+                BusCycle c = { op, setups[s].xy, cpu.uPC, cpu_next_is_write(&cpu),
+                               cpu_get_next_read_addr(&cpu), 0, 0, 0 };
+                read_count = write_count = 0;
                 cpu_step(&cpu);
-                if (write || read_count == 0) continue;
-                checked++;
-                if (read_log[0] != peek) {
-                    printf("TEST next_read_addr: FAIL op %02X X=Y=%02X uPC %d "
-                           "peek %04X, read %04X\n",
-                           op, setups[s].xy, upc, peek, read_log[0]);
-                    ok = 0;
-                }
+                c.reads = read_count;
+                c.writes = write_count;
+                c.first_read = read_log[0];
+                total++;
+                if (!check(&c)) ok = 0;
             } while (cpu.uPC != 0);
         }
     }
+    *cycles_out = total;
+    return ok;
+}
 
-    if (ok) printf("TEST next_read_addr: PASS (%d cycles checked)\n", checked);
+/* A DMA that halts the CPU repeats the read the CPU was about to make, at
+ * the address cpu_get_next_read_addr() reports. */
+static int check_next_read_addr(const BusCycle *c) {
+    if (c->reads == 0 || c->first_read == c->peek) return 1;
+    printf("TEST next_read_addr: FAIL op %02X X=Y=%02X uPC %d peek %04X, read %04X\n",
+           c->op, c->xy, c->upc, c->peek, c->first_read);
+    return 0;
+}
+
+int test_next_read_addr(void) {
+    int cycles;
+    int ok = for_each_bus_cycle("next_read_addr", check_next_read_addr, &cycles);
+    if (ok) printf("TEST next_read_addr: PASS (%d cycles)\n", cycles);
+    return ok;
+}
+
+/* DMA cannot halt the CPU on a write cycle, so cpu_next_is_write() must
+ * name exactly the cycles that write. Every cycle is one bus access. */
+static int check_next_is_write(const BusCycle *c) {
+    if (c->reads + c->writes == 1 && c->predicted_write == (c->writes == 1)) return 1;
+    printf("TEST next_is_write: FAIL op %02X X=Y=%02X uPC %d predicted %s, "
+           "made %d reads %d writes\n", c->op, c->xy, c->upc,
+           c->predicted_write ? "write" : "read", c->reads, c->writes);
+    return 0;
+}
+
+int test_next_is_write(void) {
+    int cycles;
+    int ok = for_each_bus_cycle("next_is_write", check_next_is_write, &cycles);
+    if (ok) printf("TEST next_is_write: PASS (%d cycles)\n", cycles);
     return ok;
 }
 
@@ -627,6 +674,7 @@ int main(int argc, char **argv) {
     total++; passed += test_jmp_ind_flags();
     total++; passed += test_indexed_page_cross_reads();
     total++; passed += test_next_read_addr();
+    total++; passed += test_next_is_write();
 
     printf("\n=== Results: %d/%d tests passed ===\n", passed, total);
 

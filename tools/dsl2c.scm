@@ -245,6 +245,9 @@
     ((write)
      (fprintf port "        cpu->mem_write(cpu, ~a, ~a);~%"
               (addr->expr (cadr op)) (reg->field (caddr op))))
+    ;; SAX's store: A & X goes on the bus without passing through a register.
+    ((store-ax)
+     (fprintf port "        cpu->mem_write(cpu, ~a, cpu->A & cpu->X);~%" (addr->expr (cadr op))))
     ((dummy)
      (let ((addr-str (addr->expr (cadr op))))
        (fprintf port "        cpu->last_read_addr = ~a;~%" addr-str)
@@ -429,9 +432,6 @@
        (else (fprintf port "        cpu->DL = (cpu->P | 0x20) & ~~0x10;~%"))))
 
     ;; Unofficial opcode operations
-    ((store-ax)
-     (fprintf port "        cpu->mem_write(cpu, ~a, cpu->A & cpu->X);~%" (addr->expr (cadr op))))
-
     ((set-c-from-n)
      (fprintf port "        cpu->P = (cpu->P & 0xFE) | ((cpu->A >> 7) & 1);~%"))
 
@@ -475,7 +475,10 @@
               (reg->field (cadr op))))))
 
 (define (bus-op? form)
-  (and (pair? form) (memq (car form) '(fetch read write dummy))))
+  (and (pair? form) (memq (car form) '(fetch read write store-ax dummy))))
+
+(define (write-op? form)
+  (and (pair? form) (memq (car form) '(write store-ax))))
 
 ;; ----------------------------------------------------------------------------
 ;; Bus address peek
@@ -582,7 +585,7 @@
                                env)
                (error "cycle's read address depends on an op the peek cannot follow"
                       cycle-forms)))
-          ((write assert) (loop (cdr forms) env))
+          ((write store-ax assert) (loop (cdr forms) env))
           (else (loop (cdr forms) (peek-step env f)))))))))
 
 (define (record-case-addr! upc addr-expr)
@@ -600,9 +603,7 @@
                            (and (pair? f)
                                 (memq (car f) '(fetch read dummy))))
                          cycle-forms))
-         (has-write (any (lambda (f)
-                           (and (pair? f) (eq? (car f) 'write)))
-                         cycle-forms)))
+         (has-write (any write-op? cycle-forms)))
     (cond (has-read 'read)
           (has-write 'write)
           (else 'none))))
