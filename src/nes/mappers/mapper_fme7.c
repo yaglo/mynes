@@ -16,7 +16,7 @@
  *   10:   PRG bank at $A000-$BFFF
  *   11:   PRG bank at $C000-$DFFF
  *   12:   Mirroring (bits 1:0)
- *   13:   IRQ control (bit 7: enable, bit 0: counter enable)
+ *   13:   IRQ control (bit 7: counter enable, bit 0: IRQ enable)
  *   14:   IRQ counter low byte
  *   15:   IRQ counter high byte
  *
@@ -149,8 +149,8 @@ static void mapper69_cpu_write(Mapper *m, uint16_t addr, uint8_t val) {
             fme7_update_mirroring(m);
             break;
         case 13:
-            s->irq_enabled = (val & 0x80) != 0;
-            s->irq_counting = (val & 0x01) != 0;
+            s->irq_counting = (val & 0x80) != 0;
+            s->irq_enabled = (val & 0x01) != 0;
             m->irq_pending = false; /* Acknowledge IRQ on write */
             break;
         case 14:

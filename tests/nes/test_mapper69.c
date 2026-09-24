@@ -55,13 +55,31 @@ int main(void) {
     CHECK(m.ext.fme7.irq_counter == 0 && !m.irq_pending);
     mapper_cpu_clock(&m);
     CHECK(m.ext.fme7.irq_counter == 0xFFFF && m.irq_pending);
-    reg(&m, 13, 0x01);   /* acknowledge, keep counting without IRQ */
+    reg(&m, 13, 0x80);   /* acknowledge, keep counting without IRQ */
     CHECK(!m.irq_pending);
     mapper_cpu_clock(&m);
+    CHECK(m.ext.fme7.irq_counter == 0xFFFE && !m.irq_pending);
+    reg(&m, 13, 0x01);   /* IRQ enabled but the counter holds */
+    for (int i = 0; i < 4; ++i) mapper_cpu_clock(&m);
     CHECK(m.ext.fme7.irq_counter == 0xFFFE && !m.irq_pending);
     reg(&m, 13, 0x00);   /* counting stopped */
     mapper_cpu_clock(&m);
     CHECK(m.ext.fme7.irq_counter == 0xFFFE);
+
+    /* With the IRQ disabled the wrap raises nothing; any $D write
+     * acknowledges a pending IRQ, even one that leaves both bits set. */
+    reg(&m, 14, 0);
+    reg(&m, 15, 0);
+    reg(&m, 13, 0x80);
+    mapper_cpu_clock(&m);
+    CHECK(m.ext.fme7.irq_counter == 0xFFFF && !m.irq_pending);
+    reg(&m, 14, 0);
+    reg(&m, 15, 0);
+    reg(&m, 13, 0x81);
+    mapper_cpu_clock(&m);
+    CHECK(m.irq_pending);
+    reg(&m, 13, 0x81);
+    CHECK(!m.irq_pending);
 
     printf("Mapper 69 tests: %s\n", failures ? "FAIL" : "PASS");
     return failures ? 1 : 0;
