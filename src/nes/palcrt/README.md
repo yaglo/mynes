@@ -44,3 +44,6 @@ vignette, bloom) on top.
   `struct PAL_CRT`, and is cleared at the start of each field. Upstream
   shares it across instances and never resets it, so a field's first
   line averaged with the previous field's last.
+- `pal_core.c` / `pal_nes.c`: the noise LCG steps in unsigned
+  arithmetic and left shifts of possibly negative values are multiplies,
+  so UBSan stays quiet; the results are bit-identical.

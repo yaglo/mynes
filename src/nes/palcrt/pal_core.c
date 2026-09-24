@@ -326,7 +326,8 @@ found_field:
     c->vsync = -3;
 #endif
     for (i = 0; i < PAL_INPUT_SIZE; i++) {
-        rn = (214019 * rn + 140327895);
+        /* unsigned: the LCG wraps by design, signed overflow is UB */
+        rn = (int)(214019u * (unsigned)rn + 140327895u);
 
         /* signal + noise */
         s = c->analog[i] + (((((rn >> 16) & 0xff) - 0x7f) * noise) >> 8);
@@ -501,7 +502,7 @@ vsync_found:
                 c->delay_line[i].u = ou;
                 c->delay_line[i].v = ov;
             }
-            out[i].y = eqf(&eqY, sig[i] + bright) << 4;
+            out[i].y = eqf(&eqY, sig[i] + bright) * 16; /* may be < 0 */
             out[i + c->chroma_lag].u = eqf(&eqU, dmU >> 9) >> 3;
             out[i + c->chroma_lag].v = eqf(&eqV, dmV >> 9) >> 3;
         }
