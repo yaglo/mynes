@@ -56,6 +56,7 @@ int main(int argc, char **argv) {
             unsigned long frame;
             unsigned mask;
             char extra;
+            if (sscanf(line, " %c", &extra) != 1) continue;  /* blank line */
             if (sscanf(line, "%lu %x %c", &frame, &mask, &extra) != 2 ||
                 frame >= frames || mask > 255 || input_count == 1024 ||
                 (input_count && frame <= inputs[input_count - 1].frame)) {
