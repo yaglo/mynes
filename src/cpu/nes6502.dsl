@@ -630,7 +630,7 @@
   (fetch-adl)
   (fetch-adh)
   (read-to-dl)
-  (cycle (inc adl) (read adh ad) (mov pcl dl) (mov pch adh))
+  (cycle (inc-nf adl) (read adh ad) (mov pcl dl) (mov pch adh))
  )
 
 ;; JSR: 6 cycles total

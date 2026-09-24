@@ -2592,7 +2592,7 @@ static void cpu_microcycle(CPU *cpu) {
         cpu->DL = cpu->mem_read(cpu, ((uint16_t)cpu->ADH << 8) | cpu->ADL);
         cpu->uPC = 468; return;
     case 468: /* jmp-ind */
-        { uint8_t n = (cpu->ADL + 1) & 0xFF; cpu->ADL = n; cpu->P = (cpu->P & 0x7D) | (n == 0 ? 2 : 0) | (n & 0x80); }
+        cpu->ADL = (cpu->ADL + 1) & 0xFF;
         cpu->last_read_addr = ((uint16_t)cpu->ADH << 8) | cpu->ADL;
         cpu->ADH = cpu->mem_read(cpu, ((uint16_t)cpu->ADH << 8) | cpu->ADL);
         cpu->PC = (cpu->PC & 0xFF00) | (cpu->DL);

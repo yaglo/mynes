@@ -443,6 +443,35 @@ int test_reset(void) {
     }
 }
 
+int test_jmp_ind_flags(void) {
+    CPU cpu;
+    cpu_init(&cpu);
+    cpu.mem_read = mem_read;
+    cpu.mem_write = mem_write;
+    memset(memory, 0, sizeof(memory));
+
+    /* JMP ($02FF): the pointer increment wraps within the page, reading
+     * $02FF then $0200 (which holds the $6C opcode). The increment is
+     * internal address math and must not touch N/Z. */
+    uint8_t prog[] = { 0x6C, 0xFF, 0x02 };
+    memcpy(&memory[0x200], prog, sizeof(prog));
+    memory[0x2FF] = 0x00;
+    memory[0x6C00] = 0xEA;
+    cpu.PC = 0x200;
+    cpu.uPC = 0;
+    cpu.P = 0x24;
+
+    run_until_nop(&cpu, 100, 0);
+
+    if (cpu.PC == 0x6C01 && cpu.P == 0x24) {
+        printf("TEST jmp_ind_flags: PASS (PC=%04X P=%02X)\n", cpu.PC, cpu.P);
+        return 1;
+    } else {
+        printf("TEST jmp_ind_flags: FAIL (PC=%04X P=%02X)\n", cpu.PC, cpu.P);
+        return 0;
+    }
+}
+
 int main(int argc, char **argv) {
     int trace = (argc > 1 && strcmp(argv[1], "-trace") == 0);
     (void)trace;
@@ -466,6 +495,7 @@ int main(int argc, char **argv) {
     total++; passed += test_irq();
     total++; passed += test_irq_masked();
     total++; passed += test_reset();
+    total++; passed += test_jmp_ind_flags();
 
     printf("\n=== Results: %d/%d tests passed ===\n", passed, total);
 
