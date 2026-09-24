@@ -481,13 +481,18 @@ static uint8_t logged_read(CPU *cpu, uint16_t addr) {
     return memory[addr];
 }
 
-/* Run one instruction from $0200 and return how many bus reads it made. */
+/* Run one instruction from $0200 and return how many bus reads it made,
+ * or -1 if it has not finished within 20 cycles. */
 static int trace_reads(CPU *cpu, const uint8_t *prog, size_t len) {
     memcpy(&memory[0x200], prog, len);
     cpu->PC = 0x200;
     cpu->uPC = 0;
     read_count = 0;
-    do cpu_step(cpu); while (cpu->uPC != 0);
+    int cycles = 0;
+    do {
+        if (++cycles > 20) return -1;
+        cpu_step(cpu);
+    } while (cpu->uPC != 0);
     return read_count;
 }
 
