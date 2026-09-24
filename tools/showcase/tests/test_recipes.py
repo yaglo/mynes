@@ -90,6 +90,33 @@ class Geometry(unittest.TestCase):
         r = recipes.flicker_geometry([1, 1, 3, 3], (1920, 1440), align=2)
         self.assertEqual((r.w % 2, r.h % 2), (0, 0))
 
+    def test_preset_raster(self):
+        self.assertEqual(recipes.preset_raster({}), recipes.Raster())
+        r = recipes.preset_raster({"overscan": 0.04, "h_size": 1.0222, "v_size": 0, "h_pos": 0.01})
+        self.assertEqual(r, recipes.Raster(0.04, 1.0222, 1.0, 0.01, 0.0))
+        # The JVC alignment shows 90% of the active line and 92% of the field.
+        jvc = recipes.Raster(0.04, 1.0222)
+        self.assertAlmostEqual(jvc.face(0.05), 0.0, places=4)
+        self.assertAlmostEqual(jvc.face(0.04, True), 0.0, places=6)
+        # The picture's first dot: 197 px in on a plain 3840 face, 0.4 dot of border on the JVC.
+        self.assertAlmostEqual(recipes.nes_point((3840, 2880), 0, 0)[0], 197.3, places=1)
+        self.assertAlmostEqual(recipes.nes_point((3840, 2880), 0, 0, jvc)[0] / 3840 * 0.9 * recipes.ACTIVE_DOTS,
+                               0.39, places=2)
+
+    def test_crop_follows_the_raster(self):
+        plain = recipes.flicker_geometry([10, 20, 100, 93.75])
+        big = recipes.flicker_geometry([10, 20, 100, 93.75], raster=recipes.Raster(0.04, 1.0222))
+        self.assertEqual((big.w, big.h), (plain.w, plain.h))   # the same size on every preset
+        # The centre stays on NES point (60, 66.875), which the enlarged raster moves out and up.
+        cx, cy = recipes.nes_point((3840, 2880), 60, 66.875, recipes.Raster(0.04, 1.0222))
+        self.assertLessEqual(abs(big.x + big.w / 2 - cx), 1)
+        self.assertLessEqual(abs(big.y + big.h / 2 - cy), 1)
+        self.assertLess(big.x, plain.x)
+        self.assertLess(big.y, plain.y)
+        # An explicit scale describes a render of the picture alone.
+        self.assertEqual(recipes.flicker_geometry([64, 72, 128, 96], scale="15", raster=recipes.Raster(0.04)),
+                         Rect(960, 1080, 1920, 1440))
+
     def test_square_scale_override(self):
         self.assertEqual(recipes.flicker_geometry([64, 72, 128, 96], scale="15"), Rect(960, 1080, 1920, 1440))
 
