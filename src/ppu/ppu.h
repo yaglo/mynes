@@ -1003,7 +1003,6 @@ static inline void ppu_render_pixel(PPU *ppu) {
     bool sp_zero = false;
 
     int x = ppu->dot - 1;
-    int y = ppu->scanline;
 
     /* Background pixel */
     if (ppu->mask & MASK_BG_ENABLE) {
