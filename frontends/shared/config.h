@@ -63,9 +63,10 @@ bool mynes_config_load(MynesConfig *cfg);
 bool mynes_config_save(const MynesConfig *cfg);
 
 /* Add `path` to recent_roms[], made absolute by its directory with the file
- * name kept as given (saves are named after it). If already present it's
- * moved to the front; otherwise it's prepended and the list is capped at
- * MYNES_RECENT_MAX. */
+ * name kept as given (saves are named after it). If already present, as that
+ * path or as a relative entry naming the same file from the current
+ * directory, it's moved to the front; otherwise it's prepended and the list
+ * is capped at MYNES_RECENT_MAX. */
 void mynes_config_add_recent(MynesConfig *cfg, const char *path);
 
 /* Set last_preset (truncates if too long). */

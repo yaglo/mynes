@@ -138,6 +138,20 @@ int main(void) {
     snprintf(other, sizeof(other), "%s/Linked Game.nes", real_dir);
     CHECK(recents.recent_count == 3);
     CHECK(strcmp(recents.recent_roms[0], other) == 0);
+
+    /* An entry an older build stored relative is the same ROM when it names
+     * the same file from here: reopening moves it, it is not listed twice. */
+    memset(&recents, 0, sizeof(recents));
+    snprintf(recents.recent_roms[0], MYNES_PATH_MAX, "roms/game.nes");
+    snprintf(recents.recent_roms[1], MYNES_PATH_MAX, "roms/other.nes");
+    recents.recent_count = 2;
+    mynes_config_add_recent(&recents, "roms/other.nes");
+    mynes_config_add_recent(&recents, rom);
+    CHECK(recents.recent_count == 2);
+    CHECK(strcmp(recents.recent_roms[0], rom) == 0);
+    snprintf(other, sizeof(other), "%s/roms/other.nes", real_dir);
+    CHECK(strcmp(recents.recent_roms[1], other) == 0);
+
     remove("Linked Game.nes");
     remove("roms/game.nes");
     rmdir("roms");

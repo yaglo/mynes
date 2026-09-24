@@ -369,10 +369,16 @@ void mynes_config_add_recent(MynesConfig *cfg, const char *path) {
     char absolute[MYNES_PATH_MAX];
     if (absolute_rom_path(path, absolute, sizeof(absolute))) path = absolute;
 
-    /* If already present, remove the existing entry first (move-to-front). */
+    /* If already present, remove the existing entry first (move-to-front).
+     * Older builds stored relative paths as typed; such an entry is the same
+     * ROM when it resolves to the same place from here. */
     int found = -1;
     for (int i = 0; i < cfg->recent_count; i++) {
-        if (strcmp(cfg->recent_roms[i], path) == 0) { found = i; break; }
+        const char *entry = cfg->recent_roms[i];
+        char entry_abs[MYNES_PATH_MAX];
+        if (entry[0] != '/' && absolute_rom_path(entry, entry_abs, sizeof(entry_abs)))
+            entry = entry_abs;
+        if (strcmp(entry, path) == 0) { found = i; break; }
     }
     if (found >= 0) {
         for (int i = found; i + 1 < cfg->recent_count; i++) {
