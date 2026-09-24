@@ -152,6 +152,8 @@ the GPU tests. `gpu_fidelity_tests` needs a hardware GPU and runs outside CI.
 - [CPU DSL design](docs/dsl-design.md) and [reference](docs/dsl-reference.md)
 - [GPU pipeline design](docs/gpu-pipeline-design.md) and [reference](docs/gpu-pipeline-reference.md)
 - [Controls and menus](docs/gpu-controls.md), [Signal Studio](tools/visualiser/README.md)
+- [Pictures and videos through the chain](docs/video-tool.md): `mynes_video`
+  records a photo or a video through any NTSC preset, VHS included
 - [Showcase pipeline](tools/showcase/README.md): the site's clips, stills and
   crops, recorded at every size they are shown at
 - [Debugging workflows](docs/debugging/common-workflows.md), [commands](docs/dev/commands.md)

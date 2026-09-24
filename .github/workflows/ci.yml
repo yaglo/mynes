@@ -85,4 +85,4 @@ jobs:
       - name: Core tests and device-free GPU tests
         run: |
           ctest --test-dir build --output-on-failure \
-            -E '^gpu_(pipeline_test|fidelity_tests|audio_tests|fence_tests|playback_tests|frame_capture_tests)$'
+            -E '^gpu_(pipeline_test|fidelity_tests|audio_tests|fence_tests|playback_tests|frame_capture_tests|video_tool_test)$'

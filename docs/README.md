@@ -10,6 +10,8 @@ hardware research notes and the blog series moved to the project site:
 - [Signal Studio, the macOS chain editor](../tools/visualiser/README.md)
 - [Build and test commands](dev/commands.md), including Linux and headless recipes
 - [Play on a real CRT over USB](crt-usb.md)
+- [Pictures and videos through the chain](video-tool.md): `mynes_video` runs a
+  photo or a video through any NTSC preset, VHS included
 - [Release and packaging](dev/release.md)
 
 ## Architecture and design
