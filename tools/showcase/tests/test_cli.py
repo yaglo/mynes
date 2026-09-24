@@ -161,7 +161,7 @@ class Cli(unittest.TestCase):
         self.assertEqual(out.count("-c:v libx264 -profile:v high -preset slow -crf 18"), clips * stage)
         self.assertEqual(out.count("-crf 14 -profile:v main10"), lens)
         self.assertEqual(out.count("-crf 14 -profile:v main "), lens)
-        self.assertEqual(out.count("--cicp 9/16/9 --depth 10 --yuv 444"), (clips + crops) * 3)  # still and two crops
+        self.assertEqual(out.count("--cicp 9/16/9 --depth 10 --yuv 444"), (clips + crops) * 2)  # still and crop
         # Every README quality is encoded at once and the best kept; the flicker crop is lossless only.
         self.assertEqual(out.count("-c:v libwebp_anim"), readme * (len(recipes.README_QUALITIES) + 1))
         self.assertIn("hstack=inputs=3", out)

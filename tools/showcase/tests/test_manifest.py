@@ -109,8 +109,8 @@ class Build(unittest.TestCase):
         self.assertEqual(json.loads(manifest.dump(m)), m)
 
     def test_crop_entries(self):
-        c = {"crop": {"sdr": "a/crop-sdr.png", "sdr_1x": "a/crop-sdr@1x.png", "hdr": "a/crop-hdr.avif",
-                      "hdr_1x": "a/crop-hdr@1x.avif", "x": 930, "y": 1260, "width": 1500, "height": 1122}}
+        c = {"crop": {"sdr": "a/crop-sdr.png", "hdr": "a/crop-hdr.avif",
+                      "x": 930, "y": 1260, "width": 1500, "height": 1122}}
         m = manifest.build(self.shot_list, {"mario": {"stass_favourite": c}}, presets_dir=self.presets_dir)
         self.assertEqual(m["clips"]["mario"]["stass_favourite"], c)  # a crop-only clip
         self.assertEqual(manifest.validate(m), [])
@@ -120,6 +120,16 @@ class Build(unittest.TestCase):
         m = manifest.build(self.shot_list, {"mario": {"sony_pvm_14l2": c}}, existing=existing,
                            presets_dir=self.presets_dir)
         self.assertEqual(m["clips"]["mario"]["sony_pvm_14l2"], {**clip(), **c})  # merged into the clip
+
+    def test_old_crops_lose_their_1x_keys(self):
+        """A crop the run did not produce keeps its files but not the @1x
+        keys of the 2x2-averaged copies the site no longer shows."""
+        old = {"sdr": "a/crop-sdr.png", "sdr_1x": "a/crop-sdr@1x.png", "hdr": "a/crop-hdr.avif",
+               "hdr_1x": "a/crop-hdr@1x.avif", "x": 930, "y": 1260, "width": 1500, "height": 1122}
+        existing = {"version": 2, "clips": {"mario": {"stass_favourite": {"crop": dict(old)}}}}
+        m = manifest.build(self.shot_list, {}, existing=existing, presets_dir=self.presets_dir)
+        self.assertEqual(m["clips"]["mario"]["stass_favourite"]["crop"],
+                         {k: v for k, v in old.items() if not k.endswith("_1x")})
 
     def test_merge_keeps_everything_not_produced(self):
         existing = copy.deepcopy(V1)

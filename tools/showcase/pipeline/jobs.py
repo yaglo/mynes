@@ -8,8 +8,7 @@ Output layout (--out, default tools/showcase/out): one directory per clip
   <WxH>/{sdr,hdr}.record.log|json  recorder output; command, frames, inputs' SHA-256
   stage sizes   stage-hdr-hevc.mp4, stage-hdr-av1.mp4, stage-sdr.mp4, poster.webp
   full size     still-sdr.png, still-hdr.png (16-bit PQ), still-hdr.avif,
-                crop-sdr.png, crop-sdr@1x.png, crop-hdr.png, crop-hdr@1x.png,
-                crop-hdr.avif, crop-hdr@1x.avif,
+                crop-sdr.png, crop-hdr.png, crop-hdr.avif,
                 lens-hdr-hevc.mp4, lens-hdr-av1.mp4, lens-sdr-hevc.mp4   (lens clips)
                 flicker.webp, flicker.png, flicker-hdr.png, flicker-hdr.jpg (README presets)
   README size   readme.webp, readme.png, readme-hdr.png, readme-hdr.jpg  (README presets)
@@ -52,10 +51,9 @@ DEFAULT_BUDGET_MB = 900
 HDR_COLOUR = {"color_primaries": "bt2020", "color_transfer": "smpte2084", "color_space": "bt2020nc"}
 SDR_COLOUR = {"color_primaries": "bt709", "color_transfer": "bt709", "color_space": "bt709"}
 STILL_FILES = ("still-sdr.png", "still-hdr.png", "still-hdr.avif")
-CROP_FILES = ("crop-sdr.png", "crop-sdr@1x.png", "crop-hdr.png", "crop-hdr@1x.png",
-              "crop-hdr.avif", "crop-hdr@1x.avif")
-SITE_CROP_FILES = ("crop-sdr.png", "crop-sdr@1x.png", "crop-hdr.avif", "crop-hdr@1x.avif")
-CROP_ALIGN = 6  # detail crop sizes: whole device pixels at pixel ratios 1, 1.5, 2 and 3
+CROP_FILES = ("crop-sdr.png", "crop-hdr.png", "crop-hdr.avif")
+SITE_CROP_FILES = ("crop-sdr.png", "crop-hdr.avif")
+CROP_ALIGN = 6  # detail crop sizes: whole CSS px at pixel ratios 1, 1.5, 2 and 3 (flicker_geometry)
 
 
 @dataclass
@@ -621,7 +619,8 @@ def _verify_avif(path: Path, size) -> None:
 
 def encode_still(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dict | None:
     """Stills and 1:1 detail crops of frame thumbnail_frame at full size:
-    lossless SDR PNGs, HDR AVIFs from 16-bit PQ PNGs, @1x by 2x2 average."""
+    lossless SDR PNGs and HDR AVIFs from 16-bit PQ PNGs. Nothing is scaled:
+    a 1x display shows the crop 1:1 too, larger on the page."""
     size = ctx.defaults.lens_size
     sdr = render_facts(ctx, runner, shot, preset, size, False)
     hdr = render_facts(ctx, runner, shot, preset, size, True)
@@ -635,32 +634,26 @@ def encode_still(ctx: Context, runner: Runner, shot: Shot, preset: str) -> dict 
                                         raster=ctx.raster(preset))
         runner.run(recipes.sdr_png_args(sdr.path, d / "still-sdr.png", frame, matrix=sdr.matrix, range_=sdr.range),
                    what=f"still-sdr {shot.id}/{preset}")
-        runner.step("rewrite still-sdr.png with the sRGB chunk, cut crop-sdr.png "
-                    f"({rect.crop_filter()}) and crop-sdr@1x.png (Image.reduce(2))",
+        runner.step(f"rewrite still-sdr.png with the sRGB chunk and cut crop-sdr.png ({rect.crop_filter()})",
                     lambda: (images.sdr_png(d / "still-sdr.png", d / "still-sdr.png"),
-                             images.sdr_crop(d / "still-sdr.png", d / "crop-sdr.png", rect),
-                             images.sdr_reduce(d / "crop-sdr.png", d / "crop-sdr@1x.png")))
+                             images.sdr_crop(d / "still-sdr.png", d / "crop-sdr.png", rect)))
 
         def hdr_work(rgb):
-            part = images.crop(rgb, rect)
-            return {**_write16(d / "still-hdr.png", rgb), **_write16(d / "crop-hdr.png", part),
-                    **_write16(d / "crop-hdr@1x.png", images.box_average_2x2(part))}
+            return {**_write16(d / "still-hdr.png", rgb), **_write16(d / "crop-hdr.png", images.crop(rgb, rect))}
 
         levels = _hdr_frame(runner, hdr, frame, d / "still-hdr.yuv",
-                            f"write still-hdr.png, crop-hdr.png ({rect.crop_filter()}) and crop-hdr@1x.png "
-                            f"(2x2 box average) as 16-bit PQ PNGs", hdr_work)
-        for png in ("still-hdr.png", "crop-hdr.png", "crop-hdr@1x.png"):
+                            f"write still-hdr.png and crop-hdr.png ({rect.crop_filter()}) as 16-bit PQ PNGs",
+                            hdr_work)
+        for png in ("still-hdr.png", "crop-hdr.png"):
             avif = png.replace(".png", ".avif")
             runner.run(recipes.avifenc_args(d / png, d / avif, clli=levels.get(png)), what=f"{avif} {shot.id}/{preset}")
         if runner.dry_run:
             return None
-        half = (rect.w // 2, rect.h // 2)
         for name, want in (("still-sdr.png", size), ("still-hdr.png", size), ("crop-sdr.png", (rect.w, rect.h)),
-                           ("crop-sdr@1x.png", half), ("crop-hdr.png", (rect.w, rect.h)), ("crop-hdr@1x.png", half)):
+                           ("crop-hdr.png", (rect.w, rect.h))):
             verify_image(d / name, frames=1, size=want)
         _verify_avif(d / "still-hdr.avif", size)
         _verify_avif(d / "crop-hdr.avif", (rect.w, rect.h))
-        _verify_avif(d / "crop-hdr@1x.avif", half)
     return {"crop": [rect.x, rect.y, rect.w, rect.h], "light_levels": levels}
 
 
@@ -937,11 +930,11 @@ def collect_clip(ctx: Context, runner: Runner, shot: Shot, preset: str) -> ClipI
 
 
 def crop_entry(ctx: Context, shot: Shot, preset: str, rels: dict[str, str]) -> dict:
-    """The manifest's detail crop: its four files and where it sits in the still."""
+    """The manifest's detail crop: its SDR and HDR files and where it sits in the still."""
     rect = recipes.flicker_geometry(shot.detail_crop, ctx.defaults.lens_size, ctx.flicker_scale, align=CROP_ALIGN,
                                     raster=ctx.raster(preset))
-    return {"sdr": rels["crop-sdr.png"], "sdr_1x": rels["crop-sdr@1x.png"], "hdr": rels["crop-hdr.avif"],
-            "hdr_1x": rels["crop-hdr@1x.avif"], "x": rect.x, "y": rect.y, "width": rect.w, "height": rect.h}
+    return {"sdr": rels["crop-sdr.png"], "hdr": rels["crop-hdr.avif"],
+            "x": rect.x, "y": rect.y, "width": rect.w, "height": rect.h}
 
 
 def _hdr_sidecars(ctx: Context, shot: Shot, preset: str) -> list[dict]:

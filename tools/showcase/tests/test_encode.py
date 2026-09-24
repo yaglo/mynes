@@ -267,10 +267,9 @@ class EncodePipeline(unittest.TestCase):
         got = jobs_mod.collect_clip(ctx, runner, shot, "p_jvc")
         rect = recipes.flicker_geometry(shot.flicker_crop, LENS, align=jobs_mod.CROP_ALIGN)
         self.assertEqual(got.entry, {"crop": {
-            "sdr": "assets/hero/synth/p_jvc/512x384/crop-sdr.png", "sdr_1x": "assets/hero/synth/p_jvc/512x384/crop-sdr@1x.png",
-            "hdr": "assets/hero/synth/p_jvc/512x384/crop-hdr.avif", "hdr_1x": "assets/hero/synth/p_jvc/512x384/crop-hdr@1x.avif",
+            "sdr": "assets/hero/synth/p_jvc/512x384/crop-sdr.png", "hdr": "assets/hero/synth/p_jvc/512x384/crop-hdr.avif",
             "x": rect.x, "y": rect.y, "width": rect.w, "height": rect.h}})
-        self.assertEqual([rel for _src, rel in got.copies], [got.entry["crop"][k] for k in ("sdr", "sdr_1x", "hdr", "hdr_1x")])
+        self.assertEqual([rel for _src, rel in got.copies], [got.entry["crop"][k] for k in ("sdr", "hdr")])
 
     def test_renders_are_what_the_recorder_writes(self):
         info = probe_video(self.ctx.render_path(self.shot, "p_sony", LENS, True))
@@ -470,26 +469,22 @@ class EncodePipeline(unittest.TestCase):
                          images.light_levels(hdr.astype(np.uint16)))
         self.assertEqual(light["max_content"], PEAK_NITS)
 
-    def test_detail_crops_are_1_to_1_with_exact_1x_averages(self):
+    def test_detail_crops_are_1_to_1(self):
         d = self.d(LENS)
         rect = recipes.flicker_geometry([78, 73, 100, 93.75], LENS, align=jobs_mod.CROP_ALIGN)
         self.assertEqual(rect, recipes.Rect(168, 115, 180, 144))  # on the raster, rounded down to multiples of 6
-        with Image.open(d / "still-sdr.png") as still, Image.open(d / "crop-sdr.png") as crop, \
-                Image.open(d / "crop-sdr@1x.png") as small:
+        with Image.open(d / "still-sdr.png") as still, Image.open(d / "crop-sdr.png") as crop:
             self.assertEqual(np.asarray(crop).tolist(), np.asarray(still.crop(rect.box)).tolist())
-            self.assertEqual(np.asarray(small).tolist(), np.asarray(crop.reduce(2)).tolist())
-        for name in ("still-sdr.png", "crop-sdr.png", "crop-sdr@1x.png"):  # sRGB chunk, no ICC profile
+        self.assertFalse(any(d.glob("*@1x*")))  # no reduced copies: a 1x display shows the crop 1:1 too
+        for name in ("still-sdr.png", "crop-sdr.png"):  # sRGB chunk, no ICC profile
             kinds = images.png_chunk_types(d / name)
             self.assertIn("sRGB", kinds, name)
             self.assertNotIn("iCCP", kinds, name)
         still = decode_hdr(d / "still-hdr.png", LENS)
         crop = decode_hdr(d / "crop-hdr.png", (rect.w, rect.h))
-        small = decode_hdr(d / "crop-hdr@1x.png", (rect.w // 2, rect.h // 2))
         self.assertTrue(np.array_equal(crop, still[rect.y:rect.y + rect.h, rect.x:rect.x + rect.w]))
-        self.assertTrue(np.array_equal(small, images.box_average_2x2(crop.astype(np.uint16))))
-        for name, size in (("crop-hdr.avif", (rect.w, rect.h)), ("crop-hdr@1x.avif", (rect.w // 2, rect.h // 2))):
-            info = probe_video(d / name)
-            self.assertEqual((info.width, info.height, info.colour["color_transfer"]), (*size, "smpte2084"))
+        info = probe_video(d / "crop-hdr.avif")
+        self.assertEqual((info.width, info.height, info.colour["color_transfer"]), (rect.w, rect.h, "smpte2084"))
 
     # -- README media ----------------------------------------------------------
     def test_readme_media(self):
@@ -652,11 +647,11 @@ class EncodePipeline(unittest.TestCase):
         self.assertEqual(json.loads((site / "assets" / "hero" / "manifest.json").read_text()), merged)
         runner2, said = self.listening_runner()
         merged2 = jobs_mod.install(self.install_ctx(site, with_crops=True), runner2, self.shot_list.select())
-        self.assertTrue((hero / "512x384" / "crop-hdr@1x.avif").exists())
+        self.assertTrue((hero / "512x384" / "crop-hdr.avif").exists())
+        self.assertFalse(any((hero / "512x384").glob("*@1x*")))
         rect = recipes.flicker_geometry(self.shot.flicker_crop, LENS, align=jobs_mod.CROP_ALIGN)
         self.assertEqual(merged2["clips"]["synth"]["p_sony"]["crop"], {
-            "sdr": "assets/hero/synth/p_sony/512x384/crop-sdr.png", "sdr_1x": "assets/hero/synth/p_sony/512x384/crop-sdr@1x.png",
-            "hdr": "assets/hero/synth/p_sony/512x384/crop-hdr.avif", "hdr_1x": "assets/hero/synth/p_sony/512x384/crop-hdr@1x.avif",
+            "sdr": "assets/hero/synth/p_sony/512x384/crop-sdr.png", "hdr": "assets/hero/synth/p_sony/512x384/crop-hdr.avif",
             "x": rect.x, "y": rect.y, "width": rect.w, "height": rect.h})
         self.assertEqual(json.loads((site / "assets" / "hero" / "manifest.json").read_text()), merged2)
         self.assertEqual(runner2.ran, [])  # no commands

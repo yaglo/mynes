@@ -38,7 +38,9 @@ VERSION = 2
 HERO_PREFIX = "assets/hero"
 V1_CLIP_KEYS = ("video", "still_size", "full")
 CLIP_KEYS = ("poster", "stage", "lens", "still", "hdr", "crop")
-CROP_KEYS = ("sdr", "sdr_1x", "hdr", "hdr_1x", "x", "y", "width", "height")
+CROP_KEYS = ("sdr", "hdr", "x", "y", "width", "height")
+# Crop keys of the 2x2-averaged files the site no longer shows.
+OLD_CROP_KEYS = ("sdr_1x", "hdr_1x")
 SOURCE_KEYS = ("src", "type", "hdr", "width", "height", "bytes")
 STILL_KEYS = ("hdr", "sdr", "width", "height", "frame")
 HDR_KEYS = ("white_nits", "headroom", "max_cll", "max_fall")
@@ -164,7 +166,8 @@ def build(shot_list: ShotList, produced: dict[str, dict[str, dict]], *,
 
     ``produced`` is {shot_id: {preset: clip}} with clip keys from CLIP_KEYS.
     Every other clip still in version 1 form is upgraded (upgrade_clip), so
-    the version 2 file holds no version 1 clip."""
+    the version 2 file holds no version 1 clip, and every crop loses the
+    @1x keys (OLD_CROP_KEYS) of the averaged files the site no longer shows."""
     old = copy.deepcopy(existing) if existing else {}
     meta = shot_list.preset_meta
     old_presets = {e["id"]: e for e in old.get("presets", []) if isinstance(e, dict) and "id" in e}
@@ -184,6 +187,10 @@ def build(shot_list: ShotList, produced: dict[str, dict[str, dict]], *,
         for preset, clip in by_preset.items():
             if is_v1_clip(clip):
                 by_preset[preset] = upgrade_clip(clip, describe)
+            crop = by_preset[preset].get("crop")
+            if isinstance(crop, dict):
+                for key in OLD_CROP_KEYS:
+                    crop.pop(key, None)
     out = {"version": VERSION, "fps": old.get("fps", recipes.FPS_BY_REGION[region]),
            "aspect": old.get("aspect", [4, 3]), "presets": presets, "games": games, "clips": clips}
     for key, value in old.items():

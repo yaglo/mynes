@@ -32,20 +32,7 @@ def read_png_chunks(path):
 
 
 @unittest.skipUnless(HAVE_LIBS, "needs numpy and Pillow")
-class BoxAverage(unittest.TestCase):
-    def test_matches_pillow_reduce(self):
-        rng = np.random.default_rng(7)
-        rgb8 = rng.integers(0, 256, (48, 64, 3), dtype=np.uint8)
-        want = np.asarray(Image.fromarray(rgb8).reduce(2))
-        got = images.box_average_2x2(rgb8.astype(np.uint16))
-        self.assertTrue(np.array_equal(got, want))
-
-    def test_rounds_half_up_in_16_bit(self):
-        block = np.array([[[0, 1, 65535], [1, 1, 65535]], [[1, 2, 65535], [1, 2, 65534]]], dtype=np.uint16)
-        self.assertEqual(images.box_average_2x2(block).tolist(), [[[1, 2, 65535]]])  # 3/4 -> 1, 6/4 -> 2 (1.5 up)
-        with self.assertRaises(ValueError):
-            images.box_average_2x2(np.zeros((3, 4, 3), np.uint16))
-
+class Crops(unittest.TestCase):
     def test_crop_bounds(self):
         rgb = np.zeros((10, 20, 3), np.uint16)
         self.assertEqual(images.crop(rgb, Rect(2, 3, 4, 5)).shape, (5, 4, 3))
@@ -158,7 +145,7 @@ class LightLevels(unittest.TestCase):
 
 @unittest.skipUnless(HAVE_LIBS, "needs numpy and Pillow")
 class SdrCrops(unittest.TestCase):
-    def test_crop_and_reduce(self):
+    def test_crop(self):
         with tempfile.TemporaryDirectory() as tmp:
             d = Path(tmp)
             rng = np.random.default_rng(1)
@@ -167,13 +154,7 @@ class SdrCrops(unittest.TestCase):
             self.assertEqual(images.sdr_crop(d / "still.png", d / "crop.png", Rect(10, 20, 30, 16)), (30, 16))
             with Image.open(d / "crop.png") as im:
                 self.assertTrue(np.array_equal(np.asarray(im), rgb[20:36, 10:40]))
-            self.assertEqual(images.sdr_reduce(d / "crop.png", d / "crop@1x.png"), (15, 8))
-            with Image.open(d / "crop@1x.png") as im:
-                want = images.box_average_2x2(rgb[20:36, 10:40].astype(np.uint16))
-                self.assertTrue(np.array_equal(np.asarray(im), want))
-            images.sdr_crop(d / "still.png", d / "odd.png", Rect(0, 0, 3, 3))
-            with self.assertRaises(ValueError):
-                images.sdr_reduce(d / "odd.png", d / "odd@1x.png")
+            self.assertEqual(images.sdr_crop(d / "still.png", d / "odd.png", Rect(1, 2, 3, 5)), (3, 5))
 
 
 if __name__ == "__main__":

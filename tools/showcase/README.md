@@ -39,9 +39,8 @@ the pick, and the recorder gets the same ffmpeg through `MYNES_FFMPEG`.
   picture size, in any graph option (`-vf`, `-filter`, `-lavfi`,
   `-filter_complex`, with or without a stream specifier), an output `-s` or
   `-video_size`, or a graph read from a file (`resampling_problem` in
-  `pipeline/recipes.py`). The one
-  reduction is the `@1x` variant of a detail crop: the exact 2x2 average
-  that Pillow's `Image.reduce(2)` computes.
+  `pipeline/recipes.py`). No file is reduced either: a 1x display shows a
+  detail crop 1:1 too, twice as large on the page as a 2x display does.
 - The SDR and HDR renders of a clip come from the same state and replay, so
   their frames match one for one.
 - Every video keeps the render's frames and timebase: `-fps_mode passthrough`
@@ -177,9 +176,9 @@ In `out/<shot>/<preset>/<WxH>/`:
 | `still-sdr.png` | 3840x2880 | Frame `thumbnail_frame` of the SDR render, lossless, with an sRGB chunk and no ICC profile (as every SDR PNG here) |
 | `still-hdr.png` | 3840x2880 | The same frame of the HDR render, 16-bit PQ PNG with a cICP chunk |
 | `still-hdr.avif` | 3840x2880 | `avifenc --cicp 9/16/9 --depth 10 --yuv 444 --range full -q 90 --clli MaxCLL,MaxFALL` from `still-hdr.png` |
-| `crop-sdr.png`, `crop-sdr@1x.png` | crop | 1:1 detail crop of `still-sdr.png`, and its 2x2 average |
-| `crop-hdr.png`, `crop-hdr@1x.png` | crop | The same from the 16-bit HDR frame |
-| `crop-hdr.avif`, `crop-hdr@1x.avif` | crop | AVIF of each, as `still-hdr.avif` |
+| `crop-sdr.png` | crop | 1:1 detail crop of `still-sdr.png` |
+| `crop-hdr.png` | crop | The same from the 16-bit HDR frame |
+| `crop-hdr.avif` | crop | AVIF of it, as `still-hdr.avif` |
 | `flicker.webp` | crop | README presets: eight consecutive frames from `flicker_frame` at 1:1, 125 ms each (8 fps), always lossless: lossy WebP is 4:2:0 and would halve the colour resolution the crop shows. Over 24 MB the encode fails; choose a smaller `flicker_crop` |
 | `flicker.png` | crop | Frame `flicker_frame` of the crop, lossless |
 | `flicker-hdr.png`, `flicker-hdr.jpg` | crop | The HDR crop, and a JPEG with the SDR crop as base image and a gain map toward the HDR one |
@@ -247,9 +246,7 @@ not installed:
              "sdr": "assets/hero/super-mario-bros/sony_pvm_14l2/3840x2880/still-sdr.png",
              "width": 3840, "height": 2880, "frame": 0},
    "crop": {"sdr": "assets/hero/super-mario-bros/sony_pvm_14l2/3840x2880/crop-sdr.png",
-            "sdr_1x": "assets/hero/super-mario-bros/sony_pvm_14l2/3840x2880/crop-sdr@1x.png",
             "hdr": "assets/hero/super-mario-bros/sony_pvm_14l2/3840x2880/crop-hdr.avif",
-            "hdr_1x": "assets/hero/super-mario-bros/sony_pvm_14l2/3840x2880/crop-hdr@1x.avif",
             "x": 930, "y": 1260, "width": 1500, "height": 1122},
    "hdr": {"white_nits": 203, "headroom": 4.0, "max_cll": 812, "max_fall": 50}}}}}
 ```
@@ -263,11 +260,13 @@ so the same string works for `canPlayType` and
 `mediaCapabilities.decodingInfo`; stage files also carry AAC-LC audio.
 `poster` has one entry per stage size because the switcher shows a poster
 only at its own pixel size. `hdr` holds the largest `max_cll` and `max_fall`
-over the clip's HDR renders. `crop` is the 1:1 detail crop of the still and
-its `@1x` files, with its position and size in the still; a clip installed
+over the clip's HDR renders. `crop` is the 1:1 detail crop of the still,
+SDR and HDR, with its position and size in the still; a clip installed
 without `--with-crops` has none, and a crop preset's clip has nothing else. Merging keeps presets, games, clips and
 top-level keys the run did not produce, replaces a produced clip's version 1
-keys (`video`, `still_size`, `full`), and merges `stage` and `lens` by `src`.
+keys (`video`, `still_size`, `full`), merges `stage` and `lens` by `src`, and
+drops the `sdr_1x` and `hdr_1x` keys of earlier crops, whose 2x2-averaged
+files the site no longer shows.
 
 The site reads `version` once for the whole file, so a version 1 clip that
 stays in a version 2 manifest is rewritten in version 2 form: its `video`
@@ -319,10 +318,12 @@ black at both sides. On 3840x2880 one NES pixel is 13.58x11.95 render
 pixels and the picture starts 197 pixels in: 100 pixels by 93.75 lines is
 the 1358x1120 flicker crop, where a 100x75 region would be 1358x896. The
 detail crops use the same region with a size that is a multiple of 6
-(1356x1116, `@1x` 678x558): the site shows the crop at half its size on a
-2x display and at the `@1x` size on a 1x display, and a multiple of 6 also
-lands on whole device pixels at pixel ratios 1.5 and 3, where browsers lay
-out in steps of 1/64 CSS px.
+(1356x1116). The site shows a crop 1:1 at any pixel ratio, at its pixel size
+divided by the ratio, and a multiple of 6 makes that a whole number of CSS
+px at ratios 1, 1.5, 2 and 3: even for the half-size width and height the
+markup gives 2x displays, and a multiple of 3 at 1.5 and 3, where browsers
+lay out in steps of 1/64 CSS px and a fractional size would stretch the
+image by a fraction of a pixel.
 `--flicker-scale 15` or `15x12` overrides the scale. `thumbnail_frame` picks
 the poster and still frame; the site freezes clips at frame 0, so leave it
 at 0 for shots on the site.
@@ -449,7 +450,7 @@ them and checks the outputs: codecs strings, HDR10 metadata, one-pixel
 columns surviving, colours after the BT.601 to BT.709 change, an 800-nit
 highlight within 1% in the stage video and the still, a PQ-peak patch that
 must read 65535 in `still-hdr.png` and 10000 nits in the AVIF's content
-light level, 1:1 crops and exact `@1x` averages, the manifest (a version 1
+light level, 1:1 crops, the manifest (a version 1
 clip rewritten in version 2 form), the budget refusal and the cases where
 install stops before copying. It takes under a minute and is skipped when
 ffmpeg lacks one of the encoders or avifenc, numpy or Pillow is missing; the

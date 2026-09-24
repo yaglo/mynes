@@ -10,9 +10,8 @@ Two rules hold for every command built here:
   emulator at that size, and resampling anywhere would blur the mask. Filters
   only convert pixel format and colour (``format``, ``scale`` without a size,
   ``setparams``), select frames or cut whole-pixel crops. resampling_problem()
-  enforces this for every ffmpeg command the runner starts. The one reduction
-  is the exact 2x2 box average for the @1x crop variants, done on pixels in
-  images.py.
+  enforces this for every ffmpeg command the runner starts, and images.py
+  only cuts 1:1 crops.
 - Frame count and timebase come from the render: ``-fps_mode passthrough`` and
   no ``-r``, so ffmpeg neither drops nor duplicates a frame, and the runner
   verifies the count afterwards.
@@ -304,9 +303,11 @@ def validate_nes_rect(crop: Sequence[float]) -> tuple[float, float, float, float
 def flicker_geometry(crop: Sequence[float], size: Sequence[int] = LENS_SIZE,
                      scale: str | None = None, *, align: int = 1, raster: Raster = Raster()) -> Rect:
     """The crop in render pixels, 1:1. ``align`` rounds the size down to a
-    multiple: 2 keeps the 2x2 average of the @1x variant covering every
-    pixel, and 6 also puts the crop on whole device pixels at pixel ratios
-    1.5 and 3, where browsers lay out in steps of 1/64 CSS px.
+    multiple. The site shows a crop at its pixel size divided by the pixel
+    ratio, and 6 makes that a whole number of CSS px at ratios 1, 1.5, 2
+    and 3: even for the half-size width and height its markup gives for 2x
+    displays, and a multiple of 3 at 1.5 and 3, where a fractional CSS size
+    would have the browser stretch the image by a fraction of a pixel.
 
     The size is the crop's on a face without overscan, the same for every
     preset; ``raster`` (preset_raster) moves it so its centre stays on the
@@ -518,7 +519,7 @@ def hdr_raw_args(src: Path | str, out: Path | str, frame: int = 0, *,
     """One frame of the HDR render as raw planar Y'CbCr in the decoder's own
     format (ffmpeg decodes ProRes 4444 as yuv444p12le), so ffmpeg changes no
     sample. images.yuv_to_rgb48 turns it into 16-bit PQ R'G'B'; then
-    images.py cuts the crops, averages the @1x variants and writes the PNGs."""
+    images.py cuts the crops and writes the PNGs."""
     if pix_fmt not in HDR_RAW_FORMATS:
         raise RecipeError(f"an HDR still needs a 4:4:4 render of 10, 12 or 16 bits, not {pix_fmt}")
     return [*FFMPEG_BASE, "-i", str(src), "-an", "-vf", select_frame(frame),
