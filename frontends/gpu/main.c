@@ -2319,8 +2319,6 @@ int main(int argc, char **argv) {
                 video_gpu_set_demod(&video_gpu_chain, base_phase, video_gpu_chain.demod_dp);
             }
 
-            int out_w = video_gpu_chain.window.width;
-            int out_h = video_gpu_chain.window.lines;
 
             bool dump_this_frame = signal_decode_active && debug_dump &&
                 frame_wanted(frame_count, debug_dump_frames, debug_dump_count);
@@ -2414,10 +2412,27 @@ int main(int argc, char **argv) {
                     render_ctx.display_tex_h = beam_h;
                     render_ctx.owns_display_tex = false;
                 } else {
-                    gpu_render_ensure_texture(&render_ctx, out_w, out_h);
-                    uint8_t *rgba = gpu_render_float_rgb_to_rgba8(gpu_rgb_out,
-                                                        out_w * out_h);
-                    gpu_render_upload_rgba(&render_ctx, rgba, out_w, out_h);
+                    /* No beam: show the part of the decoded raster the
+                     * receiver unblanks, border included, retrace cut off. */
+                    const DecodeWindow *dw = &video_gpu_chain.window;
+                    int x0 = (int)ceilf(dw->trace_x0), x1 = (int)floorf(dw->trace_x1);
+                    int cols = x1 - x0, rows = dw->trace_row1 - dw->trace_row0;
+                    static float *crop; static size_t crop_floats;
+                    size_t need = (size_t)cols * rows * 3;
+                    if (need > crop_floats) {
+                        free(crop);
+                        crop = malloc(need * sizeof(float));
+                        crop_floats = crop ? need : 0;
+                    }
+                    if (crop && cols > 0 && rows > 0) {
+                        for (int r = 0; r < rows; r++)
+                            memcpy(crop + (size_t)r * cols * 3,
+                                   gpu_rgb_out + ((size_t)(dw->trace_row0 + r) * dw->width + x0) * 3,
+                                   (size_t)cols * 3 * sizeof(float));
+                        gpu_render_ensure_texture(&render_ctx, cols, rows);
+                        uint8_t *rgba = gpu_render_float_rgb_to_rgba8(crop, cols * rows);
+                        gpu_render_upload_rgba(&render_ctx, rgba, cols, rows);
+                    }
                 }
             } else {
                 /* GPU dispatch failed: keep host UI usable on the raw fallback. */
