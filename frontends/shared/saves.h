@@ -63,7 +63,8 @@ bool  mynes_state_write(const MynesSaves *s, int slot, const void *data, size_t 
 void *mynes_state_read(const MynesSaves *s, int slot, size_t *size);
 
 /* Write through a temporary file and rename it into place, so an interrupted
- * write leaves the previous file intact rather than a truncated one. */
+ * write leaves the previous file intact rather than a truncated one. A
+ * symlinked `path` stays a link: the file it names is the one replaced. */
 bool mynes_write_file_atomic(const char *path, const void *data, size_t size);
 
 #endif /* MYNES_SAVES_H */

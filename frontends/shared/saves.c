@@ -1,7 +1,7 @@
 /*
  * saves.c — battery RAM and save-state files (see saves.h).
  */
-#define _POSIX_C_SOURCE 200809L  /* fileno and fsync under strict C11 */
+#define _POSIX_C_SOURCE 200809L  /* fileno, fsync and lstat under strict C11 */
 #include "saves.h"
 
 #include <errno.h>
@@ -10,6 +10,7 @@
 #include <string.h>
 #ifndef _WIN32
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -141,14 +142,19 @@ void *mynes_state_read(const MynesSaves *s, int slot, size_t *size) {
 }
 
 #ifndef _WIN32
+/* The directory part of `path`: "." when there is none. */
+static void parent_dir(const char *path, char *out, size_t out_sz) {
+    snprintf(out, out_sz, "%s", path);
+    char *slash = strrchr(out, '/');
+    if (!slash) snprintf(out, out_sz, ".");
+    else if (slash == out) out[1] = '\0';
+    else *slash = '\0';
+}
+
 /* A rename is durable only once the directory holding it is on disk. */
 static void sync_parent_dir(const char *path) {
     char dir[MYNES_PATH_MAX];
-    snprintf(dir, sizeof(dir), "%s", path);
-    char *slash = strrchr(dir, '/');
-    if (!slash) snprintf(dir, sizeof(dir), ".");
-    else if (slash == dir) dir[1] = '\0';
-    else *slash = '\0';
+    parent_dir(path, dir, sizeof(dir));
     int fd = open(dir, O_RDONLY);
     if (fd < 0) return;
     /* Some filesystems refuse to sync a directory; the file itself is
@@ -156,13 +162,55 @@ static void sync_parent_dir(const char *path) {
     (void)fsync(fd);
     close(fd);
 }
+
+/* Follow `path` through symlinks to the file they name, which need not exist
+ * yet. Renaming onto the link itself would replace it with a regular file,
+ * and a config.json linked in from elsewhere would silently stop being
+ * shared. Only the last component is followed; a linked directory on the
+ * way works as it is. */
+static bool follow_links(const char *path, char *out, size_t out_sz) {
+    if (snprintf(out, out_sz, "%s", path) >= (int)out_sz) {
+        errno = ENAMETOOLONG;
+        return false;
+    }
+    for (int depth = 0; depth < 32; depth++) {
+        struct stat st;
+        if (lstat(out, &st) != 0 || !S_ISLNK(st.st_mode)) return true;
+        char target[MYNES_PATH_MAX], dir[MYNES_PATH_MAX];
+        ssize_t n = readlink(out, target, sizeof(target));
+        if (n < 0) return false;
+        if ((size_t)n >= sizeof(target)) {
+            errno = ENAMETOOLONG;
+            return false;
+        }
+        target[n] = '\0';
+        /* A relative target is relative to the link's own directory. */
+        parent_dir(out, dir, sizeof(dir));
+        if (target[0] == '/' ? snprintf(out, out_sz, "%s", target) >= (int)out_sz
+                             : snprintf(out, out_sz, "%s/%s", dir, target) >= (int)out_sz) {
+            errno = ENAMETOOLONG;
+            return false;
+        }
+    }
+    errno = ELOOP;
+    return false;
+}
 #endif
 
 bool mynes_write_file_atomic(const char *path, const void *data, size_t size) {
-    char tmp[MYNES_PATH_MAX];
+    char tmp[MYNES_PATH_MAX], target[MYNES_PATH_MAX];
     if (!*path) return false;
-    if (snprintf(tmp, sizeof(tmp), "%s.tmp", path) >= (int)sizeof(tmp)) {
-        fprintf(stderr, "Cannot write %s: path too long\n", path);
+#ifndef _WIN32
+    if (!follow_links(path, target, sizeof(target))) {
+        fprintf(stderr, "Cannot write %s: %s\n", path, strerror(errno));
+        return false;
+    }
+#else
+    snprintf(target, sizeof(target), "%s", path);
+#endif
+    /* Beside the file the link names, since rename cannot cross filesystems. */
+    if (snprintf(tmp, sizeof(tmp), "%s.tmp", target) >= (int)sizeof(tmp)) {
+        fprintf(stderr, "Cannot write %s: path too long\n", target);
         return false;
     }
     FILE *f = fopen(tmp, "wb");
@@ -178,12 +226,12 @@ bool mynes_write_file_atomic(const char *path, const void *data, size_t size) {
 #endif
     ok = (fclose(f) == 0) && ok;
     if (!ok) fprintf(stderr, "Cannot write %s: %s\n", tmp, strerror(errno));
-    if (ok && rename(tmp, path) != 0) {
-        fprintf(stderr, "Cannot replace %s: %s\n", path, strerror(errno));
+    if (ok && rename(tmp, target) != 0) {
+        fprintf(stderr, "Cannot replace %s: %s\n", target, strerror(errno));
         ok = false;
     }
 #ifndef _WIN32
-    if (ok) sync_parent_dir(path);
+    if (ok) sync_parent_dir(target);
 #endif
     if (!ok) remove(tmp);
     return ok;

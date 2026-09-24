@@ -125,6 +125,40 @@ int main(void) {
     /* An unwritable destination fails cleanly and leaves no temp file. */
     CHECK(!mynes_write_file_atomic("/nonexistent-dir/x/y.sav", ram, sizeof(ram)));
 
+    /* A symlink stays a link, relative targets resolve beside the link, and
+     * the temporary file goes beside the target. A dangling link creates
+     * its target. */
+    char link[MYNES_PATH_MAX + 16], real[MYNES_PATH_MAX + 16], chain[MYNES_PATH_MAX + 16];
+    char sub[MYNES_PATH_MAX], text[16], side[MYNES_PATH_MAX + 32];
+    snprintf(sub, sizeof(sub), "%s/real", root);
+    CHECK(mkdir(sub, 0755) == 0);
+    snprintf(real, sizeof(real), "%s/real/target.json", root);
+    snprintf(link, sizeof(link), "%s/link.json", root);
+    snprintf(chain, sizeof(chain), "%s/chain.json", root);
+    CHECK(symlink("real/target.json", link) == 0);
+    CHECK(symlink("link.json", chain) == 0);
+    CHECK(mynes_write_file_atomic(chain, "first", 5));
+    CHECK(lstat(link, &st) == 0 && S_ISLNK(st.st_mode));
+    CHECK(lstat(chain, &st) == 0 && S_ISLNK(st.st_mode));
+    CHECK(lstat(real, &st) == 0 && S_ISREG(st.st_mode) && st.st_size == 5);
+    CHECK(mynes_write_file_atomic(link, "second", 6));
+    CHECK(lstat(link, &st) == 0 && S_ISLNK(st.st_mode));
+    FILE *rf = fopen(real, "rb");
+    size_t got = rf ? fread(text, 1, sizeof(text), rf) : 0;
+    if (rf) fclose(rf);
+    CHECK(got == 6 && memcmp(text, "second", 6) == 0);
+    snprintf(side, sizeof(side), "%s.tmp", real);
+    CHECK(!exists(side));
+    snprintf(side, sizeof(side), "%s.tmp", link);
+    CHECK(!exists(side));
+    /* A link to itself is refused rather than followed forever. */
+    char loop[MYNES_PATH_MAX + 16];
+    snprintf(loop, sizeof(loop), "%s/loop.json", root);
+    CHECK(symlink("loop.json", loop) == 0);
+    CHECK(!mynes_write_file_atomic(loop, "x", 1));
+    CHECK(lstat(loop, &st) == 0 && S_ISLNK(st.st_mode));
+    remove(loop); remove(chain); remove(link); remove(real); rmdir(sub);
+
     /* A config directory too long for the slot suffix gives no path at all,
      * rather than one truncated path shared by every slot. */
     char deep[MYNES_PATH_MAX];
