@@ -39,3 +39,8 @@ vignette, bloom) on top.
   default is `0`). We feed PAL-CRT a pixel whose bit 6 comes from raw
   `PPUMASK` bit 5, which on PAL hardware is green — so PAL-CRT needs to
   swap R↔G internally to match our bit layout.
+- `pal_core.c` / `pal_core.h`: the chroma-correction (Hanover) delay
+  line moved from a function-static in `pal_demodulate` into
+  `struct PAL_CRT`, and is cleared at the start of each field. Upstream
+  shares it across instances and never resets it, so a field's first
+  line averaged with the previous field's last.

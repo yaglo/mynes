@@ -82,6 +82,8 @@ struct PAL_CRT {
     int cc_period; /* vertically */
     int hsync, vsync; /* keep track of sync over frames */
     int rn; /* seed for the 'random' noise */
+    /* 1H delay line for chroma_correction; per instance, cleared each field */
+    struct { int u, v; } delay_line[AV_LEN + 1];
 };
 
 /* Initializes the library. Sets up filters.

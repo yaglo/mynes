@@ -375,6 +375,8 @@ vsync_found:
 
     field = (field * (ratio / 2));
 
+    /* the first line of a field must not average with the last one */
+    memset(c->delay_line, 0, sizeof(c->delay_line));
     for (line = PAL_TOP; line < PAL_BOT; line++) {
         unsigned pos, ln, scanR;
         int scanL, dx;
@@ -492,13 +494,12 @@ vsync_found:
             dmU = sig[i] * wave[(i + 0) & 3];
             dmV = sig[i] * wave[(i + 3) & 3] * odd;
             if (c->chroma_correction) {
-                static struct { int u, v; } delay_line[AV_LEN + 1];
                 ou = dmU;
                 ov = dmV;
-                dmU = (delay_line[i].u + dmU) / 2;
-                dmV = (delay_line[i].v + dmV) / 2;
-                delay_line[i].u = ou;
-                delay_line[i].v = ov;
+                dmU = (c->delay_line[i].u + dmU) / 2;
+                dmV = (c->delay_line[i].v + dmV) / 2;
+                c->delay_line[i].u = ou;
+                c->delay_line[i].v = ov;
             }
             out[i].y = eqf(&eqY, sig[i] + bright) << 4;
             out[i + c->chroma_lag].u = eqf(&eqU, dmU >> 9) >> 3;
