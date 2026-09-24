@@ -582,11 +582,11 @@ static int test_pixel_palette_priority(void) {
     return pass;
 }
 
-static bool row_is(int y, unsigned color) {
+static bool row_is(int y, unsigned entry) {
     for (int x = 0; x < PPU_WIDTH; x++) {
         int i = y * PPU_WIDTH + x;
-        if (ppu.index_framebuffer[i] != color ||
-            memcmp(&ppu.framebuffer[i * 3], ppu_palette_2c02[color], 3) != 0)
+        if (ppu.index_framebuffer[i] != entry ||
+            memcmp(&ppu.framebuffer[i * 3], ppu_palette_2c02[entry & 0x3F], 3) != 0)
             return false;
     }
     return true;
@@ -607,6 +607,13 @@ static int test_forced_blank_backdrop(void) {
     ppu.v = 0x3F05;
     run_to(2, 0);
     pass &= row_is(1, 0x21);
+    /* $3F14 mirrors $3F04, through greyscale and with emphasis, the same
+     * entry the frontend takes for the border. */
+    ppu.palette[4] = 0x2A;
+    ppu.mask = MASK_GREYSCALE | 0xA0;
+    ppu.v = 0x3F14;
+    run_to(3, 0);
+    pass &= row_is(2, 0x20 | 0x140) && ppu_backdrop_entry(&ppu) == (0x20 | 0x140);
     printf("TEST forced_blank_backdrop: %s\n", pass ? "PASS" : "FAIL");
     return pass;
 }

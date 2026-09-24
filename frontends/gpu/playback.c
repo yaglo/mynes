@@ -54,17 +54,6 @@ struct Playback {
     uint16_t border[242][2];   /* the frame in progress's border, see run_frame */
 };
 
-uint16_t playback_border_entry(const PPU *ppu) {
-    unsigned addr = 0;
-    bool rendering = (ppu->mask & (MASK_BG_ENABLE | MASK_SPRITE_ENABLE)) != 0;
-    if (!rendering && (ppu->v & 0x3f00) == 0x3f00) {
-        addr = ppu->v & 0x1f;
-        if ((addr & 0x13) == 0x10) addr &= ~0x10u;   /* $3F10/14/18/1C mirror $3F00/04/08/0C */
-    }
-    uint16_t colour = ppu->palette[addr] & (ppu->mask & MASK_GREYSCALE ? 0x30 : 0x3f);
-    return colour | (uint16_t)((ppu->mask & 0xe0) << 1);
-}
-
 /* One frame, noting the border each raster line gets. Raster line r starts
  * at PPU dot 277 of PPU line r - 1, so the left border of line r (dots 49
  * to 64) is drawn in PPU line r - 1's dots 326 to 340 and the right border
@@ -81,14 +70,14 @@ static void run_frame(NES *nes, uint16_t border[242][2]) {
     while (!ppu->frame_complete) {
         nes_step(nes);
         if (ppu->scanline != line) {
-            uint16_t entry = playback_border_entry(ppu);
+            uint16_t entry = ppu_backdrop_entry(ppu);
             int next = line == ppu->prerender_line ? 0 : line + 1;
             if (line < 242) border[line][1] = entry;
             if (next < 242) border[next][0] = entry;
             line = ppu->scanline;
         }
     }
-    border[241][1] = playback_border_entry(ppu);
+    border[241][1] = ppu_backdrop_entry(ppu);
 }
 
 /* Deterministic controller replay for offscreen visual reviews. Each row is
