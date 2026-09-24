@@ -132,6 +132,15 @@ static bool flush_output(DebugServerState *state) {
  * Background listener thread
  * ============================================================================ */
 
+/* The recorder starts ffmpeg with posix_spawnp and counts on the child
+ * inheriting nothing beyond the descriptors it hands over; a debug socket or
+ * wake pipe leaked into it would outlive the server. macOS has neither
+ * SOCK_CLOEXEC nor pipe2, so the flag is set just after each one is made. */
+static void set_cloexec(int fd) {
+    int flags = fcntl(fd, F_GETFD);
+    if (flags >= 0) fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
+}
+
 /* close() does not wake a thread blocked in accept() on Linux, so the loop
  * polls the listening socket together with a pipe that destroy writes to.
  * Only destroy closes the descriptors, after the join. */
@@ -158,6 +167,7 @@ static void *listen_thread_main(void *arg) {
                 perror("accept");
             continue;
         }
+        set_cloexec(client);
         /* The listening socket is non-blocking; BSD accept() inherits that. */
         int client_flags = fcntl(client, F_GETFL);
         if (client_flags >= 0) fcntl(client, F_SETFL, client_flags & ~O_NONBLOCK);
@@ -287,6 +297,7 @@ static int open_listen_socket(const char *socket_path) {
         perror("socket(AF_UNIX)");
         return -1;
     }
+    set_cloexec(sock);
     /* Non-blocking, so a client that goes away between poll() and accept()
      * cannot park the thread in accept() where destroy's wake-up misses it. */
     int flags = fcntl(sock, F_GETFL);
@@ -335,6 +346,8 @@ DebugServer *debug_server_create(const char *socket_path) {
         free(state);
         return NULL;
     }
+    set_cloexec(state->wake_pipe[0]);
+    set_cloexec(state->wake_pipe[1]);
 
     pthread_mutex_init(&state->client_lock, NULL);
 
