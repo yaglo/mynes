@@ -19,9 +19,24 @@
 #   git push --force --all origin
 #   git push --force --tags origin
 #
+# The script refuses to run while HEAD still tracks any of the paths it
+# removes, and leaves git-filter-repo's own fresh-clone check on. Set
+# MYNES_STRIP_FORCE=1 to pass --force to git-filter-repo only if that check
+# rejects a clone you know is fresh.
+#
 # Requires git-filter-repo (pip install git-filter-repo, or brew install git-filter-repo).
 
 set -euo pipefail
+
+# The paths dropped from every commit. They must already be gone from the
+# tip: the rewrite would otherwise delete files the tree still uses.
+MEDIA_PATHS=(
+    docs/images
+    docs/contra-gallery-metrics.json
+    docs/gpu-motion-metrics.json
+    docs/preset-audit-4k.json
+    docs/showcase-captures.json
+)
 
 if [[ "${1:-}" != "--yes" ]]; then
     echo "This rewrites all history. Read the header of this script, then rerun with --yes." >&2
@@ -38,18 +53,37 @@ if [[ -n "$(git status --porcelain)" ]]; then
     exit 1
 fi
 
+still_tracked=$(git ls-tree -r --name-only HEAD -- "${MEDIA_PATHS[@]}")
+if [[ -n "$still_tracked" ]]; then
+    count=$(printf '%s\n' "$still_tracked" | wc -l | tr -d ' ')
+    echo "HEAD still tracks $count file(s) this script would delete from history:" >&2
+    # sed rather than head: head closing the pipe early would kill printf
+    # with SIGPIPE and, under pipefail, the script before its last message.
+    printf '%s\n' "$still_tracked" | sed -n '1,20s/^/  /p' >&2
+    if [[ $count -gt 20 ]]; then echo "  ..." >&2; fi
+    echo "Merge the branch that removes them from the tree first (see the header)." >&2
+    exit 1
+fi
+
+# git-filter-repo refuses to run outside a fresh clone unless forced. That
+# check is the last guard against rewriting a working repository, so it
+# stays on unless explicitly waived.
+force=()
+if [[ "${MYNES_STRIP_FORCE:-}" == "1" ]]; then
+    force=(--force)
+fi
+
 before=$(git count-objects -vH | awk '/size-pack/ {print $2 " " $3}')
 
 # --invert-paths drops the listed paths from every commit. The media-only
 # pages that referenced them were removed from the tree separately; their
 # history can stay, it is small.
-git filter-repo --force \
-    --path docs/images \
-    --path docs/contra-gallery-metrics.json \
-    --path docs/gpu-motion-metrics.json \
-    --path docs/preset-audit-4k.json \
-    --path docs/showcase-captures.json \
-    --invert-paths
+path_args=()
+for path in "${MEDIA_PATHS[@]}"; do
+    path_args+=(--path "$path")
+done
+# ${force[@]+...} keeps an empty array legal under set -u in bash 3.2 (macOS).
+git filter-repo ${force[@]+"${force[@]}"} "${path_args[@]}" --invert-paths
 
 # filter-repo removes the origin remote on purpose; put it back so the
 # force push in the usage notes works.
