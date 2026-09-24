@@ -650,7 +650,9 @@ static inline void nes_init(NES *nes) {
     nes->cpu.mem_write = nes_cpu_write;
     nes->cpu.user_data = nes;
 
-    /* Trigger reset to load reset vector */
+    /* Trigger reset to load reset vector. S powers on at $00; the reset
+     * sequence's three suppressed pushes leave it at $FD. */
+    nes->cpu.SP = 0x00;
     nes->cpu.reset_pending = true;
 
     /* Initialize PPU */

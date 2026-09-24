@@ -556,6 +556,29 @@ int test_reset_from_kil(void) {
     return pass;
 }
 
+int test_power_on_sp(void) {
+    setup();
+
+    uint8_t prog[] = { 0x4C, 0x00, 0x80 };  /* JMP * */
+    write_program(0x8000, prog, sizeof(prog));
+    set_reset_vector(0x8000);
+
+    /* S powers on at $00 and the reset sequence takes 3 from it, as it
+     * does again on every later reset. Frontends call nes_reset() right
+     * after nes_init(); that must still run a single reset. */
+    nes_reset(&nes);
+    run_cycles(50);
+    uint8_t power_on = nes.cpu.SP;
+    nes_reset(&nes);
+    run_cycles(50);
+    uint8_t after_reset = nes.cpu.SP;
+
+    bool pass = power_on == 0xFD && after_reset == 0xFA;
+    printf("TEST power_on_sp: %s (S=%02X after power-on, %02X after reset)\n",
+           pass ? "PASS" : "FAIL", power_on, after_reset);
+    return pass;
+}
+
 int test_controller_strobe_held(void) {
     setup();
 
@@ -609,6 +632,7 @@ int main(void) {
     total++; passed += test_trace_callback_toggle();
     total++; passed += test_four_screen_nametables();
     total++; passed += test_reset_from_kil();
+    total++; passed += test_power_on_sp();
     total++; passed += test_controller_strobe_held();
 
     printf("\n=== Results: %d/%d tests passed ===\n", passed, total);

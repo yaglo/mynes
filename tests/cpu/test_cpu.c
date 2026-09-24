@@ -427,6 +427,9 @@ int test_reset(void) {
     cpu.PC = 0x200;
     cpu.uPC = 0;
     cpu.A = 0x00;
+    /* Reset runs the interrupt sequence with its three pushes turned into
+     * reads: S drops by 3, wrapping, and the stack is left alone. */
+    cpu.SP = 0x01;
 
     /* Trigger reset */
     cpu.reset_pending = 1;
@@ -434,11 +437,15 @@ int test_reset(void) {
     /* Run reset sequence + program */
     for (int i = 0; i < 20; i++) cpu_step(&cpu);
 
-    if (cpu.A == 0xAA && cpu.PC >= 0x500) {
-        printf("TEST reset: PASS (A=%02X PC=%04X)\n", cpu.A, cpu.PC);
+    int stack_clean = 1;
+    for (int i = 0x100; i < 0x200; i++) stack_clean &= memory[i] == 0;
+
+    if (cpu.A == 0xAA && cpu.PC >= 0x500 && cpu.SP == 0xFE && stack_clean) {
+        printf("TEST reset: PASS (A=%02X PC=%04X SP=%02X)\n", cpu.A, cpu.PC, cpu.SP);
         return 1;
     } else {
-        printf("TEST reset: FAIL (A=%02X PC=%04X)\n", cpu.A, cpu.PC);
+        printf("TEST reset: FAIL (A=%02X PC=%04X SP=%02X stack %s)\n", cpu.A, cpu.PC,
+               cpu.SP, stack_clean ? "untouched" : "written");
         return 0;
     }
 }
