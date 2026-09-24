@@ -205,7 +205,7 @@ class Rect:
 
 
 # Where the 256x240 picture sits on the receiver's 4:3 raster, as the
-# frontend places it (frontends/gpu/post_pipeline.c, raster_window): the
+# frontend places it (frontends/gpu/decode_window.h, decode_window_geometry): the
 # receiver scans the standard active line and field (BT.470 NTSC: a 63.556 us
 # line with 10.9 us of blanking after a 1.5 us front porch, 21 blanked lines
 # of the console's 262) locked to the console's sync, and the console's
