@@ -111,6 +111,29 @@ int main(void) {
     CHECK(!m->irq_pending && !m->ext.mmc5.in_frame);
     mapper_cpu_write(m,0x5204,0);
 
+    /* $5114-$5116 bit 7 clear maps PRG RAM into $8000-$DFFF; $5117 and
+     * mode 0 are always ROM. */
+    mapper_reset(m);
+    for (int i=0; i<4; ++i) memset(prg+i*0x2000,0x40+i,0x2000);
+    mapper_cpu_write(m,0x6123,0x5a);
+    CHECK(mapper_cpu_read(m,0x8123)==0x40);
+    mapper_cpu_write(m,0x8123,0x11);    /* ROM ignores writes */
+    CHECK(mapper_cpu_read(m,0x8123)==0x40);
+    mapper_cpu_write(m,0x5114,0x00);
+    mapper_cpu_write(m,0x5116,0x81);
+    CHECK(mapper_cpu_read(m,0x8123)==0x5a);
+    CHECK(mapper_cpu_read(m,0xC123)==0x41);
+    mapper_cpu_write(m,0x9234,0x77);
+    CHECK(mapper_cpu_read(m,0x7234)==0x77);
+    mapper_cpu_write(m,0x5100,1);       /* 16 KB: $5115 governs $8000 */
+    mapper_cpu_write(m,0x5115,0x00);
+    mapper_cpu_write(m,0x5117,0x00);
+    CHECK(mapper_cpu_read(m,0xB234)==0x77);
+    CHECK(mapper_cpu_read(m,0xC000)==0x40);
+    mapper_cpu_write(m,0x5100,0);       /* 32 KB: always ROM */
+    CHECK(mapper_cpu_read(m,0x8000)==0x40);
+    memset(prg,0,0x8000);
+
     /* Exercise the real PPU bus hook over successive frames: counter must
      * restart, assert near line 1's attribute fetch, and clear in vblank. */
     nes_init(&nes);

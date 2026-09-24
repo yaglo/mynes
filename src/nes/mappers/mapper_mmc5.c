@@ -9,7 +9,7 @@
  *   - Scanline IRQ ($5203/$5204)
  *   - Per-quadrant CIRAM/ExRAM/fill nametable mapping ($5105)
  *   - Fill-mode tile/attribute ($5106/$5107)
- *   - PRG RAM at $6000-$7FFF
+ *   - PRG RAM at $6000-$7FFF, and in $8000-$DFFF via $5114-$5116 bit 7
  *   - Multiplicand/multiplier hardware ($5205/$5206)
  *   - ExRAM ($5C00-$5FFF) as general-purpose RAM
  *
@@ -17,6 +17,7 @@
  *   - ExRAM as extended nametable attributes (needs PPU changes)
  *   - Split-screen mode ($5200-$5202)
  *   - PCM audio channel
+ *   - PRG RAM beyond one 8 KB chip ($5113 and the RAM bank bits)
  */
 
 #include "mapper_ops.h"
@@ -59,6 +60,16 @@ static uint8_t mmc5_get_prg_reg(MMC5 *s, uint16_t addr) {
     case 3: return s->prg_regs[1 + slot_8k]; /* $5114-$5117 */
     }
     return s->prg_regs[4];
+}
+
+/* Whether $8000-$DFFF at addr is mapped to PRG RAM: bit 7 clear in the
+ * governing $5114-$5116 register. $5117's windows are always ROM. The
+ * cartridge RAM is the single 8 KB of Mapper.prg_ram, so the RAM bank
+ * number (and $5113) can only select that one chip. */
+static bool mmc5_prg_is_ram(const MMC5 *s, uint16_t addr) {
+    if (addr >= 0xE000 || s->prg_mode == 0) return false;
+    if (s->prg_mode == 1 && addr >= 0xC000) return false;
+    return !(mmc5_get_prg_reg((MMC5 *)s, addr) & 0x80);
 }
 
 /*
@@ -185,7 +196,8 @@ static uint8_t mapper5_cpu_peek(Mapper *m, uint16_t addr) {
     MMC5 *s = mmc5(m);
 
     if (addr >= 0x8000)
-        return mmc5_read_prg(m, addr);
+        return mmc5_prg_is_ram(s, addr) ? m->prg_ram[addr & 0x1FFF]
+                                        : mmc5_read_prg(m, addr);
 
     if (addr >= 0x6000)
         return m->prg_ram[addr - 0x6000];
@@ -232,7 +244,11 @@ static uint8_t mapper5_cpu_read(Mapper *m, uint16_t addr) {
 static void mapper5_cpu_write(Mapper *m, uint16_t addr, uint8_t val) {
     MMC5 *s = mmc5(m);
 
-    if (addr >= 0x8000) return; /* PRG ROM — writes ignored */
+    if (addr >= 0x8000) {
+        if (mmc5_prg_is_ram(s, addr))
+            m->prg_ram[addr & 0x1FFF] = val;
+        return; /* PRG ROM ignores writes */
+    }
 
     if (addr >= 0x6000) {
         m->prg_ram[addr - 0x6000] = val;
@@ -400,6 +416,9 @@ static void mapper5_init(Mapper *m) {
 
     s->prg_mode = 3;            /* 8KB banks — CV3 expects this */
     s->chr_mode = 3;            /* 1KB CHR banks */
+    s->prg_regs[1] = 0x80;     /* $8000-$DFFF: ROM bank 0 until written */
+    s->prg_regs[2] = 0x80;
+    s->prg_regs[3] = 0x80;
     s->prg_regs[4] = 0xFF;     /* Last 8KB bank at $E000 (reset vector) */
     s->nt_mapping = 0;
 
