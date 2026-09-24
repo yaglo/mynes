@@ -16,6 +16,7 @@
  */
 
 #include <errno.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -156,30 +157,39 @@ typedef struct {
 } AudioRateCtrl;
 static AudioRateCtrl audio_ctrl;
 
+/* One producer (the emulation thread) and one consumer (SDL's audio
+ * thread). Each side publishes its index with release after touching a
+ * slot and reads the other's with acquire, so a slot is never read before
+ * its sample is visible or overwritten before it was read. */
 typedef struct {
     float buffer[AUDIO_BUF_SIZE];
-    volatile int write_pos;
-    volatile int read_pos;
+    atomic_int write_pos;
+    atomic_int read_pos;
     float last_sample;  /* held on underrun to avoid discontinuity */
 } AudioRingBuffer;
 
 static AudioRingBuffer audio_ring;
 
 static void audio_ring_init(void) {
-    memset(&audio_ring, 0, sizeof(audio_ring));
+    memset(audio_ring.buffer, 0, sizeof(audio_ring.buffer));
+    atomic_init(&audio_ring.write_pos, 0);
+    atomic_init(&audio_ring.read_pos, 0);
+    audio_ring.last_sample = 0.0f;
 }
 
 static inline int audio_ring_available(void) {
-    int avail = audio_ring.write_pos - audio_ring.read_pos;
+    int avail = atomic_load_explicit(&audio_ring.write_pos, memory_order_acquire)
+              - atomic_load_explicit(&audio_ring.read_pos, memory_order_acquire);
     if (avail < 0) avail += AUDIO_BUF_SIZE;
     return avail;
 }
 
 static void audio_ring_push(float sample) {
-    int next = (audio_ring.write_pos + 1) % AUDIO_BUF_SIZE;
-    if (next != audio_ring.read_pos) {
-        audio_ring.buffer[audio_ring.write_pos] = sample;
-        audio_ring.write_pos = next;
+    int write = atomic_load_explicit(&audio_ring.write_pos, memory_order_relaxed);
+    int next = (write + 1) % AUDIO_BUF_SIZE;
+    if (next != atomic_load_explicit(&audio_ring.read_pos, memory_order_acquire)) {
+        audio_ring.buffer[write] = sample;
+        atomic_store_explicit(&audio_ring.write_pos, next, memory_order_release);
     }
     /* If full, drop the sample — the dynamic rate adjust below will
        slow production so this rarely fires in steady state. */
@@ -190,11 +200,13 @@ static void sdl_audio_callback(void *userdata, Uint8 *stream, int len) {
     (void)userdata;
     float *out = (float *)stream;
     int samples = len / (int)sizeof(float);
+    int read = atomic_load_explicit(&audio_ring.read_pos, memory_order_relaxed);
 
     for (int i = 0; i < samples; i++) {
-        if (audio_ring.read_pos != audio_ring.write_pos) {
-            float s = audio_ring.buffer[audio_ring.read_pos];
-            audio_ring.read_pos = (audio_ring.read_pos + 1) % AUDIO_BUF_SIZE;
+        if (read != atomic_load_explicit(&audio_ring.write_pos, memory_order_acquire)) {
+            float s = audio_ring.buffer[read];
+            read = (read + 1) % AUDIO_BUF_SIZE;
+            atomic_store_explicit(&audio_ring.read_pos, read, memory_order_release);
             audio_ring.last_sample = s;
             out[i] = s;
         } else {
