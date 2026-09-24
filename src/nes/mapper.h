@@ -14,6 +14,52 @@
 /* Forward declarations */
 struct NES;
 
+/* Sunsoft FME-7 (mapper 69) registers */
+typedef struct {
+    uint8_t command;        /* $8000: selected register (0-15) */
+    uint8_t regs[16];       /* Internal registers */
+    uint16_t irq_counter;   /* 16-bit IRQ counter, decremented every CPU cycle */
+    bool irq_enabled;       /* IRQ fires when counter wraps */
+    bool irq_counting;      /* Counter is actively decrementing */
+} MapperFME7;
+
+/* MMC5 (mapper 5) registers and ExRAM */
+typedef struct {
+    /* PRG banking */
+    uint8_t prg_mode;           /* $5100: 0-3 */
+    uint8_t prg_regs[5];        /* $5113-$5117 */
+
+    /* CHR banking */
+    uint8_t chr_mode;           /* $5101: 0-3 */
+    uint16_t chr_regs[12];      /* $5120-$512B: effective bank (upper|low) */
+    uint8_t chr_upper;          /* $5130: upper 2 bits for CHR bank numbers */
+    bool chr_hi_written;        /* last CHR write was to B set ($5128-$512B) */
+
+    /* Nametable / fill */
+    uint8_t nt_mapping;         /* $5105 raw value */
+    uint8_t fill_tile;          /* $5106 */
+    uint8_t fill_attr;          /* $5107 (2 bits) */
+
+    /* ExRAM */
+    uint8_t exram_mode;         /* $5104: 0-3 */
+    uint8_t exram[0x400];       /* 1KB */
+
+    /* Scanline IRQ */
+    uint8_t irq_target;         /* $5203 */
+    bool irq_enabled;           /* $5204 bit 7 */
+    uint8_t scanline_counter;
+    bool in_frame;
+    bool irq_status;
+    uint16_t last_ppu_read;
+    uint8_t repeated_reads;
+    uint8_t idle_cpu_cycles;
+    bool ppu_read_since_clock;
+
+    /* Multiplier */
+    uint8_t multiplicand;       /* $5205 */
+    uint8_t multiplier;         /* $5206 */
+} MapperMMC5;
+
 typedef struct Mapper {
     uint16_t number;        /* Mapper number (NES 2.0 goes up to 4095) */
 
@@ -74,6 +120,13 @@ typedef struct Mapper {
     uint8_t mmc4_latch1;
     uint8_t mmc4_chr0; /* Selected 4KB bank for $0000-$0FFF */
     uint8_t mmc4_chr1; /* Selected 4KB bank for $1000-$1FFF */
+
+    /* Registers of mappers too large to keep as flat fields above. Only the
+     * member for this cartridge's mapper is live. */
+    union {
+        MapperFME7 fme7;
+        MapperMMC5 mmc5;
+    } ext;
 
     /* IRQ signaling */
     bool irq_pending;       /* Set by mapper, cleared by NES system */

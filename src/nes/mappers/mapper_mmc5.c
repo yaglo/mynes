@@ -23,50 +23,10 @@
 #include "../nes.h"
 #include <string.h>
 
-/* --------------------------------------------------------------------------
- * MMC5 state — overlaid on chr_ram (unused since MMC5 uses CHR ROM)
- * -------------------------------------------------------------------------- */
-
-typedef struct {
-    /* PRG banking */
-    uint8_t prg_mode;           /* $5100: 0-3 */
-    uint8_t prg_regs[5];       /* $5113-$5117 */
-
-    /* CHR banking */
-    uint8_t chr_mode;           /* $5101: 0-3 */
-    uint16_t chr_regs[12];     /* $5120-$512B: effective bank (upper|low) */
-    uint8_t chr_upper;         /* $5130: upper 2 bits for CHR bank numbers */
-    bool     chr_hi_written;   /* last CHR write was to B set ($5128-$512B) */
-
-    /* Nametable / fill */
-    uint8_t nt_mapping;        /* $5105 raw value */
-    uint8_t fill_tile;         /* $5106 */
-    uint8_t fill_attr;         /* $5107 (2 bits) */
-
-    /* ExRAM */
-    uint8_t exram_mode;        /* $5104: 0-3 */
-    uint8_t exram[0x400];      /* 1KB */
-
-    /* Scanline IRQ */
-    uint8_t irq_target;        /* $5203 */
-    bool    irq_enabled;       /* $5204 bit 7 */
-    uint8_t scanline_counter;
-    bool    in_frame;
-    bool    irq_status;
-    uint16_t last_ppu_read;
-    uint8_t repeated_reads;
-    uint8_t idle_cpu_cycles;
-    bool ppu_read_since_clock;
-
-    /* Multiplier */
-    uint8_t multiplicand;      /* $5205 */
-    uint8_t multiplier;        /* $5206 */
-} MMC5;
-
-_Static_assert(sizeof(MMC5) <= 0x2000, "MMC5 state must fit in chr_ram");
+typedef MapperMMC5 MMC5;
 
 static MMC5 *mmc5(Mapper *m) {
-    return (MMC5 *)(void *)m->chr_ram;
+    return &m->ext.mmc5;
 }
 
 /* ========================================================================== */

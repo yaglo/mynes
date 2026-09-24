@@ -25,19 +25,10 @@
 
 #include "mapper_ops.h"
 
-/* FME-7 state overlaid on chr_ram (unused since FME-7 uses CHR ROM). */
-typedef struct {
-    uint8_t command;        /* $8000: selected register (0-15) */
-    uint8_t regs[16];      /* Internal registers */
-    uint16_t irq_counter;  /* 16-bit IRQ counter */
-    bool irq_enabled;      /* IRQ fires when counter wraps */
-    bool irq_counting;     /* Counter is actively decrementing */
-} FME7;
-
-_Static_assert(sizeof(FME7) <= 0x2000, "FME7 state must fit in chr_ram");
+typedef MapperFME7 FME7;
 
 static FME7 *fme7(Mapper *m) {
-    return (FME7 *)(void *)m->chr_ram;
+    return &m->ext.fme7;
 }
 
 /* ========================================================================== */

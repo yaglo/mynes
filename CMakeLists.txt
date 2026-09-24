@@ -306,6 +306,11 @@ if(NES_BUILD_TESTS)
     target_link_libraries(test_mapper66 PRIVATE nes_static)
     add_test(NAME mapper66_tests COMMAND test_mapper66)
 
+    # Sunsoft FME-7 registers and IRQ counter
+    add_executable(test_mapper69 tests/nes/test_mapper69.c)
+    target_link_libraries(test_mapper69 PRIVATE nes_static)
+    add_test(NAME mapper69_tests COMMAND test_mapper69)
+
     # Camerica/Codemasters incl. Fire Hawk mirroring
     add_executable(test_mapper71 tests/nes/test_mapper71.c)
     target_link_libraries(test_mapper71 PRIVATE nes_static)

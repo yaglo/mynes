@@ -20,7 +20,7 @@
 #include "nes.h"
 
 #define NES_STATE_MAGIC   "MYNESST"   /* 7 characters plus the terminator */
-#define NES_STATE_VERSION 2u
+#define NES_STATE_VERSION 3u
 
 typedef struct {
     char     magic[8];
