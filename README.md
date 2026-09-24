@@ -16,10 +16,11 @@ display shows one render pixel per device pixel and nothing is scaled.
 Flicker warning: the detail crop below alternates NTSC phases at 8 frames per
 second.
 
-<img src="docs/images/flicker-super-mario-bros-sony-pvm-14l2.webp" width="750" alt="Detail crop of Super Mario Bros. on the Sony PVM-14L2 preset, 8 consecutive frames">
+<img src="docs/images/flicker-super-mario-bros-sony-pvm-14l2.webp" width="679" alt="Detail crop of Super Mario Bros. on the Sony PVM-14L2 preset, 8 consecutive frames">
 
-The crop is 1500×1125 render pixels, cut 1:1 from 3840×2880 frames, 8
-consecutive frames with the alternating NTSC phases kept separate. The
+The crop is 1358×1120 render pixels, 100 NES pixels of the hill, Mario and
+the bricks, cut 1:1 from 3840×2880 frames: 8 consecutive frames with the
+alternating NTSC phases kept separate. The
 [Gallery](https://yaglo.github.io/mynes-web/gallery/) of the
 [project site](https://yaglo.github.io/mynes-web/) shows every television
 preset with 1:1 crops and 3840×2880 full frames, and the home page switches
