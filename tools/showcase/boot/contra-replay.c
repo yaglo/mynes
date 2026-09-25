@@ -37,6 +37,7 @@ int main(int argc, char **argv) {
     if (nes_rom_load(&rom, argv[1]) != ROM_OK) return 1;
     nes_init(&nes);
     nes_load_mapper(&nes, rom.mapper, rom.prg_rom, rom.prg_size, rom.chr_rom, rom.chr_size, rom.mirroring);
+    nes_rom_apply_trainer(&rom, &nes.mapper);
     nes_reset(&nes);
     FILE *f = fopen(argv[2], "rb");
     if (!f) return 1;

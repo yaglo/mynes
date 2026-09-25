@@ -532,6 +532,81 @@ int test_four_screen_nametables(void) {
     return pass;
 }
 
+int test_reset_from_kil(void) {
+    setup();
+
+    /* INC $10, KIL */
+    uint8_t prog[] = { 0xE6, 0x10, 0x02 };
+    write_program(0x8000, prog, sizeof(prog));
+    set_reset_vector(0x8000);
+
+    nes_reset(&nes);
+    run_cycles(50);
+    bool pass = nes.ram[0x10] == 1 && nes.cpu.PC == 0x8003;
+
+    /* Reset must escape the jam and drop any DMA the CPU was stuck behind.
+     * RAM survives it, so the program's second pass counts on to 2. */
+    nes.oam_dma_pending = true;
+    nes_reset(&nes);
+    run_cycles(50);
+    pass &= !nes.cpu.reset_pending && !nes.oam_dma_pending && !nes.dma.oam_active;
+    pass &= nes.ram[0x10] == 2 && nes.cpu.PC == 0x8003;
+
+    printf("TEST reset_from_kil: %s (PC=%04X ram[10]=%02X)\n",
+           pass ? "PASS" : "FAIL", nes.cpu.PC, nes.ram[0x10]);
+    return pass;
+}
+
+int test_power_on_sp(void) {
+    setup();
+
+    uint8_t prog[] = { 0x4C, 0x00, 0x80 };  /* JMP * */
+    write_program(0x8000, prog, sizeof(prog));
+    set_reset_vector(0x8000);
+
+    /* S powers on at $00 and the reset sequence takes 3 from it, as it
+     * does again on every later reset. Frontends call nes_reset() right
+     * after nes_init(); that must still run a single reset. */
+    nes_reset(&nes);
+    run_cycles(50);
+    uint8_t power_on = nes.cpu.SP;
+    nes_reset(&nes);
+    run_cycles(50);
+    uint8_t after_reset = nes.cpu.SP;
+
+    bool pass = power_on == 0xFD && after_reset == 0xFA;
+    printf("TEST power_on_sp: %s (S=%02X after power-on, %02X after reset)\n",
+           pass ? "PASS" : "FAIL", power_on, after_reset);
+    return pass;
+}
+
+int test_controller_strobe_held(void) {
+    setup();
+
+    /* Strobe high, spin while the buttons change, strobe low, read A. */
+    uint8_t prog[] = {
+        0xA9, 0x01, 0x8D, 0x16, 0x40,  /* LDA #$01, STA $4016 */
+        0xA2, 0x20, 0xCA, 0xD0, 0xFD,  /* LDX #$20, loop: DEX, BNE loop */
+        0xA9, 0x00, 0x8D, 0x16, 0x40,  /* LDA #$00, STA $4016 */
+        0xAD, 0x16, 0x40, 0x85, 0x00,  /* LDA $4016, STA $00 */
+        0x4C, 0x14, 0x80               /* JMP * */
+    };
+    write_program(0x8000, prog, sizeof(prog));
+    set_reset_vector(0x8000);
+
+    nes_reset(&nes);
+    run_cycles(20);                     /* strobe is high, A released */
+    nes_set_controller(&nes, 0, BTN_A);
+    run_cycles(300);
+
+    /* While strobe is high the shift register keeps reloading, so the press
+     * made after the strobe went high is what gets read. */
+    bool pass = (nes.ram[0] & 1) == 1;
+    printf("TEST controller_strobe_held: %s (A=%d)\n", pass ? "PASS" : "FAIL",
+           nes.ram[0] & 1);
+    return pass;
+}
+
 /* ============================================================================
  * Main
  * ============================================================================ */
@@ -557,6 +632,9 @@ int main(void) {
     total++; passed += test_vblank_flag_read();
     total++; passed += test_trace_callback_toggle();
     total++; passed += test_four_screen_nametables();
+    total++; passed += test_reset_from_kil();
+    total++; passed += test_power_on_sp();
+    total++; passed += test_controller_strobe_held();
 
     printf("\n=== Results: %d/%d tests passed ===\n", passed, total);
 

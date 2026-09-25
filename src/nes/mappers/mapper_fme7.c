@@ -16,7 +16,7 @@
  *   10:   PRG bank at $A000-$BFFF
  *   11:   PRG bank at $C000-$DFFF
  *   12:   Mirroring (bits 1:0)
- *   13:   IRQ control (bit 7: enable, bit 0: counter enable)
+ *   13:   IRQ control (bit 7: counter enable, bit 0: IRQ enable)
  *   14:   IRQ counter low byte
  *   15:   IRQ counter high byte
  *
@@ -25,19 +25,10 @@
 
 #include "mapper_ops.h"
 
-/* FME-7 state overlaid on chr_ram (unused since FME-7 uses CHR ROM). */
-typedef struct {
-    uint8_t command;        /* $8000: selected register (0-15) */
-    uint8_t regs[16];      /* Internal registers */
-    uint16_t irq_counter;  /* 16-bit IRQ counter */
-    bool irq_enabled;      /* IRQ fires when counter wraps */
-    bool irq_counting;     /* Counter is actively decrementing */
-} FME7;
-
-_Static_assert(sizeof(FME7) <= 0x2000, "FME7 state must fit in chr_ram");
+typedef MapperFME7 FME7;
 
 static FME7 *fme7(Mapper *m) {
-    return (FME7 *)(void *)m->chr_ram;
+    return &m->ext.fme7;
 }
 
 /* ========================================================================== */
@@ -158,8 +149,8 @@ static void mapper69_cpu_write(Mapper *m, uint16_t addr, uint8_t val) {
             fme7_update_mirroring(m);
             break;
         case 13:
-            s->irq_enabled = (val & 0x80) != 0;
-            s->irq_counting = (val & 0x01) != 0;
+            s->irq_counting = (val & 0x80) != 0;
+            s->irq_enabled = (val & 0x01) != 0;
             m->irq_pending = false; /* Acknowledge IRQ on write */
             break;
         case 14:
@@ -196,25 +187,14 @@ static void mapper69_ppu_write(Mapper *m, uint16_t addr, uint8_t val) {
 }
 
 /* ========================================================================== */
-/* Scanline — FME-7 IRQ is cycle-based, not scanline-based.                   */
-/* We approximate by decrementing ~114 times per scanline (NTSC CPU cycles    */
-/* per scanline). This is called once per visible scanline by the system.     */
+/* IRQ counter: decremented on every CPU cycle while counting is enabled.     */
 /* ========================================================================== */
 
-static void mapper69_scanline(Mapper *m) {
+static void mapper69_cpu_clock(Mapper *m) {
     FME7 *s = fme7(m);
     if (!s->irq_counting) return;
-
-    /* ~114 CPU cycles per scanline (NTSC: 341/3 ≈ 113.67) */
-    for (int i = 0; i < 114; i++) {
-        if (s->irq_counter == 0) {
-            if (s->irq_enabled)
-                m->irq_pending = true;
-            s->irq_counter = 0xFFFF;
-        } else {
-            s->irq_counter--;
-        }
-    }
+    if (s->irq_counter-- == 0 && s->irq_enabled)
+        m->irq_pending = true;
 }
 
 /* ========================================================================== */
@@ -238,5 +218,5 @@ const MapperOps mapper69_ops = {
     .cpu_write = mapper69_cpu_write,
     .ppu_read  = mapper69_ppu_read,
     .ppu_write = mapper69_ppu_write,
-    .scanline  = mapper69_scanline,
+    .cpu_clock = mapper69_cpu_clock,
 };

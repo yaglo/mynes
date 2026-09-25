@@ -30,6 +30,10 @@
  * 8-15    8     Padding (zeros in iNES 1.0)
  *
  * NES 2.0 byte 8: bits 0-3 are mapper bits 8-11, bits 4-7 the submapper.
+ * NES 2.0 byte 9: bits 0-3 are PRG size bits 8-11, bits 4-7 CHR size bits
+ * 8-11. An MSB nibble of $F switches that size to exponent-multiplier form.
+ * A header counts as NES 2.0 only when those sizes fit the image; junk
+ * headers that merely carry the NES 2.0 bits in byte 7 fall back to iNES.
  */
 
 #define INES_HEADER_SIZE 16
@@ -78,6 +82,7 @@ typedef struct {
     bool is_nes2;           /* true if NES 2.0 header detected */
     bool has_battery;       /* Battery-backed RAM */
     bool has_trainer;       /* 512-byte trainer present */
+    uint8_t trainer[INES_TRAINER_SIZE]; /* Loaded at $7000 by nes_rom_apply_trainer */
 } ROM;
 
 /* ============================================================================
@@ -108,10 +113,32 @@ static inline bool nes_rom_pal_filename(const char *path) {
     return false;
 }
 
+/* Largest PRG or CHR size accepted. Mapper keeps its bank counts in 16
+ * bits, and nothing real comes close (the plain NES 2.0 form tops out
+ * just under 64 MB). */
+#define INES_MAX_ROM_SIZE (64u * 1024 * 1024)
+
+/* NES 2.0 ROM size from the iNES size byte and its byte-9 MSB nibble. The
+ * $F nibble selects exponent-multiplier form, 2^E * (MM*2+1) bytes with
+ * the size byte read as EEEEEEMM. False when the size is out of range. */
+static inline bool nes_rom_nes2_size(uint8_t lsb, uint8_t msb, uint32_t unit,
+                                     uint32_t *size) {
+    uint64_t bytes;
+    if (msb == 0x0F) {
+        if ((lsb >> 2) > 26) return false;
+        bytes = ((uint64_t)1 << (lsb >> 2)) * ((lsb & 0x03) * 2u + 1u);
+    } else
+        bytes = (((uint64_t)msb << 8) | lsb) * unit;
+    if (bytes > INES_MAX_ROM_SIZE) return false;
+    *size = (uint32_t)bytes;
+    return true;
+}
+
 /* Reads the 16-byte header into rom (sizes, flags, mapper, TV system) and
- * applies the mapper gate. Both loaders call it, so a file and a buffer
- * holding the same bytes describe the same cartridge. */
-static inline int nes_rom_parse_header(ROM *rom, const uint8_t *header) {
+ * applies the mapper gate. image_size is the whole file, header included.
+ * Both loaders call it, so a file and a buffer holding the same bytes
+ * describe the same cartridge. */
+static inline int nes_rom_parse_header(ROM *rom, const uint8_t *header, size_t image_size) {
     /* Verify magic number: "NES\x1A" */
     if (header[0] != 'N' || header[1] != 'E' || header[2] != 'S' || header[3] != 0x1A)
         return ROM_ERR_HEADER;
@@ -133,16 +160,41 @@ static inline int nes_rom_parse_header(ROM *rom, const uint8_t *header) {
      * apply the "zero out flags7's mapper bits" fallback when we've
      * already ruled out NES 2.0 AND bytes 12-15 are non-zero (so the
      * header looks like it has junk rather than legit NES 2.0 data).
+     *
+     * The NES 2.0 bits alone are not enough: some junk headers match them
+     * (e.g. a "Deep Dungeon 4" translation with byte 7 = $C9 and byte 9 =
+     * $90). As the wiki's detection rule says, NES 2.0 also needs the
+     * sizes byte 9 widens to fit the image; otherwise the header is
+     * archaic iNES, since byte 7 does not have the iNES 1.0 form either.
      */
-    bool is_nes2 = ((flags7 & 0x0C) == 0x08);
+    bool nes2_bits = ((flags7 & 0x0C) == 0x08);
+    bool is_nes2 = false;
+    if (nes2_bits) {
+        uint32_t prg_size, chr_size;
+        uint64_t need = INES_HEADER_SIZE + ((flags6 & 0x04) ? INES_TRAINER_SIZE : 0);
+        if (nes_rom_nes2_size(prg_banks, header[9] & 0x0F, INES_PRG_BANK_SIZE, &prg_size) &&
+            nes_rom_nes2_size(chr_banks, header[9] >> 4, INES_CHR_BANK_SIZE, &chr_size) &&
+            need + prg_size + chr_size <= image_size) {
+            is_nes2 = true;
+            rom->prg_size = prg_size;
+            rom->chr_size = chr_size;
+        }
+    }
     bool header_bytes_12_15_zero =
         (header[12] | header[13] | header[14] | header[15]) == 0;
-    if (!is_nes2 && !header_bytes_12_15_zero) {
+    bool archaic = !is_nes2 && (nes2_bits || !header_bytes_12_15_zero);
+    if (archaic) {
         flags7 = 0;
     }
 
-    rom->prg_size = prg_banks * INES_PRG_BANK_SIZE;
-    rom->chr_size = chr_banks * INES_CHR_BANK_SIZE;
+    if (!is_nes2) {
+        rom->prg_size = prg_banks * INES_PRG_BANK_SIZE;
+        rom->chr_size = chr_banks * INES_CHR_BANK_SIZE;
+    }
+    /* Every mapper reduces PRG addresses modulo the ROM size and needs the
+     * vectors at $FFFA-$FFFF, so a cartridge without PRG ROM cannot run. */
+    if (rom->prg_size == 0)
+        return ROM_ERR_HEADER;
     /* Bit 0: mirroring. Bit 3: the cartridge carries 2 KB of VRAM for four
      * separate nametables, which replaces the bit 0 layout. */
     rom->mirroring = (flags6 & 0x08) ? 4 : (flags6 & 0x01);
@@ -161,9 +213,9 @@ static inline int nes_rom_parse_header(ROM *rom, const uint8_t *header) {
     if (rom->is_nes2) {
         /* NES 2.0: byte 12 bits 0-1 */
         rom->tv_system = header[12] & 0x03;
-    } else if (header_bytes_12_15_zero) {
+    } else if (!archaic) {
         /* iNES 1.0: byte 9 bit 0. Only trust it when the archaic-iNES
-         * garbage heuristic says bytes 12-15 look clean; otherwise byte 9
+         * garbage heuristic says the header looks clean; otherwise byte 9
          * is part of the junk (e.g. "DiskDude!" dumps) and we default to
          * NTSC. */
         rom->tv_system = (header[9] & 0x01) ? NES_TV_PAL : NES_TV_NTSC;
@@ -195,7 +247,15 @@ static inline int nes_rom_load(ROM *rom, const char *path) {
         return ROM_ERR_FILE;
     }
 
-    int err = nes_rom_parse_header(rom, header);
+    /* The NES 2.0 check compares the header's sizes with the file's. */
+    long file_size = -1;
+    if (fseek(fp, 0, SEEK_END) == 0) file_size = ftell(fp);
+    if (file_size < 0 || fseek(fp, INES_HEADER_SIZE, SEEK_SET) != 0) {
+        fclose(fp);
+        return ROM_ERR_FILE;
+    }
+
+    int err = nes_rom_parse_header(rom, header, (size_t)file_size);
     if (err != ROM_OK) {
         fclose(fp);
         return err;
@@ -207,9 +267,10 @@ static inline int nes_rom_load(ROM *rom, const char *path) {
         rom->region_from_filename = true;
     }
 
-    /* Skip trainer if present */
-    if (rom->has_trainer) {
-        fseek(fp, INES_TRAINER_SIZE, SEEK_CUR);
+    if (rom->has_trainer &&
+        fread(rom->trainer, 1, INES_TRAINER_SIZE, fp) != INES_TRAINER_SIZE) {
+        fclose(fp);
+        return ROM_ERR_FILE;
     }
 
     /* Allocate and read PRG ROM */
@@ -258,7 +319,7 @@ static inline int nes_rom_load_data(ROM *rom, const uint8_t *data, size_t size) 
 
     if (size < INES_HEADER_SIZE) return ROM_ERR_FILE;
 
-    int err = nes_rom_parse_header(rom, data);
+    int err = nes_rom_parse_header(rom, data, size);
     if (err != ROM_OK) return err;
 
     size_t offset = INES_HEADER_SIZE;
@@ -266,6 +327,8 @@ static inline int nes_rom_load_data(ROM *rom, const uint8_t *data, size_t size) 
 
     if (size < offset + rom->prg_size + rom->chr_size)
         return ROM_ERR_FILE;
+    if (rom->has_trainer)
+        memcpy(rom->trainer, data + INES_HEADER_SIZE, INES_TRAINER_SIZE);
 
     if (rom->prg_size > 0) {
         rom->prg_rom = (uint8_t *)malloc(rom->prg_size);
@@ -279,6 +342,14 @@ static inline int nes_rom_load_data(ROM *rom, const uint8_t *data, size_t size) 
         memcpy(rom->chr_rom, data + offset, rom->chr_size);
     }
     return ROM_OK;
+}
+
+/* A trainer is 512 bytes that copier hardware held at $7000-$71FF; the
+ * patched games that carry one expect it there at power-on. Call after the
+ * mapper is initialised, since mapper_init clears the cartridge RAM. */
+static inline void nes_rom_apply_trainer(const ROM *rom, Mapper *m) {
+    if (rom->has_trainer)
+        memcpy(m->prg_ram + 0x1000, rom->trainer, INES_TRAINER_SIZE);
 }
 
 /* Free ROM memory */

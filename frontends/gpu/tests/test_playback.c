@@ -128,15 +128,15 @@ static void border_entry(void) {
     PPU ppu; memset(&ppu,0,sizeof(ppu));
     for(int i=0;i<32;i++) ppu.palette[i]=(uint8_t)(0x20+i);
     ppu.mask=MASK_BG_ENABLE; ppu.v=0x3f05;
-    CHECK(playback_border_entry(&ppu)==0x20);            /* rendering: $3F00 */
+    CHECK(ppu_backdrop_entry(&ppu)==0x20);              /* rendering: $3F00 */
     ppu.mask=MASK_BG_ENABLE|MASK_GREYSCALE|0xa0;
-    CHECK(playback_border_entry(&ppu)==(0x20|0x140));    /* greyscale, red and blue emphasis */
+    CHECK(ppu_backdrop_entry(&ppu)==(0x20|0x140));      /* greyscale, red and blue emphasis */
     ppu.mask=0;
-    CHECK(playback_border_entry(&ppu)==0x25);            /* rendering off: the entry v points at */
+    CHECK(ppu_backdrop_entry(&ppu)==0x25);              /* rendering off: the entry v points at */
     ppu.v=0x3f14;
-    CHECK(playback_border_entry(&ppu)==0x24);            /* $3F14 mirrors $3F04 */
+    CHECK(ppu_backdrop_entry(&ppu)==0x24);              /* $3F14 mirrors $3F04 */
     ppu.v=0x2005;
-    CHECK(playback_border_entry(&ppu)==0x20);            /* v outside palette space */
+    CHECK(ppu_backdrop_entry(&ppu)==0x20);              /* v outside palette space */
 }
 
 int main(void) {
@@ -171,10 +171,10 @@ int main(void) {
                                0xa9,0x00,0x8d,0x06,0x20,0x8d,0x06,0x20,
                                0xa9,0x08,0x8d,0x01,0x20,0x4c,0x1c,0x80};
         memcpy(replacement,paint,sizeof(paint));
-        nes->cpu.uPC=cpu_entry[0x02]; // KIL: the old reload path could not escape.
+        nes->cpu.uPC=cpu_entry[0x02]; // KIL: nes_reset must still escape it.
         nes_reset(nes);
         for(int i=0;i<16;i++) nes_step(nes);
-        CHECK(nes->cpu.reset_pending); // proves reset was never serviced
+        CHECK(!nes->cpu.reset_pending); // the reset was serviced
         nes->dma.oam_active=true; nes->prev_nmi=true; nes->ram[42]=0x73;
         ROM cartridge={.mapper=0,.prg_rom=replacement,.prg_size=32768,.chr_rom=chr,.chr_size=8192};
         playback_load_cartridge(p,&cartridge,1);

@@ -359,13 +359,17 @@ static inline int apu_noise_volume(const APU_Noise *n) {
 }
 
 /* ============================================================================
- * Pulse Timer Update
+ * Pulse Period Update
  * ============================================================================ */
 
-static inline void apu_update_pulse_timer(APU_Pulse *p) {
-    p->timer_reload &= 0x7FF;
-    p->timer = (p->timer_reload + 1) * 2;
-    p->sweep_mute = (p->timer_reload < 8);
+/* The sweep unit computes its target continuously, so the channel mutes
+ * whenever an add would overflow $7FF, even with sweep disabled or a zero
+ * shift. Only the reload period changes here: a running timer divider keeps
+ * counting and picks up the new period at its next reload. */
+static inline void apu_update_pulse_period(APU_Pulse *p) {
+    int period = p->timer_reload &= 0x7FF;
+    p->sweep_mute = period < 8 ||
+        (!p->sweep_negate && period + (period >> p->sweep_shift) > 0x7FF);
 }
 
 /* ============================================================================
@@ -439,25 +443,23 @@ static inline void apu_clock_length(bool halt, int *length_counter) {
  * Sweep Unit
  * ============================================================================ */
 
+/* The divider is clocked every half frame and honours the reload flag
+ * whether or not the sweep is enabled; the enable bit only gates the
+ * period update (nesdev "APU Sweep"). */
 static inline void apu_clock_sweep(APU_Pulse *p, bool negate_correction) {
-    if (!p->sweep_enable)
-        return;
-
-    if (p->sweep_divider == 0) {
-        if (p->sweep_shift > 0 && !p->sweep_mute) {
-            int change = p->timer_reload >> p->sweep_shift;
-            if (p->sweep_negate) {
-                change = -(change + (negate_correction ? 1 : 0));
-            }
-            int target = p->timer_reload + change;
-            if (target >= 0 && target <= 0x7FF && p->timer_reload >= 8) {
-                p->timer_reload = target;
-                apu_update_pulse_timer(p);
-            }
+    if (p->sweep_divider == 0 && p->sweep_enable &&
+        p->sweep_shift > 0 && !p->sweep_mute) {
+        int change = p->timer_reload >> p->sweep_shift;
+        if (p->sweep_negate) {
+            change = -(change + (negate_correction ? 1 : 0));
         }
-        p->sweep_divider = p->sweep_period;
-        p->sweep_reload = false;
-    } else if (p->sweep_reload) {
+        int target = p->timer_reload + change;
+        if (target >= 0 && target <= 0x7FF && p->timer_reload >= 8) {
+            p->timer_reload = target;
+            apu_update_pulse_period(p);
+        }
+    }
+    if (p->sweep_divider == 0 || p->sweep_reload) {
         p->sweep_divider = p->sweep_period;
         p->sweep_reload = false;
     } else {
@@ -592,13 +594,17 @@ static inline void apu_clock_frame_counter(APU *apu) {
  * changes per second, so ~95% of the 1.79M/sec CPU cycles can skip
  * the mixer entirely and reuse a cached sample. */
 
+/* The pulse and noise timers run whether or not the channel sounds: a
+ * disabled channel, an empty length counter or a period below 8 mutes the
+ * output (apu_pulse_output, apu_noise_output), not the divider, so a note
+ * started after a silent period change is not held up by the old count.
+ * A step taken while muted cannot change the mix and does not dirty it;
+ * whatever unmutes the channel does. */
 static inline bool apu_clock_pulse_timer(APU_Pulse *p) {
-    if (!p->enabled || p->length_counter == 0 || p->timer_reload < 8)
-        return false;
     if (--p->timer <= 0) {
         p->timer = (p->timer_reload + 1) * 2;
         p->sequence_step = (p->sequence_step + 1) & 7;
-        return true;  /* duty waveform advanced → output may have flipped */
+        return p->enabled && p->length_counter != 0 && !p->sweep_mute;
     }
     return false;
 }
@@ -615,8 +621,6 @@ static inline bool apu_clock_triangle_timer(APU_Triangle *t) {
 }
 
 static inline bool apu_clock_noise_timer(APU_Noise *n, bool pal) {
-    if (!n->enabled || n->length_counter == 0)
-        return false;
     if (--n->timer <= 0) {
         n->timer = (pal ? apu_noise_period_table_pal : apu_noise_period_table)[n->reg2 & 0x0F];
         int feedback_bit = (n->reg2 & 0x80) ? ((n->lfsr >> 6) & 1)
@@ -624,7 +628,7 @@ static inline bool apu_clock_noise_timer(APU_Noise *n, bool pal) {
         int bit0 = n->lfsr & 1;
         int feedback = (bit0 ^ feedback_bit) & 1;
         n->lfsr = (n->lfsr >> 1) | (feedback << 14);
-        return true;  /* LFSR shifted */
+        return n->enabled && n->length_counter != 0;
     }
     return false;
 }
@@ -909,7 +913,9 @@ static inline double apu_mix_sample_raw(APU *apu) {
 
     /* These should be in range by construction but clamp defensively
      * against DMC DAC overflow or channel-disable transitions. */
+    if (pulse_idx < 0)   pulse_idx = 0;
     if (pulse_idx > 30)  pulse_idx = 30;
+    if (tnd_idx   < 0)   tnd_idx   = 0;
     if (tnd_idx   > 202) tnd_idx   = 202;
 
     return (double)apu->pulse_dac[pulse_idx] + (double)apu->tnd_dac[tnd_idx];
@@ -1154,16 +1160,17 @@ static inline void apu_write(APU *apu, uint16_t addr, uint8_t val) {
         apu->pulse[0].sweep_negate = (val & 0x08) != 0;
         apu->pulse[0].sweep_shift = val & 0x07;
         apu->pulse[0].sweep_reload = true;
+        apu_update_pulse_period(&apu->pulse[0]);
         break;
     case 0x4002:
         apu->pulse[0].reg[2] = val;
         apu->pulse[0].timer_reload = (apu->pulse[0].timer_reload & 0x700) | val;
-        apu_update_pulse_timer(&apu->pulse[0]);
+        apu_update_pulse_period(&apu->pulse[0]);
         break;
     case 0x4003:
         apu->pulse[0].reg[3] = val;
         apu->pulse[0].timer_reload = ((val & 0x07) << 8) | apu->pulse[0].reg[2];
-        apu_update_pulse_timer(&apu->pulse[0]);
+        apu_update_pulse_period(&apu->pulse[0]);
         apu->pulse[0].sequence_step = 0;
         apu->pulse[0].envelope_start = true;
         if (apu->pulse[0].enabled) {
@@ -1185,16 +1192,17 @@ static inline void apu_write(APU *apu, uint16_t addr, uint8_t val) {
         apu->pulse[1].sweep_negate = (val & 0x08) != 0;
         apu->pulse[1].sweep_shift = val & 0x07;
         apu->pulse[1].sweep_reload = true;
+        apu_update_pulse_period(&apu->pulse[1]);
         break;
     case 0x4006:
         apu->pulse[1].reg[2] = val;
         apu->pulse[1].timer_reload = (apu->pulse[1].timer_reload & 0x700) | val;
-        apu_update_pulse_timer(&apu->pulse[1]);
+        apu_update_pulse_period(&apu->pulse[1]);
         break;
     case 0x4007:
         apu->pulse[1].reg[3] = val;
         apu->pulse[1].timer_reload = ((val & 0x07) << 8) | apu->pulse[1].reg[2];
-        apu_update_pulse_timer(&apu->pulse[1]);
+        apu_update_pulse_period(&apu->pulse[1]);
         apu->pulse[1].sequence_step = 0;
         apu->pulse[1].envelope_start = true;
         if (apu->pulse[1].enabled) {
@@ -1237,8 +1245,8 @@ static inline void apu_write(APU *apu, uint16_t addr, uint8_t val) {
         /* Unused */
         break;
     case 0x400E:
+        /* The new period takes effect at the timer's next reload. */
         apu->noise.reg2 = val;
-        apu->noise.timer = (apu->pal ? apu_noise_period_table_pal : apu_noise_period_table)[val & 0x0F];
         break;
     case 0x400F:
         apu->noise.reg3 = val;
@@ -1400,6 +1408,14 @@ static inline void apu_reset(APU *apu) {
     int saved_rate = apu->sample_rate;
     int saved_clock = apu->cpu_clock;
     bool saved_pal = apu->pal;
+    /* Filter and analog character are user settings, not console state. */
+    APUFilterConfig saved_filter = apu->filter_config;
+    APUAnalog saved_analog = apu->analog;
+    /* Reset leaves the frame counter's last $4017 write and bit 0 of the
+     * DMC counter alone (nesdev "CPU power up state"; blargg
+     * apu_reset/4017_written). At power-on both are still zero. */
+    uint8_t saved_4017 = apu->regs[0x17];
+    uint8_t saved_dmc_bit0 = apu->dmc.output_level & 1;
 
     memset(apu, 0, sizeof(APU));
     apu->sample_rate = saved_rate ? saved_rate : APU_SAMPLE_RATE;
@@ -1412,20 +1428,11 @@ static inline void apu_reset(APU *apu) {
     apu->dmc.timer = apu->pal ? apu_dmc_rate_table_pal[0] : apu_dmc_rate_table[0];
     apu->dmc.timer_reload = apu->dmc.timer;
 
-    /* Re-design resampling FIR, DAC tables, filter config, and
-     * analog character layer (memset wiped them all). */
+    /* Re-design the resampling FIR and DAC tables (memset wiped them). */
     apu_design_kaiser_sinc(apu->resample_taps, APU_RESAMPLE_TAPS,
                             0.0120, 8.5);
-    apu->filter_config.hp1_alpha = 0.996863;
-    apu->filter_config.hp2_alpha = 0.937419;
-    apu->filter_config.lp_alpha  = 0.815687;
-    apu->analog.filter            = apu->filter_config;
-    apu->analog.dac_nonlinearity  = 0.0f;
-    apu->analog.saturation        = 0.0f;
-    apu->analog.noise_floor       = 0.0f;
-    apu->analog.hum_60hz          = 0.0f;
-    apu->analog.dmc_bus_crosstalk = 0.0f;
-    apu->analog.output_gain       = 1.0f;
+    apu->filter_config = saved_filter;
+    apu->analog = saved_analog;
     apu->noise_rng                = 0x12345678u;
     apu->hum_phase                = 0.0;
     apu->dirty                    = true;
@@ -1435,6 +1442,16 @@ static inline void apu_reset(APU *apu) {
     /* Restore triangle control flag (unaffected by reset) */
     apu->triangle.reg0 = saved_tri_reg0;
     apu->length_halt = (saved_tri_reg0 & 0x80) ? 4 : 0;
+
+    /* The frame counter acts as if the last value were written again, on
+     * the same schedule as the $00 at power-on (blargg
+     * apu_reset/4017_timing), so it restarts here rather than through
+     * apu_write's delay. The quarter and half frame a mode-1 write clocks
+     * would find every unit it drives cleared, so they are left out. */
+    apu->regs[0x17] = saved_4017;
+    apu->frame.five_step = (saved_4017 & 0x80) != 0;
+    apu->frame.irq_inhibit = (saved_4017 & 0x40) != 0;
+    apu->dmc.output_level = saved_dmc_bit0;
 
     /* Restore audio callback */
     apu->audio_callback = saved_cb;

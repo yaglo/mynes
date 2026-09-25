@@ -6,11 +6,11 @@
 ;;; Usage:
 ;;;   csi -s scripts/run-tests.scm all          Run everything
 ;;;   csi -s scripts/run-tests.scm accuracy     Run AccuracyCoin
-;;;   csi -s scripts/run-tests.scm blargg       Run Blargg CPU instruction tests
+;;;   csi -s scripts/run-tests.scm blargg       Run Blargg CPU instruction and reset tests
 ;;;   csi -s scripts/run-tests.scm unit         Run C unit tests (cpu, ppu, nes)
 ;;;   csi -s scripts/run-tests.scm quick        Run unit + accuracy (CI fast path)
 
-(import (chicken process-context) (srfi 1))
+(import (chicken process-context))
 (load "scripts/test-lib.scm")
 
 ;;; =========================================================================
@@ -62,9 +62,27 @@
        "05-zp_xy" "06-absolute" "07-abs_xy" "08-ind_x"
        "09-ind_y" "10-branches" "11-stack" "12-jmp_jsr"
        "13-rts" "14-rti" "15-brk" "16-special")))
+  (newline)
+  (display "=== Blargg Reset Tests ===\n\n")
+  (for-each
+   (lambda (path)
+     (test-rom (car (reverse (string-split path "/")))
+               (string-append "tests/nes-test-roms/" path ".nes")))
+   '("apu_reset/4015_cleared" "apu_reset/4017_timing" "apu_reset/4017_written"
+     "apu_reset/irq_flag_cleared" "apu_reset/len_ctrs_enabled"
+     "apu_reset/works_immediately" "cpu_reset/ram_after_reset"
+     "cpu_reset/registers"))
   (print-summary))
 
-;;; Helper
+;;; Helpers. Stock CHICKEN 5 has no SRFI 1 without the srfi-1 egg, so the
+;;; one list procedure needed is defined here.
+(define (filter keep? lst)
+  (let loop ((lst lst) (acc '()))
+    (cond
+     ((null? lst) (reverse acc))
+     ((keep? (car lst)) (loop (cdr lst) (cons (car lst) acc)))
+     (else (loop (cdr lst) acc)))))
+
 (define (string-contains str sub)
   (let ((slen (string-length str))
         (sublen (string-length sub)))

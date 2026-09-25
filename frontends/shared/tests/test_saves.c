@@ -52,7 +52,7 @@ int main(void) {
     /* Battery round trip. */
     static uint8_t ram[MYNES_PRG_RAM_SIZE], back[MYNES_PRG_RAM_SIZE];
     MynesSaves s;
-    mynes_saves_open(&s, "/roms/Zelda (U).nes", 0xDEADBEEF, true);
+    mynes_saves_open(&s, "/roms/Zelda (U).nes", 0xDEADBEEF, true, MYNES_PRG_RAM_SIZE);
     CHECK(s.battery && ends_with(s.sav_path, "/mynes/saves/Zelda (U)-deadbeef.sav"));
     CHECK(!mynes_saves_restore(&s, ram));          /* nothing on disk yet */
     CHECK(mynes_saves_flush(&s, ram, false));       /* unchanged: no write */
@@ -67,7 +67,7 @@ int main(void) {
     CHECK(stat(s.sav_path, &st) == 0 && st.st_size == MYNES_PRG_RAM_SIZE);
 
     MynesSaves t;
-    mynes_saves_open(&t, "/elsewhere/Zelda (U).nes", 0xDEADBEEF, true);
+    mynes_saves_open(&t, "/elsewhere/Zelda (U).nes", 0xDEADBEEF, true, MYNES_PRG_RAM_SIZE);
     memset(back, 0, sizeof(back));
     CHECK(mynes_saves_restore(&t, back));
     CHECK(memcmp(back, ram, sizeof(ram)) == 0);
@@ -79,13 +79,29 @@ int main(void) {
 
     /* A different dump of the same name gets its own file. */
     MynesSaves u;
-    mynes_saves_open(&u, "/roms/Zelda (U).nes", 0x0BADF00D, true);
+    mynes_saves_open(&u, "/roms/Zelda (U).nes", 0x0BADF00D, true, MYNES_PRG_RAM_SIZE);
     CHECK(strcmp(u.sav_path, s.sav_path) != 0);
     CHECK(!mynes_saves_restore(&u, back));
 
+    /* MMC5 keeps 64 KB of pages: an 8 KB save from before fills page 0
+     * and leaves the rest, and the next write holds every page. */
+    static uint8_t big[MYNES_PRG_RAM_MAX];
+    MynesSaves b;
+    mynes_saves_open(&b, "/roms/Zelda (U).nes", 0xDEADBEEF, true, MYNES_PRG_RAM_MAX);
+    memset(big, 0x5A, sizeof(big));
+    CHECK(mynes_saves_restore(&b, big));
+    CHECK(big[100] == (uint8_t)((100 * 7) ^ 0xFF) && big[MYNES_PRG_RAM_SIZE] == 0x5A);
+    CHECK(mynes_saves_flush(&b, big, false));        /* unchanged since the restore */
+    CHECK(stat(b.sav_path, &st) == 0 && st.st_size == MYNES_PRG_RAM_SIZE);
+    big[0xE000] = 0x42;
+    CHECK(mynes_saves_flush(&b, big, false));
+    CHECK(stat(b.sav_path, &st) == 0 && st.st_size == MYNES_PRG_RAM_MAX);
+    memset(big, 0, sizeof(big));
+    CHECK(mynes_saves_restore(&b, big) && big[0xE000] == 0x42 && big[100] == ram[100]);
+
     /* No battery: never writes, even when forced. */
     MynesSaves n;
-    mynes_saves_open(&n, "/roms/Mario.nes", 0x11111111, false);
+    mynes_saves_open(&n, "/roms/Mario.nes", 0x11111111, false, MYNES_PRG_RAM_SIZE);
     CHECK(mynes_saves_flush(&n, ram, true));
     CHECK(!exists(n.sav_path));
 
@@ -108,6 +124,56 @@ int main(void) {
 
     /* An unwritable destination fails cleanly and leaves no temp file. */
     CHECK(!mynes_write_file_atomic("/nonexistent-dir/x/y.sav", ram, sizeof(ram)));
+
+    /* A symlink stays a link, relative targets resolve beside the link, and
+     * the temporary file goes beside the target. A dangling link creates
+     * its target. */
+    char link[MYNES_PATH_MAX + 16], real[MYNES_PATH_MAX + 16], chain[MYNES_PATH_MAX + 16];
+    char sub[MYNES_PATH_MAX], text[16], side[MYNES_PATH_MAX + 32];
+    snprintf(sub, sizeof(sub), "%s/real", root);
+    CHECK(mkdir(sub, 0755) == 0);
+    snprintf(real, sizeof(real), "%s/real/target.json", root);
+    snprintf(link, sizeof(link), "%s/link.json", root);
+    snprintf(chain, sizeof(chain), "%s/chain.json", root);
+    CHECK(symlink("real/target.json", link) == 0);
+    CHECK(symlink("link.json", chain) == 0);
+    CHECK(mynes_write_file_atomic(chain, "first", 5));
+    CHECK(lstat(link, &st) == 0 && S_ISLNK(st.st_mode));
+    CHECK(lstat(chain, &st) == 0 && S_ISLNK(st.st_mode));
+    CHECK(lstat(real, &st) == 0 && S_ISREG(st.st_mode) && st.st_size == 5);
+    CHECK(mynes_write_file_atomic(link, "second", 6));
+    CHECK(lstat(link, &st) == 0 && S_ISLNK(st.st_mode));
+    FILE *rf = fopen(real, "rb");
+    size_t got = rf ? fread(text, 1, sizeof(text), rf) : 0;
+    if (rf) fclose(rf);
+    CHECK(got == 6 && memcmp(text, "second", 6) == 0);
+    snprintf(side, sizeof(side), "%s.tmp", real);
+    CHECK(!exists(side));
+    snprintf(side, sizeof(side), "%s.tmp", link);
+    CHECK(!exists(side));
+    /* A link to itself is refused rather than followed forever. */
+    char loop[MYNES_PATH_MAX + 16];
+    snprintf(loop, sizeof(loop), "%s/loop.json", root);
+    CHECK(symlink("loop.json", loop) == 0);
+    CHECK(!mynes_write_file_atomic(loop, "x", 1));
+    CHECK(lstat(loop, &st) == 0 && S_ISLNK(st.st_mode));
+    remove(loop); remove(chain); remove(link); remove(real); rmdir(sub);
+
+    /* A config directory too long for the slot suffix gives no path at all,
+     * rather than one truncated path shared by every slot. */
+    char deep[MYNES_PATH_MAX];
+    snprintf(deep, sizeof(deep), "%s/%0*d", root, (int)(490 - strlen(root)), 0);
+    setenv("XDG_CONFIG_HOME", deep, 1);
+    MynesSaves d;
+    mynes_saves_open(&d, "/roms/Zelda (U).nes", 0xDEADBEEF, true, MYNES_PRG_RAM_SIZE);
+    CHECK(d.sav_path[0] == '\0');
+    char p1[MYNES_PATH_MAX], p2[MYNES_PATH_MAX];
+    mynes_state_path(&d, 1, p1, sizeof(p1));
+    mynes_state_path(&d, 2, p2, sizeof(p2));
+    CHECK(p1[0] == '\0' && p2[0] == '\0');
+    CHECK(mynes_state_read(&d, 1, &size) == NULL);
+    CHECK(!mynes_write_file_atomic("", ram, sizeof(ram)));
+    setenv("XDG_CONFIG_HOME", root, 1);
 
     /* Tidy up. */
     remove(path);

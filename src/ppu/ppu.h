@@ -668,7 +668,7 @@ static inline void ppu_reg_write(PPU *ppu, uint16_t addr, uint8_t val) {
  * Rendering Helpers
  * ============================================================================ */
 
-static inline bool ppu_rendering_enabled(PPU *ppu) {
+static inline bool ppu_rendering_enabled(const PPU *ppu) {
     return (ppu->mask & (MASK_BG_ENABLE | MASK_SPRITE_ENABLE)) != 0;
 }
 
@@ -962,6 +962,49 @@ static inline void ppu_fetch_sprites(PPU *ppu) {
  * Pixel Output
  * ============================================================================ */
 
+/* The 9-bit entry the PPU puts out for a palette colour under the current
+ * PPUMASK: greyscale keeps only the column bits, and emphasis (bits 5..7)
+ * lands in bits 6..8. */
+static inline uint16_t ppu_mask_entry(const PPU *ppu, uint8_t color_idx) {
+    color_idx &= (ppu->mask & MASK_GREYSCALE) ? 0x30 : 0x3F;
+    return (uint16_t)color_idx | (uint16_t)((ppu->mask & 0xE0) << 1);
+}
+
+/* The entry the 2C02 puts out where it draws no tile or sprite: the
+ * backdrop at $3F00, or with rendering off and v in $3F00-$3FFF the entry
+ * v points at (the "background palette hack"). The picture's forced blank
+ * and the border both come from here, so they cannot disagree. */
+static inline uint16_t ppu_backdrop_entry(const PPU *ppu) {
+    unsigned addr = 0;
+    if (!ppu_rendering_enabled(ppu) && (ppu->v & 0x3F00) == 0x3F00) {
+        addr = ppu->v & 0x1F;
+        if ((addr & 0x13) == 0x10) addr &= ~0x10u;   /* $3F10/14/18/1C mirror $3F00/04/08/0C */
+    }
+    return ppu_mask_entry(ppu, ppu->palette[addr]);
+}
+
+/* Emphasis is captured per pixel because games can rewrite PPUMASK
+ * mid-scanline and ppu_reg_write applies those writes immediately. */
+static inline void ppu_output_entry(PPU *ppu, uint16_t entry) {
+    int fb_idx_px = ppu->scanline * PPU_WIDTH + (ppu->dot - 1);
+    ppu->index_framebuffer[fb_idx_px] = entry;
+
+    uint8_t color_idx = entry & 0x3F;
+    int fb_idx = fb_idx_px * 3;
+    const uint8_t (*pal)[3] = ppu->color_palette ? ppu->color_palette : ppu_palette_2c02;
+    ppu->framebuffer[fb_idx + 0] = pal[color_idx][0];
+    ppu->framebuffer[fb_idx + 1] = pal[color_idx][1];
+    ppu->framebuffer[fb_idx + 2] = pal[color_idx][2];
+}
+
+static inline void ppu_output_pixel(PPU *ppu, uint8_t color_idx) {
+    ppu_output_entry(ppu, ppu_mask_entry(ppu, color_idx));
+}
+
+static inline void ppu_render_backdrop(PPU *ppu) {
+    ppu_output_entry(ppu, ppu_backdrop_entry(ppu));
+}
+
 static inline void ppu_render_pixel(PPU *ppu) {
     uint8_t bg_pixel = 0;
     uint8_t bg_palette = 0;
@@ -971,7 +1014,6 @@ static inline void ppu_render_pixel(PPU *ppu) {
     bool sp_zero = false;
 
     int x = ppu->dot - 1;
-    int y = ppu->scanline;
 
     /* Background pixel */
     if (ppu->mask & MASK_BG_ENABLE) {
@@ -1042,24 +1084,7 @@ static inline void ppu_render_pixel(PPU *ppu) {
     uint8_t color_idx = ppu_read(ppu, 0x3F00 + (final_palette << 2) + final_pixel);
     if (final_pixel == 0) color_idx = ppu_read(ppu, 0x3F00); /* Universal background */
 
-    color_idx &= 0x3F;
-
-    /* Greyscale mode masks lower 4 bits → only colors $00, $10, $20, $30 */
-    if (ppu->mask & MASK_GREYSCALE) color_idx &= 0x30;
-
-    /* Capture palette index + emphasis for the NTSC waveform pipeline.
-     * Emphasis is captured per-pixel because games can rewrite PPUMASK
-     * mid-scanline and ppu_reg_write applies those writes immediately. */
-    int fb_idx_px = y * PPU_WIDTH + x;
-    uint16_t emph = (uint16_t)((ppu->mask & 0xE0) << 1);  /* bits 5..7 → 6..8 */
-    ppu->index_framebuffer[fb_idx_px] = (uint16_t)color_idx | emph;
-
-    /* Write to framebuffer */
-    int fb_idx = fb_idx_px * 3;
-    const uint8_t (*pal)[3] = ppu->color_palette ? ppu->color_palette : ppu_palette_2c02;
-    ppu->framebuffer[fb_idx + 0] = pal[color_idx][0];
-    ppu->framebuffer[fb_idx + 1] = pal[color_idx][1];
-    ppu->framebuffer[fb_idx + 2] = pal[color_idx][2];
+    ppu_output_pixel(ppu, color_idx);
 }
 
 /* ============================================================================
@@ -1158,6 +1183,8 @@ static inline void ppu_step(PPU *ppu) {
             ppu_shift_bg(ppu);
             ppu_fetch_bg(ppu);
         }
+    } else if (visible_scanline && visible_dot) {
+        ppu_render_backdrop(ppu);
     }
 
     /* The counter-enable latch is clocked after the pixel shifters. On an

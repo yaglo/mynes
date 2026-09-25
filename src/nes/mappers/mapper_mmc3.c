@@ -67,7 +67,7 @@ static void mapper4_init(Mapper *m) {
 static uint8_t mapper4_cpu_read(Mapper *m, uint16_t addr) {
     if (addr >= 0x8000) {
         uint32_t bank, offset;
-        uint8_t total_prg_8k = m->prg_banks * 2;
+        uint16_t total_prg_8k = m->prg_banks * 2;
         if (addr < 0xA000) {
             bank = m->prg_bank0;
         } else if (addr < 0xC000) {

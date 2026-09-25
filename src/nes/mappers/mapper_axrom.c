@@ -7,7 +7,6 @@
 static void mapper7_init(Mapper *m) {
     m->prg_bank0 = 0;       /* 32KB bank number */
     m->mirroring = 2;       /* Single-screen low */
-    m->has_chr_ram = true;
 }
 
 static uint8_t mapper7_cpu_read(Mapper *m, uint16_t addr) {
@@ -33,15 +32,18 @@ static void mapper7_cpu_write(Mapper *m, uint16_t addr, uint8_t val) {
     }
 }
 
+/* The boards carry CHR RAM, but a header that declares CHR ROM gets it. */
 static uint8_t mapper7_ppu_read(Mapper *m, uint16_t addr) {
     if (addr < 0x2000) {
-        return m->chr_ram[addr];
+        if (m->has_chr_ram)
+            return m->chr_ram[addr];
+        return m->chr_rom[addr % m->chr_rom_size];
     }
     return 0;
 }
 
 static void mapper7_ppu_write(Mapper *m, uint16_t addr, uint8_t val) {
-    if (addr < 0x2000) {
+    if (addr < 0x2000 && m->has_chr_ram) {
         m->chr_ram[addr] = val;
     }
 }

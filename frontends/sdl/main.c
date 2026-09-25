@@ -16,6 +16,7 @@
  */
 
 #include <errno.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -61,7 +62,7 @@ static MynesSaves  saves;
 static Uint32      battery_next_check;
 static void saves_attach(const char *rom_path) {
     uint32_t crc = nes_state_rom_crc(rom.prg_rom, rom.prg_size, rom.chr_rom, rom.chr_size);
-    mynes_saves_open(&saves, rom_path, crc, rom.has_battery);
+    mynes_saves_open(&saves, rom_path, crc, rom.has_battery, nes.mapper.prg_ram_size);
     if (saves.battery && mynes_saves_restore(&saves, nes.mapper.prg_ram))
         printf("Battery RAM restored from %s\n", saves.sav_path);
 }
@@ -123,6 +124,9 @@ static SDL_Window   *window;     /* forward decl for apply_display_for_nes_regio
  * can re-apply the appropriate display mode when entering/leaving
  * exclusive fullscreen. */
 static int nes_region_current = NES_REGION_NTSC;
+/* --pal: every ROM runs as PAL, whatever its header says. */
+static bool force_pal = false;
+static int apply_rom_region(void);   /* fwd decl for the ROM browser */
 
 /* ============================================================================
  * Audio Ring Buffer
@@ -158,30 +162,39 @@ static AudioRateCtrl audio_ctrl;
 /* Nominal APU rate: 44.1 kHz on the Mac, or whatever the CRT box consumes. */
 static int apu_base_rate = APU_SAMPLE_RATE;
 
+/* One producer (the emulation thread) and one consumer (SDL's audio
+ * thread). Each side publishes its index with release after touching a
+ * slot and reads the other's with acquire, so a slot is never read before
+ * its sample is visible or overwritten before it was read. */
 typedef struct {
     float buffer[AUDIO_BUF_SIZE];
-    volatile int write_pos;
-    volatile int read_pos;
+    atomic_int write_pos;
+    atomic_int read_pos;
     float last_sample;  /* held on underrun to avoid discontinuity */
 } AudioRingBuffer;
 
 static AudioRingBuffer audio_ring;
 
 static void audio_ring_init(void) {
-    memset(&audio_ring, 0, sizeof(audio_ring));
+    memset(audio_ring.buffer, 0, sizeof(audio_ring.buffer));
+    atomic_init(&audio_ring.write_pos, 0);
+    atomic_init(&audio_ring.read_pos, 0);
+    audio_ring.last_sample = 0.0f;
 }
 
 static inline int audio_ring_available(void) {
-    int avail = audio_ring.write_pos - audio_ring.read_pos;
+    int avail = atomic_load_explicit(&audio_ring.write_pos, memory_order_acquire)
+              - atomic_load_explicit(&audio_ring.read_pos, memory_order_acquire);
     if (avail < 0) avail += AUDIO_BUF_SIZE;
     return avail;
 }
 
 static void audio_ring_push(float sample) {
-    int next = (audio_ring.write_pos + 1) % AUDIO_BUF_SIZE;
-    if (next != audio_ring.read_pos) {
-        audio_ring.buffer[audio_ring.write_pos] = sample;
-        audio_ring.write_pos = next;
+    int write = atomic_load_explicit(&audio_ring.write_pos, memory_order_relaxed);
+    int next = (write + 1) % AUDIO_BUF_SIZE;
+    if (next != atomic_load_explicit(&audio_ring.read_pos, memory_order_acquire)) {
+        audio_ring.buffer[write] = sample;
+        atomic_store_explicit(&audio_ring.write_pos, next, memory_order_release);
     }
     /* If full, drop the sample — the dynamic rate adjust below will
        slow production so this rarely fires in steady state. */
@@ -192,11 +205,13 @@ static void sdl_audio_callback(void *userdata, Uint8 *stream, int len) {
     (void)userdata;
     float *out = (float *)stream;
     int samples = len / (int)sizeof(float);
+    int read = atomic_load_explicit(&audio_ring.read_pos, memory_order_relaxed);
 
     for (int i = 0; i < samples; i++) {
-        if (audio_ring.read_pos != audio_ring.write_pos) {
-            float s = audio_ring.buffer[audio_ring.read_pos];
-            audio_ring.read_pos = (audio_ring.read_pos + 1) % AUDIO_BUF_SIZE;
+        if (read != atomic_load_explicit(&audio_ring.write_pos, memory_order_acquire)) {
+            float s = audio_ring.buffer[read];
+            read = (read + 1) % AUDIO_BUF_SIZE;
+            atomic_store_explicit(&audio_ring.read_pos, read, memory_order_release);
             audio_ring.last_sample = s;
             out[i] = s;
         } else {
@@ -1676,6 +1691,7 @@ typedef struct {
 static PaletteEntry palettes[MAX_PALETTES];
 static int palette_count = 0;
 static int current_palette = 0;  /* 0 = built-in */
+static bool palette_from_cli = false;  /* --palette: never replaced by a region default */
 
 static void palette_add_builtin(void) {
     strcpy(palettes[0].name, "2C02 NTSC (built-in)");
@@ -1873,10 +1889,9 @@ static void palette_init(const char *exe_path) {
 
     /* Resolve the real path of the executable so palette loading works
        regardless of the working directory the user launches from. */
-    char resolved[1024];
-    const char *real_exe = NULL;
-    if (exe_path && realpath(exe_path, resolved))
-        real_exe = resolved;
+    /* realpath allocates: glibc's fortified realpath aborts when handed a
+     * buffer smaller than PATH_MAX. */
+    char *real_exe = exe_path ? realpath(exe_path, NULL) : NULL;
 
     /* Try CWD-relative first */
     palette_scan_directory("palettes");
@@ -1894,12 +1909,13 @@ static void palette_init(const char *exe_path) {
             palette_scan_directory(dir);
         }
     }
+    free(real_exe);
 
-    /* Don't auto-select a default here — the region detection code in
-     * main() picks the right palette after the ROM region is known
-     * (2C07 for PAL, Digital Prime for NTSC). Leave current_palette at
-     * its default (0 = 2C02 built-in) so the region-pick logic can
-     * tell we haven't chosen anything yet. */
+    /* Don't auto-select a default here — apply_rom_region picks the
+     * right palette once the ROM region is known (2C07 for PAL, Digital
+     * Prime for NTSC). Leave current_palette at its default (0 = 2C02
+     * built-in) so the region-pick logic can tell we haven't chosen
+     * anything yet. */
 
     printf("Loaded %d palette(s)\n", palette_count);
     for (int i = 0; i < palette_count; i++) {
@@ -2095,13 +2111,36 @@ void handle_input(void) {
                         int re = nes_rom_load(&new_rom, browser.chosen_path);
                         if (re == ROM_OK) {
                             mynes_saves_flush(&saves, nes.mapper.prg_ram, false);
+                            /* A new cartridge is a power cycle: nes_reset
+                             * keeps RAM and the old cartridge's bus state.
+                             * nes_init also resets the audio sink, rate and
+                             * the user's filter and analog settings, so
+                             * carry those over; apply_rom_region restores
+                             * the palette. */
+                            {
+                                APUFilterConfig filter = nes.apu.filter_config;
+                                APUAnalog analog = nes.apu.analog;
+                                int sample_rate = nes.apu.sample_rate;
+                                nes_init(&nes);
+                                nes.apu.filter_config = filter;
+                                nes.apu.analog = analog;
+                                nes.apu.sample_rate = sample_rate;
+                                apu_build_dac_tables(&nes.apu);
+                                apu_set_audio_callback(&nes.apu,
+                                    apu_sample_callback, NULL);
+                            }
                             nes_load_mapper(&nes, new_rom.mapper,
                                 new_rom.prg_rom, new_rom.prg_size,
                                 new_rom.chr_rom, new_rom.chr_size,
                                 new_rom.mirroring);
-                            nes_reset(&nes);
+                            nes_rom_apply_trainer(&new_rom, &nes.mapper);
+                            /* The mapper now points into new_rom, so the
+                             * old image is no longer referenced. */
+                            nes_rom_free(&rom);
                             rom = new_rom;
                             rom_loaded = true;
+                            apply_rom_region();
+                            nes_reset(&nes);
                             saves_attach(browser.chosen_path);
                             mynes_config_add_recent(&mynes_config,
                                                     browser.chosen_path);
@@ -2452,6 +2491,72 @@ static void apply_display_for_nes_region(int nes_region) {
     }
 }
 
+/* Put the console, the composite pipeline and the display rate in the
+ * loaded ROM's region (or PAL under --pal). Called at startup and for each
+ * ROM the browser loads, before nes_reset. Without a ROM the browser runs
+ * with NTSC defaults. Returns the region. */
+static int apply_rom_region(void) {
+    int region = NES_REGION_NTSC;
+    if (force_pal) {
+        region = NES_REGION_PAL;
+    } else if (rom_loaded && rom.tv_system == NES_TV_PAL) {
+        region = NES_REGION_PAL;
+        printf("Region: PAL (auto-detected from ROM header)\n");
+    }
+    nes_set_region(&nes, region);
+    if (region == NES_REGION_PAL)
+        printf("Region: PAL (312 scanlines, 1.66MHz CPU)\n");
+    /* Follow the region with the palette while it is still one of the
+     * region defaults, so a ROM opened from the browser gets the palette
+     * the same ROM gets from the command line; a palette given with
+     * --palette stays. ppu_set_region selected the built-in table, so the
+     * PPU is re-pointed either way.
+     *
+     * PAL ROMs: "2C07 PAL (built-in)" — palettes[1], the canonical
+     *           hardcoded PAL RGB values. The composite signal table
+     *           is synthesized to decode to exactly these values
+     *           (see comp_precompute_signal_table_pal), so wave-on
+     *           and wave-off show matching hues, with composite
+     *           effects layered on top.
+     * NTSC ROMs: Digital Prime (FBX) if loaded, else 2C02 built-in. */
+    if (!palette_from_cli) {
+        int pal_default = palette_find_by_name("2C07 PAL (built-in)");
+        int ntsc_default = palette_find_by_name("Digital Prime");
+        if (ntsc_default < 0) ntsc_default = 0;
+        if (current_palette == 0 || current_palette == pal_default
+            || current_palette == ntsc_default) {
+            int picked = region == NES_REGION_PAL ? pal_default : ntsc_default;
+            if (picked >= 0) current_palette = picked;
+        }
+    }
+    if (current_palette >= 0 && current_palette < palette_count) {
+        nes.ppu.color_palette = palettes[current_palette].colors;
+        printf("Palette: %s\n", palettes[current_palette].name);
+    }
+
+    /* Wire the same region into the composite pipeline so PAL ROMs get
+     * 2C07 voltages, YUV decoding, and per-line V-flip. Safe to call
+     * after comp_init — comp_set_region rebuilds the signal table, FIR
+     * coefficients, and the output color matrix to match. */
+    comp_set_region(&composite,
+                    region == NES_REGION_PAL ? COMP_REGION_PAL
+                                             : COMP_REGION_NTSC);
+
+    /* Compute the derived PAL palette from the just-initialized
+     * composite decoder state, so palettes[2] holds 2C07 RGB values
+     * that are mathematically consistent with what the waveform
+     * pipeline will produce. */
+    palette_refresh_composite_derived();
+
+    /* Match the display refresh rate / vsync policy to the NES region's
+     * native frame rate. PAL on a 60 Hz display is the most visible
+     * mismatch — apply_display_for_nes_region tries exclusive display
+     * mode switching first, then falls back to disabling vsync so the
+     * main-loop timer paces frames without stutter. */
+    apply_display_for_nes_region(region);
+    return region;
+}
+
 void toggle_fullscreen(void) {
     Uint32 flags = SDL_GetWindowFlags(window);
     if (flags & SDL_WINDOW_FULLSCREEN_DESKTOP)
@@ -2633,7 +2738,6 @@ int main(int argc, char *argv[]) {
 
     const char *rom_path = NULL;
     const char *palette_path = NULL;
-    int region = NES_REGION_NTSC;
 
     /* First positional argument that isn't a recognised option is the ROM. */
     for (int i = 1; i < argc; i++) {
@@ -2646,7 +2750,7 @@ int main(int argc, char *argv[]) {
         } else if (strcmp(argv[i], "--no-composite") == 0) {
             composite_enabled = false;
         } else if (strcmp(argv[i], "--pal") == 0) {
-            region = NES_REGION_PAL;
+            force_pal = true;
         } else if (strcmp(argv[i], "--scale") == 0 && i + 1 < argc) {
             char *endptr = NULL;
             errno = 0;
@@ -2730,10 +2834,18 @@ int main(int argc, char *argv[]) {
             const char *slash = strrchr(palette_path, '/');
             const char *name = slash ? slash + 1 : palette_path;
 
+            /* palette_init may have filled the table from the palettes
+             * directory; the one asked for by name takes the last slot. */
+            if (palette_count >= MAX_PALETTES) {
+                palette_count = MAX_PALETTES - 1;
+                fprintf(stderr, "Palette table full; %s replaces %s\n",
+                        name, palettes[palette_count].name);
+            }
             PaletteEntry *pe = &palettes[palette_count];
             strncpy(pe->name, name, sizeof(pe->name) - 1);
             memcpy(pe->colors, custom_colors, sizeof(pe->colors));
             current_palette = palette_count;
+            palette_from_cli = true;
             palette_count++;
             printf("Using custom palette: %s\n", palette_path);
         } else {
@@ -2889,36 +3001,15 @@ int main(int argc, char *argv[]) {
                         rom.prg_rom, rom.prg_size,
                         rom.chr_rom, rom.chr_size,
                         rom.mirroring);
+        nes_rom_apply_trainer(&rom, &nes.mapper);
         saves_attach(rom_path);
     }
 
     apu_set_audio_callback(&nes.apu, apu_sample_callback, NULL);
     nes.apu.sample_rate = apu_base_rate;
 
-    /* Set region — auto-detect from ROM header, or override with --pal.
-     * Without a ROM the browser runs with NTSC defaults. */
-    if (rom_loaded && region == NES_REGION_NTSC && rom.tv_system == NES_TV_PAL) {
-        region = NES_REGION_PAL;
-        printf("Region: PAL (auto-detected from ROM header)\n");
-    }
-    if (region == NES_REGION_PAL) {
-        nes_set_region(&nes, NES_REGION_PAL);
-        printf("Region: PAL (312 scanlines, 1.66MHz CPU)\n");
-    }
-
-    /* Wire the same region into the composite pipeline so PAL ROMs get
-     * 2C07 voltages, YUV decoding, and per-line V-flip. Safe to call
-     * after comp_init — comp_set_region rebuilds the signal table, FIR
-     * coefficients, and the output color matrix to match. */
-    comp_set_region(&composite,
-                    region == NES_REGION_PAL ? COMP_REGION_PAL
-                                             : COMP_REGION_NTSC);
-
-    /* Compute the derived PAL palette from the just-initialized
-     * composite decoder state, so palettes[2] holds 2C07 RGB values
-     * that are mathematically consistent with what the waveform
-     * pipeline will produce. */
-    palette_refresh_composite_derived();
+    /* Region — auto-detected from the ROM header, or forced by --pal. */
+    apply_rom_region();
 
 #ifdef MYNES_CRT_CAPTURE
     const char *crt_capture_path = getenv("MYNES_CRT_CAPTURE");
@@ -2928,39 +3019,6 @@ int main(int argc, char *argv[]) {
     }
 #endif
 
-
-    /* Match the display refresh rate / vsync policy to the NES region's
-     * native frame rate. PAL on a 60 Hz display is the most visible
-     * mismatch — apply_display_for_nes_region tries exclusive display
-     * mode switching first, then falls back to disabling vsync so the
-     * main-loop timer paces frames without stutter. */
-    apply_display_for_nes_region(region);
-
-    /* Apply the region-appropriate default palette to the PPU, unless
-     * the user passed --palette on the command line (in which case
-     * current_palette was already set during argument parsing and we
-     * respect that choice).
-     *
-     * PAL ROMs: "2C07 PAL (built-in)" — palettes[1], the canonical
-     *           hardcoded PAL RGB values. The composite signal table
-     *           is synthesized to decode to exactly these values
-     *           (see comp_precompute_signal_table_pal), so wave-on
-     *           and wave-off show matching hues, with composite
-     *           effects layered on top.
-     * NTSC ROMs: Digital Prime (FBX) if loaded, else 2C02 built-in. */
-    if (current_palette == 0) {
-        int picked = -1;
-        if (region == NES_REGION_PAL) {
-            picked = palette_find_by_name("2C07 PAL (built-in)");
-        } else {
-            picked = palette_find_by_name("Digital Prime");
-        }
-        if (picked >= 0) current_palette = picked;
-    }
-    if (current_palette >= 0 && current_palette < palette_count) {
-        nes.ppu.color_palette = palettes[current_palette].colors;
-        printf("Palette: %s\n", palettes[current_palette].name);
-    }
 
     if (rom_loaded) nes_reset(&nes);
 
@@ -2997,7 +3055,7 @@ int main(int argc, char *argv[]) {
      * Audio stays smooth because game logic always runs on time.
      */
     Uint64 freq = SDL_GetPerformanceFrequency();
-    Uint64 frame_ticks = freq / (region == NES_REGION_PAL ? 50 : 60);
+    Uint64 frame_ticks = 0;
     Uint64 next_frame = SDL_GetPerformanceCounter();
     int frames_behind = 0;
     const int MAX_SKIP = 4;
@@ -3009,6 +3067,8 @@ int main(int argc, char *argv[]) {
 
     while (running) {
         handle_input();
+        /* A ROM loaded from the browser can change the region. */
+        frame_ticks = freq / (nes_region_current == NES_REGION_PAL ? 50 : 60);
         /* Battery RAM reaches disk within a couple of seconds of a change. */
         if (saves.battery && SDL_GetTicks() >= battery_next_check) {
             battery_next_check = SDL_GetTicks() + 2000;
@@ -3044,6 +3104,7 @@ int main(int argc, char *argv[]) {
                         break;
                     }
 #endif
+                    frame_counter++;
                     /* Apply scheduled RAM pokes after the frame runs.
                      * We poke AFTER so our values win against the
                      * game's frame-start initialization. */

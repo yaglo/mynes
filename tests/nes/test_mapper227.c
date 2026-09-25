@@ -45,6 +45,16 @@ int main(void) {
         pass = 0;
     }
 
+    /* A header that declares CHR ROM gets it, read-only. */
+    static uint8_t chr[0x2000];
+    chr[0x1234] = 0x3C;
+    mapper_init(&m, 227, prg, sizeof(prg), chr, sizeof(chr), 0);
+    mapper_ppu_write(&m, 0x1234, 0xA5);
+    if (mapper_ppu_read(&m, 0x1234) != 0x3C) {
+        printf("FAIL CHR ROM read\n");
+        pass = 0;
+    }
+
     printf("Mapper 227 tests: %s\n", pass ? "PASS" : "FAIL");
     return pass ? 0 : 1;
 }

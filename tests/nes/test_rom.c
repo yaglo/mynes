@@ -327,6 +327,200 @@ static int test_four_screen(void) {
     return pass;
 }
 
+/* NES 2.0 byte 9 extends both sizes: the low nibble is PRG size bits 8-11
+ * and the high nibble CHR size bits 8-11, with $F selecting the
+ * exponent-multiplier form 2^E * (2M+1). iNES 1.0 ignores the byte. */
+static int test_nes2_sizes(void) {
+    static uint8_t data[INES_HEADER_SIZE + 0x100 * INES_PRG_BANK_SIZE + 3 * 0x2000];
+    int pass = 1;
+    ROM rom;
+    memset(data, 0, INES_HEADER_SIZE);
+    memcpy(data, "NES\x1A", 4);
+
+    /* PRG $100 banks (4 MB) through the MSB nibble; CHR 3 x 8 KB as
+     * 2^13 * 3 in exponent form. */
+    data[4] = 0x00;
+    data[5] = (13 << 2) | 1;
+    data[7] = 0x08;
+    data[9] = 0xF1;
+    int result = nes_rom_load_data(&rom, data, sizeof(data));
+    if (result != ROM_OK || rom.prg_size != 0x100u * INES_PRG_BANK_SIZE ||
+        rom.chr_size != 3 * 0x2000) {
+        printf("TEST nes2_sizes: FAIL (MSB/exponent: result %d, PRG %u, CHR %u)\n",
+               result, rom.prg_size, rom.chr_size);
+        pass = 0;
+    } else {
+        Mapper m;
+        mapper_init(&m, 0, rom.prg_rom, rom.prg_size, rom.chr_rom, rom.chr_size, 0);
+        if (m.prg_banks != 0x100) {
+            printf("TEST nes2_sizes: FAIL (Mapper.prg_banks %u)\n", m.prg_banks);
+            pass = 0;
+        }
+    }
+    if (result == ROM_OK) nes_rom_free(&rom);
+
+    /* 8 KB PRG in exponent form (2^13 * 1). */
+    data[4] = 13 << 2;
+    data[5] = 0;
+    data[9] = 0x0F;
+    result = nes_rom_load_data(&rom, data, INES_HEADER_SIZE + 0x2000);
+    if (result != ROM_OK || rom.prg_size != 0x2000 || rom.chr_size != 0) {
+        printf("TEST nes2_sizes: FAIL (8 KB PRG: result %d, PRG %u)\n", result, rom.prg_size);
+        pass = 0;
+    }
+    if (result == ROM_OK) nes_rom_free(&rom);
+
+    /* Sizes past what the mapper can count are never wrapped: they cannot
+     * fit the image, so the header reads as archaic iNES instead. */
+    data[4] = 63 << 2;
+    result = nes_rom_load_data(&rom, data, sizeof(data));
+    if (result != ROM_OK || rom.is_nes2 || rom.prg_size != (63u << 2) * INES_PRG_BANK_SIZE) {
+        printf("TEST nes2_sizes: FAIL (2^63 PRG: result %d, PRG %u)\n", result, rom.prg_size);
+        pass = 0;
+    }
+    if (result == ROM_OK) nes_rom_free(&rom);
+
+    /* iNES 1.0: byte 9 is the TV system bit, not a size. */
+    data[4] = 1;
+    data[7] = 0x00;
+    data[9] = 0x11;
+    result = nes_rom_load_data(&rom, data, INES_HEADER_SIZE + INES_PRG_BANK_SIZE);
+    if (result != ROM_OK || rom.prg_size != INES_PRG_BANK_SIZE || rom.chr_size != 0) {
+        printf("TEST nes2_sizes: FAIL (iNES 1.0 byte 9: result %d, PRG %u)\n",
+               result, rom.prg_size);
+        pass = 0;
+    }
+    if (result == ROM_OK) nes_rom_free(&rom);
+
+    if (pass)
+        printf("TEST nes2_sizes: PASS (byte 9 MSB and exponent-multiplier sizes)\n");
+    return pass;
+}
+
+/* A header is NES 2.0 only when the sizes byte 9 widens fit the image.
+ * Junk headers can carry the NES 2.0 bits: "Deep Dungeon 4 [T-Eng]" has
+ * byte 7 = $C9 and byte 9 = $90, which as NES 2.0 asks for 18 MB of CHR
+ * and mapper $C1. Both loaders must read it as archaic iNES: mapper 1,
+ * sizes from bytes 4-5, byte 9 not a TV system. */
+static int test_nes2_fallback(void) {
+    static uint8_t data[INES_HEADER_SIZE + 2 * INES_PRG_BANK_SIZE + INES_CHR_BANK_SIZE];
+    memset(data, 0, sizeof(data));
+    memcpy(data, "NES\x1A\x02\x01", 6);
+    data[6] = 0x10;
+    data[7] = 0xC9;
+    data[9] = 0x91;   /* bit 0 set: as an iNES 1.0 TV bit it would say PAL */
+    int pass = 1;
+    const char *path = "/tmp/mynes_test_nes2_fallback.nes";
+    FILE *fp = fopen(path, "wb");
+    if (!fp) return 0;
+    fwrite(data, 1, sizeof(data), fp);
+    fclose(fp);
+    for (int from_file = 0; from_file < 2; ++from_file) {
+        ROM rom;
+        int result = from_file ? nes_rom_load(&rom, path)
+                               : nes_rom_load_data(&rom, data, sizeof(data));
+        if (result != ROM_OK || rom.is_nes2 || rom.mapper != 1 ||
+            rom.prg_size != 2 * INES_PRG_BANK_SIZE || rom.chr_size != INES_CHR_BANK_SIZE ||
+            rom.tv_system != NES_TV_NTSC) {
+            printf("TEST nes2_fallback: FAIL (%s: result %d, NES 2.0 %d, mapper %u, "
+                   "PRG %u, CHR %u, TV %u)\n", from_file ? "file" : "memory", result,
+                   rom.is_nes2, rom.mapper, rom.prg_size, rom.chr_size, rom.tv_system);
+            pass = 0;
+        }
+        if (result == ROM_OK) nes_rom_free(&rom);
+    }
+
+    /* The same bytes with sizes that fit stay NES 2.0, and the trainer
+     * counts toward what has to fit. */
+    data[7] = 0x08;
+    data[9] = 0x00;
+    ROM rom;
+    int result = nes_rom_load_data(&rom, data, sizeof(data));
+    if (result != ROM_OK || !rom.is_nes2 || rom.mapper != 1) {
+        printf("TEST nes2_fallback: FAIL (fitting NES 2.0: result %d, NES 2.0 %d)\n",
+               result, rom.is_nes2);
+        pass = 0;
+    }
+    if (result == ROM_OK) nes_rom_free(&rom);
+    data[6] |= 0x04;
+    result = nes_rom_load_data(&rom, data, sizeof(data));
+    if (result == ROM_OK || rom.is_nes2) {
+        printf("TEST nes2_fallback: FAIL (trainer past the end: result %d, NES 2.0 %d)\n",
+               result, rom.is_nes2);
+        if (result == ROM_OK) nes_rom_free(&rom);
+        pass = 0;
+    }
+
+    remove(path);
+    if (pass)
+        printf("TEST nes2_fallback: PASS (NES 2.0 sizes that do not fit read as iNES)\n");
+    return pass;
+}
+
+/* Every mapper reduces PRG addresses modulo the PRG size, so a header
+ * declaring no PRG ROM must be refused rather than divide by zero. */
+static int test_prg_size_zero(void) {
+    static uint8_t data[INES_HEADER_SIZE + INES_CHR_BANK_SIZE];
+    memcpy(data, "NES\x1A\x00\x01", 6);
+    int pass = 1;
+    for (int nes2 = 0; nes2 < 2; ++nes2) {
+        data[7] = nes2 ? 0x08 : 0x00;
+        ROM rom;
+        int result = nes_rom_load_data(&rom, data, sizeof(data));
+        if (result != ROM_ERR_HEADER) {
+            printf("TEST prg_size_zero: FAIL (%s: result %d)\n", nes2 ? "NES 2.0" : "iNES", result);
+            if (result == ROM_OK) nes_rom_free(&rom);
+            pass = 0;
+        }
+    }
+    if (pass)
+        printf("TEST prg_size_zero: PASS (header without PRG ROM rejected)\n");
+    return pass;
+}
+
+/* Flags 6 bit 2 puts a 512-byte trainer between the header and PRG ROM.
+ * Both loaders keep it, and it lands at $7000 once the mapper is up. */
+static int test_trainer(void) {
+    static uint8_t data[INES_HEADER_SIZE + INES_TRAINER_SIZE + INES_PRG_BANK_SIZE];
+    memcpy(data, "NES\x1A\x01\x00", 6);
+    data[6] = 0x04;
+    for (int i = 0; i < INES_TRAINER_SIZE; ++i)
+        data[INES_HEADER_SIZE + i] = (uint8_t)(i ^ 0x5A);
+    data[INES_HEADER_SIZE + INES_TRAINER_SIZE] = 0xC3;
+    const char *path = "/tmp/test_trainer.nes";
+    FILE *fp = fopen(path, "wb");
+    if (!fp) return 0;
+    fwrite(data, 1, sizeof(data), fp);
+    fclose(fp);
+
+    int pass = 1;
+    for (int from_file = 0; from_file < 2; ++from_file) {
+        ROM rom;
+        int result = from_file ? nes_rom_load(&rom, path)
+                               : nes_rom_load_data(&rom, data, sizeof(data));
+        if (result != ROM_OK || !rom.has_trainer || rom.prg_rom[0] != 0xC3) {
+            printf("TEST trainer: FAIL (%s: result %d)\n", from_file ? "file" : "buffer", result);
+            if (result == ROM_OK) nes_rom_free(&rom);
+            pass = 0;
+            continue;
+        }
+        Mapper m;
+        mapper_init(&m, rom.mapper, rom.prg_rom, rom.prg_size, rom.chr_rom, rom.chr_size,
+                    rom.mirroring);
+        nes_rom_apply_trainer(&rom, &m);
+        if (mapper_cpu_read(&m, 0x7000) != 0x5A || mapper_cpu_read(&m, 0x71FF) != (uint8_t)(0x1FF ^ 0x5A) ||
+            mapper_cpu_read(&m, 0x6FFF) != 0 || mapper_cpu_read(&m, 0x7200) != 0) {
+            printf("TEST trainer: FAIL (%s: trainer not at $7000)\n", from_file ? "file" : "buffer");
+            pass = 0;
+        }
+        nes_rom_free(&rom);
+    }
+    remove(path);
+    if (pass)
+        printf("TEST trainer: PASS (trainer kept and loaded at $7000)\n");
+    return pass;
+}
+
 int test_battery_flag(void) {
     const char *path = "/tmp/test_battery.nes";
     create_test_rom(path, 1, 1, 0x02, 0x00);  /* Battery flag set (bit 1) */
@@ -427,6 +621,10 @@ int main(void) {
     total++; passed += test_mapper_gate();
     total++; passed += test_nes2_mapper();
     total++; passed += test_four_screen();
+    total++; passed += test_nes2_sizes();
+    total++; passed += test_nes2_fallback();
+    total++; passed += test_prg_size_zero();
+    total++; passed += test_trainer();
     total++; passed += test_battery_flag();
     total++; passed += test_rom_free();
 

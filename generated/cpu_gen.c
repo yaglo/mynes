@@ -2592,7 +2592,7 @@ static void cpu_microcycle(CPU *cpu) {
         cpu->DL = cpu->mem_read(cpu, ((uint16_t)cpu->ADH << 8) | cpu->ADL);
         cpu->uPC = 468; return;
     case 468: /* jmp-ind */
-        { uint8_t n = (cpu->ADL + 1) & 0xFF; cpu->ADL = n; cpu->P = (cpu->P & 0x7D) | (n == 0 ? 2 : 0) | (n & 0x80); }
+        cpu->ADL = (cpu->ADL + 1) & 0xFF;
         cpu->last_read_addr = ((uint16_t)cpu->ADH << 8) | cpu->ADL;
         cpu->ADH = cpu->mem_read(cpu, ((uint16_t)cpu->ADH << 8) | cpu->ADL);
         cpu->PC = (cpu->PC & 0xFF00) | (cpu->DL);
@@ -4140,280 +4140,246 @@ static void cpu_microcycle(CPU *cpu) {
         cpu->last_read_addr = cpu->PC;
         cpu->DL = cpu->mem_read(cpu, cpu->PC);
         cpu->PC = (cpu->PC + 1) & 0xFFFF;
-        cpu->uPC = 775; return;
-    case 775: /* anc-imm */
         { uint8_t r = cpu->A & cpu->DL; cpu->A = r; cpu->P = (cpu->P & 0x7D) | (r == 0 ? 2 : 0) | (r & 0x80); }
         cpu->P = (cpu->P & 0xFE) | ((cpu->A >> 7) & 1);
         cpu->uPC = 0; return;
-    case 776: /* alr-imm */
+    case 775: /* alr-imm */
         cpu->last_read_addr = cpu->PC;
         cpu->DL = cpu->mem_read(cpu, cpu->PC);
         cpu->PC = (cpu->PC + 1) & 0xFFFF;
-        cpu->uPC = 777; return;
-    case 777: /* alr-imm */
         { uint8_t r = cpu->A & cpu->DL; cpu->A = r; cpu->P = (cpu->P & 0x7D) | (r == 0 ? 2 : 0) | (r & 0x80); }
         { uint8_t o = cpu->A, n = o >> 1; cpu->A = n; cpu->P = (cpu->P & 0x7C) | (o & 1) | (n == 0 ? 2 : 0); }
         cpu->uPC = 0; return;
-    case 778: /* arr-imm */
+    case 776: /* arr-imm */
         cpu->last_read_addr = cpu->PC;
         cpu->DL = cpu->mem_read(cpu, cpu->PC);
         cpu->PC = (cpu->PC + 1) & 0xFFFF;
-        cpu->uPC = 779; return;
-    case 779: /* arr-imm */
         { uint8_t t = cpu->A & cpu->DL; uint8_t r = (t >> 1) | ((cpu->P & 1) << 7);
           cpu->A = r; cpu->P = (cpu->P & 0x3C) | ((r >> 6) & 1) | (r == 0 ? 2 : 0) | (r & 0x80) | (((r >> 6) ^ (r >> 5)) & 1 ? 0x40 : 0); }
         cpu->uPC = 0; return;
-    case 780: /* xaa-imm */
+    case 777: /* xaa-imm */
         cpu->last_read_addr = cpu->PC;
         cpu->DL = cpu->mem_read(cpu, cpu->PC);
         cpu->PC = (cpu->PC + 1) & 0xFFFF;
-        cpu->uPC = 781; return;
-    case 781: /* xaa-imm */
         cpu->A = cpu->X;
         { uint8_t r = cpu->A & cpu->DL; cpu->A = r; cpu->P = (cpu->P & 0x7D) | (r == 0 ? 2 : 0) | (r & 0x80); }
         cpu->uPC = 0; return;
-    case 782: /* axs-imm */
+    case 778: /* axs-imm */
+        cpu->last_read_addr = cpu->PC;
+        cpu->DL = cpu->mem_read(cpu, cpu->PC);
+        cpu->PC = (cpu->PC + 1) & 0xFFFF;
+        { uint8_t t = cpu->A & cpu->X; int16_t r = t - cpu->DL; cpu->X = r & 0xFF;
+          cpu->P = (cpu->P & 0x7C) | (r >= 0 ? 1 : 0) | ((r & 0xFF) == 0 ? 2 : 0) | (r & 0x80); }
+        cpu->uPC = 0; return;
+    case 779: /* stp */
+        cpu->last_read_addr = cpu->PC;
+        (void)cpu->mem_read(cpu, cpu->PC);
+        cpu->uPC = 779; return;
+    case 780: /* nop-1 */
+        cpu->last_read_addr = cpu->PC;
+        (void)cpu->mem_read(cpu, cpu->PC);
+        cpu->uPC = 0; return;
+    case 781: /* nop-2 */
+        cpu->last_read_addr = cpu->PC;
+        cpu->DL = cpu->mem_read(cpu, cpu->PC);
+        cpu->PC = (cpu->PC + 1) & 0xFFFF;
+        cpu->uPC = 0; return;
+    case 782: /* nop-3 */
         cpu->last_read_addr = cpu->PC;
         cpu->DL = cpu->mem_read(cpu, cpu->PC);
         cpu->PC = (cpu->PC + 1) & 0xFFFF;
         cpu->uPC = 783; return;
-    case 783: /* axs-imm */
-        { uint8_t t = cpu->A & cpu->X; int16_t r = t - cpu->DL; cpu->X = r & 0xFF;
-          cpu->P = (cpu->P & 0x7C) | (r >= 0 ? 1 : 0) | ((r & 0xFF) == 0 ? 2 : 0) | (r & 0x80); }
-        cpu->uPC = 0; return;
-    case 784: /* stp */
-        cpu->last_read_addr = cpu->PC;
-        (void)cpu->mem_read(cpu, cpu->PC);
-        cpu->uPC = 784; return;
-    case 785: /* nop-1 */
-        cpu->last_read_addr = cpu->PC;
-        (void)cpu->mem_read(cpu, cpu->PC);
-        cpu->uPC = 0; return;
-    case 786: /* nop-2 */
+    case 783: /* nop-3 */
         cpu->last_read_addr = cpu->PC;
         cpu->DL = cpu->mem_read(cpu, cpu->PC);
         cpu->PC = (cpu->PC + 1) & 0xFFFF;
-        cpu->uPC = 787; return;
-    case 787: /* nop-2 */
-        cpu->last_read_addr = cpu->PC;
-        (void)cpu->mem_read(cpu, cpu->PC);
         cpu->uPC = 0; return;
-    case 788: /* nop-3 */
-        cpu->last_read_addr = cpu->PC;
-        cpu->DL = cpu->mem_read(cpu, cpu->PC);
-        cpu->PC = (cpu->PC + 1) & 0xFFFF;
-        cpu->uPC = 789; return;
-    case 789: /* nop-3 */
-        cpu->last_read_addr = cpu->PC;
-        cpu->DL = cpu->mem_read(cpu, cpu->PC);
-        cpu->PC = (cpu->PC + 1) & 0xFFFF;
-        cpu->uPC = 790; return;
-    case 790: /* nop-3 */
-        cpu->last_read_addr = cpu->PC;
-        (void)cpu->mem_read(cpu, cpu->PC);
-        cpu->uPC = 0; return;
-    case 791: /* nop-zp */
+    case 784: /* nop-zp */
         cpu->last_read_addr = cpu->PC;
         cpu->ADL = cpu->mem_read(cpu, cpu->PC);
         cpu->PC = (cpu->PC + 1) & 0xFFFF;
         cpu->ADH = 0;
-        cpu->uPC = 792; return;
-    case 792: /* nop-zp */
+        cpu->uPC = 785; return;
+    case 785: /* nop-zp */
         cpu->last_read_addr = ((uint16_t)cpu->ADH << 8) | cpu->ADL;
         cpu->DL = cpu->mem_read(cpu, ((uint16_t)cpu->ADH << 8) | cpu->ADL);
-        cpu->uPC = 793; return;
-    case 793: /* nop-zp */
-        cpu->last_read_addr = cpu->PC;
-        (void)cpu->mem_read(cpu, cpu->PC);
         cpu->uPC = 0; return;
-    case 794: /* nop-zpx */
+    case 786: /* nop-zpx */
         cpu->last_read_addr = cpu->PC;
         cpu->ADL = cpu->mem_read(cpu, cpu->PC);
         cpu->PC = (cpu->PC + 1) & 0xFFFF;
         cpu->ADH = 0;
-        cpu->uPC = 795; return;
-    case 795: /* nop-zpx */
+        cpu->uPC = 787; return;
+    case 787: /* nop-zpx */
         cpu->last_read_addr = ((uint16_t)cpu->ADH << 8) | cpu->ADL;
         (void)cpu->mem_read(cpu, ((uint16_t)cpu->ADH << 8) | cpu->ADL);
         { uint16_t s = (uint16_t)cpu->ADL + (uint16_t)cpu->X; cpu->ADL = s & 0xFF; cpu->page_cross = (s > 0xFF); }
-        cpu->uPC = 796; return;
-    case 796: /* nop-zpx */
+        cpu->uPC = 788; return;
+    case 788: /* nop-zpx */
         cpu->last_read_addr = ((uint16_t)cpu->ADH << 8) | cpu->ADL;
         cpu->DL = cpu->mem_read(cpu, ((uint16_t)cpu->ADH << 8) | cpu->ADL);
-        cpu->uPC = 797; return;
-    case 797: /* nop-zpx */
-        cpu->last_read_addr = cpu->PC;
-        (void)cpu->mem_read(cpu, cpu->PC);
         cpu->uPC = 0; return;
-    case 798: /* nop-abs */
+    case 789: /* nop-abs */
         cpu->last_read_addr = cpu->PC;
         cpu->ADL = cpu->mem_read(cpu, cpu->PC);
         cpu->PC = (cpu->PC + 1) & 0xFFFF;
-        cpu->uPC = 799; return;
-    case 799: /* nop-abs */
+        cpu->uPC = 790; return;
+    case 790: /* nop-abs */
         cpu->last_read_addr = cpu->PC;
         cpu->ADH = cpu->mem_read(cpu, cpu->PC);
         cpu->PC = (cpu->PC + 1) & 0xFFFF;
-        cpu->uPC = 800; return;
-    case 800: /* nop-abs */
+        cpu->uPC = 791; return;
+    case 791: /* nop-abs */
         cpu->last_read_addr = ((uint16_t)cpu->ADH << 8) | cpu->ADL;
         cpu->DL = cpu->mem_read(cpu, ((uint16_t)cpu->ADH << 8) | cpu->ADL);
-        cpu->uPC = 801; return;
-    case 801: /* nop-abs */
-        cpu->last_read_addr = cpu->PC;
-        (void)cpu->mem_read(cpu, cpu->PC);
         cpu->uPC = 0; return;
-    case 802: /* nop-abx */
+    case 792: /* nop-abx */
         cpu->last_read_addr = cpu->PC;
         cpu->ADL = cpu->mem_read(cpu, cpu->PC);
         cpu->PC = (cpu->PC + 1) & 0xFFFF;
-        cpu->uPC = 803; return;
-    case 803: /* nop-abx */
+        cpu->uPC = 793; return;
+    case 793: /* nop-abx */
         cpu->last_read_addr = cpu->PC;
         cpu->ADH = cpu->mem_read(cpu, cpu->PC);
         cpu->PC = (cpu->PC + 1) & 0xFFFF;
         { uint16_t s = (uint16_t)cpu->ADL + (uint16_t)cpu->X; cpu->ADL = s & 0xFF; cpu->page_cross = (s > 0xFF); }
-        cpu->uPC = 804; return;
-    case 804: /* nop-abx */
+        cpu->uPC = 794; return;
+    case 794: /* nop-abx */
         cpu->last_read_addr = ((uint16_t)cpu->ADH << 8) | cpu->ADL;
         cpu->DL = cpu->mem_read(cpu, ((uint16_t)cpu->ADH << 8) | cpu->ADL);
-        if (cpu->page_cross) { cpu->uPC = 805; return; }
-        cpu->uPC = 806; return;
-    case 805: /* nop-abx when page-cross */
-        cpu->last_read_addr = ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-        cpu->DL = cpu->mem_read(cpu, ((uint16_t)cpu->ADH << 8) | cpu->ADL);
+        if (cpu->page_cross) { cpu->uPC = 795; return; }
+        cpu->uPC = 0; return;
+    case 795: /* nop-abx when page-cross */
         cpu->ADH = cpu->ADH + (cpu->page_cross ? 1 : 0);
         cpu->page_cross = 0;
-        cpu->uPC = 806; return;
-    case 806: /* nop-abx */
-        cpu->last_read_addr = cpu->PC;
-        (void)cpu->mem_read(cpu, cpu->PC);
+        cpu->last_read_addr = ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+        cpu->DL = cpu->mem_read(cpu, ((uint16_t)cpu->ADH << 8) | cpu->ADL);
         cpu->uPC = 0; return;
-    case 807: /* las-aby */
+    case 796: /* las-aby */
         cpu->last_read_addr = cpu->PC;
         cpu->ADL = cpu->mem_read(cpu, cpu->PC);
         cpu->PC = (cpu->PC + 1) & 0xFFFF;
-        cpu->uPC = 808; return;
-    case 808: /* las-aby */
+        cpu->uPC = 797; return;
+    case 797: /* las-aby */
         cpu->last_read_addr = cpu->PC;
         cpu->ADH = cpu->mem_read(cpu, cpu->PC);
         cpu->PC = (cpu->PC + 1) & 0xFFFF;
         { uint16_t s = (uint16_t)cpu->ADL + (uint16_t)cpu->Y; cpu->ADL = s & 0xFF; cpu->page_cross = (s > 0xFF); }
-        cpu->uPC = 809; return;
-    case 809: /* las-aby */
+        cpu->uPC = 798; return;
+    case 798: /* las-aby */
         cpu->last_read_addr = ((uint16_t)cpu->ADH << 8) | cpu->ADL;
         cpu->DL = cpu->mem_read(cpu, ((uint16_t)cpu->ADH << 8) | cpu->ADL);
-        if (cpu->page_cross) { cpu->uPC = 810; return; }
-        cpu->uPC = 811; return;
-    case 810: /* las-aby when page-cross */
-        cpu->last_read_addr = ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-        cpu->DL = cpu->mem_read(cpu, ((uint16_t)cpu->ADH << 8) | cpu->ADL);
-        cpu->ADH = cpu->ADH + (cpu->page_cross ? 1 : 0);
-        cpu->page_cross = 0;
-        cpu->uPC = 811; return;
-    case 811: /* las-aby */
+        if (cpu->page_cross) { cpu->uPC = 799; return; }
         { uint8_t v = cpu->DL & cpu->SP; cpu->A = cpu->X = cpu->SP = v;
           cpu->P = (cpu->P & 0x7D) | (v == 0 ? 2 : 0) | (v & 0x80); }
         cpu->uPC = 0; return;
-    case 812: /* tas-aby */
+    case 799: /* las-aby when page-cross */
+        cpu->ADH = cpu->ADH + (cpu->page_cross ? 1 : 0);
+        cpu->page_cross = 0;
+        cpu->last_read_addr = ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+        cpu->DL = cpu->mem_read(cpu, ((uint16_t)cpu->ADH << 8) | cpu->ADL);
+        { uint8_t v = cpu->DL & cpu->SP; cpu->A = cpu->X = cpu->SP = v;
+          cpu->P = (cpu->P & 0x7D) | (v == 0 ? 2 : 0) | (v & 0x80); }
+        cpu->uPC = 0; return;
+    case 800: /* tas-aby */
         cpu->last_read_addr = cpu->PC;
         cpu->ADL = cpu->mem_read(cpu, cpu->PC);
         cpu->PC = (cpu->PC + 1) & 0xFFFF;
-        cpu->uPC = 813; return;
-    case 813: /* tas-aby */
+        cpu->uPC = 801; return;
+    case 801: /* tas-aby */
         cpu->last_read_addr = cpu->PC;
         cpu->ADH = cpu->mem_read(cpu, cpu->PC);
         cpu->PC = (cpu->PC + 1) & 0xFFFF;
         { uint16_t s = (uint16_t)cpu->ADL + (uint16_t)cpu->Y; cpu->ADL = s & 0xFF; cpu->page_cross = (s > 0xFF); }
-        cpu->uPC = 814; return;
-    case 814: /* tas-aby */
+        cpu->uPC = 802; return;
+    case 802: /* tas-aby */
         cpu->last_read_addr = ((uint16_t)cpu->ADH << 8) | cpu->ADL;
         cpu->DL = cpu->mem_read(cpu, ((uint16_t)cpu->ADH << 8) | cpu->ADL);
         { uint8_t h1 = cpu->ignore_h ? 0xFF : (cpu->ADH + 1); cpu->ignore_h = 0; cpu->SP = cpu->A & cpu->X; cpu->DL = cpu->SP & h1; if (cpu->page_cross) { cpu->ADH = h1 & cpu->A & cpu->X; cpu->page_cross = 0; } }
-        cpu->uPC = 815; return;
-    case 815: /* tas-aby */
+        cpu->uPC = 803; return;
+    case 803: /* tas-aby */
         cpu->mem_write(cpu, ((uint16_t)cpu->ADH << 8) | cpu->ADL, cpu->DL);
         cpu->uPC = 0; return;
-    case 816: /* sha-aby */
+    case 804: /* sha-aby */
         cpu->last_read_addr = cpu->PC;
         cpu->ADL = cpu->mem_read(cpu, cpu->PC);
         cpu->PC = (cpu->PC + 1) & 0xFFFF;
-        cpu->uPC = 817; return;
-    case 817: /* sha-aby */
+        cpu->uPC = 805; return;
+    case 805: /* sha-aby */
         cpu->last_read_addr = cpu->PC;
         cpu->ADH = cpu->mem_read(cpu, cpu->PC);
         cpu->PC = (cpu->PC + 1) & 0xFFFF;
         { uint16_t s = (uint16_t)cpu->ADL + (uint16_t)cpu->Y; cpu->ADL = s & 0xFF; cpu->page_cross = (s > 0xFF); }
-        cpu->uPC = 818; return;
-    case 818: /* sha-aby */
+        cpu->uPC = 806; return;
+    case 806: /* sha-aby */
         cpu->last_read_addr = ((uint16_t)cpu->ADH << 8) | cpu->ADL;
         cpu->DL = cpu->mem_read(cpu, ((uint16_t)cpu->ADH << 8) | cpu->ADL);
         { uint8_t h1 = cpu->ignore_h ? 0xFF : (cpu->ADH + 1); cpu->ignore_h = 0; cpu->DL = cpu->A & cpu->X & h1; if (cpu->page_cross) { cpu->ADH = h1 & cpu->A & cpu->X; cpu->page_cross = 0; } }
-        cpu->uPC = 819; return;
-    case 819: /* sha-aby */
+        cpu->uPC = 807; return;
+    case 807: /* sha-aby */
         cpu->mem_write(cpu, ((uint16_t)cpu->ADH << 8) | cpu->ADL, cpu->DL);
         cpu->uPC = 0; return;
-    case 820: /* sha-izy */
+    case 808: /* sha-izy */
         cpu->last_read_addr = cpu->PC;
         cpu->DL = cpu->mem_read(cpu, cpu->PC);
         cpu->PC = (cpu->PC + 1) & 0xFFFF;
         cpu->ADH = 0;
-        cpu->uPC = 821; return;
-    case 821: /* sha-izy */
+        cpu->uPC = 809; return;
+    case 809: /* sha-izy */
         cpu->ADL = cpu->DL;
         cpu->last_read_addr = ((uint16_t)cpu->ADH << 8) | cpu->ADL;
         cpu->DL = cpu->mem_read(cpu, ((uint16_t)cpu->ADH << 8) | cpu->ADL);
-        cpu->uPC = 822; return;
-    case 822: /* sha-izy */
+        cpu->uPC = 810; return;
+    case 810: /* sha-izy */
         cpu->ADL = (cpu->ADL + 1) & 0xFF;
         cpu->last_read_addr = ((uint16_t)cpu->ADH << 8) | cpu->ADL;
         cpu->ADH = cpu->mem_read(cpu, ((uint16_t)cpu->ADH << 8) | cpu->ADL);
         { uint16_t s = (uint16_t)cpu->DL + (uint16_t)cpu->Y; cpu->ADL = s & 0xFF; cpu->page_cross = (s > 0xFF); }
-        cpu->uPC = 823; return;
-    case 823: /* sha-izy */
+        cpu->uPC = 811; return;
+    case 811: /* sha-izy */
         cpu->last_read_addr = ((uint16_t)cpu->ADH << 8) | cpu->ADL;
         cpu->DL = cpu->mem_read(cpu, ((uint16_t)cpu->ADH << 8) | cpu->ADL);
         { uint8_t h1 = cpu->ignore_h ? 0xFF : (cpu->ADH + 1); cpu->ignore_h = 0; cpu->DL = cpu->A & cpu->X & h1; if (cpu->page_cross) { cpu->ADH = h1 & cpu->A & cpu->X; cpu->page_cross = 0; } }
-        cpu->uPC = 824; return;
-    case 824: /* sha-izy */
+        cpu->uPC = 812; return;
+    case 812: /* sha-izy */
         cpu->mem_write(cpu, ((uint16_t)cpu->ADH << 8) | cpu->ADL, cpu->DL);
         cpu->uPC = 0; return;
-    case 825: /* shx-aby */
+    case 813: /* shx-aby */
         cpu->last_read_addr = cpu->PC;
         cpu->ADL = cpu->mem_read(cpu, cpu->PC);
         cpu->PC = (cpu->PC + 1) & 0xFFFF;
-        cpu->uPC = 826; return;
-    case 826: /* shx-aby */
+        cpu->uPC = 814; return;
+    case 814: /* shx-aby */
         cpu->last_read_addr = cpu->PC;
         cpu->ADH = cpu->mem_read(cpu, cpu->PC);
         cpu->PC = (cpu->PC + 1) & 0xFFFF;
         { uint16_t s = (uint16_t)cpu->ADL + (uint16_t)cpu->Y; cpu->ADL = s & 0xFF; cpu->page_cross = (s > 0xFF); }
-        cpu->uPC = 827; return;
-    case 827: /* shx-aby */
+        cpu->uPC = 815; return;
+    case 815: /* shx-aby */
         cpu->last_read_addr = ((uint16_t)cpu->ADH << 8) | cpu->ADL;
         cpu->DL = cpu->mem_read(cpu, ((uint16_t)cpu->ADH << 8) | cpu->ADL);
         { uint8_t h1 = cpu->ignore_h ? 0xFF : (cpu->ADH + 1); cpu->ignore_h = 0; cpu->DL = cpu->X & h1; if (cpu->page_cross) { cpu->ADH = h1 & cpu->X; cpu->page_cross = 0; } }
-        cpu->uPC = 828; return;
-    case 828: /* shx-aby */
+        cpu->uPC = 816; return;
+    case 816: /* shx-aby */
         cpu->mem_write(cpu, ((uint16_t)cpu->ADH << 8) | cpu->ADL, cpu->DL);
         cpu->uPC = 0; return;
-    case 829: /* shy-abx */
+    case 817: /* shy-abx */
         cpu->last_read_addr = cpu->PC;
         cpu->ADL = cpu->mem_read(cpu, cpu->PC);
         cpu->PC = (cpu->PC + 1) & 0xFFFF;
-        cpu->uPC = 830; return;
-    case 830: /* shy-abx */
+        cpu->uPC = 818; return;
+    case 818: /* shy-abx */
         cpu->last_read_addr = cpu->PC;
         cpu->ADH = cpu->mem_read(cpu, cpu->PC);
         cpu->PC = (cpu->PC + 1) & 0xFFFF;
         { uint16_t s = (uint16_t)cpu->ADL + (uint16_t)cpu->X; cpu->ADL = s & 0xFF; cpu->page_cross = (s > 0xFF); }
-        cpu->uPC = 831; return;
-    case 831: /* shy-abx */
+        cpu->uPC = 819; return;
+    case 819: /* shy-abx */
         cpu->last_read_addr = ((uint16_t)cpu->ADH << 8) | cpu->ADL;
         cpu->DL = cpu->mem_read(cpu, ((uint16_t)cpu->ADH << 8) | cpu->ADL);
         { uint8_t h1 = cpu->ignore_h ? 0xFF : (cpu->ADH + 1); cpu->ignore_h = 0; cpu->DL = cpu->Y & h1; if (cpu->page_cross) { cpu->ADH = h1 & cpu->Y; cpu->page_cross = 0; } }
-        cpu->uPC = 832; return;
-    case 832: /* shy-abx */
+        cpu->uPC = 820; return;
+    case 820: /* shy-abx */
         cpu->mem_write(cpu, ((uint16_t)cpu->ADH << 8) | cpu->ADL, cpu->DL);
         cpu->uPC = 0; return;
     default: cpu->uPC = 0; return;
@@ -4459,21 +4425,21 @@ uint16_t cpu_get_next_read_addr(CPU *cpu) {
     case 30: return cpu->PC;
     case 31: return cpu->PC;
     case 32: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 33: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 33: return ((uint16_t)(uint8_t)(cpu->ADH + (cpu->page_cross ? 1 : 0)) << 8) | cpu->ADL;
     case 34: return cpu->PC;
     case 35: return cpu->PC;
     case 36: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 37: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 37: return ((uint16_t)(uint8_t)(cpu->ADH + (cpu->page_cross ? 1 : 0)) << 8) | cpu->ADL;
     case 38: return cpu->PC;
-    case 39: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 40: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 41: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 42: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 39: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
+    case 40: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + cpu->X);
+    case 41: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + 1);
+    case 42: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
     case 43: return cpu->PC;
-    case 44: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 45: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 44: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
+    case 45: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + 1);
     case 46: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 47: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 47: return ((uint16_t)(uint8_t)(cpu->ADH + (cpu->page_cross ? 1 : 0)) << 8) | cpu->ADL;
     case 48: return cpu->PC;
     case 49: return cpu->PC;
     case 50: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
@@ -4486,7 +4452,7 @@ uint16_t cpu_get_next_read_addr(CPU *cpu) {
     case 57: return cpu->PC;
     case 58: return cpu->PC;
     case 59: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 60: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 60: return ((uint16_t)(uint8_t)(cpu->ADH + (cpu->page_cross ? 1 : 0)) << 8) | cpu->ADL;
     case 61: return cpu->PC;
     case 62: return cpu->PC;
     case 63: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
@@ -4499,7 +4465,7 @@ uint16_t cpu_get_next_read_addr(CPU *cpu) {
     case 70: return cpu->PC;
     case 71: return cpu->PC;
     case 72: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 73: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 73: return ((uint16_t)(uint8_t)(cpu->ADH + (cpu->page_cross ? 1 : 0)) << 8) | cpu->ADL;
     case 74: return cpu->PC;
     case 76: return cpu->PC;
     case 77: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
@@ -4512,12 +4478,12 @@ uint16_t cpu_get_next_read_addr(CPU *cpu) {
     case 87: return cpu->PC;
     case 88: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
     case 90: return cpu->PC;
-    case 91: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 92: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 93: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 91: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
+    case 92: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + cpu->X);
+    case 93: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + 1);
     case 95: return cpu->PC;
-    case 96: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 97: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 96: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
+    case 97: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + 1);
     case 98: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
     case 100: return cpu->PC;
     case 102: return cpu->PC;
@@ -4555,21 +4521,21 @@ uint16_t cpu_get_next_read_addr(CPU *cpu) {
     case 141: return cpu->PC;
     case 142: return cpu->PC;
     case 143: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 144: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 144: return ((uint16_t)(uint8_t)(cpu->ADH + (cpu->page_cross ? 1 : 0)) << 8) | cpu->ADL;
     case 145: return cpu->PC;
     case 146: return cpu->PC;
     case 147: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 148: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 148: return ((uint16_t)(uint8_t)(cpu->ADH + (cpu->page_cross ? 1 : 0)) << 8) | cpu->ADL;
     case 149: return cpu->PC;
-    case 150: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 151: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 152: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 153: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 150: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
+    case 151: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + cpu->X);
+    case 152: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + 1);
+    case 153: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
     case 154: return cpu->PC;
-    case 155: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 156: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 155: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
+    case 156: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + 1);
     case 157: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 158: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 158: return ((uint16_t)(uint8_t)(cpu->ADH + (cpu->page_cross ? 1 : 0)) << 8) | cpu->ADL;
     case 159: return cpu->PC;
     case 160: return cpu->PC;
     case 161: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
@@ -4582,21 +4548,21 @@ uint16_t cpu_get_next_read_addr(CPU *cpu) {
     case 168: return cpu->PC;
     case 169: return cpu->PC;
     case 170: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 171: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 171: return ((uint16_t)(uint8_t)(cpu->ADH + (cpu->page_cross ? 1 : 0)) << 8) | cpu->ADL;
     case 172: return cpu->PC;
     case 173: return cpu->PC;
     case 174: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 175: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 175: return ((uint16_t)(uint8_t)(cpu->ADH + (cpu->page_cross ? 1 : 0)) << 8) | cpu->ADL;
     case 176: return cpu->PC;
-    case 177: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 178: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 179: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 180: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 177: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
+    case 178: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + cpu->X);
+    case 179: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + 1);
+    case 180: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
     case 181: return cpu->PC;
-    case 182: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 183: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 182: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
+    case 183: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + 1);
     case 184: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 185: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 185: return ((uint16_t)(uint8_t)(cpu->ADH + (cpu->page_cross ? 1 : 0)) << 8) | cpu->ADL;
     case 186: return cpu->PC;
     case 187: return cpu->PC;
     case 188: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
@@ -4609,21 +4575,21 @@ uint16_t cpu_get_next_read_addr(CPU *cpu) {
     case 195: return cpu->PC;
     case 196: return cpu->PC;
     case 197: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 198: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 198: return ((uint16_t)(uint8_t)(cpu->ADH + (cpu->page_cross ? 1 : 0)) << 8) | cpu->ADL;
     case 199: return cpu->PC;
     case 200: return cpu->PC;
     case 201: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 202: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 202: return ((uint16_t)(uint8_t)(cpu->ADH + (cpu->page_cross ? 1 : 0)) << 8) | cpu->ADL;
     case 203: return cpu->PC;
-    case 204: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 205: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 206: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 207: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 204: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
+    case 205: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + cpu->X);
+    case 206: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + 1);
+    case 207: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
     case 208: return cpu->PC;
-    case 209: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 210: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 209: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
+    case 210: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + 1);
     case 211: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 212: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 212: return ((uint16_t)(uint8_t)(cpu->ADH + (cpu->page_cross ? 1 : 0)) << 8) | cpu->ADL;
     case 213: return cpu->PC;
     case 214: return cpu->PC;
     case 215: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
@@ -4636,21 +4602,21 @@ uint16_t cpu_get_next_read_addr(CPU *cpu) {
     case 222: return cpu->PC;
     case 223: return cpu->PC;
     case 224: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 225: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 225: return ((uint16_t)(uint8_t)(cpu->ADH + (cpu->page_cross ? 1 : 0)) << 8) | cpu->ADL;
     case 226: return cpu->PC;
     case 227: return cpu->PC;
     case 228: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 229: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 229: return ((uint16_t)(uint8_t)(cpu->ADH + (cpu->page_cross ? 1 : 0)) << 8) | cpu->ADL;
     case 230: return cpu->PC;
-    case 231: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 232: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 233: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 234: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 231: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
+    case 232: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + cpu->X);
+    case 233: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + 1);
+    case 234: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
     case 235: return cpu->PC;
-    case 236: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 237: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 236: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
+    case 237: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + 1);
     case 238: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 239: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 239: return ((uint16_t)(uint8_t)(cpu->ADH + (cpu->page_cross ? 1 : 0)) << 8) | cpu->ADL;
     case 240: return cpu->PC;
     case 241: return cpu->PC;
     case 242: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
@@ -4663,21 +4629,21 @@ uint16_t cpu_get_next_read_addr(CPU *cpu) {
     case 249: return cpu->PC;
     case 250: return cpu->PC;
     case 251: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 252: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 252: return ((uint16_t)(uint8_t)(cpu->ADH + (cpu->page_cross ? 1 : 0)) << 8) | cpu->ADL;
     case 253: return cpu->PC;
     case 254: return cpu->PC;
     case 255: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 256: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 256: return ((uint16_t)(uint8_t)(cpu->ADH + (cpu->page_cross ? 1 : 0)) << 8) | cpu->ADL;
     case 257: return cpu->PC;
-    case 258: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 259: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 260: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 261: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 258: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
+    case 259: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + cpu->X);
+    case 260: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + 1);
+    case 261: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
     case 262: return cpu->PC;
-    case 263: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 264: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 263: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
+    case 264: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + 1);
     case 265: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 266: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 266: return ((uint16_t)(uint8_t)(cpu->ADH + (cpu->page_cross ? 1 : 0)) << 8) | cpu->ADL;
     case 267: return cpu->PC;
     case 268: return cpu->PC;
     case 269: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
@@ -4690,21 +4656,21 @@ uint16_t cpu_get_next_read_addr(CPU *cpu) {
     case 276: return cpu->PC;
     case 277: return cpu->PC;
     case 278: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 279: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 279: return ((uint16_t)(uint8_t)(cpu->ADH + (cpu->page_cross ? 1 : 0)) << 8) | cpu->ADL;
     case 280: return cpu->PC;
     case 281: return cpu->PC;
     case 282: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 283: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 283: return ((uint16_t)(uint8_t)(cpu->ADH + (cpu->page_cross ? 1 : 0)) << 8) | cpu->ADL;
     case 284: return cpu->PC;
-    case 285: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 286: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 287: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 288: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 285: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
+    case 286: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + cpu->X);
+    case 287: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + 1);
+    case 288: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
     case 289: return cpu->PC;
-    case 290: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 291: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 290: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
+    case 291: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + 1);
     case 292: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 293: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 293: return ((uint16_t)(uint8_t)(cpu->ADH + (cpu->page_cross ? 1 : 0)) << 8) | cpu->ADL;
     case 294: return cpu->PC;
     case 295: return cpu->PC;
     case 296: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
@@ -4831,7 +4797,7 @@ uint16_t cpu_get_next_read_addr(CPU *cpu) {
     case 465: return cpu->PC;
     case 466: return cpu->PC;
     case 467: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 468: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 468: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + 1);
     case 469: return cpu->PC;
     case 470: return (0x0100 | cpu->SP);
     case 473: return cpu->PC;
@@ -4867,17 +4833,17 @@ uint16_t cpu_get_next_read_addr(CPU *cpu) {
     case 506: return cpu->PC;
     case 507: return cpu->PC;
     case 508: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 509: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 509: return ((uint16_t)(uint8_t)(cpu->ADH + (cpu->page_cross ? 1 : 0)) << 8) | cpu->ADL;
     case 510: return cpu->PC;
-    case 511: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 512: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 513: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 514: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 511: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
+    case 512: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + cpu->X);
+    case 513: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + 1);
+    case 514: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
     case 515: return cpu->PC;
-    case 516: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 517: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 516: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
+    case 517: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + 1);
     case 518: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 519: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 519: return ((uint16_t)(uint8_t)(cpu->ADH + (cpu->page_cross ? 1 : 0)) << 8) | cpu->ADL;
     case 520: return cpu->PC;
     case 521: return cpu->PC;
     case 523: return cpu->PC;
@@ -4885,9 +4851,9 @@ uint16_t cpu_get_next_read_addr(CPU *cpu) {
     case 526: return cpu->PC;
     case 527: return cpu->PC;
     case 529: return cpu->PC;
-    case 530: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 531: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 532: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 530: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
+    case 531: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + cpu->X);
+    case 532: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + 1);
     case 534: return cpu->PC;
     case 535: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
     case 538: return cpu->PC;
@@ -4905,13 +4871,13 @@ uint16_t cpu_get_next_read_addr(CPU *cpu) {
     case 556: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
     case 557: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
     case 560: return cpu->PC;
-    case 561: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 562: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 563: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 564: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 561: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
+    case 562: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + cpu->X);
+    case 563: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + 1);
+    case 564: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
     case 567: return cpu->PC;
-    case 568: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 569: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 568: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
+    case 569: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + 1);
     case 570: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
     case 571: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
     case 574: return cpu->PC;
@@ -4931,13 +4897,13 @@ uint16_t cpu_get_next_read_addr(CPU *cpu) {
     case 596: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
     case 597: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
     case 600: return cpu->PC;
-    case 601: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 602: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 603: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 604: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 601: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
+    case 602: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + cpu->X);
+    case 603: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + 1);
+    case 604: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
     case 607: return cpu->PC;
-    case 608: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 609: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 608: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
+    case 609: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + 1);
     case 610: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
     case 611: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
     case 614: return cpu->PC;
@@ -4957,13 +4923,13 @@ uint16_t cpu_get_next_read_addr(CPU *cpu) {
     case 636: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
     case 637: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
     case 640: return cpu->PC;
-    case 641: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 642: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 643: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 644: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 641: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
+    case 642: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + cpu->X);
+    case 643: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + 1);
+    case 644: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
     case 647: return cpu->PC;
-    case 648: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 649: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 648: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
+    case 649: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + 1);
     case 650: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
     case 651: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
     case 654: return cpu->PC;
@@ -4983,13 +4949,13 @@ uint16_t cpu_get_next_read_addr(CPU *cpu) {
     case 676: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
     case 677: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
     case 680: return cpu->PC;
-    case 681: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 682: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 683: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 684: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 681: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
+    case 682: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + cpu->X);
+    case 683: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + 1);
+    case 684: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
     case 687: return cpu->PC;
-    case 688: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 689: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 688: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
+    case 689: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + 1);
     case 690: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
     case 691: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
     case 694: return cpu->PC;
@@ -5009,13 +4975,13 @@ uint16_t cpu_get_next_read_addr(CPU *cpu) {
     case 716: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
     case 717: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
     case 720: return cpu->PC;
-    case 721: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 722: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 723: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 724: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 721: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
+    case 722: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + cpu->X);
+    case 723: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + 1);
+    case 724: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
     case 727: return cpu->PC;
-    case 728: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 729: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 728: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
+    case 729: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + 1);
     case 730: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
     case 731: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
     case 734: return cpu->PC;
@@ -5035,63 +5001,57 @@ uint16_t cpu_get_next_read_addr(CPU *cpu) {
     case 756: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
     case 757: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
     case 760: return cpu->PC;
-    case 761: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 762: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 763: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 764: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 761: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
+    case 762: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + cpu->X);
+    case 763: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + 1);
+    case 764: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
     case 767: return cpu->PC;
-    case 768: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 769: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 768: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
+    case 769: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + 1);
     case 770: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
     case 771: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
     case 774: return cpu->PC;
+    case 775: return cpu->PC;
     case 776: return cpu->PC;
+    case 777: return cpu->PC;
     case 778: return cpu->PC;
+    case 779: return cpu->PC;
     case 780: return cpu->PC;
+    case 781: return cpu->PC;
     case 782: return cpu->PC;
+    case 783: return cpu->PC;
     case 784: return cpu->PC;
-    case 785: return cpu->PC;
+    case 785: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
     case 786: return cpu->PC;
-    case 787: return cpu->PC;
-    case 788: return cpu->PC;
+    case 787: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 788: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
     case 789: return cpu->PC;
     case 790: return cpu->PC;
-    case 791: return cpu->PC;
-    case 792: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 791: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 792: return cpu->PC;
     case 793: return cpu->PC;
-    case 794: return cpu->PC;
-    case 795: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 796: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 794: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 795: return ((uint16_t)(uint8_t)(cpu->ADH + (cpu->page_cross ? 1 : 0)) << 8) | cpu->ADL;
+    case 796: return cpu->PC;
     case 797: return cpu->PC;
-    case 798: return cpu->PC;
-    case 799: return cpu->PC;
-    case 800: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 798: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 799: return ((uint16_t)(uint8_t)(cpu->ADH + (cpu->page_cross ? 1 : 0)) << 8) | cpu->ADL;
+    case 800: return cpu->PC;
     case 801: return cpu->PC;
-    case 802: return cpu->PC;
-    case 803: return cpu->PC;
-    case 804: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 805: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 806: return cpu->PC;
-    case 807: return cpu->PC;
+    case 802: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 804: return cpu->PC;
+    case 805: return cpu->PC;
+    case 806: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
     case 808: return cpu->PC;
-    case 809: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 810: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 812: return cpu->PC;
+    case 809: return ((uint16_t)cpu->ADH << 8) | cpu->DL;
+    case 810: return ((uint16_t)cpu->ADH << 8) | (uint8_t)(cpu->ADL + 1);
+    case 811: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
     case 813: return cpu->PC;
-    case 814: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 816: return cpu->PC;
+    case 814: return cpu->PC;
+    case 815: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
     case 817: return cpu->PC;
-    case 818: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 820: return cpu->PC;
-    case 821: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 822: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 823: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 825: return cpu->PC;
-    case 826: return cpu->PC;
-    case 827: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
-    case 829: return cpu->PC;
-    case 830: return cpu->PC;
-    case 831: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
+    case 818: return cpu->PC;
+    case 819: return ((uint16_t)cpu->ADH << 8) | cpu->ADL;
     default: return cpu->last_read_addr;
     }
 }
@@ -5172,6 +5132,10 @@ bool cpu_next_is_write(CPU *cpu) {
     case 493: return true;
     case 494: return true;
     case 495: return true;
+    case 522: return true;
+    case 525: return true;
+    case 528: return true;
+    case 533: return true;
     case 536: return true;
     case 537: return true;
     case 541: return true;
@@ -5256,41 +5220,41 @@ bool cpu_next_is_write(CPU *cpu) {
     case 766: return true;
     case 772: return true;
     case 773: return true;
-    case 815: return true;
-    case 819: return true;
-    case 824: return true;
-    case 828: return true;
-    case 832: return true;
+    case 803: return true;
+    case 807: return true;
+    case 812: return true;
+    case 816: return true;
+    case 820: return true;
     default: return false;
     }
 }
 
 bool cpu_next_is_sha_dummy_read(CPU *cpu) {
     switch (cpu->uPC) {
-    case 814: return true;
-    case 818: return true;
-    case 823: return true;
-    case 827: return true;
-    case 831: return true;
+    case 802: return true;
+    case 806: return true;
+    case 811: return true;
+    case 815: return true;
+    case 819: return true;
     default: return false;
     }
 }
 
 const uint16_t cpu_entry[256] = {
-    492,230,784,640,791,214,359,614,124,213,355,774,798,219,368,623,
-    439,235,784,647,794,216,363,618,484,226,785,634,802,222,373,628,
-    469,203,784,680,306,187,399,654,129,186,357,774,308,192,408,663,
-    442,208,784,687,794,189,403,658,485,199,785,674,802,195,413,668,
-    479,257,784,720,791,241,379,694,122,240,356,776,463,246,388,703,
-    445,262,784,727,794,243,383,698,486,253,785,714,802,249,393,708,
-    474,149,784,760,791,133,419,734,126,132,358,778,465,138,428,743,
-    448,154,784,767,794,135,423,738,487,145,785,754,802,141,433,748,
-    786,90,786,529,108,74,100,521,354,786,118,780,113,79,105,526,
-    451,95,784,820,110,76,102,523,119,86,121,812,829,82,825,816,
+    492,230,779,640,784,214,359,614,124,213,355,774,789,219,368,623,
+    439,235,779,647,786,216,363,618,484,226,780,634,792,222,373,628,
+    469,203,779,680,306,187,399,654,129,186,357,774,308,192,408,663,
+    442,208,779,687,786,189,403,658,485,199,780,674,792,195,413,668,
+    479,257,779,720,784,241,379,694,122,240,356,775,463,246,388,703,
+    445,262,779,727,786,243,383,698,486,253,780,714,792,249,393,708,
+    474,149,779,760,784,133,419,734,126,132,358,776,465,138,428,743,
+    448,154,779,767,786,135,423,738,487,145,780,754,792,141,433,748,
+    781,90,781,529,108,74,100,521,354,781,118,777,113,79,105,526,
+    451,95,779,808,110,76,102,523,119,86,121,800,817,82,813,804,
     61,38,48,510,62,22,49,498,117,21,116,520,67,27,54,503,
-    454,43,784,515,64,24,51,500,490,34,120,807,70,30,57,506,
-    300,284,786,560,301,268,331,534,352,267,353,782,303,273,340,543,
-    457,289,784,567,794,270,335,538,488,280,785,554,802,276,345,548,
-    294,176,786,600,295,160,311,574,351,159,491,159,297,165,320,583,
-    460,181,784,607,794,162,315,578,489,172,785,594,802,168,325,588
+    454,43,779,515,64,24,51,500,490,34,120,796,70,30,57,506,
+    300,284,781,560,301,268,331,534,352,267,353,778,303,273,340,543,
+    457,289,779,567,786,270,335,538,488,280,780,554,792,276,345,548,
+    294,176,781,600,295,160,311,574,351,159,491,159,297,165,320,583,
+    460,181,779,607,786,162,315,578,489,172,780,594,792,168,325,588
 };

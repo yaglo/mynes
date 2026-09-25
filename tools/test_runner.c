@@ -78,6 +78,13 @@ static uint64_t frame_count = 0;
 static bool event_blargg_done = false;
 static bool scanline_screenshot_taken = false;
 
+/* Frames left before pressing reset for a Blargg ROM that asked for it
+ * (0 = no press pending). $6000 still reads $81 for several frames after
+ * the press, until the ROM's reset code gets to it, so a new request only
+ * counts once the status has moved off $81. */
+static int reset_countdown = 0;
+static bool reset_acknowledged = true;
+
 /* ============================================================================
  * Scanline Hook — mid-frame screenshot capture
  * ============================================================================ */
@@ -104,6 +111,16 @@ static void on_frame(uint64_t frame, uint64_t cycles) {
 
     if (opts.blargg) {
         BlarggStatus new_status = blargg_check(&nes);
+        /* $81: the ROM wants the reset button, pressed at least 100 ms
+         * from now (the readme's convention). Seven frames is over 100 ms
+         * in both regions; the press happens between frames, in run_frame. */
+        bool reset_request = new_status == BLARGG_FAILED && blargg_get_code(&nes) == 0x81;
+        if (new_status != BLARGG_NOT_DETECTED && !reset_request)
+            reset_acknowledged = true;
+        if (reset_request) {
+            new_status = BLARGG_RUNNING;
+            if (!reset_countdown && reset_acknowledged) reset_countdown = 7;
+        }
         if (new_status != blargg_status) {
             if (opts.verbose && new_status != BLARGG_NOT_DETECTED) {
                 printf("[Blargg] Status: %s", blargg_status_str(new_status));
@@ -130,6 +147,18 @@ static void on_frame(uint64_t frame, uint64_t cycles) {
     }
 }
 
+/* One frame, then any reset a Blargg ROM asked for once its delay is up.
+ * The reset keeps RAM, where the reset ROMs count their passes. */
+static void run_frame(void) {
+    nes_run_frame(&nes);
+    if (reset_countdown && --reset_countdown == 0) {
+        if (opts.verbose)
+            printf("[Blargg] Pressing reset\n");
+        nes_reset(&nes);
+        reset_acknowledged = false;
+    }
+}
+
 /* ============================================================================
  * Script Execution
  * ============================================================================ */
@@ -143,7 +172,7 @@ static void execute_script(Script *script) {
             if (opts.verbose)
                 printf("[Script] WAIT_FRAMES %d\n", cmd->int_arg);
             for (int f = 0; f < cmd->int_arg && running; f++)
-                nes_run_frame(&nes);
+                run_frame();
             break;
 
         case SCRIPT_CMD_PRESS_BUTTON:
@@ -152,7 +181,7 @@ static void execute_script(Script *script) {
                        cmd->int_arg, cmd->int_arg2);
             nes_set_controller(&nes, 0, (uint8_t)cmd->int_arg);
             for (int f = 0; f < cmd->int_arg2 && running; f++)
-                nes_run_frame(&nes);
+                run_frame();
             nes_set_controller(&nes, 0, 0);
             break;
 
@@ -161,7 +190,7 @@ static void execute_script(Script *script) {
                 printf("[Script] WAIT_EVENT %s\n", cmd->str_arg);
             if (strcmp(cmd->str_arg, "blargg_done") == 0) {
                 while (!event_blargg_done && running) {
-                    nes_run_frame(&nes);
+                    run_frame();
                     if (frame_count >= (uint64_t)opts.max_frames) {
                         running = false;
                         exit_code = NES_EXIT_TIMEOUT;
@@ -298,6 +327,12 @@ int main(int argc, char *argv[]) {
                     rom.prg_rom, rom.prg_size,
                     rom.chr_rom, rom.chr_size,
                     rom.mirroring);
+    nes_rom_apply_trainer(&rom, &nes.mapper);
+    /* Auto-detect PAL from ROM header, as run_rom does */
+    if (rom.tv_system == NES_TV_PAL) {
+        nes_set_region(&nes, NES_REGION_PAL);
+        if (opts.verbose) printf("Region: PAL (auto-detected)\n");
+    }
     nes_reset(&nes);
 
     /* Set up hooks */
@@ -335,7 +370,7 @@ int main(int argc, char *argv[]) {
     } else {
         /* Default: run until blargg result or max frames */
         for (int frame = 0; frame < opts.max_frames && running; frame++) {
-            nes_run_frame(&nes);
+            run_frame();
         }
     }
 

@@ -54,17 +54,6 @@ struct Playback {
     uint16_t border[242][2];   /* the frame in progress's border, see run_frame */
 };
 
-uint16_t playback_border_entry(const PPU *ppu) {
-    unsigned addr = 0;
-    bool rendering = (ppu->mask & (MASK_BG_ENABLE | MASK_SPRITE_ENABLE)) != 0;
-    if (!rendering && (ppu->v & 0x3f00) == 0x3f00) {
-        addr = ppu->v & 0x1f;
-        if ((addr & 0x13) == 0x10) addr &= ~0x10u;   /* $3F10/14/18/1C mirror $3F00/04/08/0C */
-    }
-    uint16_t colour = ppu->palette[addr] & (ppu->mask & MASK_GREYSCALE ? 0x30 : 0x3f);
-    return colour | (uint16_t)((ppu->mask & 0xe0) << 1);
-}
-
 /* One frame, noting the border each raster line gets. Raster line r starts
  * at PPU dot 277 of PPU line r - 1, so the left border of line r (dots 49
  * to 64) is drawn in PPU line r - 1's dots 326 to 340 and the right border
@@ -81,14 +70,14 @@ static void run_frame(NES *nes, uint16_t border[242][2]) {
     while (!ppu->frame_complete) {
         nes_step(nes);
         if (ppu->scanline != line) {
-            uint16_t entry = playback_border_entry(ppu);
+            uint16_t entry = ppu_backdrop_entry(ppu);
             int next = line == ppu->prerender_line ? 0 : line + 1;
             if (line < 242) border[line][1] = entry;
             if (next < 242) border[next][0] = entry;
             line = ppu->scanline;
         }
     }
-    border[241][1] = playback_border_entry(ppu);
+    border[241][1] = ppu_backdrop_entry(ppu);
 }
 
 /* Deterministic controller replay for offscreen visual reviews. Each row is
@@ -445,6 +434,7 @@ void playback_load_cartridge(Playback *p, const ROM *rom, int region) {
     nes_init(p->nes);
     nes_load_mapper(p->nes,rom->mapper,rom->prg_rom,rom->prg_size,
                     rom->chr_rom,rom->chr_size,rom->mirroring);
+    nes_rom_apply_trainer(rom,&p->nes->mapper);
     ppu_set_region(&p->nes->ppu,region ? PPU_REGION_PAL : PPU_REGION_NTSC);
     nes_reset(p->nes);
     apu_set_region(&p->nes->apu,region);
@@ -454,26 +444,16 @@ void playback_load_cartridge(Playback *p, const ROM *rom, int region) {
 void playback_reset_console(Playback *p) {
     playback_pause(p);
     NES *nes=p->nes;
-    /* Frontend reset: restart the CPU reset sequence even from KIL, retaining
-     * cartridge/work RAM. Keep the shared master-clock timeline intact. */
-    nes->cpu.uPC=0;
-    nes->cpu.reset_pending=true;
-    nes->cpu.rdy=true;
-    nes->cpu.irq_pending=nes->cpu.nmi_pending=false;
-    nes->cpu.irq_sampled=nes->cpu.nmi_sampled=0;
-    nes->cpu.irq_armed=nes->cpu.nmi_armed=0;
-    memset(&nes->dma,0,sizeof(nes->dma));
-    nes->oam_dma_pending=false;
-    nes->prev_nmi=nes->nmi_edge_detected=false;
-    nes->irq_inhibit_cycles=0;
-    nes->controller_strobe=nes->controller_strobed=0;
+    /* Frontend reset: nes_reset restarts the CPU reset sequence even from
+     * KIL, retaining cartridge/work RAM and the shared master-clock timeline.
+     * The frontend also drops the strobe and resets the mapper. */
+    nes->controller_strobe=0;
     if(nes->mapper_loaded) {
         mapper_reset(&nes->mapper);
         nes->mapper.irq_pending=false;
         nes->ppu.mirroring=mapper_get_mirroring(&nes->mapper);
     }
-    ppu_reset(&nes->ppu);
-    apu_reset(&nes->apu);
+    nes_reset(nes);
     reset_audio(p);
 }
 bool playback_read(Playback *p, PlaybackFrame *frame) {

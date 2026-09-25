@@ -51,7 +51,6 @@ struct NES {
     uint8_t controller[2];      /* Current button state */
     uint8_t controller_shift[2]; /* Shift register for serial read */
     uint8_t controller_strobe;  /* Strobe state (bit 0) */
-    bool controller_strobed;    /* Latched once per APU put cycle while strobe is high */
 
     /* DMA Controller State */
     struct {
@@ -261,9 +260,6 @@ static inline void nes_cpu_write(CPU *cpu, uint16_t addr, uint8_t val) {
              * happens to fall between two put cycles never strobes at
              * all (AccuracyCoin Controller Strobing test 4). */
             nes->controller_strobe = val & 1;
-            if (!(val & 1)) {
-                nes->controller_strobed = false;
-            }
         }
         else {
             /* APU registers ($4000-$4013, $4015, $4017) */
@@ -444,7 +440,7 @@ static inline void nes_cpu_step_traced(NES *nes) {
         if (tpc < 0x2000)
             actual_op = nes->ram[tpc & 0x7FF];
         else if (tpc >= 0x8000 && nes->mapper_loaded)
-            actual_op = mapper_cpu_read(&nes->mapper, tpc);
+            actual_op = mapper_cpu_peek(&nes->mapper, tpc);
         else if (tpc >= 0x8000 && nes->prg_rom)
             actual_op = nes->prg_rom[(tpc - 0x8000) % nes->prg_rom_size];
         else
@@ -471,16 +467,9 @@ static inline void nes_step(NES *nes) {
      * APU "put" cycle. A 1-cycle strobe pulse that falls between two put
      * cycles never strobes at all — AccuracyCoin Controller Strobing test 4
      * relies on this. */
-    if (nes->apu.put_cycle) {
-        if (nes->controller_strobe) {
-            if (!nes->controller_strobed) {
-                nes->controller_strobed = true;
-                nes->controller_shift[0] = nes->controller[0];
-                nes->controller_shift[1] = nes->controller[1];
-            }
-        } else {
-            nes->controller_strobed = false;
-        }
+    if (nes->apu.put_cycle && nes->controller_strobe) {
+        nes->controller_shift[0] = nes->controller[0];
+        nes->controller_shift[1] = nes->controller[1];
     }
 
     /* IRQ line — level-sensitive, reflects current state of all sources.
@@ -532,7 +521,7 @@ static inline void nes_step(NES *nes) {
                                nes->apu.dmc_irq_pending ||
                                (nes->mapper_loaded && nes->mapper.irq_pending);
 
-        if (nes->mapper_loaded && nes->mapper.number == 5)
+        if (nes->mapper_loaded && (nes->mapper.number == 5 || nes->mapper.number == 69))
             mapper_cpu_clock(&nes->mapper);
 
         bool dma_cycle = nes_dma_step(nes);
@@ -652,7 +641,9 @@ static inline void nes_init(NES *nes) {
     nes->cpu.mem_write = nes_cpu_write;
     nes->cpu.user_data = nes;
 
-    /* Trigger reset to load reset vector */
+    /* Trigger reset to load reset vector. S powers on at $00; the reset
+     * sequence's three suppressed pushes leave it at $FD. */
+    nes->cpu.SP = 0x00;
     nes->cpu.reset_pending = true;
 
     /* Initialize PPU */
@@ -667,8 +658,19 @@ static inline void nes_init(NES *nes) {
 }
 
 static inline void nes_reset(NES *nes) {
-    /* Reset CPU - trigger reset sequence in microcode */
+    /* Reset CPU - trigger reset sequence in microcode. reset_pending is only
+     * polled at uPC 0, so restart the microcode there; otherwise a CPU stuck
+     * in KIL/JAM (or mid-DMA) never services the reset. */
+    nes->cpu.uPC = 0;
     nes->cpu.reset_pending = true;
+    nes->cpu.rdy = true;
+    nes->cpu.irq_pending = nes->cpu.nmi_pending = false;
+    nes->cpu.irq_sampled = nes->cpu.nmi_sampled = 0;
+    nes->cpu.irq_armed = nes->cpu.nmi_armed = 0;
+    memset(&nes->dma, 0, sizeof(nes->dma));
+    nes->oam_dma_pending = false;
+    nes->prev_nmi = nes->nmi_edge_detected = false;
+    nes->irq_inhibit_cycles = 0;
 
     /* Reset PPU */
     ppu_reset(&nes->ppu);
@@ -676,8 +678,8 @@ static inline void nes_reset(NES *nes) {
     /* Reset APU */
     apu_reset(&nes->apu);
 
-    /* Clear RAM (optional, real NES has random values) */
-    memset(nes->ram, 0, sizeof(nes->ram));
+    /* RAM is left alone, as the reset button leaves it: blargg's reset
+     * ROMs keep their pass count there. Power-on RAM comes from nes_init. */
 }
 
 /* Set CPU/PPU clock alignment (0, 1, or 2). Real hardware has a fixed but

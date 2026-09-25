@@ -30,8 +30,12 @@ static void mapper3_cpu_write(Mapper *m, uint16_t addr, uint8_t val) {
     }
 }
 
+/* A header with no CHR ROM gets the 8 KB of CHR RAM, which the bank
+ * register cannot switch. */
 static uint8_t mapper3_ppu_read(Mapper *m, uint16_t addr) {
     if (addr < 0x2000) {
+        if (m->has_chr_ram)
+            return m->chr_ram[addr];
         uint32_t offset = addr + (m->chr_bank0 * 0x2000);
         return m->chr_rom[offset % m->chr_rom_size];
     }
@@ -39,7 +43,8 @@ static uint8_t mapper3_ppu_read(Mapper *m, uint16_t addr) {
 }
 
 static void mapper3_ppu_write(Mapper *m, uint16_t addr, uint8_t val) {
-    (void)m; (void)addr; (void)val; /* CHR ROM is read-only */
+    if (addr < 0x2000 && m->has_chr_ram)
+        m->chr_ram[addr] = val;
 }
 
 const MapperOps mapper3_ops = {

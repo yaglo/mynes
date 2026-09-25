@@ -277,9 +277,24 @@ if(NES_BUILD_TESTS)
     target_link_libraries(test_mapper1 PRIVATE nes_static)
     add_test(NAME mapper1_tests COMMAND test_mapper1)
 
+    # MMC3 PRG banking up to 2 MB
+    add_executable(test_mapper4 tests/nes/test_mapper4.c)
+    target_link_libraries(test_mapper4 PRIVATE nes_static)
+    add_test(NAME mapper4_tests COMMAND test_mapper4)
+
     add_executable(test_mapper5 tests/nes/test_mapper5.c)
     target_link_libraries(test_mapper5 PRIVATE nes_static)
     add_test(NAME mapper5_tests COMMAND test_mapper5)
+
+    # UxROM banking and CHR ROM/RAM selection (AxROM too)
+    add_executable(test_mapper2 tests/nes/test_mapper2.c)
+    target_link_libraries(test_mapper2 PRIVATE nes_static)
+    add_test(NAME mapper2_tests COMMAND test_mapper2)
+
+    # CNROM, including CHR RAM when the header has no CHR ROM
+    add_executable(test_mapper3 tests/nes/test_mapper3.c)
+    target_link_libraries(test_mapper3 PRIVATE nes_static)
+    add_test(NAME mapper3_tests COMMAND test_mapper3)
 
     # MMC2 latch semantics
     add_executable(test_mapper9 tests/nes/test_mapper9.c)
@@ -300,6 +315,11 @@ if(NES_BUILD_TESTS)
     add_executable(test_mapper66 tests/nes/test_mapper66.c)
     target_link_libraries(test_mapper66 PRIVATE nes_static)
     add_test(NAME mapper66_tests COMMAND test_mapper66)
+
+    # Sunsoft FME-7 registers and IRQ counter
+    add_executable(test_mapper69 tests/nes/test_mapper69.c)
+    target_link_libraries(test_mapper69 PRIVATE nes_static)
+    add_test(NAME mapper69_tests COMMAND test_mapper69)
 
     # Camerica/Codemasters incl. Fire Hawk mirroring
     add_executable(test_mapper71 tests/nes/test_mapper71.c)
@@ -331,9 +351,11 @@ if(NES_BUILD_TESTS)
     add_custom_target(cputest COMMAND test_cpu DEPENDS test_cpu)
     add_custom_target(pputest COMMAND test_ppu DEPENDS test_ppu)
     add_custom_target(nestest COMMAND test_nes DEPENDS test_nes)
+    # Runs every registered test, so it depends on every test binary; the
+    # dependencies are added at the end of this file, once the frontend and
+    # GPU tests further down have been defined too.
     add_custom_target(alltests
-        COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-        DEPENDS test_cpu test_cpu_cycles test_ppu test_nes test_rom accuracy_coin)
+        COMMAND ${CMAKE_CTEST_COMMAND} -C $<CONFIG> --output-on-failure)
 endif()
 
 # =============================================================================
@@ -363,7 +385,8 @@ if(NES_BUILD_FRONTENDS)
         add_test(NAME saves_tests COMMAND test_saves)
 
         # config.json defaults and the stored render scale
-        add_executable(test_config frontends/shared/tests/test_config.c frontends/shared/config.c)
+        add_executable(test_config frontends/shared/tests/test_config.c
+            frontends/shared/config.c frontends/shared/saves.c)
         target_include_directories(test_config PRIVATE frontends/shared)
         target_link_libraries(test_config PRIVATE nes_static)
         add_test(NAME config_tests COMMAND test_config)
@@ -909,4 +932,28 @@ if(NES_CRT_USB AND NES_BUILD_TESTS)
     add_executable(test_crt_protocol tests/test_crt_protocol.c frontends/sdl/crt/crt_protocol.c)
     target_include_directories(test_crt_protocol PRIVATE frontends/sdl/crt)
     add_test(NAME crt_protocol COMMAND test_crt_protocol)
+endif()
+
+# alltests runs ctest over every test above, so it has to build every
+# executable those tests run: the test_* binaries, accuracy_coin, the
+# frontends and tools the script-driven tests call, and the shaders. Collected here rather
+# than listed by hand, so a new test cannot be left out and run stale or
+# "Not Run".
+if(NES_BUILD_TESTS)
+    get_property(MYNES_ALL_TARGETS DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+    set(MYNES_TEST_TARGETS)
+    # Every executable, not only test_*: script-driven tests run the
+    # frontends and tools themselves (mynes_gpu, mynes_video, ...).
+    foreach(target IN LISTS MYNES_ALL_TARGETS)
+        get_target_property(target_type ${target} TYPE)
+        if(target_type STREQUAL "EXECUTABLE")
+            list(APPEND MYNES_TEST_TARGETS ${target})
+        endif()
+    endforeach()
+    foreach(target IN ITEMS gpu_shaders)
+        if(TARGET ${target})
+            list(APPEND MYNES_TEST_TARGETS ${target})
+        endif()
+    endforeach()
+    add_dependencies(alltests ${MYNES_TEST_TARGETS})
 endif()

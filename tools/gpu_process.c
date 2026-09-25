@@ -90,14 +90,11 @@ int main(int argc, char **argv) {
     fseek(fin, 0, SEEK_END);
     long fsize = ftell(fin);
     fseek(fin, 0, SEEK_SET);
-    int spl = 2048;
-    int num_lines = (int)(fsize / (spl * sizeof(float)));
     float *waveform = fsize > 0 ? (float *)malloc((size_t)fsize) : NULL;
     if (!waveform || fread(waveform, 1, (size_t)fsize, fin) != (size_t)fsize) {
         fprintf(stderr, "Cannot read %s\n", input_path); return 1;
     }
     fclose(fin);
-    printf("Loaded: %d lines × %d samples\n", num_lines, spl);
 
     /* SDL init */
     if (!SDL_Init(SDL_INIT_VIDEO)) {
@@ -171,6 +168,20 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    /* video_gpu_process uploads one whole field in the chain's own format
+     * and downloads three floats for each of its samples, so the file must
+     * be exactly that field. */
+    const SignalFormat *fmt = &vgc.signal_fmt;
+    int spl = fmt->samples_per_line;
+    int num_lines = fmt->lines;
+    long field_bytes = (long)fmt->total_samples * (long)sizeof(float);
+    if (fsize != field_bytes) {
+        fprintf(stderr, "%s: %ld bytes; this preset's chain takes %d lines x %d float32 samples "
+                "(%ld bytes)\n", input_path, fsize, num_lines, spl, field_bytes);
+        return 1;
+    }
+    printf("Loaded: %d lines × %d samples\n", num_lines, spl);
+
     /* Color matrix */
     float contrast = preset->contrast > 0 ? preset->contrast : 1.0f;
     float brightness = preset->brightness;
@@ -191,6 +202,7 @@ int main(int argc, char **argv) {
 
     /* Process */
     float *rgb_out = (float *)calloc(vgc.rgb_size / sizeof(float), sizeof(float));
+    if (!rgb_out) { fprintf(stderr, "Out of memory\n"); return 1; }
     printf("Processing...\n");
     if (!video_gpu_process(&vgc, gpu, waveform, rgb_out)) {
         fprintf(stderr, "video_gpu_process failed\n");
@@ -205,6 +217,7 @@ int main(int argc, char **argv) {
 
     /* Write PPM */
     FILE *fout = fopen(output_path, "wb");
+    if (!fout) { fprintf(stderr, "Cannot write %s\n", output_path); return 1; }
     fprintf(fout, "P6\n%d %d\n255\n", beam_w, beam_h);
     for (int i = 0; i < beam_w * beam_h; i++) {
         uint32_t rg, ba;
@@ -217,7 +230,11 @@ int main(int argc, char **argv) {
         };
         fwrite(rgb, 3, 1, fout);
     }
-    fclose(fout);
+    bool write_failed = ferror(fout) != 0;
+    if (fclose(fout) != 0 || write_failed) {
+        fprintf(stderr, "Cannot write %s\n", output_path);
+        return 1;
+    }
     printf("Saved: %s (%dx%d)\n", output_path, beam_w, beam_h);
 
     free(beam); free(rgb_out); free(waveform);

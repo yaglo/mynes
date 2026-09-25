@@ -9,7 +9,8 @@
  *   - Scanline IRQ ($5203/$5204)
  *   - Per-quadrant CIRAM/ExRAM/fill nametable mapping ($5105)
  *   - Fill-mode tile/attribute ($5106/$5107)
- *   - PRG RAM at $6000-$7FFF
+ *   - PRG RAM at $6000-$7FFF, and in $8000-$DFFF via $5114-$5116 bit 7,
+ *     as a 64 KB superset of every board's RAM: bank & 7 picks the page
  *   - Multiplicand/multiplier hardware ($5205/$5206)
  *   - ExRAM ($5C00-$5FFF) as general-purpose RAM
  *
@@ -17,56 +18,17 @@
  *   - ExRAM as extended nametable attributes (needs PPU changes)
  *   - Split-screen mode ($5200-$5202)
  *   - PCM audio channel
+ *   - RAM write protection ($5102/$5103)
  */
 
 #include "mapper_ops.h"
 #include "../nes.h"
 #include <string.h>
 
-/* --------------------------------------------------------------------------
- * MMC5 state — overlaid on chr_ram (unused since MMC5 uses CHR ROM)
- * -------------------------------------------------------------------------- */
-
-typedef struct {
-    /* PRG banking */
-    uint8_t prg_mode;           /* $5100: 0-3 */
-    uint8_t prg_regs[5];       /* $5113-$5117 */
-
-    /* CHR banking */
-    uint8_t chr_mode;           /* $5101: 0-3 */
-    uint16_t chr_regs[12];     /* $5120-$512B: effective bank (upper|low) */
-    uint8_t chr_upper;         /* $5130: upper 2 bits for CHR bank numbers */
-    bool     chr_hi_written;   /* last CHR write was to B set ($5128-$512B) */
-
-    /* Nametable / fill */
-    uint8_t nt_mapping;        /* $5105 raw value */
-    uint8_t fill_tile;         /* $5106 */
-    uint8_t fill_attr;         /* $5107 (2 bits) */
-
-    /* ExRAM */
-    uint8_t exram_mode;        /* $5104: 0-3 */
-    uint8_t exram[0x400];      /* 1KB */
-
-    /* Scanline IRQ */
-    uint8_t irq_target;        /* $5203 */
-    bool    irq_enabled;       /* $5204 bit 7 */
-    uint8_t scanline_counter;
-    bool    in_frame;
-    bool    irq_status;
-    uint16_t last_ppu_read;
-    uint8_t repeated_reads;
-    uint8_t idle_cpu_cycles;
-    bool ppu_read_since_clock;
-
-    /* Multiplier */
-    uint8_t multiplicand;      /* $5205 */
-    uint8_t multiplier;        /* $5206 */
-} MMC5;
-
-_Static_assert(sizeof(MMC5) <= 0x2000, "MMC5 state must fit in chr_ram");
+typedef MapperMMC5 MMC5;
 
 static MMC5 *mmc5(Mapper *m) {
-    return (MMC5 *)(void *)m->chr_ram;
+    return &m->ext.mmc5;
 }
 
 /* ========================================================================== */
@@ -86,7 +48,7 @@ static MMC5 *mmc5(Mapper *m) {
  * Registers $5114-$5116: bit 7 = 1 means PRG ROM, 0 means PRG RAM.
  * Register $5117: always PRG ROM (bit 7 ignored for ROM/RAM selection).
  */
-static uint8_t mmc5_get_prg_reg(MMC5 *s, uint16_t addr) {
+static uint8_t mmc5_get_prg_reg(const MMC5 *s, uint16_t addr) {
     int slot_8k = (addr - 0x8000) >> 13; /* 0-3 */
 
     switch (s->prg_mode) {
@@ -101,6 +63,30 @@ static uint8_t mmc5_get_prg_reg(MMC5 *s, uint16_t addr) {
     return s->prg_regs[4];
 }
 
+/* Whether $8000-$DFFF at addr is mapped to PRG RAM: bit 7 clear in the
+ * governing $5114-$5116 register. $5117's windows are always ROM. */
+static bool mmc5_prg_is_ram(const MMC5 *s, uint16_t addr) {
+    if (addr >= 0xE000 || s->prg_mode == 0) return false;
+    if (s->prg_mode == 1 && addr >= 0xC000) return false;
+    return !(mmc5_get_prg_reg(s, addr) & 0x80);
+}
+
+/* Offset into the 64 KB PRG RAM for $6000-$DFFF. Boards carry 8 to 32 KB
+ * on one or two chips, but treating the RAM as 64 KB with bank & 7 as the
+ * 8 KB page runs every game (nesdev "MMC5", PRG RAM). $5113 pages $6000;
+ * a 16 KB window at $8000 ignores bit 0 of its bank as it does for ROM,
+ * and A13 picks the half. */
+static uint32_t mmc5_prg_ram_offset(const MMC5 *s, uint16_t addr) {
+    uint32_t page;
+    if (addr < 0x8000)
+        page = s->prg_regs[0] & 7;
+    else if (addr < 0xC000 && (s->prg_mode == 1 || s->prg_mode == 2))
+        page = (s->prg_regs[2] & 6) | ((addr >> 13) & 1);
+    else
+        page = mmc5_get_prg_reg(s, addr) & 7;
+    return page * 0x2000 + (addr & 0x1FFF);
+}
+
 /*
  * PRG banking — matches Mesen's approach:
  *   1. Strip bit 7 from the register (ROM/RAM flag, ignored for ROM reads)
@@ -112,8 +98,8 @@ static uint8_t mmc5_get_prg_reg(MMC5 *s, uint16_t addr) {
  * Mode 2: $5115 & 0x7E → 16KB at $8000, $5116 & 0x7F → 8KB at $C000, $5117 & 0x7F → 8KB at $E000
  * Mode 3: $5114-$5117 & 0x7F → 8KB each
  */
-static uint8_t mmc5_read_prg(Mapper *m, uint16_t addr) {
-    MMC5 *s = mmc5(m);
+static uint8_t mmc5_read_prg(const Mapper *m, uint16_t addr) {
+    const MMC5 *s = &m->ext.mmc5;
     uint32_t total_8k = m->prg_rom_size / 0x2000;
     if (total_8k == 0) total_8k = 1;
 
@@ -158,11 +144,15 @@ static uint8_t mmc5_read_prg(Mapper *m, uint16_t addr) {
 /* CHR banking                                                                */
 /* ========================================================================== */
 
+static bool mmc5_sprites_8x16(const Mapper *m) {
+    return m->nes && (m->nes->ppu.ctrl & CTRL_SPRITE_SIZE);
+}
+
 /* In 8x8 mode all fetches use set A. In 8x16 mode rendering uses
  * A for sprites and B for backgrounds; CPU $2007 accesses outside
  * rendering use the most recently written set. */
-static uint8_t mmc5_read_chr(Mapper *m, uint16_t addr) {
-    MMC5 *s = mmc5(m);
+static uint8_t mmc5_read_chr(const Mapper *m, uint16_t addr) {
+    const MMC5 *s = &m->ext.mmc5;
     uint32_t total_1k = m->chr_rom_size / 0x400;
     if (total_1k == 0) return 0;
 
@@ -170,14 +160,12 @@ static uint8_t mmc5_read_chr(Mapper *m, uint16_t addr) {
     int slot = (addr >> 10) & 7;
 
     bool use_b = false;
-    if (m->nes && (m->nes->ppu.ctrl & CTRL_SPRITE_SIZE)) {
-        PPU *ppu = &m->nes->ppu;
+    if (mmc5_sprites_8x16(m)) {
+        const PPU *ppu = &m->nes->ppu;
         bool rendering = (ppu->mask & (MASK_BG_ENABLE | MASK_SPRITE_ENABLE)) &&
             (ppu->scanline < 240 || ppu->scanline == ppu->prerender_line);
         use_b = rendering ? !(ppu->dot >= 257 && ppu->dot <= 320)
                           : s->chr_hi_written;
-    } else {
-        s->chr_hi_written = false;
     }
 
     switch (s->chr_mode) {
@@ -221,32 +209,19 @@ static uint8_t mmc5_read_chr(Mapper *m, uint16_t addr) {
 /* CPU read                                                                   */
 /* ========================================================================== */
 
-static uint8_t mapper5_cpu_read(Mapper *m, uint16_t addr) {
-    MMC5 *s = mmc5(m);
+static uint8_t mapper5_cpu_peek(const Mapper *m, uint16_t addr) {
+    const MMC5 *s = &m->ext.mmc5;
 
-    if (addr == 0xFFFA || addr == 0xFFFB) {
-        s->in_frame = false;
-        s->scanline_counter = 0;
-        s->repeated_reads = 0;
-        s->irq_status = false;
-        m->irq_pending = false;
-    }
-    if (addr >= 0x8000)
+    if (addr >= 0x8000 && !mmc5_prg_is_ram(s, addr))
         return mmc5_read_prg(m, addr);
 
     if (addr >= 0x6000)
-        return m->prg_ram[addr - 0x6000];
+        return m->prg_ram[mmc5_prg_ram_offset(s, addr)];
 
     /* Internal registers */
     switch (addr) {
-    case 0x5204: {
-        uint8_t val = 0;
-        if (s->irq_status) val |= 0x80;
-        if (s->in_frame)   val |= 0x40;
-        s->irq_status = false;
-        m->irq_pending = false;
-        return val;
-    }
+    case 0x5204:
+        return (s->irq_status ? 0x80 : 0) | (s->in_frame ? 0x40 : 0);
     case 0x5205:
         return (uint8_t)(s->multiplicand * s->multiplier);
     case 0x5206:
@@ -260,6 +235,24 @@ static uint8_t mapper5_cpu_read(Mapper *m, uint16_t addr) {
     return 0;
 }
 
+static uint8_t mapper5_cpu_read(Mapper *m, uint16_t addr) {
+    MMC5 *s = mmc5(m);
+    uint8_t val = mapper5_cpu_peek(m, addr);
+
+    /* The NMI vector fetch ends the frame; reading $5204 acknowledges. */
+    if (addr == 0xFFFA || addr == 0xFFFB) {
+        s->in_frame = false;
+        s->scanline_counter = 0;
+        s->repeated_reads = 0;
+        s->irq_status = false;
+        m->irq_pending = false;
+    } else if (addr == 0x5204) {
+        s->irq_status = false;
+        m->irq_pending = false;
+    }
+    return val;
+}
+
 /* ========================================================================== */
 /* CPU write                                                                  */
 /* ========================================================================== */
@@ -267,10 +260,11 @@ static uint8_t mapper5_cpu_read(Mapper *m, uint16_t addr) {
 static void mapper5_cpu_write(Mapper *m, uint16_t addr, uint8_t val) {
     MMC5 *s = mmc5(m);
 
-    if (addr >= 0x8000) return; /* PRG ROM — writes ignored */
+    if (addr >= 0x8000 && !mmc5_prg_is_ram(s, addr))
+        return; /* PRG ROM ignores writes */
 
     if (addr >= 0x6000) {
-        m->prg_ram[addr - 0x6000] = val;
+        m->prg_ram[mmc5_prg_ram_offset(s, addr)] = val;
         return;
     }
 
@@ -348,9 +342,9 @@ static void mapper5_cpu_write(Mapper *m, uint16_t addr, uint8_t val) {
 /* PPU memory: MMC5 independently routes each 1KB nametable quadrant.        */
 /* ========================================================================== */
 
-static uint8_t mapper5_ppu_read(Mapper *m, uint16_t addr) {
+static uint8_t mapper5_ppu_peek(const Mapper *m, uint16_t addr) {
     if (addr < 0x2000) return mmc5_read_chr(m, addr);
-    MMC5 *s = mmc5(m);
+    const MMC5 *s = &m->ext.mmc5;
     unsigned offset = addr & 0x3ff;
     unsigned source = (s->nt_mapping >> (((addr >> 10) & 3) * 2)) & 3;
     if (source < 2)
@@ -358,6 +352,15 @@ static uint8_t mapper5_ppu_read(Mapper *m, uint16_t addr) {
     if (source == 2)
         return s->exram_mode < 2 ? s->exram[offset] : 0;
     return offset < 0x3c0 ? s->fill_tile : s->fill_attr * 0x55;
+}
+
+/* Outside 8x16 mode a CHR read forgets which register set was written
+ * last; a debugger's peek leaves that alone. */
+static uint8_t mapper5_ppu_read(Mapper *m, uint16_t addr) {
+    uint8_t val = mapper5_ppu_peek(m, addr);
+    if (addr < 0x2000 && !mmc5_sprites_8x16(m))
+        mmc5(m)->chr_hi_written = false;
+    return val;
 }
 
 static void mapper5_ppu_write(Mapper *m, uint16_t addr, uint8_t val) {
@@ -426,10 +429,14 @@ static void mapper5_init(Mapper *m) {
 
     s->prg_mode = 3;            /* 8KB banks — CV3 expects this */
     s->chr_mode = 3;            /* 1KB CHR banks */
+    s->prg_regs[1] = 0x80;     /* $8000-$DFFF: ROM bank 0 until written */
+    s->prg_regs[2] = 0x80;
+    s->prg_regs[3] = 0x80;
     s->prg_regs[4] = 0xFF;     /* Last 8KB bank at $E000 (reset vector) */
     s->nt_mapping = 0;
 
     m->prg_ram_enabled = true;
+    m->prg_ram_size = sizeof(m->prg_ram);
     m->has_chr_ram = false;
 
 }
@@ -446,4 +453,6 @@ const MapperOps mapper5_ops = {
     .ppu_write = mapper5_ppu_write,
     .ppu_bus_read = mapper5_ppu_bus_read,
     .cpu_clock = mapper5_cpu_clock,
+    .cpu_peek  = mapper5_cpu_peek,
+    .ppu_peek  = mapper5_ppu_peek,
 };

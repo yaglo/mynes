@@ -20,6 +20,8 @@
 #endif
 #include <sys/un.h>
 #include <pthread.h>
+#include <poll.h>
+#include <stdatomic.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <math.h>
@@ -77,7 +79,9 @@ typedef struct {
  * ============================================================================ */
 
 typedef struct {
-    int listen_sock;        /* listening socket (background thread) */
+    int listen_sock;        /* opened in create, closed in destroy after the join */
+    int wake_pipe[2];       /* destroy writes to [1] to end the accept loop */
+    atomic_bool stopping;
     int client_sock;        /* connected client, or -1 */
     pthread_t listen_thread;
     pthread_mutex_t client_lock;  /* protects client socket and output queue */
@@ -128,48 +132,45 @@ static bool flush_output(DebugServerState *state) {
  * Background listener thread
  * ============================================================================ */
 
+/* The recorder starts ffmpeg with posix_spawnp and counts on the child
+ * inheriting nothing beyond the descriptors it hands over; a debug socket or
+ * wake pipe leaked into it would outlive the server. macOS has neither
+ * SOCK_CLOEXEC nor pipe2, so the flag is set just after each one is made. */
+static void set_cloexec(int fd) {
+    int flags = fcntl(fd, F_GETFD);
+    if (flags >= 0) fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
+}
+
+/* close() does not wake a thread blocked in accept() on Linux, so the loop
+ * polls the listening socket together with a pipe that destroy writes to.
+ * Only destroy closes the descriptors, after the join. */
 static void *listen_thread_main(void *arg) {
     DebugServerState *state = (DebugServerState *)arg;
 
-    struct sockaddr_un addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, state->socket_path, sizeof(addr.sun_path) - 1);
+    while (!atomic_load(&state->stopping)) {
+        struct pollfd fds[2] = {
+            {.fd = state->listen_sock, .events = POLLIN},
+            {.fd = state->wake_pipe[0], .events = POLLIN},
+        };
+        if (poll(fds, 2, -1) < 0) {
+            if (errno == EINTR) continue;
+            perror("poll");
+            break;
+        }
+        if (fds[1].revents || atomic_load(&state->stopping)) break;
+        if (!(fds[0].revents & POLLIN)) continue;
 
-    /* Remove old socket file if it exists */
-    unlink(state->socket_path);
-
-    /* Create and bind listening socket */
-    state->listen_sock = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (state->listen_sock < 0) {
-        perror("socket(AF_UNIX)");
-        return NULL;
-    }
-
-    if (bind(state->listen_sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        perror("bind");
-        close(state->listen_sock);
-        state->listen_sock = -1;
-        return NULL;
-    }
-
-    if (listen(state->listen_sock, 1) < 0) {
-        perror("listen");
-        close(state->listen_sock);
-        state->listen_sock = -1;
-        return NULL;
-    }
-
-    printf("Debug server listening on %s\n", state->socket_path);
-
-    /* Accept loop: one client at a time */
-    while (state->listen_sock >= 0) {
         int client = accept(state->listen_sock, NULL, NULL);
         if (client < 0) {
-            if (errno == EINTR || errno == EBADF) break;
-            perror("accept");
+            if (errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK &&
+                errno != ECONNABORTED)
+                perror("accept");
             continue;
         }
+        set_cloexec(client);
+        /* The listening socket is non-blocking; BSD accept() inherits that. */
+        int client_flags = fcntl(client, F_GETFL);
+        if (client_flags >= 0) fcntl(client, F_SETFL, client_flags & ~O_NONBLOCK);
 
 #ifdef SO_NOSIGPIPE
         /* macOS/BSD: a vanished editor must not kill the emulator with SIGPIPE.
@@ -188,11 +189,6 @@ static void *listen_thread_main(void *arg) {
         state->client_sock = client;
         state->output_start = state->output_end = 0;
         pthread_mutex_unlock(&state->client_lock);
-    }
-
-    if (state->listen_sock >= 0) {
-        close(state->listen_sock);
-        state->listen_sock = -1;
     }
 
     return NULL;
@@ -285,23 +281,88 @@ void debug_server_set_controls(DebugServer *srv, const DebugControl *controls, i
  * Public API
  * ============================================================================ */
 
+/* Bind and listen before the thread starts, so a server that cannot listen
+ * is reported to the caller instead of announced as ready. */
+static int open_listen_socket(const char *socket_path) {
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    memcpy(addr.sun_path, socket_path, strlen(socket_path) + 1);
+
+    /* Remove old socket file if it exists */
+    unlink(socket_path);
+
+    int sock = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (sock < 0) {
+        perror("socket(AF_UNIX)");
+        return -1;
+    }
+    set_cloexec(sock);
+    /* Non-blocking, so a client that goes away between poll() and accept()
+     * cannot park the thread in accept() where destroy's wake-up misses it. */
+    int flags = fcntl(sock, F_GETFL);
+    if (flags < 0 || fcntl(sock, F_SETFL, flags | O_NONBLOCK) < 0) {
+        perror("fcntl(O_NONBLOCK)");
+        close(sock);
+        return -1;
+    }
+    if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        perror("bind");
+        close(sock);
+        return -1;
+    }
+    if (listen(sock, 1) < 0) {
+        perror("listen");
+        close(sock);
+        return -1;
+    }
+    return sock;
+}
+
 DebugServer *debug_server_create(const char *socket_path) {
+    const size_t path_max = sizeof(((struct sockaddr_un *)0)->sun_path);
+    if (!socket_path || strlen(socket_path) >= path_max) {
+        fprintf(stderr, "Debug server socket path longer than %zu bytes: %s\n",
+                path_max - 1, socket_path ? socket_path : "(null)");
+        return NULL;
+    }
+
     DebugServerState *state = (DebugServerState *)calloc(1, sizeof(*state));
     if (!state) return NULL;
 
     strncpy(state->socket_path, socket_path, sizeof(state->socket_path) - 1);
     state->client_sock = -1;
-    state->listen_sock = -1;
     state->tap_stage_pending = -1;
+    atomic_init(&state->stopping, false);
+
+    state->listen_sock = open_listen_socket(state->socket_path);
+    if (state->listen_sock < 0) {
+        free(state);
+        return NULL;
+    }
+    if (pipe(state->wake_pipe) < 0) {
+        perror("pipe");
+        close(state->listen_sock);
+        free(state);
+        return NULL;
+    }
+    set_cloexec(state->wake_pipe[0]);
+    set_cloexec(state->wake_pipe[1]);
 
     pthread_mutex_init(&state->client_lock, NULL);
 
-    if (pthread_create(&state->listen_thread, NULL, listen_thread_main, state) < 0) {
-        perror("pthread_create");
+    int err = pthread_create(&state->listen_thread, NULL, listen_thread_main, state);
+    if (err != 0) {
+        fprintf(stderr, "pthread_create: %s\n", strerror(err));
+        pthread_mutex_destroy(&state->client_lock);
+        close(state->wake_pipe[0]);
+        close(state->wake_pipe[1]);
+        close(state->listen_sock);
         free(state);
         return NULL;
     }
 
+    printf("Debug server listening on %s\n", state->socket_path);
     g_server = (DebugServer *)state;
     return (DebugServer *)state;
 }
@@ -311,10 +372,14 @@ void debug_server_destroy(DebugServer *srv) {
 
     DebugServerState *state = (DebugServerState *)srv;
 
-    if (state->listen_sock >= 0) {
-        close(state->listen_sock);
-        state->listen_sock = -1;
-    }
+    atomic_store(&state->stopping, true);
+    char wake = 0;
+    while (write(state->wake_pipe[1], &wake, 1) < 0 && errno == EINTR) {}
+    pthread_join(state->listen_thread, NULL);
+
+    close(state->listen_sock);
+    close(state->wake_pipe[0]);
+    close(state->wake_pipe[1]);
 
     pthread_mutex_lock(&state->client_lock);
     if (state->client_sock >= 0) {
@@ -323,7 +388,6 @@ void debug_server_destroy(DebugServer *srv) {
     }
     pthread_mutex_unlock(&state->client_lock);
 
-    pthread_join(state->listen_thread, NULL);
     pthread_mutex_destroy(&state->client_lock);
     free(state->output);
 

@@ -126,6 +126,19 @@ int main(void) {
     Snapshot fresh = snapshot(&other);
     CHECK(same(&fresh, &reference));
 
+    /* The output filter and analog character are user settings: a load
+     * keeps the ones in use, and the DAC tables follow them. */
+    boot(&other, &rom);
+    other.apu.filter_config.lp_alpha = 0.5;
+    other.apu.analog.dac_nonlinearity = 1.0f;
+    other.apu.analog.output_gain = 2.0f;
+    apu_build_dac_tables(&other.apu);
+    float curved_dac = other.apu.pulse_dac[30];
+    CHECK(nes_state_load(&other, state, size, error, sizeof(error)));
+    CHECK(other.apu.filter_config.lp_alpha == 0.5);
+    CHECK(other.apu.analog.dac_nonlinearity == 1.0f && other.apu.analog.output_gain == 2.0f);
+    CHECK(other.apu.pulse_dac[30] == curved_dac && curved_dac != nes.apu.pulse_dac[30]);
+
     /* Corruption and mismatches are refused without touching the machine. */
     memcpy(again, state, size);
     again[0] = 'X';
@@ -184,6 +197,10 @@ int main(void) {
     memcpy(again + sizeof(header) + offsetof(NES, mapper.chr_banks), &bogus_banks, sizeof(bogus_banks));
     memcpy(again + sizeof(header) + offsetof(NES, mapper.number), &bogus_banks, sizeof(bogus_banks));
     memcpy(again + sizeof(header) + offsetof(NES, mapper.has_chr_ram), &bogus_banks, sizeof(bogus_banks));
+    /* PRG RAM size too: battery saves copy that many bytes out of the
+     * console, so 0 would stop them and a large value overrun them. */
+    uint32_t live_ram_size = nes.mapper.prg_ram_size;
+    memcpy(again + sizeof(header) + offsetof(NES, mapper.prg_ram_size), &bogus_size, sizeof(bogus_size));
     memcpy(&header, again, sizeof(header));
     header.image_crc = nes_crc32(0, again + sizeof(header), sizeof(NES));
     memcpy(again, &header, sizeof(header));
@@ -192,9 +209,43 @@ int main(void) {
     CHECK(nes.mapper.prg_rom_size == rom.prg_size && nes.mapper.chr_rom_size == rom.chr_size);
     CHECK(nes.mapper.prg_banks == rom.prg_size / 0x4000 && nes.mapper.chr_banks == rom.chr_size / 0x2000);
     CHECK(nes.mapper.number == rom.mapper && nes.mapper.has_chr_ram == (rom.chr_size == 0));
+    CHECK(nes.mapper.prg_ram_size == live_ram_size);
     frames(&nes, 60);
     replay = snapshot(&nes);
     CHECK(same(&replay, &reference));
+
+    /* Index fields the emulator uses unmasked are folded back into their
+     * arrays' range, so a crafted body with a valid CRC stays in bounds. */
+    memcpy(again, state, size);
+    uint8_t bogus_index = 0xff;
+    memcpy(again + sizeof(header) + offsetof(NES, ppu.secondary_addr), &bogus_index, 1);
+    memcpy(again + sizeof(header) + offsetof(NES, ppu.sprites_on_line), &bogus_index, 1);
+    memcpy(&header, again, sizeof(header));
+    header.image_crc = nes_crc32(0, again + sizeof(header), sizeof(NES));
+    memcpy(again, &header, sizeof(header));
+    CHECK(nes_state_load(&nes, again, size, error, sizeof(error)));
+    CHECK(nes.ppu.secondary_addr == 0x1f && nes.ppu.sprites_on_line == 8);
+
+    /* The channel outputs index the mixer's DAC tables: a negative
+     * envelope or an 8-bit DMC level would reach outside them. */
+    memcpy(again, state, size);
+    int bogus_level = -100;
+    memcpy(again + sizeof(header) + offsetof(NES, apu.pulse[0].envelope_decay), &bogus_level, sizeof(int));
+    memcpy(again + sizeof(header) + offsetof(NES, apu.pulse[1].envelope_decay), &bogus_level, sizeof(int));
+    memcpy(again + sizeof(header) + offsetof(NES, apu.noise.envelope_decay), &bogus_level, sizeof(int));
+    memcpy(again + sizeof(header) + offsetof(NES, apu.pulse[0].envelope_divider), &bogus_level, sizeof(int));
+    memcpy(again + sizeof(header) + offsetof(NES, apu.dmc.output_level), &bogus_index, 1);
+    memcpy(again + sizeof(header) + offsetof(NES, apu.pulse[0].sweep_shift), &bogus_index, 1);
+    memcpy(&header, again, sizeof(header));
+    header.image_crc = nes_crc32(0, again + sizeof(header), sizeof(NES));
+    memcpy(again, &header, sizeof(header));
+    CHECK(nes_state_load(&nes, again, size, error, sizeof(error)));
+    CHECK(nes.apu.pulse[0].envelope_decay == (bogus_level & 15));
+    CHECK(nes.apu.pulse[1].envelope_decay == (bogus_level & 15));
+    CHECK(nes.apu.noise.envelope_decay == (bogus_level & 15));
+    CHECK(nes.apu.pulse[0].envelope_divider == (bogus_level & 15));
+    CHECK(nes.apu.dmc.output_level == 0x7f && nes.apu.pulse[0].sweep_shift == 7);
+    frames(&nes, 1);
 
     /* A valid state still loads after the refusals. */
     CHECK(nes_state_load(&nes, state, size, error, sizeof(error)));

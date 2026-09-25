@@ -44,11 +44,6 @@ typedef struct {
     uint64_t start_ns, ready_ns, audio_ns;
 } PlaybackFrame;
 
-/* The 9-bit entry the 2C02 puts out as its border now: the backdrop at
- * $3F00, or with rendering off and v in palette space the entry v points at,
- * after greyscale, with the emphasis bits. */
-uint16_t playback_border_entry(const PPU *ppu);
-
 Playback *playback_create(NES *nes, SDL_GPUDevice *gpu, AudioGPUChain *audio,
                           SDL_AudioStream *stream, unsigned frame_limit, unsigned capture_from);
 void playback_controls(Playback *p, const PlaybackControls *controls);

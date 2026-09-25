@@ -65,6 +65,25 @@ int main(void) {
     if (m.mmc1_shift_count != 2)
         pass = 0;
 
+    /* SUROM: 512 KB of PRG, CHR bank bit 4 selects the 256 KB half for
+     * both windows, including the fixed banks. */
+    static uint8_t surom[32 * 0x4000];
+    for (unsigned i = 0; i < 32; ++i) memset(surom + i * 0x4000, (int)i, 0x4000);
+    mapper_init(&m, 1, surom, sizeof(surom), NULL, 0, 0);
+    if (mapper_cpu_read(&m, 0x8000) != 0 || mapper_cpu_read(&m, 0xC000) != 15)
+        pass = 0;
+    write_register(&m, 0xE000, 3);
+    write_register(&m, 0xA000, 0x10);
+    if (mapper_cpu_read(&m, 0x8000) != 19 || mapper_cpu_read(&m, 0xC000) != 31)
+        pass = 0;
+    write_register(&m, 0x8000, 0x08);   /* fixed first bank */
+    if (mapper_cpu_read(&m, 0x8000) != 16 || mapper_cpu_read(&m, 0xC000) != 19)
+        pass = 0;
+    write_register(&m, 0x8000, 0x00);   /* 32 KB */
+    write_register(&m, 0xA000, 0x00);
+    if (mapper_cpu_read(&m, 0x8000) != 2 || mapper_cpu_read(&m, 0xC000) != 3)
+        pass = 0;
+
     printf("MMC1 tests: %s\n", pass ? "PASS" : "FAIL");
     return pass ? 0 : 1;
 }

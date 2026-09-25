@@ -13,6 +13,7 @@ int main(int argc, char **argv) {
     ROM rom; if (nes_rom_load(&rom, argv[1]) != ROM_OK) return 1;
     nes_init(&nes);
     nes_load_mapper(&nes, rom.mapper, rom.prg_rom, rom.prg_size, rom.chr_rom, rom.chr_size, rom.mirroring);
+    nes_rom_apply_trainer(&rom, &nes.mapper);
     nes_reset(&nes);
     for (int i = 0; i < 400; i++) nes_run_frame(&nes);
     nes_set_controller(&nes, 0, 8); for (int i = 0; i < 2; i++) nes_run_frame(&nes); nes_set_controller(&nes, 0, 0);

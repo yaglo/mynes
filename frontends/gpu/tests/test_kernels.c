@@ -494,18 +494,20 @@ static int test_comb_3line_cancellation(void) {
 static int test_pal_chroma_delay_line(void) {
     /* PAL correction stage:
      *   - odd-line U sign flips back to match the previous line
-     *   - V averages with the previous scanline */
-    float v_in[8] = {
+     *   - V and the corrected U average with the previous scanline */
+    float v_in[12] = {
         0.20f, 0.30f, 0.40f, 0.50f,
         0.60f, 0.70f, 0.80f, 0.90f,
+        0.10f, 0.10f, 0.10f, 0.10f,
     };
-    float u_in[8] = {
-        0.25f, 0.25f, 0.25f, 0.25f,
-       -0.25f,-0.25f,-0.25f,-0.25f,
+    float u_in[12] = {
+        0.20f, 0.20f, 0.20f, 0.20f,
+       -0.30f,-0.30f,-0.30f,-0.30f,
+        0.10f, 0.10f, 0.10f, 0.10f,
     };
-    float v_out[8], u_out[8];
+    float v_out[12], u_out[12];
 
-    pal_chroma_ref(v_in, u_in, v_out, u_out, 8, 4);
+    pal_chroma_ref(v_in, u_in, v_out, u_out, 12, 4);
 
     /* First line passes through unchanged. */
     ASSERT_NEAR(v_out[0], 0.20f, 1e-6f, "PAL V line0 passthrough");
@@ -513,9 +515,13 @@ static int test_pal_chroma_delay_line(void) {
     /* Second line averages with the previous line. */
     ASSERT_NEAR(v_out[4], 0.40f, 1e-6f, "PAL V line1 averaged");
     ASSERT_NEAR(v_out[7], 0.70f, 1e-6f, "PAL V line1 averaged end");
-    /* Odd-line U is sign-corrected back to positive. */
-    ASSERT_NEAR(u_out[0], 0.25f, 1e-6f, "PAL U line0 stable");
-    ASSERT_NEAR(u_out[4], 0.25f, 1e-6f, "PAL U line1 sign-corrected");
+    ASSERT_NEAR(v_out[8], 0.35f, 1e-6f, "PAL V line2 averaged");
+    ASSERT_NEAR(u_out[0], 0.20f, 1e-6f, "PAL U line0 passthrough");
+    /* Odd-line U is sign-corrected, then averaged with the line above. */
+    ASSERT_NEAR(u_out[4], 0.25f, 1e-6f, "PAL U line1 corrected and averaged");
+    ASSERT_NEAR(u_out[7], 0.25f, 1e-6f, "PAL U line1 corrected and averaged end");
+    /* Even line averages with the previous odd line's corrected U. */
+    ASSERT_NEAR(u_out[8], 0.20f, 1e-6f, "PAL U line2 averaged with corrected line1");
     return 1;
 }
 

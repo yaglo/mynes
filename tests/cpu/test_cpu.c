@@ -427,6 +427,9 @@ int test_reset(void) {
     cpu.PC = 0x200;
     cpu.uPC = 0;
     cpu.A = 0x00;
+    /* Reset runs the interrupt sequence with its three pushes turned into
+     * reads: S drops by 3, wrapping, and the stack is left alone. */
+    cpu.SP = 0x01;
 
     /* Trigger reset */
     cpu.reset_pending = 1;
@@ -434,13 +437,222 @@ int test_reset(void) {
     /* Run reset sequence + program */
     for (int i = 0; i < 20; i++) cpu_step(&cpu);
 
-    if (cpu.A == 0xAA && cpu.PC >= 0x500) {
-        printf("TEST reset: PASS (A=%02X PC=%04X)\n", cpu.A, cpu.PC);
+    int stack_clean = 1;
+    for (int i = 0x100; i < 0x200; i++) stack_clean &= memory[i] == 0;
+
+    if (cpu.A == 0xAA && cpu.PC >= 0x500 && cpu.SP == 0xFE && stack_clean) {
+        printf("TEST reset: PASS (A=%02X PC=%04X SP=%02X)\n", cpu.A, cpu.PC, cpu.SP);
         return 1;
     } else {
-        printf("TEST reset: FAIL (A=%02X PC=%04X)\n", cpu.A, cpu.PC);
+        printf("TEST reset: FAIL (A=%02X PC=%04X SP=%02X stack %s)\n", cpu.A, cpu.PC,
+               cpu.SP, stack_clean ? "untouched" : "written");
         return 0;
     }
+}
+
+int test_jmp_ind_flags(void) {
+    CPU cpu;
+    cpu_init(&cpu);
+    cpu.mem_read = mem_read;
+    cpu.mem_write = mem_write;
+    memset(memory, 0, sizeof(memory));
+
+    /* JMP ($02FF): the pointer increment wraps within the page, reading
+     * $02FF then $0200 (which holds the $6C opcode). The increment is
+     * internal address math and must not touch N/Z. */
+    uint8_t prog[] = { 0x6C, 0xFF, 0x02 };
+    memcpy(&memory[0x200], prog, sizeof(prog));
+    memory[0x2FF] = 0x00;
+    memory[0x6C00] = 0xEA;
+    cpu.PC = 0x200;
+    cpu.uPC = 0;
+    cpu.P = 0x24;
+
+    run_until_nop(&cpu, 100, 0);
+
+    if (cpu.PC == 0x6C01 && cpu.P == 0x24) {
+        printf("TEST jmp_ind_flags: PASS (PC=%04X P=%02X)\n", cpu.PC, cpu.P);
+        return 1;
+    } else {
+        printf("TEST jmp_ind_flags: FAIL (PC=%04X P=%02X)\n", cpu.PC, cpu.P);
+        return 0;
+    }
+}
+
+static uint16_t read_log[16];
+static int read_count;
+
+static uint8_t logged_read(CPU *cpu, uint16_t addr) {
+    (void)cpu;
+    if (read_count < 16) read_log[read_count++] = addr;
+    return memory[addr];
+}
+
+/* Run one instruction from $0200 and return how many bus reads it made,
+ * or -1 if it has not finished within 20 cycles. */
+static int trace_reads(CPU *cpu, const uint8_t *prog, size_t len) {
+    memcpy(&memory[0x200], prog, len);
+    cpu->PC = 0x200;
+    cpu->uPC = 0;
+    read_count = 0;
+    int cycles = 0;
+    do {
+        if (++cycles > 20) return -1;
+        cpu_step(cpu);
+    } while (cpu->uPC != 0);
+    return read_count;
+}
+
+int test_indexed_page_cross_reads(void) {
+    CPU cpu;
+    cpu_init(&cpu);
+    cpu.mem_read = logged_read;
+    cpu.mem_write = mem_write;
+    memset(memory, 0, sizeof(memory));
+    int ok = 1;
+
+    /* LAS $10F0,Y with Y=$20 reads $1010 (uncorrected) then $1110, and
+     * loads A/X/SP from the corrected read only. */
+    memory[0x1010] = 0x00;
+    memory[0x1110] = 0xF3;
+    cpu.Y = 0x20;
+    cpu.SP = 0x7F;
+    const uint8_t las[] = { 0xBB, 0xF0, 0x10 };
+    int n = trace_reads(&cpu, las, sizeof(las));
+    if (n != 5 || read_log[3] != 0x1010 || read_log[4] != 0x1110 ||
+        cpu.A != 0x73 || cpu.X != 0x73 || cpu.SP != 0x73) {
+        printf("TEST page_cross_reads: FAIL LAS (reads=%d %04X %04X A=%02X SP=%02X)\n",
+               n, read_log[3], read_log[4], cpu.A, cpu.SP);
+        ok = 0;
+    }
+
+    /* NOP $10F0,X with X=$20: the same two reads. */
+    cpu.X = 0x20;
+    const uint8_t nop[] = { 0x1C, 0xF0, 0x10 };
+    n = trace_reads(&cpu, nop, sizeof(nop));
+    if (n != 5 || read_log[3] != 0x1010 || read_log[4] != 0x1110) {
+        printf("TEST page_cross_reads: FAIL NOP (reads=%d %04X %04X)\n",
+               n, read_log[3], read_log[4]);
+        ok = 0;
+    }
+
+    if (ok) printf("TEST page_cross_reads: PASS\n");
+    return ok;
+}
+
+/* One CPU cycle as the DMA logic sees it before the cycle runs, and the
+ * bus accesses the cycle then made. */
+typedef struct {
+    int op;
+    uint8_t xy;
+    uint16_t upc;
+    bool predicted_write;
+    uint16_t peek;
+    int reads, writes;
+    uint16_t first_read;
+} BusCycle;
+
+static int write_count;
+
+static void logged_write(CPU *cpu, uint16_t addr, uint8_t val) {
+    (void)cpu;
+    write_count++;
+    memory[addr] = val;
+}
+
+/* Step every opcode cycle by cycle, with indexes that cross pages and
+ * without, and hand each cycle to check(). Returns 0 if any check fails
+ * or an instruction runs past 20 cycles; *cycles_out counts the cycles. */
+static int for_each_bus_cycle(const char *name, int (*check)(const BusCycle *),
+                              int *cycles_out) {
+    static const struct { uint8_t xy, p; } setups[] = {
+        { 0x00, 0x24 },  /* no page cross, branches on clear flags taken */
+        { 0x20, 0x24 },  /* abs,X/abs,Y/(zp),Y cross; (zp,X) pointer moves */
+        { 0x20, 0xE7 },  /* same, branches on set flags taken */
+        { 0x0F, 0xE7 },  /* (zp,X) pointer high byte wraps within page 0 */
+    };
+    CPU cpu;
+    int ok = 1, total = 0;
+
+    for (int op = 0; op < 256; op++) {
+        if (cpu_entry[op] == cpu_entry[0x02]) continue;  /* STP jams */
+        for (size_t s = 0; s < sizeof(setups) / sizeof(setups[0]); s++) {
+            cpu_init(&cpu);
+            cpu.mem_read = logged_read;
+            cpu.mem_write = logged_write;
+            memset(memory, 0, sizeof(memory));
+            /* Operand $10F0: abs $10F0, zp $F0, JMP ($10F0), branch -16
+             * from $0202 into page 1. (zp),Y reads its pointer from
+             * $F0/$F1 = $10F0; (zp,X) from $F0+X. */
+            memory[0x200] = (uint8_t)op;
+            memory[0x201] = 0xF0;
+            memory[0x202] = 0x10;
+            memory[0xF0] = 0xF0;
+            memory[0xF1] = 0x10;
+            memory[0xFF] = 0x34;
+            memory[0x00] = 0x12;
+            memory[0x10F0] = 0x80;
+            memory[0x10F1] = 0x40;
+            cpu.PC = 0x200;
+            cpu.uPC = 0;
+            cpu.X = cpu.Y = setups[s].xy;
+            cpu.P = setups[s].p;
+            cpu.SP = 0xF0;
+
+            int cycles = 0;
+            do {
+                if (++cycles > 20) {
+                    printf("TEST %s: FAIL op %02X did not finish in 20 cycles\n", name, op);
+                    ok = 0;
+                    break;
+                }
+                BusCycle c = { op, setups[s].xy, cpu.uPC, cpu_next_is_write(&cpu),
+                               cpu_get_next_read_addr(&cpu), 0, 0, 0 };
+                read_count = write_count = 0;
+                cpu_step(&cpu);
+                c.reads = read_count;
+                c.writes = write_count;
+                c.first_read = read_log[0];
+                total++;
+                if (!check(&c)) ok = 0;
+            } while (cpu.uPC != 0);
+        }
+    }
+    *cycles_out = total;
+    return ok;
+}
+
+/* A DMA that halts the CPU repeats the read the CPU was about to make, at
+ * the address cpu_get_next_read_addr() reports. */
+static int check_next_read_addr(const BusCycle *c) {
+    if (c->reads == 0 || c->first_read == c->peek) return 1;
+    printf("TEST next_read_addr: FAIL op %02X X=Y=%02X uPC %d peek %04X, read %04X\n",
+           c->op, c->xy, c->upc, c->peek, c->first_read);
+    return 0;
+}
+
+int test_next_read_addr(void) {
+    int cycles;
+    int ok = for_each_bus_cycle("next_read_addr", check_next_read_addr, &cycles);
+    if (ok) printf("TEST next_read_addr: PASS (%d cycles)\n", cycles);
+    return ok;
+}
+
+/* DMA cannot halt the CPU on a write cycle, so cpu_next_is_write() must
+ * name exactly the cycles that write. Every cycle is one bus access. */
+static int check_next_is_write(const BusCycle *c) {
+    if (c->reads + c->writes == 1 && c->predicted_write == (c->writes == 1)) return 1;
+    printf("TEST next_is_write: FAIL op %02X X=Y=%02X uPC %d predicted %s, "
+           "made %d reads %d writes\n", c->op, c->xy, c->upc,
+           c->predicted_write ? "write" : "read", c->reads, c->writes);
+    return 0;
+}
+
+int test_next_is_write(void) {
+    int cycles;
+    int ok = for_each_bus_cycle("next_is_write", check_next_is_write, &cycles);
+    if (ok) printf("TEST next_is_write: PASS (%d cycles)\n", cycles);
+    return ok;
 }
 
 int main(int argc, char **argv) {
@@ -466,6 +678,10 @@ int main(int argc, char **argv) {
     total++; passed += test_irq();
     total++; passed += test_irq_masked();
     total++; passed += test_reset();
+    total++; passed += test_jmp_ind_flags();
+    total++; passed += test_indexed_page_cross_reads();
+    total++; passed += test_next_read_addr();
+    total++; passed += test_next_is_write();
 
     printf("\n=== Results: %d/%d tests passed ===\n", passed, total);
 

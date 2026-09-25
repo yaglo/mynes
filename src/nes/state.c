@@ -16,8 +16,11 @@
  * zero) before any check could catch it, so these always come from the
  * live instance on load and are zeroed in the saved image (which also keeps
  * two saves of the same machine state byte-identical). The header already
- * ties the file to the live cartridge, so nothing is lost. The list must
- * be kept in step with nes.h, cpu_gen.h, ppu.h, apu.h and mapper.h. */
+ * ties the file to the live cartridge, so nothing is lost. The APU's
+ * output filter and analog character are here for another reason: they
+ * are the user's settings, not the console's, so a load keeps the ones in
+ * use as a reset does. The list must be kept in step with nes.h,
+ * cpu_gen.h, ppu.h, apu.h and mapper.h. */
 typedef struct {
     size_t offset;
     size_t size;
@@ -42,14 +45,18 @@ static const StateField state_live_fields[] = {
     STATE_FIELD(ppu.cart_address),
     STATE_FIELD(ppu.cart_bus_read),
     STATE_FIELD(ppu.user_data),
-    /* APU: sample sink */
+    /* APU: sample sink, and the output filter and analog character, which
+     * are user settings rather than console state (apu_reset keeps them) */
     STATE_FIELD(apu.audio_callback),
     STATE_FIELD(apu.audio_user_data),
+    STATE_FIELD(apu.filter_config),
+    STATE_FIELD(apu.analog),
     /* Mapper: ROM buffers, their geometry and the back-pointer to its console */
     STATE_FIELD(mapper.number),
     STATE_FIELD(mapper.prg_rom),
     STATE_FIELD(mapper.prg_rom_size),
     STATE_FIELD(mapper.prg_banks),
+    STATE_FIELD(mapper.prg_ram_size),
     STATE_FIELD(mapper.chr_rom),
     STATE_FIELD(mapper.chr_rom_size),
     STATE_FIELD(mapper.chr_banks),
@@ -61,7 +68,46 @@ static const StateField state_live_fields[] = {
 
 /* Scratch for the live field bytes while the image is copied over the
  * instance; sized for every entry above with room to spare. */
-#define STATE_LIVE_BYTES_MAX (STATE_LIVE_FIELD_COUNT * 2 * sizeof(void *))
+#define STATE_LIVE_BYTES_MAX (STATE_LIVE_FIELD_COUNT * 2 * sizeof(void *) + \
+                              sizeof(APUFilterConfig) + sizeof(APUAnalog))
+
+/* The image CRC only proves the body is what some build wrote, not that
+ * it came from a running machine, and the emulator indexes fixed-size
+ * arrays with some fields without masking them again (the PPU's
+ * secondary OAM cursor, Namco 108's register select). Fold each such field
+ * back into the range its array allows, the way the hardware counter
+ * would wrap, so a crafted state cannot reach outside the NES struct. */
+static void state_clamp_indices(NES *nes) {
+    PPU *ppu = &nes->ppu;
+    ppu->secondary_addr &= 0x1F;
+    ppu->oam_corruption_row &= 0x1F;
+    if (ppu->sprite_count > 8) ppu->sprite_count = 8;
+    if (ppu->sprites_on_line > 8) ppu->sprites_on_line = 8;
+
+    /* The mixer indexes its DAC tables with the channel outputs, so the
+     * envelope levels and the DMC counter stay within their widths too.
+     * The shift keeps the sweep's target a defined shift. */
+    APU *apu = &nes->apu;
+    for (int i = 0; i < 2; i++) {
+        apu->pulse[i].sequence_step &= 7;
+        apu->pulse[i].envelope_decay &= 15;
+        apu->pulse[i].envelope_divider &= 15;
+        apu->pulse[i].sweep_shift &= 7;
+        apu->pulse[i].sweep_period &= 7;
+    }
+    apu->triangle.sequence_step &= 31;
+    apu->noise.envelope_decay &= 15;
+    apu->noise.envelope_divider &= 15;
+    apu->dmc.output_level &= 0x7F;
+
+    Mapper *m = &nes->mapper;
+    /* MMC3 keeps its mode bits beside the register number and masks on
+     * use; Namco 108 stores the bare number and indexes with it. */
+    if (m->number == 206)
+        m->mmc3_bank_select &= 0x07;
+    if (m->number == 69)
+        m->ext.fme7.command &= 0x0F;
+}
 
 static void state_error(char *error, size_t error_size, const char *fmt, ...) {
     if (!error || !error_size) return;
@@ -200,5 +246,9 @@ bool nes_state_load(NES *nes, const void *buf, size_t size,
                state_live_fields[i].size);
         used += state_live_fields[i].size;
     }
+    state_clamp_indices(nes);
+    /* The image's DAC tables were built for its own analog settings. */
+    apu_build_dac_tables(&nes->apu);
+    nes->apu.dirty = true;
     return true;
 }

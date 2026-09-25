@@ -5,14 +5,18 @@
  * are recognised by simple substring match, unknown lines are skipped.
  * No external deps.
  */
+#define _XOPEN_SOURCE 700  /* realpath and getcwd under strict C11 */
 #include "config.h"
+#include "saves.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <errno.h>
+#include <unistd.h>
 
 /* ---------------------------------------------------------------------------
  * Path resolution
@@ -58,6 +62,7 @@ void mynes_user_presets_dir(char *out, int out_sz) {
 /* mkdir -p — public via mynes_mkdir_p (declared in config.h). */
 bool mynes_mkdir_p(const char *path) {
     char buf[MYNES_PATH_MAX];
+    if (!*path) return false;
     snprintf(buf, sizeof(buf), "%s", path);
     for (char *p = buf + 1; *p; p++) {
         if (*p == '/') {
@@ -74,22 +79,49 @@ bool mynes_mkdir_p(const char *path) {
  * JSON I/O — line-oriented, dependency-free
  * ------------------------------------------------------------------------- */
 
-static void json_escape(FILE *f, const char *s) {
-    fputc('"', f);
+/* Growable text; `failed` sticks after the first allocation failure. */
+typedef struct {
+    char  *data;
+    size_t len, cap;
+    bool   failed;
+} TextBuf;
+
+static void text_printf(TextBuf *t, const char *fmt, ...) {
+    if (t->failed) return;
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(NULL, 0, fmt, ap);
+    va_end(ap);
+    if (n < 0) { t->failed = true; return; }
+    if (t->len + (size_t)n + 1 > t->cap) {
+        size_t cap = (t->len + (size_t)n + 1) * 2;
+        char *grown = (char *)realloc(t->data, cap);
+        if (!grown) { t->failed = true; return; }
+        t->data = grown;
+        t->cap = cap;
+    }
+    va_start(ap, fmt);
+    vsnprintf(t->data + t->len, t->cap - t->len, fmt, ap);
+    va_end(ap);
+    t->len += (size_t)n;
+}
+
+static void json_escape(TextBuf *t, const char *s) {
+    text_printf(t, "\"");
     for (const char *p = s; *p; p++) {
         unsigned char c = (unsigned char)*p;
         switch (c) {
-        case '\\': fputs("\\\\", f); break;
-        case '"':  fputs("\\\"", f); break;
-        case '\n': fputs("\\n", f);  break;
-        case '\r': fputs("\\r", f);  break;
-        case '\t': fputs("\\t", f);  break;
+        case '\\': text_printf(t, "\\\\"); break;
+        case '"':  text_printf(t, "\\\""); break;
+        case '\n': text_printf(t, "\\n");  break;
+        case '\r': text_printf(t, "\\r");  break;
+        case '\t': text_printf(t, "\\t");  break;
         default:
-            if (c < 0x20) fprintf(f, "\\u%04x", c);
-            else          fputc((int)c, f);
+            if (c < 0x20) text_printf(t, "\\u%04x", c);
+            else          text_printf(t, "%c", c);
         }
     }
-    fputc('"', f);
+    text_printf(t, "\"");
 }
 
 /* Pull the next quoted JSON string off `*cursor`. Writes the unescaped
@@ -123,6 +155,22 @@ static bool json_take_string(const char **cursor, char *out, int out_sz) {
     out[o] = '\0';
     *cursor = p + 1;  /* skip closing quote */
     return true;
+}
+
+/* Take the recent_roms entries on one line, starting inside the array.
+ * Only a `]` outside a string closes it: ROM names like "Metroid (U) [!]"
+ * carry brackets. Returns whether the array is still open. */
+static bool take_recent_items(const char *p, MynesConfig *cfg) {
+    for (;;) {
+        while (*p == ' ' || *p == '\t' || *p == '\r' || *p == ',') p++;
+        if (*p == ']') return false;
+        char tmp[MYNES_PATH_MAX];
+        if (*p != '"' || !json_take_string(&p, tmp, sizeof(tmp))) return true;
+        if (cfg->recent_count < MYNES_RECENT_MAX) {
+            memcpy(cfg->recent_roms[cfg->recent_count], tmp, strlen(tmp) + 1);
+            cfg->recent_count++;
+        }
+    }
 }
 
 /* gpu_render_scale values, in MynesConfig order. */
@@ -169,20 +217,10 @@ bool mynes_config_load(MynesConfig *cfg) {
         char *s = line;
         while (*s == ' ' || *s == '\t' || *s == ',') s++;
 
-        if (strstr(s, "\"recent_roms\"") && strchr(s, '[')) {
-            in_recent = true;
-        } else if (in_recent && strchr(s, ']')) {
-            in_recent = false;
-        } else if (in_recent) {
-            const char *cur = s;
-            char tmp[MYNES_PATH_MAX];
-            if (json_take_string(&cur, tmp, sizeof(tmp))
-                && cfg->recent_count < MYNES_RECENT_MAX) {
-                strncpy(cfg->recent_roms[cfg->recent_count], tmp,
-                        MYNES_PATH_MAX - 1);
-                cfg->recent_roms[cfg->recent_count][MYNES_PATH_MAX - 1] = '\0';
-                cfg->recent_count++;
-            }
+        if (in_recent) {
+            in_recent = take_recent_items(s, cfg);
+        } else if (strstr(s, "\"recent_roms\"") && strchr(s, '[')) {
+            in_recent = take_recent_items(strchr(s, '[') + 1, cfg);
         } else if (strstr(s, "\"gpu_hdr_gain_mode\"")) {
             const char *colon=strchr(s, ':');
             cfg->gpu_hdr_gain_mode=colon && atoi(colon+1)==1 ? 1 : 0;
@@ -255,50 +293,92 @@ bool mynes_config_save(const MynesConfig *cfg) {
         return false;
     }
 
-    FILE *f = fopen(path, "wb");
-    if (!f) {
-        fprintf(stderr, "mynes_config_save: cannot open %s: %s\n",
-                path, strerror(errno));
-        return false;
-    }
-
-    fprintf(f, "{\n");
-    fprintf(f, "    \"recent_roms\": [\n");
+    /* Built in memory and written through a renamed temporary file, so a
+     * failed or interrupted save never leaves a truncated config behind. */
+    TextBuf t = {0};
+    text_printf(&t, "{\n");
+    text_printf(&t, "    \"recent_roms\": [\n");
     for (int i = 0; i < cfg->recent_count; i++) {
-        fprintf(f, "        ");
-        json_escape(f, cfg->recent_roms[i]);
-        fputs(i + 1 < cfg->recent_count ? ",\n" : "\n", f);
+        text_printf(&t, "        ");
+        json_escape(&t, cfg->recent_roms[i]);
+        text_printf(&t, "%s", i + 1 < cfg->recent_count ? ",\n" : "\n");
     }
-    fprintf(f, "    ],\n");
-    fprintf(f, "    \"gpu_mask_alignment\": %d,\n",cfg->gpu_mask_alignment==1 ? 1 : 0);
-    fprintf(f, "    \"gpu_hdr_gain_mode\": %d,\n",cfg->gpu_hdr_gain_mode==1 ? 1 : 0);
-    fprintf(f, "    \"gpu_panel_primaries\": %d,\n",cfg->gpu_panel_primaries==0 ? 0 : 1);
-    fprintf(f, "    \"gpu_hdr_boost\": %d,\n",cfg->gpu_hdr_boost);
-    fprintf(f, "    \"gpu_lab_split\": %d,\n    \"gpu_lab_gap_r\": %d,\n    \"gpu_lab_gap_g\": %d,\n    \"gpu_lab_gap_b\": %d,\n",
+    text_printf(&t, "    ],\n");
+    text_printf(&t, "    \"gpu_mask_alignment\": %d,\n",cfg->gpu_mask_alignment==1 ? 1 : 0);
+    text_printf(&t, "    \"gpu_hdr_gain_mode\": %d,\n",cfg->gpu_hdr_gain_mode==1 ? 1 : 0);
+    text_printf(&t, "    \"gpu_panel_primaries\": %d,\n",cfg->gpu_panel_primaries==0 ? 0 : 1);
+    text_printf(&t, "    \"gpu_hdr_boost\": %d,\n",cfg->gpu_hdr_boost);
+    text_printf(&t, "    \"gpu_lab_split\": %d,\n    \"gpu_lab_gap_r\": %d,\n    \"gpu_lab_gap_g\": %d,\n    \"gpu_lab_gap_b\": %d,\n",
         cfg->gpu_lab_split,cfg->gpu_lab_gap[0],cfg->gpu_lab_gap[1],cfg->gpu_lab_gap[2]);
-    fprintf(f, "    \"gpu_lab_gain_r\": %d,\n    \"gpu_lab_gain_g\": %d,\n    \"gpu_lab_gain_b\": %d,\n    \"gpu_lab_fill\": %d,\n",
+    text_printf(&t, "    \"gpu_lab_gain_r\": %d,\n    \"gpu_lab_gain_g\": %d,\n    \"gpu_lab_gain_b\": %d,\n    \"gpu_lab_fill\": %d,\n",
         cfg->gpu_lab_gain[0],cfg->gpu_lab_gain[1],cfg->gpu_lab_gain[2],cfg->gpu_lab_fill);
-    fprintf(f, "    \"gpu_lab_reference\": %d,\n    \"gpu_lab_fit\": %d,\n",cfg->gpu_lab_reference,cfg->gpu_lab_fit);
-    fprintf(f, "    \"gpu_panel_subpixels\": %d,\n",cfg->gpu_panel_subpixels==1 || cfg->gpu_panel_subpixels==2 ? cfg->gpu_panel_subpixels : 0);
-    fprintf(f, "    \"gpu_room_reflections\": %d,\n",cfg->gpu_room_reflections==1 ? 1 : 0);
-    fprintf(f, "    \"gpu_render_scale\": \"%s\",\n",
+    text_printf(&t, "    \"gpu_lab_reference\": %d,\n    \"gpu_lab_fit\": %d,\n",cfg->gpu_lab_reference,cfg->gpu_lab_fit);
+    text_printf(&t, "    \"gpu_panel_subpixels\": %d,\n",cfg->gpu_panel_subpixels==1 || cfg->gpu_panel_subpixels==2 ? cfg->gpu_panel_subpixels : 0);
+    text_printf(&t, "    \"gpu_room_reflections\": %d,\n",cfg->gpu_room_reflections==1 ? 1 : 0);
+    text_printf(&t, "    \"gpu_render_scale\": \"%s\",\n",
             render_scale_names[cfg->gpu_render_scale>=0 && cfg->gpu_render_scale<=3 ? cfg->gpu_render_scale : 1]);
-    fprintf(f, "    \"gpu_low_latency\": %d,\n",cfg->gpu_low_latency==0 ? 0 : 1);
-    fprintf(f, "    \"last_preset\": ");
-    json_escape(f, cfg->last_preset);
-    fprintf(f, "\n}\n");
+    text_printf(&t, "    \"gpu_low_latency\": %d,\n",cfg->gpu_low_latency==0 ? 0 : 1);
+    text_printf(&t, "    \"last_preset\": ");
+    json_escape(&t, cfg->last_preset);
+    text_printf(&t, "\n}\n");
 
-    fclose(f);
-    return true;
+    bool ok = !t.failed;
+    if (!ok) fprintf(stderr, "mynes_config_save: out of memory\n");
+    ok = ok && mynes_write_file_atomic_cached(path, t.data, t.len);
+    free(t.data);
+    return ok;
+}
+
+/* `path` made absolute with its file name untouched. A relative path from the
+ * command line only means something in the directory it was typed in, and
+ * the list is opened from anywhere. Only the directory is resolved: realpath
+ * on the whole path would follow a symlinked ROM to its target's name, and
+ * on macOS rewrite the name's case, and saves and states are named after
+ * the ROM's basename, so the same cartridge would get a second save file
+ * depending on how it was opened. Returns false when `path` cannot be made
+ * absolute within MYNES_PATH_MAX. */
+static bool absolute_rom_path(const char *path, char *out, size_t out_sz) {
+    const char *slash = strrchr(path, '/');
+    const char *name = slash ? slash + 1 : path;
+    bool plain_name = *name && strcmp(name, ".") != 0 && strcmp(name, "..") != 0;
+    if (plain_name) {
+        char dir[MYNES_PATH_MAX];
+        if (!slash) snprintf(dir, sizeof(dir), ".");
+        else if (slash == path) snprintf(dir, sizeof(dir), "/");
+        else snprintf(dir, sizeof(dir), "%.*s", (int)(slash - path), path);
+        char *real = realpath(dir, NULL);
+        if (real) {
+            bool root = strcmp(real, "/") == 0;
+            int n = snprintf(out, out_sz, "%s%s%s", real, root ? "" : "/", name);
+            free(real);
+            if (n >= 0 && (size_t)n < out_sz) return true;
+        }
+    }
+    /* No such directory: keep the path as typed, anchored where it was. */
+    if (path[0] == '/') return (size_t)snprintf(out, out_sz, "%s", path) < out_sz;
+    char cwd[MYNES_PATH_MAX];
+    if (!getcwd(cwd, sizeof(cwd))) return false;
+    const char *rest = strncmp(path, "./", 2) == 0 ? path + 2 : path;
+    return (size_t)snprintf(out, out_sz, "%s%s%s", cwd,
+                            strcmp(cwd, "/") == 0 ? "" : "/", rest) < out_sz;
 }
 
 void mynes_config_add_recent(MynesConfig *cfg, const char *path) {
     if (!cfg || !path || !*path) return;
 
-    /* If already present, remove the existing entry first (move-to-front). */
+    char absolute[MYNES_PATH_MAX];
+    if (absolute_rom_path(path, absolute, sizeof(absolute))) path = absolute;
+
+    /* If already present, remove the existing entry first (move-to-front).
+     * Older builds stored relative paths as typed; such an entry is the same
+     * ROM when it resolves to the same place from here. */
     int found = -1;
     for (int i = 0; i < cfg->recent_count; i++) {
-        if (strcmp(cfg->recent_roms[i], path) == 0) { found = i; break; }
+        const char *entry = cfg->recent_roms[i];
+        char entry_abs[MYNES_PATH_MAX];
+        if (entry[0] != '/' && absolute_rom_path(entry, entry_abs, sizeof(entry_abs)))
+            entry = entry_abs;
+        if (strcmp(entry, path) == 0) { found = i; break; }
     }
     if (found >= 0) {
         for (int i = found; i + 1 < cfg->recent_count; i++) {

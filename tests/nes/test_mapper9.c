@@ -65,6 +65,12 @@ int main(void) {
     CHECK(mapper_ppu_read(&m, 0x0000) == 0xC3);
     CHECK(mapper_ppu_read(&m, 0x1000) == 0xC4);
 
+    /* A debugger peek at a trigger address does not flip the latch. */
+    CHECK(mapper_ppu_peek(&m, 0x0FD8) == 0xC3);
+    CHECK(mapper_ppu_peek(&m, 0x1FE8) == 0xC4);
+    CHECK(mapper_ppu_read(&m, 0x0000) == 0xC3);
+    CHECK(mapper_ppu_read(&m, 0x1000) == 0xC4);
+
     /* A register write for the currently latched bank applies at once. */
     mapper_cpu_write(&m, 0xD000, 9);
     CHECK(mapper_ppu_read(&m, 0x1FFF) == 0xC9);

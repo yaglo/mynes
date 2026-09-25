@@ -1723,80 +1723,95 @@ bool video_gpu_set_beam_params(VideoGPUChain *vgc, SDL_GPUDevice *gpu,
 {
     if (out_w <= 0 || out_h <= 0 || rows_per_scanline <= 0) return false;
 
+    /* Allocate every resized resource first and commit only when all exist, so
+     * a failure leaves the old buffers, texture and dimensions consistent. */
     Uint32 deflect_needed = (Uint32)(out_w * out_h * 4 * sizeof(float));
-    if (deflect_needed != vgc->deflection_size) {
-        vgc->deflection_cache_valid=false;
-        if (vgc->buf_deflection_x) {
-            SDL_ReleaseGPUBuffer(gpu, vgc->buf_deflection_x);
-            vgc->buf_deflection_x = NULL;
-        }
-        if (vgc->buf_deflection_y) {
-            SDL_ReleaseGPUBuffer(gpu, vgc->buf_deflection_y);
-            vgc->buf_deflection_y = NULL;
-        }
-        vgc->buf_deflection_x = gpu_buffer_create(gpu, deflect_needed, GPU_BUF_READWRITE);
-        vgc->buf_deflection_y = gpu_buffer_create(gpu, deflect_needed, GPU_BUF_READWRITE);
-        if (!vgc->buf_deflection_x || !vgc->buf_deflection_y) {
+    // A second decay state costs memory/bandwidth only when a tail is enabled.
+    Uint32 history_needed=(Uint32)(out_w*out_h*8)*(vgc->tail_weight>0 ? 2u : 1u);
+    Uint32 needed = (Uint32)(out_w * out_h * 8);  /* 4x float16 = 8 bytes/pixel */
+    bool new_deflection = deflect_needed != vgc->deflection_size;
+    bool new_history = history_needed != vgc->phosphor_history_size;
+    bool new_beam = needed != vgc->beam_rgba_size || out_w != vgc->beam_out_w ||
+                    out_h != vgc->beam_out_h;
+    SDL_GPUBuffer *deflection_x = NULL, *deflection_y = NULL, *history = NULL;
+    SDL_GPUBuffer *beam_rgba = NULL, *beam_prev = NULL;
+    SDL_GPUTexture *tex_beam = NULL;
+    bool ok = true;
+
+    if (new_deflection) {
+        deflection_x = gpu_buffer_create(gpu, deflect_needed, GPU_BUF_READWRITE);
+        deflection_y = gpu_buffer_create(gpu, deflect_needed, GPU_BUF_READWRITE);
+        if (!deflection_x || !deflection_y) {
             fprintf(stderr,
                     "video_gpu_set_beam_params: failed to create deflection buffers (%u bytes each)\n",
                     deflect_needed);
-            return false;
+            ok = false;
         }
-        vgc->deflection_size = deflect_needed;
     }
-
-    // A second decay state costs memory/bandwidth only when a tail is enabled.
-    Uint32 history_needed=(Uint32)(out_w*out_h*8)*(vgc->tail_weight>0 ? 2u : 1u);
-    if (history_needed!=vgc->phosphor_history_size) {
-        if (vgc->buf_phosphor_history) SDL_ReleaseGPUBuffer(gpu,vgc->buf_phosphor_history);
-        vgc->buf_phosphor_history=gpu_buffer_create(gpu,history_needed,GPU_BUF_READWRITE);
-        if (!vgc->buf_phosphor_history) { vgc->phosphor_history_size=0; return false; }
-        vgc->phosphor_history_size=history_needed;
-        vgc->temporal_history_valid=false;
+    if (ok && new_history) {
+        history = gpu_buffer_create(gpu, history_needed, GPU_BUF_READWRITE);
+        ok = history != NULL;
     }
-    /* Reallocate RGBA16F output buffer if size changed (8 bytes per pixel). */
-    Uint32 needed = (Uint32)(out_w * out_h * 8);  /* 4x float16 = 8 bytes/pixel */
-    if (needed != vgc->beam_rgba_size || out_w != vgc->beam_out_w || out_h != vgc->beam_out_h) {
-        if (vgc->buf_beam_rgba) {
-            SDL_ReleaseGPUBuffer(gpu, vgc->buf_beam_rgba);
-            vgc->buf_beam_rgba = NULL;
-        }
-        vgc->buf_beam_rgba = gpu_buffer_create(gpu, needed, GPU_BUF_READWRITE);
-        if (!vgc->buf_beam_rgba) {
+    if (ok && new_beam) {
+        beam_rgba = gpu_buffer_create(gpu, needed, GPU_BUF_READWRITE);
+        if (!beam_rgba)
             fprintf(stderr, "video_gpu_set_beam_params: failed to create RGBA buffer (%u bytes)\n", needed);
-            return false;
-        }
-        vgc->beam_rgba_size = needed;
-
         /* Previous frame buffer for temporal blend (same size). */
-        if (vgc->buf_beam_prev) {
-            SDL_ReleaseGPUBuffer(gpu, vgc->buf_beam_prev);
-            vgc->buf_beam_prev = NULL;
-        }
-        vgc->buf_beam_prev = gpu_buffer_create(gpu, needed, GPU_BUF_READWRITE);
-        vgc->temporal_history_valid = false;
-        vgc->smoothing_history_valid = false;
-        if (!vgc->buf_beam_prev) return false;
+        beam_prev = beam_rgba ? gpu_buffer_create(gpu, needed, GPU_BUF_READWRITE) : NULL;
 
         /* Storage texture: compute writes here, CRT shader samples it.
          * Zero-copy path — no CPU download/upload needed. */
-        if (vgc->tex_beam) {
-            SDL_ReleaseGPUTexture(gpu, vgc->tex_beam);
-            vgc->tex_beam = NULL;
+        if (beam_prev) {
+            SDL_GPUTextureCreateInfo tci = {0};
+            tci.type = SDL_GPU_TEXTURETYPE_2D;
+            tci.format = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
+            tci.width = out_w;
+            tci.height = out_h;
+            tci.layer_count_or_depth = 1;
+            tci.num_levels = 1;
+            tci.usage = SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_WRITE
+                      | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+            tex_beam = SDL_CreateGPUTexture(gpu, &tci);
+            if (!tex_beam)
+                fprintf(stderr, "video_gpu_set_beam_params: failed to create beam texture: %s\n",
+                        SDL_GetError());
         }
-        SDL_GPUTextureCreateInfo tci = {0};
-        tci.type = SDL_GPU_TEXTURETYPE_2D;
-        tci.format = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
-        tci.width = out_w;
-        tci.height = out_h;
-        tci.layer_count_or_depth = 1;
-        tci.num_levels = 1;
-        tci.usage = SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_WRITE
-                  | SDL_GPU_TEXTUREUSAGE_SAMPLER;
-        vgc->tex_beam = SDL_CreateGPUTexture(gpu, &tci);
-        if (vgc->tex_beam) {
-            LOGV("Beam storage texture: %dx%d RGBA16F (zero-copy)\n", out_w, out_h);
-        }
+        ok = tex_beam != NULL;
+    }
+    if (!ok) {
+        if (deflection_x) SDL_ReleaseGPUBuffer(gpu, deflection_x);
+        if (deflection_y) SDL_ReleaseGPUBuffer(gpu, deflection_y);
+        if (history)      SDL_ReleaseGPUBuffer(gpu, history);
+        if (beam_rgba)    SDL_ReleaseGPUBuffer(gpu, beam_rgba);
+        if (beam_prev)    SDL_ReleaseGPUBuffer(gpu, beam_prev);
+        return false;
+    }
+
+    if (new_deflection) {
+        vgc->deflection_cache_valid=false;
+        if (vgc->buf_deflection_x) SDL_ReleaseGPUBuffer(gpu, vgc->buf_deflection_x);
+        if (vgc->buf_deflection_y) SDL_ReleaseGPUBuffer(gpu, vgc->buf_deflection_y);
+        vgc->buf_deflection_x = deflection_x;
+        vgc->buf_deflection_y = deflection_y;
+        vgc->deflection_size = deflect_needed;
+    }
+    if (new_history) {
+        if (vgc->buf_phosphor_history) SDL_ReleaseGPUBuffer(gpu,vgc->buf_phosphor_history);
+        vgc->buf_phosphor_history=history;
+        vgc->phosphor_history_size=history_needed;
+        vgc->temporal_history_valid=false;
+    }
+    if (new_beam) {
+        if (vgc->buf_beam_rgba) SDL_ReleaseGPUBuffer(gpu, vgc->buf_beam_rgba);
+        if (vgc->buf_beam_prev) SDL_ReleaseGPUBuffer(gpu, vgc->buf_beam_prev);
+        if (vgc->tex_beam)      SDL_ReleaseGPUTexture(gpu, vgc->tex_beam);
+        vgc->buf_beam_rgba = beam_rgba;
+        vgc->buf_beam_prev = beam_prev;
+        vgc->tex_beam = tex_beam;
+        vgc->beam_rgba_size = needed;
+        vgc->temporal_history_valid = false;
+        vgc->smoothing_history_valid = false;
+        LOGV("Beam storage texture: %dx%d RGBA16F (zero-copy)\n", out_w, out_h);
     }
 
     vgc->beam_out_w = out_w;

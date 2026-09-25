@@ -998,24 +998,27 @@ static void comp_bloom_row(float *row, int w, float amount, float pixels_per_nes
 
     /* Box blur pass 1: bright -> blurred */
     float inv_diam = 1.0f / (float)(2 * radius + 1);
+    /* Prime with the window ending just before x = 0, both edges
+     * replicated (as in comp_apply_bloom2d): zero padding on the left
+     * but edge replication on the right made the glow lopsided. */
     float running = 0.0f;
-    for (int x = 0; x < radius && x < w; x++) running += bright[x];
+    for (int i = -radius - 1; i < radius; i++)
+        running += bright[i < 0 ? 0 : (i >= w ? w - 1 : i)];
     for (int x = 0; x < w; x++) {
-        int ra = x + radius; if (ra >= w) ra = w - 1;
-        int la = x - radius - 1;
-        running += bright[ra];
-        if (la >= 0) running -= bright[la];
+        int ra = x + radius;     if (ra >= w) ra = w - 1;
+        int la = x - radius - 1; if (la < 0)  la = 0;
+        running += bright[ra] - bright[la];
         blurred[x] = running * inv_diam;
     }
 
     /* Box blur pass 2: blurred -> bright (second pass smooths the box shape) */
     running = 0.0f;
-    for (int x = 0; x < radius && x < w; x++) running += blurred[x];
+    for (int i = -radius - 1; i < radius; i++)
+        running += blurred[i < 0 ? 0 : (i >= w ? w - 1 : i)];
     for (int x = 0; x < w; x++) {
-        int ra = x + radius; if (ra >= w) ra = w - 1;
-        int la = x - radius - 1;
-        running += blurred[ra];
-        if (la >= 0) running -= blurred[la];
+        int ra = x + radius;     if (ra >= w) ra = w - 1;
+        int la = x - radius - 1; if (la < 0)  la = 0;
+        running += blurred[ra] - blurred[la];
         bright[x] = running * inv_diam;
     }
 
@@ -1210,42 +1213,38 @@ static void comp_emit_pass2_write(uint8_t * __restrict out0,
         uint8_t *dst = out0 + k * row_stride;
         int ox = 0;
 #if defined(__ARM_NEON)
-        /* NEON hot path: 16 pixels / iter.
-         * c_mod = cn + ((cdiff * ym) >> 8), clamped to u8 with
-         * saturating narrow. Then per-channel widening multiply
-         * (u8 * u8 → u16), shift right 8, re-pack, and interleaved
-         * store via vst3q_u8 (writes 48 bytes contiguously at 16 px). */
-        int16x8_t cdiff_s16 = vdupq_n_s16((int16_t)cdiff);
-        int16x8_t cn_s16    = vdupq_n_s16((int16_t)cn);
-        for (; ox + 16 <= W; ox += 16) {
-            uint8x16_t v_ym = vld1q_u8(&ym[ox]);
-            /* Widen ym → s16 (zero-extend is safe, ym is uint8). */
-            int16x8_t ym_lo = vreinterpretq_s16_u16(vmovl_u8(vget_low_u8(v_ym)));
-            int16x8_t ym_hi = vreinterpretq_s16_u16(vmovl_u8(vget_high_u8(v_ym)));
-            /* cdiff * ym, arithmetic shift right 8, add cn. */
-            int16x8_t cm_lo = vaddq_s16(cn_s16,
-                                vshrq_n_s16(vmulq_s16(ym_lo, cdiff_s16), 8));
-            int16x8_t cm_hi = vaddq_s16(cn_s16,
-                                vshrq_n_s16(vmulq_s16(ym_hi, cdiff_s16), 8));
-            /* Saturating narrow to u8; c_mod ∈ [0, 256] → clamp at 255
-             * (we lose 1/256 of precision at the upper edge, invisible). */
-            uint8x16_t c_mod = vcombine_u8(vqmovun_s16(cm_lo),
-                                            vqmovun_s16(cm_hi));
-            uint8x16_t v_br = vld1q_u8(&br[ox]);
-            uint8x16_t v_bg = vld1q_u8(&bg[ox]);
-            uint8x16_t v_bb = vld1q_u8(&bb[ox]);
-            /* Per-channel (ch * c_mod) >> 8. */
-            uint16x8_t pr_lo = vmull_u8(vget_low_u8(v_br),  vget_low_u8(c_mod));
-            uint16x8_t pr_hi = vmull_u8(vget_high_u8(v_br), vget_high_u8(c_mod));
-            uint16x8_t pg_lo = vmull_u8(vget_low_u8(v_bg),  vget_low_u8(c_mod));
-            uint16x8_t pg_hi = vmull_u8(vget_high_u8(v_bg), vget_high_u8(c_mod));
-            uint16x8_t pb_lo = vmull_u8(vget_low_u8(v_bb),  vget_low_u8(c_mod));
-            uint16x8_t pb_hi = vmull_u8(vget_high_u8(v_bb), vget_high_u8(c_mod));
-            uint8x16x3_t rgb;
-            rgb.val[0] = vcombine_u8(vshrn_n_u16(pr_lo, 8), vshrn_n_u16(pr_hi, 8));
-            rgb.val[1] = vcombine_u8(vshrn_n_u16(pg_lo, 8), vshrn_n_u16(pg_hi, 8));
-            rgb.val[2] = vcombine_u8(vshrn_n_u16(pb_lo, 8), vshrn_n_u16(pb_hi, 8));
-            vst3q_u8(&dst[ox * 3], rgb);
+        /* NEON hot path: 16 pixels / iter, bit-identical to the scalar
+         * tail. c_mod = cn + ((cdiff * ym) >> 8) is formed in u16: the
+         * product reaches 255 * 255 at large rps and would wrap in s16,
+         * and c_mod itself reaches 256 where cn = cw = 256, so it must not
+         * be narrowed to u8. ch * c_mod <= 255 * 256 still fits u16.
+         * cdiff is non-negative (the wide curve dominates the narrow one)
+         * and below 256; anything else falls through to scalar. */
+        if (cdiff >= 0 && cdiff <= 255) {
+            uint8x8_t  cdiff_u8 = vdup_n_u8((uint8_t)cdiff);
+            uint16x8_t cn_u16   = vdupq_n_u16((uint16_t)cn);
+            for (; ox + 16 <= W; ox += 16) {
+                uint8x16_t v_ym = vld1q_u8(&ym[ox]);
+                uint16x8_t cm_lo = vaddq_u16(cn_u16,
+                                    vshrq_n_u16(vmull_u8(vget_low_u8(v_ym), cdiff_u8), 8));
+                uint16x8_t cm_hi = vaddq_u16(cn_u16,
+                                    vshrq_n_u16(vmull_u8(vget_high_u8(v_ym), cdiff_u8), 8));
+                uint8x16_t v_br = vld1q_u8(&br[ox]);
+                uint8x16_t v_bg = vld1q_u8(&bg[ox]);
+                uint8x16_t v_bb = vld1q_u8(&bb[ox]);
+                /* Per-channel (ch * c_mod) >> 8. */
+                uint16x8_t pr_lo = vmulq_u16(vmovl_u8(vget_low_u8(v_br)),  cm_lo);
+                uint16x8_t pr_hi = vmulq_u16(vmovl_u8(vget_high_u8(v_br)), cm_hi);
+                uint16x8_t pg_lo = vmulq_u16(vmovl_u8(vget_low_u8(v_bg)),  cm_lo);
+                uint16x8_t pg_hi = vmulq_u16(vmovl_u8(vget_high_u8(v_bg)), cm_hi);
+                uint16x8_t pb_lo = vmulq_u16(vmovl_u8(vget_low_u8(v_bb)),  cm_lo);
+                uint16x8_t pb_hi = vmulq_u16(vmovl_u8(vget_high_u8(v_bb)), cm_hi);
+                uint8x16x3_t rgb;
+                rgb.val[0] = vcombine_u8(vshrn_n_u16(pr_lo, 8), vshrn_n_u16(pr_hi, 8));
+                rgb.val[1] = vcombine_u8(vshrn_n_u16(pg_lo, 8), vshrn_n_u16(pg_hi, 8));
+                rgb.val[2] = vcombine_u8(vshrn_n_u16(pb_lo, 8), vshrn_n_u16(pb_hi, 8));
+                vst3q_u8(&dst[ox * 3], rgb);
+            }
         }
 #endif
         for (; ox < W; ox++) {
@@ -2231,8 +2230,13 @@ static void comp_apply_barrel(Composite *n) {
             float s = 1.0f + k * (u * u + v2);
             float sx = (u * s + 1.0f) * half_W;
             float sy = (v * s + 1.0f) * half_H;
-            int ix = (int)sx;
-            int iy = (int)sy;
+            /* floorf, not a cast: truncation maps sx in (-1, 0) to ix 0
+             * with a negative fraction, and those weights wrap the u8
+             * result into speckles along the top and left edges. */
+            float fx = floorf(sx);
+            float fy = floorf(sy);
+            int ix = (int)fx;
+            int iy = (int)fy;
             if (ix < 0 || ix >= W - 1 || iy < 0 || iy >= H - 1) {
                 dst[x*3]   = 0;
                 dst[x*3+1] = 0;
@@ -2243,8 +2247,8 @@ static void comp_apply_barrel(Composite *n) {
              * integer multiply-shift. Avoids 12 float→int conversions
              * per pixel that the float path had. Total weights sum to
              * 65536 so the final >>16 recovers the correct scale. */
-            int fx8 = (int)((sx - (float)ix) * 256.0f);
-            int fy8 = (int)((sy - (float)iy) * 256.0f);
+            int fx8 = (int)((sx - fx) * 256.0f);
+            int fy8 = (int)((sy - fy) * 256.0f);
             int ifx = 256 - fx8;
             int ify = 256 - fy8;
             int w00 = ifx * ify;   /* (256-fx)(256-fy) */

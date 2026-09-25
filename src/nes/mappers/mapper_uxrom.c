@@ -7,7 +7,6 @@
 static void mapper2_init(Mapper *m) {
     m->prg_bank0 = 0;
     m->prg_bank1 = (m->prg_banks > 0) ? (m->prg_banks - 1) : 0;  /* Fixed to last bank */
-    m->has_chr_ram = true;
 }
 
 static uint8_t mapper2_cpu_read(Mapper *m, uint16_t addr) {
@@ -24,21 +23,25 @@ static uint8_t mapper2_cpu_read(Mapper *m, uint16_t addr) {
 
 static void mapper2_cpu_write(Mapper *m, uint16_t addr, uint8_t val) {
     if (addr >= 0x8000) {
-        m->prg_bank0 = val & (m->prg_banks - 1);
+        /* A mask of prg_banks - 1 is only right for power-of-two sizes. */
+        m->prg_bank0 = m->prg_banks ? val % m->prg_banks : 0;
     } else if (addr >= 0x6000) {
         m->prg_ram[addr - 0x6000] = val;
     }
 }
 
+/* The boards carry CHR RAM, but a header that declares CHR ROM gets it. */
 static uint8_t mapper2_ppu_read(Mapper *m, uint16_t addr) {
     if (addr < 0x2000) {
-        return m->chr_ram[addr];
+        if (m->has_chr_ram)
+            return m->chr_ram[addr];
+        return m->chr_rom[addr % m->chr_rom_size];
     }
     return 0;
 }
 
 static void mapper2_ppu_write(Mapper *m, uint16_t addr, uint8_t val) {
-    if (addr < 0x2000) {
+    if (addr < 0x2000 && m->has_chr_ram) {
         m->chr_ram[addr] = val;
     }
 }

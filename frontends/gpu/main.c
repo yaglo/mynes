@@ -143,7 +143,7 @@ static bool             paused;              /* Space / OSD Game menu */
 static MynesSaves       saves;
 static int              state_slot = 1;      /* 1..MYNES_STATE_SLOTS, as shown to the player */
 static bool             state_save_requested, state_load_requested, battery_write_requested;
-static uint8_t          battery_image[MYNES_PRG_RAM_SIZE];
+static uint8_t          battery_image[MYNES_PRG_RAM_MAX];
 static Uint64           battery_next_check;
 static unsigned         state_load_frame;    /* frames emulated when the last state was applied */
 
@@ -391,10 +391,13 @@ static bool review_env_present(void) {
 /* Console visitors for playback_with_console: the worker owns the NES while
  * playback is active, so cartridge RAM and machine state cross over here. */
 static void console_copy_prg_ram(NES *console, void *user) {
-    memcpy(user, console->mapper.prg_ram, MYNES_PRG_RAM_SIZE);
+    memcpy(user, console->mapper.prg_ram, console->mapper.prg_ram_size);
 }
 static void console_restore_prg_ram(NES *console, void *user) {
-    memcpy(console->mapper.prg_ram, user, MYNES_PRG_RAM_SIZE);
+    memcpy(console->mapper.prg_ram, user, console->mapper.prg_ram_size);
+}
+static void console_prg_ram_size(NES *console, void *user) {
+    *(size_t *)user = console->mapper.prg_ram_size;
 }
 typedef struct {
     void  *data;
@@ -424,7 +427,9 @@ static unsigned with_console(void (*fn)(NES *console, void *user), void *user) {
  * Runs right after a load, while the mapper's RAM is still blank. */
 static void saves_attach(const char *rom_path) {
     uint32_t crc = nes_state_rom_crc(rom.prg_rom, rom.prg_size, rom.chr_rom, rom.chr_size);
-    mynes_saves_open(&saves, rom_path, crc, rom.has_battery);
+    size_t ram_size = 0;
+    with_console(console_prg_ram_size, &ram_size);
+    mynes_saves_open(&saves, rom_path, crc, rom.has_battery, ram_size);
     battery_next_check = SDL_GetTicks() + BATTERY_FLUSH_MS;
     if (!saves.battery) return;
     with_console(console_copy_prg_ram, battery_image);
@@ -1275,6 +1280,7 @@ int main(int argc, char **argv) {
                         rom.prg_rom, rom.prg_size,
                         rom.chr_rom, rom.chr_size,
                         rom.mirroring);
+        nes_rom_apply_trainer(&rom, &nes.mapper);
 
         /* Persist this ROM as the most-recent. */
         mynes_config_add_recent(&mynes_config, rom_path);
